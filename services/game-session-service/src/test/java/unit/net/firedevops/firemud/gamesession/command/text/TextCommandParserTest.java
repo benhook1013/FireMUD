@@ -37,6 +37,17 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesLogoutAliasesAsSimpleSessionCommand() {
+    TextCommand command = parser.parse("quit");
+
+    assertEquals(TextCommandType.LOGOUT, command.type());
+    assertEquals("quit", command.aliasUsed());
+    assertTrue(command.args().isEmpty());
+    assertEquals("quit", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.None);
+  }
+
+  @Test
   void parsesPlayWithWorldAndOptionalCharacter() {
     TextCommand command = parser.parse("PLAY demo Emberline");
 

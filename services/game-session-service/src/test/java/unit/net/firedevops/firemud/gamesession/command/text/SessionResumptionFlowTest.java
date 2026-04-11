@@ -16,6 +16,7 @@ import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
@@ -39,6 +40,7 @@ import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -79,6 +81,8 @@ class SessionResumptionFlowTest {
       Mockito.mock(ObjectProvider.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
+  private final GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+  private final ScreenBufferService screenBufferService = Mockito.mock(ScreenBufferService.class);
   private PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
@@ -196,6 +200,13 @@ class SessionResumptionFlowTest {
             commandService,
             lookHandler,
             loginHandler,
+            new LogoutCommandHandler(
+                sessionAuthenticationService,
+                sessionContextService,
+                gameInstanceService,
+                gameplayPresenceService,
+                firstPartyConnectContextRegistry,
+                screenBufferService),
             playHandler,
             moveHandler,
             helpHandler,

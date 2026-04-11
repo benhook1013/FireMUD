@@ -10,7 +10,10 @@ public record GameplayPresence(
     long accountId,
     long characterId,
     String characterName,
-    GameplayPresenceRole role)
+    GameplayPresenceRole role,
+    long connectedAtEpochMs,
+    Long lastAcceptedCommandAtEpochMs,
+    Long lastMeaningfulActivityAtEpochMs)
     implements Serializable {
   private static final long serialVersionUID = 1L;
 }

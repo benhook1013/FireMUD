@@ -6,6 +6,8 @@ import java.util.List;
 public interface GameplayPresenceService {
   void registerConnected(SessionContext context);
 
+  void recordCommandActivity(long sessionId, boolean meaningfulGameplayActivity);
+
   void removeBySessionId(long sessionId);
 
   List<GameplayPresence> listConnectedByGameInstance(long tenantId, long gameInstanceId);

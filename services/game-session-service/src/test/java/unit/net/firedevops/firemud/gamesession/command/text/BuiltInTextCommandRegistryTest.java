@@ -15,7 +15,12 @@ class BuiltInTextCommandRegistryTest {
   void builtInDefinitionsCarryClassificationAndPlatformSourceMetadata() {
     assertDefinition(
         TextCommandType.LOGIN,
-        TextCommandDispatchGroup.LOGIN,
+        TextCommandDispatchGroup.SESSION,
+        TextCommandActionCategory.META,
+        TextCommandSource.PLATFORM_BUILT_IN);
+    assertDefinition(
+        TextCommandType.LOGOUT,
+        TextCommandDispatchGroup.SESSION,
         TextCommandActionCategory.META,
         TextCommandSource.PLATFORM_BUILT_IN);
     assertDefinition(

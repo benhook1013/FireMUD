@@ -20,6 +20,7 @@ public class TextCommandParser {
         switch (type) {
           case WORLDS ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WORLDS"));
+          case LOGOUT -> new ParsedCommandData(List.of(), new TextCommandPayload.None());
           case HELP -> parseHelp(tokens);
           case WHO -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WHO"));
           case INVENTORY ->

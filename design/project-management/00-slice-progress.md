@@ -10,28 +10,32 @@ It intentionally omits completed slices and uses the individual slice docs as th
 
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
-1. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
+1. [02.1.2 Logout and Session Termination](./vertical-slices/02.1.2-task-list-logout-and-session-termination-vertical-slice.md)
+   Remaining: finish the follow-through proofs so fresh post-logout login is proven distinct from reconnect recovery and takeover, then align any remaining transport variants on the same deliberate close behavior.
+2. [02.1.3 Session Activity and WHO Presence](./vertical-slices/02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
+   Remaining: build on the now-live activity timestamps with explicit AFK/auto-AFK, richer lifecycle proofs, and later `WHO` presentation consumers.
+3. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
    Remaining: extend the now-live first strict stack model with bounded authored compatibility modes beyond definition-level sameness, but only after a real per-source variant substrate exists for anything beyond the current definition-level fingerprint.
-2. [02.13.8 Built-In Command Registry and Dispatch Rollout](./vertical-slices/02.13.8-task-list-built-in-command-registry-and-dispatch-rollout-vertical-slice.md)
-   Remaining: keep future built-in command growth on the canonical registry-plus-family-handler seam and carry the richer command-definition metadata forward into later authored-command registration.
 
 ### 2. Active architecture follow-through
 
 These are already partly real in code and should continue after the immediate runtime fixes.
 
 1. [02.13.8 Built-In Command Registry and Dispatch Rollout](./vertical-slices/02.13.8-task-list-built-in-command-registry-and-dispatch-rollout-vertical-slice.md)
-   Remaining: prove ongoing built-in growth goes through registry plus family-handler extension, and carry the same seam forward into later authored-command registration.
-2. [02.1.3 Session Activity and WHO Presence](./vertical-slices/02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
+   Remaining: keep future built-in and authored command growth on the registry-plus-family-handler seam without regressing into central interpreter branching.
+2. [02.13.7 Action Classification and Activity Semantics](./vertical-slices/02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
+   Remaining: extend the current primary-category plus timestamp consumer into optional tags/facets and later scripting/policy consumers.
+3. [02.1.3 Session Activity and WHO Presence](./vertical-slices/02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: grow from the current bounded `WHO` implementation into the fuller activity model when that work becomes active.
-3. [06 Task List Inventory, Containers, Equipment](./vertical-slices/06-task-list-inventory-containers-equipment-vertical-slice.md)
+4. [06 Task List Inventory, Containers, Equipment](./vertical-slices/06-task-list-inventory-containers-equipment-vertical-slice.md)
    Remaining: complete the remaining `06.3` follow-through and later authored stackability.
-4. [06.3.1 Stable Item Instance Visible Ref Allocation](./vertical-slices/06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
+5. [06.3.1 Stable Item Instance Visible Ref Allocation](./vertical-slices/06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
-5. [06.3.2 Authored Stackability and Fungibility](./vertical-slices/06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
+6. [06.3.2 Authored Stackability and Fungibility](./vertical-slices/06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
    Remaining: add bounded authored compatibility modes once a real variant discriminator exists, then prove incompatible stack rows stay separate.
-6. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
+7. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
    Remaining: keep `02.18.6` at operator-proof level and continue any later hardening only if real-load evidence justifies it.
-7. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
+8. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
 
 ### 3. Design settled enough, but not started or only placeholder-level
@@ -83,12 +87,12 @@ These are not major design problems, but they are not fully closed.
 
 If you want the clearest immediate path, do these next:
 
-1. `06.3.2` bounded authored compatibility-mode follow-up
-   Best next real code batch because the storage/runtime groundwork is already live and the remaining work is now contract-locked.
-2. `02.13.8` built-in command registry follow-through
-   Best next platform-shape batch because the dispatcher seam is now real and the remaining work is mainly future authored-command follow-through.
-3. `02.18.4` world/entity service-boundary auth follow-through
-   Best next hardening batch if you want runtime/platform work instead of more gameplay model work.
+1. `02.1.2` logout and deliberate session termination
+   Best next runtime batch because the core logout command is now live and the remaining work is proof/alignment across reconnect and transport variants rather than fresh design.
+2. `02.1.3` presence/WHO follow-through
+   Best next gameplay-runtime batch because the activity timestamp substrate is now live and the remaining work is explicit AFK/lifecycle behavior rather than vague design.
+3. `06.3.2` bounded authored compatibility-mode follow-up
+   Best next item-model batch once a real variant discriminator substrate exists; do not fake it locally.
 
 ## Operator-Proof / Audit Tails
 

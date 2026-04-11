@@ -20,6 +20,7 @@ import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
@@ -56,6 +57,7 @@ import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -97,6 +99,8 @@ class TextCommandInterpreterTest {
       Mockito.mock(CommunicationCommandHandler.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
+  private final GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+  private final ScreenBufferService screenBufferService = Mockito.mock(ScreenBufferService.class);
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
   private final TextPlayerOutputRenderer outputRenderer =
@@ -389,6 +393,13 @@ class TextCommandInterpreterTest {
             commandService,
             lookHandler,
             loginHandler,
+            new LogoutCommandHandler(
+                sessionAuthenticationService,
+                sessionContextService,
+                gameInstanceService,
+                gameplayPresenceService,
+                firstPartyConnectContextRegistry,
+                screenBufferService),
             playHandler,
             moveHandler,
             helpHandler,
@@ -453,6 +464,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         "OK WHO\nGods [0]: \nPlayers [1]: demo\n\n" + "demo> ",
         renderedResponse("WHO", interpretation));
+    assertFalse(interpretation.meaningfulGameplayActivity());
   }
 
   @Test
@@ -479,6 +491,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         "OK INVENTORY\n" + "Inventory:\n" + "- Torch x2 (A small torch)\n\n" + "demo> ",
         renderedResponse("INVENTORY", interpretation));
+    assertTrue(interpretation.meaningfulGameplayActivity());
   }
 
   @Test

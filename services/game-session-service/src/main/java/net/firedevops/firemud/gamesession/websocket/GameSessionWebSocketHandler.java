@@ -135,6 +135,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       }
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
+      recordGameplayActivity(sessionId, interpretation);
       Optional<SessionContext> maybeContext =
           parseNumericSessionId(sessionId).flatMap(sessionContextService::findBySessionId);
       PresentationProperties effectivePresentation =
@@ -157,6 +158,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           resolveLocaleTag(session, sessionId),
           effectivePresentation);
       maybeReplayScreenBufferAndRefreshLook(session, sessionId, command, interpretation);
+      maybeCloseAfterSuccessfulLogout(session, command, interpretation);
     }
   }
 
@@ -248,6 +250,27 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       return;
     }
     session.sendMessage(new TextMessage(text));
+  }
+
+  private void maybeCloseAfterSuccessfulLogout(
+      WebSocketSession session, TextCommand command, TextCommandInterpretationResult interpretation)
+      throws IOException {
+    if (command.type() != TextCommandType.LOGOUT || !interpretation.commandResult().accepted()) {
+      return;
+    }
+    session.close(new CloseStatus(CloseStatus.NORMAL.getCode(), "LOGOUT"));
+  }
+
+  private void recordGameplayActivity(
+      String sessionId, TextCommandInterpretationResult interpretation) {
+    if (!interpretation.commandResult().accepted()) {
+      return;
+    }
+    parseNumericSessionId(sessionId)
+        .ifPresent(
+            numericSessionId ->
+                gameplayPresenceService.recordCommandActivity(
+                    numericSessionId, interpretation.meaningfulGameplayActivity()));
   }
 
   private void maybeAppendToScreenBuffer(

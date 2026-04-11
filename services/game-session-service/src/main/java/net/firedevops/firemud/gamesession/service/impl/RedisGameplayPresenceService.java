@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.LongSupplier;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
@@ -17,6 +18,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -39,17 +41,28 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   private final RedisTemplate<String, Object> redisTemplate;
   private final Duration presenceTtl;
   private final JwtUtil jwtUtil;
+  private final LongSupplier currentTimeMillisSupplier;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "RedisTemplate is a shared Spring bean used only internally")
+  @Autowired
   public RedisGameplayPresenceService(
       RedisTemplate<String, Object> redisTemplate,
       JwtUtil jwtUtil,
       @Value("${FIREMUD_AUTH_SESSION_EXPIRATION_MS:3600000}") long sessionExpirationMs) {
+    this(redisTemplate, jwtUtil, sessionExpirationMs, System::currentTimeMillis);
+  }
+
+  RedisGameplayPresenceService(
+      RedisTemplate<String, Object> redisTemplate,
+      JwtUtil jwtUtil,
+      long sessionExpirationMs,
+      LongSupplier currentTimeMillisSupplier) {
     this.redisTemplate = redisTemplate;
     this.jwtUtil = jwtUtil;
     this.presenceTtl = Duration.ofMillis(sessionExpirationMs);
+    this.currentTimeMillisSupplier = currentTimeMillisSupplier;
   }
 
   @Override
@@ -71,7 +84,10 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
             StringUtils.hasText(context.characterName())
                 ? context.characterName().trim()
                 : fallbackCharacterName(context),
-            classifyRole(context));
+            classifyRole(context),
+            currentTimeMillisSupplier.getAsLong(),
+            null,
+            null);
     String presenceKey = presenceKey(context.sessionId());
     String gameInstanceKey = gameInstanceKey(context.tenantId(), context.gameInstanceId());
     valueOps.set(presenceKey, presence, presenceTtl);
@@ -84,6 +100,9 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   @Override
   public void removeBySessionId(long sessionId) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
+    if (valueOps == null) {
+      return;
+    }
     GameplayPresence existing = (GameplayPresence) valueOps.get(presenceKey(sessionId));
     redisTemplate.delete(presenceKey(sessionId));
     if (existing != null) {
@@ -93,6 +112,33 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
         setOps.remove(gameInstanceKey, Long.toString(sessionId));
       }
     }
+  }
+
+  @Override
+  public void recordCommandActivity(long sessionId, boolean meaningfulGameplayActivity) {
+    ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
+    GameplayPresence existing = (GameplayPresence) valueOps.get(presenceKey(sessionId));
+    if (existing == null) {
+      return;
+    }
+    long now = currentTimeMillisSupplier.getAsLong();
+    GameplayPresence updated =
+        new GameplayPresence(
+            existing.sessionId(),
+            existing.tenantId(),
+            existing.gameInstanceId(),
+            existing.accountId(),
+            existing.characterId(),
+            existing.characterName(),
+            existing.role(),
+            existing.connectedAtEpochMs(),
+            Long.valueOf(now),
+            meaningfulGameplayActivity
+                ? Long.valueOf(now)
+                : existing.lastMeaningfulActivityAtEpochMs());
+    valueOps.set(presenceKey(sessionId), updated, presenceTtl);
+    redisTemplate.expire(
+        gameInstanceKey(existing.tenantId(), existing.gameInstanceId()), presenceTtl);
   }
 
   @Override

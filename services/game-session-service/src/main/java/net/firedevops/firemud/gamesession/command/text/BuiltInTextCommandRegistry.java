@@ -22,7 +22,14 @@ final class BuiltInTextCommandRegistry implements TextCommandRegistry {
     register(
         definitions,
         TextCommandType.LOGIN,
-        TextCommandDispatchGroup.LOGIN,
+        TextCommandDispatchGroup.SESSION,
+        TextCommandStageRequirement.NONE,
+        TextCommandPromptPolicy.NEVER,
+        TextCommandActionCategory.META);
+    register(
+        definitions,
+        TextCommandType.LOGOUT,
+        TextCommandDispatchGroup.SESSION,
         TextCommandStageRequirement.NONE,
         TextCommandPromptPolicy.NEVER,
         TextCommandActionCategory.META);
@@ -36,7 +43,7 @@ final class BuiltInTextCommandRegistry implements TextCommandRegistry {
     register(
         definitions,
         TextCommandType.PLAY,
-        TextCommandDispatchGroup.PLAY,
+        TextCommandDispatchGroup.SESSION,
         TextCommandStageRequirement.LOGIN,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.META);

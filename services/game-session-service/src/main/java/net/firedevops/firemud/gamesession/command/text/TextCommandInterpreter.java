@@ -26,6 +26,7 @@ public class TextCommandInterpreter {
       CommandService commandService,
       LookCommandHandler lookHandler,
       LoginCommandHandler loginHandler,
+      LogoutCommandHandler logoutHandler,
       PlayCommandHandler playHandler,
       MoveCommandHandler moveHandler,
       HelpCommandHandler helpHandler,
@@ -47,6 +48,7 @@ public class TextCommandInterpreter {
             commandService,
             lookHandler,
             loginHandler,
+            logoutHandler,
             playHandler,
             moveHandler,
             helpHandler,
@@ -60,6 +62,7 @@ public class TextCommandInterpreter {
       CommandService commandService,
       LookCommandHandler lookHandler,
       LoginCommandHandler loginHandler,
+      LogoutCommandHandler logoutHandler,
       PlayCommandHandler playHandler,
       MoveCommandHandler moveHandler,
       HelpCommandHandler helpHandler,
@@ -81,6 +84,7 @@ public class TextCommandInterpreter {
             commandService,
             lookHandler,
             loginHandler,
+            logoutHandler,
             playHandler,
             moveHandler,
             helpHandler,
@@ -149,7 +153,11 @@ public class TextCommandInterpreter {
             new TextCommandDispatchRequest(sessionId, command, requiresSoloTick, maybeContext));
     Optional<net.firedevops.firemud.gamesession.service.SessionContext> promptContext =
         promptContextAfterDispatch(sessionId, definition, dispatchResult, maybeContext);
-    return applyPromptPolicy(dispatchResult, definition.promptPolicy(), promptContext);
+    TextCommandInterpretationResult promptApplied =
+        applyPromptPolicy(dispatchResult, definition.promptPolicy(), promptContext);
+    return withMeaningfulGameplayActivity(
+        promptApplied,
+        dispatchResult.commandResult().accepted() && isMeaningfulGameplay(definition));
   }
 
   private TextCommandInterpretationResult applyPromptPolicy(
@@ -168,7 +176,8 @@ public class TextCommandInterpreter {
                       new TextCommandInterpretationResult(
                           result.commandResult(),
                           appendPrompt(context, result.outputs()),
-                          result.reconnectRedrawRecommended()))
+                          result.reconnectRedrawRecommended(),
+                          result.meaningfulGameplayActivity()))
               .orElse(result);
       case WHEN_GAMEPLAY ->
           maybeContext
@@ -178,9 +187,23 @@ public class TextCommandInterpreter {
                       new TextCommandInterpretationResult(
                           result.commandResult(),
                           appendPrompt(context, result.outputs()),
-                          result.reconnectRedrawRecommended()))
+                          result.reconnectRedrawRecommended(),
+                          result.meaningfulGameplayActivity()))
               .orElse(result);
     };
+  }
+
+  private TextCommandInterpretationResult withMeaningfulGameplayActivity(
+      TextCommandInterpretationResult result, boolean meaningfulGameplayActivity) {
+    return new TextCommandInterpretationResult(
+        result.commandResult(),
+        result.outputs(),
+        result.reconnectRedrawRecommended(),
+        meaningfulGameplayActivity);
+  }
+
+  private boolean isMeaningfulGameplay(TextCommandDefinition definition) {
+    return definition.actionCategory() == TextCommandActionCategory.GAMEPLAY;
   }
 
   private Optional<net.firedevops.firemud.gamesession.service.SessionContext>
@@ -192,7 +215,7 @@ public class TextCommandInterpreter {
     if (!result.commandResult().accepted()) {
       return maybeContext;
     }
-    if (definition.dispatchGroup() == TextCommandDispatchGroup.PLAY) {
+    if (definition.dispatchGroup() == TextCommandDispatchGroup.SESSION) {
       return sessionAuthenticationService.resolveSessionContext(sessionId);
     }
     return maybeContext;
@@ -228,6 +251,7 @@ public class TextCommandInterpreter {
       CommandService commandService,
       LookCommandHandler lookHandler,
       LoginCommandHandler loginHandler,
+      LogoutCommandHandler logoutHandler,
       PlayCommandHandler playHandler,
       MoveCommandHandler moveHandler,
       HelpCommandHandler helpHandler,
@@ -239,9 +263,8 @@ public class TextCommandInterpreter {
         List.of(
             new EnqueueOnlyTextCommandDispatchHandler(commandService),
             new WorldsTextCommandDispatchHandler(worldsHandler),
-            new LoginTextCommandDispatchHandler(loginHandler),
+            new SessionTextCommandDispatchHandler(loginHandler, logoutHandler, playHandler),
             new HelpTextCommandDispatchHandler(helpHandler),
-            new PlayTextCommandDispatchHandler(playHandler),
             new WhoTextCommandDispatchHandler(whoHandler),
             new ItemTextCommandDispatchHandler(itemHandler),
             new CommunicationTextCommandDispatchHandler(communicationHandler),

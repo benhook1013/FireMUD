@@ -11,6 +11,8 @@ import static org.mockito.Mockito.when;
 import java.net.URI;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -63,10 +65,36 @@ class GameSessionLoginIntegrationTest {
   @MockitoBean
   private org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
 
+  @MockitoBean
+  private org.springframework.data.redis.core.ValueOperations<String, Object> redisValueOperations;
+
   @Autowired private SessionContextService sessionContextService;
+
+  private final ConcurrentMap<String, Object> redisValueStore = new ConcurrentHashMap<>();
 
   @BeforeEach
   void setUp() {
+    redisValueStore.clear();
+    when(redisTemplate.opsForValue()).thenReturn(redisValueOperations);
+    when(redisValueOperations.get(anyString()))
+        .thenAnswer(invocation -> redisValueStore.get(invocation.getArgument(0)));
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              redisValueStore.put(invocation.getArgument(0), invocation.getArgument(1));
+              return null;
+            })
+        .when(redisValueOperations)
+        .set(
+            anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(java.time.Duration.class));
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              redisValueStore.remove(invocation.getArgument(0));
+              return null;
+            })
+        .when(redisTemplate)
+        .delete(anyString());
     when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken("stub-token").setAccountId("7").build());

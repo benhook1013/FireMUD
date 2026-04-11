@@ -1,7 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
 
 import java.util.List;
 import java.util.Optional;
@@ -29,7 +28,7 @@ class TextCommandInterpreterDispatchSeamTest {
     PromptComposer promptComposer = Mockito.mock(PromptComposer.class);
     AtomicReference<TextCommandDispatchGroup> dispatchedGroup = new AtomicReference<>();
     AtomicReference<TextCommandType> dispatchedType = new AtomicReference<>();
-    TextCommandInterpretationResult expected =
+    TextCommandInterpretationResult expectedDispatchResult =
         new TextCommandInterpretationResult(
             CommandEnqueueResult.success(), List.of(PlayerOutput.notice("handled-by-help-group")));
     TextCommandDispatcher dispatcher =
@@ -46,7 +45,7 @@ class TextCommandInterpreterDispatchSeamTest {
                       TextCommandDispatchRequest request) {
                     dispatchedGroup.set(group());
                     dispatchedType.set(request.command().type());
-                    return expected;
+                    return expectedDispatchResult;
                   }
                 }));
     TextCommandRegistry registry =
@@ -65,8 +64,12 @@ class TextCommandInterpreterDispatchSeamTest {
 
     TextCommandInterpretationResult actual = interpreter.interpret("1", "LOOK", false);
 
-    assertSame(expected, actual);
     assertEquals(TextCommandDispatchGroup.HELP, dispatchedGroup.get());
     assertEquals(TextCommandType.LOOK, dispatchedType.get());
+    assertEquals(expectedDispatchResult.commandResult(), actual.commandResult());
+    assertEquals(expectedDispatchResult.outputs(), actual.outputs());
+    assertEquals(
+        expectedDispatchResult.reconnectRedrawRecommended(), actual.reconnectRedrawRecommended());
+    assertEquals(false, actual.meaningfulGameplayActivity());
   }
 }

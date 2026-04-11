@@ -9,6 +9,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.function.LongSupplier;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
@@ -28,9 +29,15 @@ public final class InMemoryGameplayPresenceService implements GameplayPresenceSe
 
   private final ConcurrentMap<Long, GameplayPresence> presences = new ConcurrentHashMap<>();
   private final JwtUtil jwtUtil;
+  private final LongSupplier currentTimeMillisSupplier;
 
   public InMemoryGameplayPresenceService(JwtUtil jwtUtil) {
+    this(jwtUtil, System::currentTimeMillis);
+  }
+
+  InMemoryGameplayPresenceService(JwtUtil jwtUtil, LongSupplier currentTimeMillisSupplier) {
     this.jwtUtil = jwtUtil;
+    this.currentTimeMillisSupplier = currentTimeMillisSupplier;
   }
 
   @Override
@@ -38,6 +45,7 @@ public final class InMemoryGameplayPresenceService implements GameplayPresenceSe
     if (context == null || context.tenantId() <= 0 || context.gameInstanceId() <= 0) {
       return;
     }
+    long now = currentTimeMillisSupplier.getAsLong();
     presences.put(
         context.sessionId(),
         new GameplayPresence(
@@ -49,7 +57,32 @@ public final class InMemoryGameplayPresenceService implements GameplayPresenceSe
             StringUtils.hasText(context.characterName())
                 ? context.characterName().trim()
                 : fallbackCharacterName(context),
-            classifyRole(context)));
+            classifyRole(context),
+            now,
+            null,
+            null));
+  }
+
+  @Override
+  public void recordCommandActivity(long sessionId, boolean meaningfulGameplayActivity) {
+    presences.computeIfPresent(
+        sessionId,
+        (ignored, existing) -> {
+          long now = currentTimeMillisSupplier.getAsLong();
+          return new GameplayPresence(
+              existing.sessionId(),
+              existing.tenantId(),
+              existing.gameInstanceId(),
+              existing.accountId(),
+              existing.characterId(),
+              existing.characterName(),
+              existing.role(),
+              existing.connectedAtEpochMs(),
+              Long.valueOf(now),
+              meaningfulGameplayActivity
+                  ? Long.valueOf(now)
+                  : existing.lastMeaningfulActivityAtEpochMs());
+        });
   }
 
   @Override

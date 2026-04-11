@@ -1,10 +1,13 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
@@ -52,5 +55,31 @@ class InMemoryGameplayPresenceServiceTest {
     service.removeBySessionId(2L);
 
     assertEquals(List.of(), service.listConnectedByGameInstance(22L, 7L));
+  }
+
+  @Test
+  void recordCommandActivityUpdatesLastAcceptedAndMeaningfulTimestampsSeparately() {
+    AtomicLong now = new AtomicLong(100L);
+    InMemoryGameplayPresenceService service =
+        new InMemoryGameplayPresenceService(jwtUtil, now::get);
+    service.registerConnected(
+        new SessionContext(2L, 22L, 2L, "player@example.com", 102L, "Ben", 7L, "R-1", null));
+
+    GameplayPresence initial = service.listConnectedByGameInstance(22L, 7L).get(0);
+    assertEquals(100L, initial.connectedAtEpochMs());
+    assertNull(initial.lastAcceptedCommandAtEpochMs());
+    assertNull(initial.lastMeaningfulActivityAtEpochMs());
+
+    now.set(125L);
+    service.recordCommandActivity(2L, false);
+    GameplayPresence afterMeta = service.listConnectedByGameInstance(22L, 7L).get(0);
+    assertEquals(Long.valueOf(125L), afterMeta.lastAcceptedCommandAtEpochMs());
+    assertNull(afterMeta.lastMeaningfulActivityAtEpochMs());
+
+    now.set(150L);
+    service.recordCommandActivity(2L, true);
+    GameplayPresence afterGameplay = service.listConnectedByGameInstance(22L, 7L).get(0);
+    assertEquals(Long.valueOf(150L), afterGameplay.lastAcceptedCommandAtEpochMs());
+    assertEquals(Long.valueOf(150L), afterGameplay.lastMeaningfulActivityAtEpochMs());
   }
 }
