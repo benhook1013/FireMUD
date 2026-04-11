@@ -268,7 +268,10 @@ Launch descriptor version-resolution rules:
 - `scriptPatchVersion` is the only supported per-launch patch override and must reference the same `baseVersionId` as the resolved `versionId`.
 - `ResolveLaunchDescriptor` is idempotent per `controlPlaneRequestId`: a retry with the same `(tenantId, gameTemplateId, controlPlaneRequestId)` and the same input fields must return the same descriptor values, and it must not re-resolve to a newer attestation, patch, or runtime default.
 - A fresh launch attempt with a new `controlPlaneRequestId` may resolve against newer valid published state if the underlying template, attestation, or patch data has advanced.
+- A retry that already failed with a deterministic business outcome (for example invalid template wiring, missing attestation, stale version-state epoch, or patch override conflict) must return the same failure result for that `controlPlaneRequestId`; callers must not expect retries on the same launch-attempt identity to “pick up” newer control-plane state.
 - Caller-supplied runtime overrides are only honored when the template leaves the corresponding field unset. If the template already supplies a default, any caller-supplied value for that field is a deterministic launch-descriptor failure instead of being merged heuristically.
+- The launch orchestrator must treat `versionStateEpoch` as part of preflight proof, not informational metadata. If attestation verification or downstream activation sees a different epoch than the one frozen into the descriptor, launch fails closed before any persistent instance row or `PREPARING` world state is created.
+- World Management and Game Session may cache launch-descriptor values only as execution inputs for the current `controlPlaneRequestId`; they must not persist or reuse a descriptor as a rolling "latest launch defaults" record for later requests.
 - `GetPublishedReleaseBundle(tenantId, versionId)` is the canonical release-attestation surface for launch, cutover, and repair. In the initial slice it must expose:
   - `participantDigests[]`
   - `artifactDigests[]` for each exported derived world artifact
@@ -287,6 +290,19 @@ Illustrative launch-descriptor examples:
   - If `targetVersionId` would cause mixed-version dependencies or requires an unapproved remap, descriptor resolution fails before any instance rows are created.
 - Mixed-version rejection:
   - If `game_template_world_ref` resolves to `versionId=v42` while `game_template_entity_ref` resolves to `versionId=v43`, `ResolveLaunchDescriptor` must fail validation instead of choosing one version heuristically.
+
+Required preflight failure outcomes:
+
+- `TEMPLATE_REFERENCE_PHASE_NOT_ENFORCED`
+- `INVALID_TEMPLATE_CONFIGURATION`
+- `SCRIPT_PATCH_OVERRIDE_CONFLICT`
+- `SCRIPT_PATCH_NOT_READY`
+- `RELEASE_BUNDLE_NOT_FOUND`
+- `RELEASE_ATTESTATION_MISMATCH`
+- `VERSION_STATE_EPOCH_STALE`
+- `LAUNCH_REMAP_REQUIRED`
+
+These are deterministic application outcomes. Launch preflight must return them in normal responses and must not encode them as transport errors.
 
 Normalized-template dependency checks require explicit phase enforcement:
 
