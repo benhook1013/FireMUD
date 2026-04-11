@@ -21,8 +21,11 @@ The authoritative REST schema source lives in [../../../../services/account-serv
 - `ListBootstrapWorlds` – list caller-visible worlds for first-party gameplay bootstrap.
 - `ListBootstrapRealms` – list caller-visible realms for a selected world during first-party gameplay bootstrap.
 - `ListBootstrapCharacters` – list caller-visible characters for a selected world/realm during first-party gameplay bootstrap.
+- Bootstrap discovery response contract: for each admissible realm target, return `connectScopeId`, `tenantId`, `realmSlug`, `gameInstanceId`, `pointerVersion`, `evaluatedAt`, and `connectScopeExpiresAt`.
+  - Required behavior: treat this as a short-lived snapshot proof of the evaluated realm target, not a durable reservation; callers must rerun discovery after `connectScopeExpiresAt` or after stale-scope failures.
 - `IssueConnectToken` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy after resolving discovery `connectScopeId`, validating live membership/public admission, runtime entitlements, and the current admission pointer for the target `{tenantId, realmSlug, gameInstanceId}`.
   - Required behavior: `connectScopeId` is an opaque short-lived selector for one caller-visible realm target, must be revalidated against current visibility/grant state and current admission-pointer state at issuance time, and must fail closed with `CONNECT_SCOPE_MISMATCH` or `ADMISSION_POINTER_UNAVAILABLE` when the earlier discovery target is no longer admissible.
+  - Required behavior: `requestId` is the idempotency key for issuance. Retrying the same `{accountId, connectScopeId, requestId}` must return the same token payload or the same deterministic application failure.
 - `EnsurePublicProductionPlayerMembership` – idempotently create or return the caller's `player` membership for first admission through the default public production realm and return the resulting `membershipVersion`.
   - Required behavior: valid only for the tenant's current default public production realm, must fail closed for non-production realms, must be idempotent for `{accountId, tenantId, realmSlug}`, and must emit one durable audit/event record on successful first-join creation.
   - Required failure codes at minimum: `PUBLIC_PRODUCTION_ADMISSION_DENIED`, `ADMISSION_POINTER_UNAVAILABLE`, `TENANT_BILLING_BLOCKED`.

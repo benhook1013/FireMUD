@@ -71,6 +71,12 @@ All new frontend features that interact with protected APIs should reuse the sha
 - `CONNECT_CONTEXT_INVALID` – Keep the current auth state, force gameplay reconnect flow (`connect-token` refresh + new socket + `LOGIN`), and block `PLAY` retries on the current socket.
 - `CONNECT_SCOPE_MISMATCH` – Keep the current auth state, prompt world/session re-selection, request a fresh connect token for the intended discovery-selected realm target, and retry on a new socket.
 
+Client rule for discovery-issued selectors:
+
+- Treat `connectScopeId`, `pointerVersion`, `evaluatedAt`, and `connectScopeExpiresAt` as one short-lived snapshot bundle for the selected realm target.
+- Do not mix a stale `connectScopeId` with newly cached realm metadata or vice versa.
+- When `connectScopeExpiresAt` has passed, rerun discovery before requesting another connect token even if the visible selection has not changed.
+
 For gameplay WebSocket handshake failures on `/ws/game/**`, first-party clients must also differentiate HTTP `403` handshake classes:
 
 - `CONNECT_TOKEN_REJECTED`: prompt a fresh gameplay handshake token acquisition and retry with bounded backoff.

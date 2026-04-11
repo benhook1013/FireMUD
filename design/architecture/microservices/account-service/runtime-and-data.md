@@ -112,8 +112,11 @@ Runtime caller contract:
 - `IssueConnectToken` / `POST /auth/connect-token` is the authoritative gameplay bootstrap token-issuance surface.
   - Minimum request fields: `connectScopeId`, `requestId`.
   - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `realmSlug`, `gameInstanceId`, `jti`, `issuedAt`.
+- Bootstrap discovery surfaces must return `connectScopeId` together with `tenantId`, `realmSlug`, `gameInstanceId`, `pointerVersion`, `evaluatedAt`, and `connectScopeExpiresAt`.
+- `connectScopeExpiresAt` bounds how long the discovery-issued selector may be reused as a convenience token. Once it expires, callers must rerun discovery instead of treating the selector as a durable realm handle.
 - Account Service must expose bootstrap-discovery endpoints that accept only the `player-bootstrap` token profile and return the canonical caller-visible worlds, realms, characters, and a canonical `connectScopeId` selector for each admissible realm target.
 - Account Service must use the authoritative realm-routing contract when issuing `/auth/connect-token` so connect-token scope is pinned to the tenant's current admissible instance for the selected realm instead of a caller-supplied guess.
+- `requestId` is the idempotency key for connect-token issuance. Retrying the same `(accountId, connectScopeId, requestId)` must return the same token payload or the same deterministic application failure rather than minting a new logical issuance result.
 - `EnsurePublicProductionPlayerMembership(accountId, tenantId, realmSlug, requestId)` is the authoritative membership-creation surface for first admission through a tenant's default production realm.
   - It is valid only for the default public production realm and only when the caller satisfies the public-production admission policy.
   - It must be idempotent for `{accountId, tenantId, realmSlug}` and return the resulting `membershipVersion`.
