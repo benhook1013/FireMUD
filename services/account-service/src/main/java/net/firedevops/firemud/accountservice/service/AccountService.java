@@ -2,6 +2,9 @@ package net.firedevops.firemud.accountservice.service;
 
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
+import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
+import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
+import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
@@ -21,6 +24,13 @@ public interface AccountService {
 
   PlayerBootstrapResult issuePlayerBootstrap(
       Long tenantId, String username, String password, String otp);
+
+  java.util.List<BootstrapWorldDto> listBootstrapWorlds(String bootstrapToken);
+
+  java.util.List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug);
+
+  java.util.List<BootstrapCharacterDto> listBootstrapCharacters(
+      String bootstrapToken, String worldSlug, String realmSlug);
 
   ConnectTokenResult issueConnectToken(String bootstrapToken, ConnectTokenRequest request);
 

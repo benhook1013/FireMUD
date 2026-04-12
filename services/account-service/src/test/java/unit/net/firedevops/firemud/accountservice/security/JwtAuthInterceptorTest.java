@@ -82,4 +82,16 @@ class JwtAuthInterceptorTest {
     assertTrue(result);
     assertEquals(200, response.getStatus());
   }
+
+  @Test
+  void allowsPublicBootstrapDiscoveryRequestWithoutToken() throws Exception {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.setRequestURI("/auth/bootstrap/worlds/demo/realms");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    boolean result = interceptor.preHandle(request, response, new Object());
+
+    assertTrue(result);
+    assertEquals(200, response.getStatus());
+  }
 }

@@ -23,6 +23,7 @@ public class WebConfig implements WebMvcConfigurer {
         .excludePathPatterns(
             "/auth/login",
             "/auth/player-bootstrap",
+            "/auth/bootstrap/**",
             "/auth/connect-token",
             "/auth/request-password-reset",
             "/auth/complete-password-reset",

@@ -2,8 +2,12 @@ package net.firedevops.firemud.accountservice.controller;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
+import java.util.List;
 import net.firedevops.firemud.accountservice.dto.AccountRefRequest;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
+import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
+import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
+import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
@@ -16,6 +20,8 @@ import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -50,6 +56,34 @@ public class AuthController {
         accountService.issuePlayerBootstrap(
             request.tenantId(), request.username(), request.password(), request.otp());
     return ResponseEntity.ok(ApiResponse.success(bootstrap));
+  }
+
+  @GetMapping("/bootstrap/worlds")
+  public ResponseEntity<ApiResponse<List<BootstrapWorldDto>>> listBootstrapWorlds(
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+    String bootstrapToken = extractBearerToken(authorization);
+    return ResponseEntity.ok(
+        ApiResponse.success(accountService.listBootstrapWorlds(bootstrapToken)));
+  }
+
+  @GetMapping("/bootstrap/worlds/{worldSlug}/realms")
+  public ResponseEntity<ApiResponse<List<BootstrapRealmDto>>> listBootstrapRealms(
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+      @PathVariable String worldSlug) {
+    String bootstrapToken = extractBearerToken(authorization);
+    return ResponseEntity.ok(
+        ApiResponse.success(accountService.listBootstrapRealms(bootstrapToken, worldSlug)));
+  }
+
+  @GetMapping("/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters")
+  public ResponseEntity<ApiResponse<List<BootstrapCharacterDto>>> listBootstrapCharacters(
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+      @PathVariable String worldSlug,
+      @PathVariable String realmSlug) {
+    String bootstrapToken = extractBearerToken(authorization);
+    return ResponseEntity.ok(
+        ApiResponse.success(
+            accountService.listBootstrapCharacters(bootstrapToken, worldSlug, realmSlug)));
   }
 
   @PostMapping("/connect-token")

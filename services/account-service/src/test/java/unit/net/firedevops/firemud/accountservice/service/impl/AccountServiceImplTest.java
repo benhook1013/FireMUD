@@ -12,8 +12,10 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
+import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.config.AuthProperties;
+import net.firedevops.firemud.accountservice.config.BootstrapCatalogProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
@@ -54,7 +56,10 @@ class AccountServiceImplTest {
   @Mock private EmailService emailService;
   @Mock private MailProperties mailProperties;
   private final AuthProperties authProperties = new AuthProperties();
+  private final BootstrapCatalogProperties bootstrapCatalogProperties =
+      new BootstrapCatalogProperties();
   @Mock private LoggingAdminClient loggingAdminClient;
+  @Mock private EntityManagementClient entityManagementClient;
   @Mock private SessionService sessionService;
   @Mock private SagaRunner sagaRunner;
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
@@ -76,8 +81,20 @@ class AccountServiceImplTest {
     JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 3600000L);
     authProperties.setJwtSecret("mysecretkey123456789012345678901");
     authProperties.setPlayerBootstrapExpirationMs(300000L);
+    authProperties.setConnectScopeExpirationMs(120000L);
     authProperties.setConnectTokenExpirationMs(30000L);
     authProperties.setSessionExpirationMs(3600000L);
+    BootstrapCatalogProperties.World world = new BootstrapCatalogProperties.World();
+    world.setSlug("demo");
+    world.setDisplayName("Demo World");
+    BootstrapCatalogProperties.Realm realm = new BootstrapCatalogProperties.Realm();
+    realm.setSlug("production");
+    realm.setDisplayName("Live Realm");
+    realm.setTenantId(7L);
+    realm.setGameInstanceId(44L);
+    realm.setPointerVersion(17L);
+    world.setRealms(java.util.List.of(realm));
+    bootstrapCatalogProperties.setWorlds(new java.util.ArrayList<>(java.util.List.of(world)));
     when(mailProperties.getResetUrl()).thenReturn("http://reset/%s");
     when(mailProperties.getVerificationUrl()).thenReturn("http://verify/%s");
     service =
@@ -95,7 +112,9 @@ class AccountServiceImplTest {
             emailService,
             mailProperties,
             authProperties,
+            bootstrapCatalogProperties,
             loggingAdminClient,
+            entityManagementClient,
             jwtUtil,
             sessionService,
             sagaRunner);
@@ -314,16 +333,17 @@ class AccountServiceImplTest {
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
     ConnectTokenResult result =
         service.issueConnectToken(
-            bootstrap.bootstrapToken(),
-            new ConnectTokenRequest("scope-1", 7L, 44L, "production", "req-3"));
+            bootstrap.bootstrapToken(), new ConnectTokenRequest(connectScopeId, "req-3"));
 
     assertEquals(11L, result.accountId());
     assertEquals(7L, result.tenantId());
     assertEquals(44L, result.gameInstanceId());
-    assertEquals("scope-1", result.connectScopeId());
+    assertEquals(connectScopeId, result.connectScopeId());
     assertNotNull(result.connectToken());
     assertNotNull(result.jti());
     assertNotNull(result.issuedAt());
@@ -342,6 +362,40 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq(11L),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.eq(30000L));
+  }
+
+  @Test
+  void listBootstrapCharactersUsesEntityManagementForResolvedRealm() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setTenantId(7L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByTenantIdAndUsername(7L, "demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+    net.firedevops.firemud.entitymanagement.v1.Character character =
+        net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+            .setId("char-1")
+            .setName("Mara")
+            .setLevel(12)
+            .build();
+    when(entityManagementClient.listCharactersByAccount(7L, 11L))
+        .thenReturn(java.util.List.of(character));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+
+    var characters =
+        service.listBootstrapCharacters(bootstrap.bootstrapToken(), "demo", "production");
+
+    assertEquals(1, characters.size());
+    assertEquals("char-1", characters.getFirst().characterId());
+    assertEquals("Mara", characters.getFirst().characterName());
   }
 
   @Test

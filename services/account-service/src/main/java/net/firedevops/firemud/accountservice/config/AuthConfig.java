@@ -17,7 +17,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
 @Configuration
-@EnableConfigurationProperties(AuthProperties.class)
+@EnableConfigurationProperties({AuthProperties.class, BootstrapCatalogProperties.class})
 public class AuthConfig {
   private static final Logger logger = LoggingUtil.getLogger(AuthConfig.class);
   private final Environment environment;

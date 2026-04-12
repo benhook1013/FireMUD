@@ -9,7 +9,10 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import io.micrometer.core.annotation.Timed;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -17,11 +20,16 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
+import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.config.AuthProperties;
+import net.firedevops.firemud.accountservice.config.BootstrapCatalogProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
+import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
+import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
+import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
@@ -78,7 +86,9 @@ public class AccountServiceImpl implements AccountService {
   private final EmailService emailService;
   private final MailProperties mailProperties;
   private final AuthProperties authProperties;
+  private final BootstrapCatalogProperties bootstrapCatalogProperties;
   private final LoggingAdminClient loggingAdminClient;
+  private final EntityManagementClient entityManagementClient;
   private final JwtUtil jwtUtil;
   private final net.firedevops.firemud.accountservice.service.session.SessionService sessionService;
   private final SagaRunner sagaRunner;
@@ -100,7 +110,9 @@ public class AccountServiceImpl implements AccountService {
       EmailService emailService,
       MailProperties mailProperties,
       AuthProperties authProperties,
+      BootstrapCatalogProperties bootstrapCatalogProperties,
       LoggingAdminClient loggingAdminClient,
+      EntityManagementClient entityManagementClient,
       JwtUtil jwtUtil,
       net.firedevops.firemud.accountservice.service.session.SessionService sessionService,
       SagaRunner sagaRunner) {
@@ -117,7 +129,9 @@ public class AccountServiceImpl implements AccountService {
     this.emailService = emailService;
     this.mailProperties = mailProperties;
     this.authProperties = authProperties;
+    this.bootstrapCatalogProperties = bootstrapCatalogProperties;
     this.loggingAdminClient = loggingAdminClient;
+    this.entityManagementClient = entityManagementClient;
     this.jwtUtil = jwtUtil;
     this.sessionService = sessionService;
     this.sagaRunner = sagaRunner;
@@ -233,82 +247,144 @@ public class AccountServiceImpl implements AccountService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "account.bootstrap_worlds")
+  public List<BootstrapWorldDto> listBootstrapWorlds(String bootstrapToken) {
+    BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
+    return bootstrapCatalogProperties.getWorlds().stream()
+        .filter(world -> hasAdmissibleRealm(bootstrapContext, world))
+        .map(world -> new BootstrapWorldDto(world.getSlug(), world.getDisplayName()))
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "account.bootstrap_realms")
+  public List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug) {
+    BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
+    BootstrapCatalogProperties.World world = requireWorld(worldSlug);
+    Instant evaluatedAt = Instant.now();
+    Instant expiresAt = evaluatedAt.plusMillis(authProperties.getConnectScopeExpirationMs());
+    return world.getRealms().stream()
+        .filter(realm -> isRealmAdmissible(bootstrapContext, realm))
+        .map(
+            realm ->
+                new BootstrapRealmDto(
+                    world.getSlug(),
+                    realm.getSlug(),
+                    realm.getDisplayName(),
+                    realm.getTenantId(),
+                    realm.getGameInstanceId(),
+                    realm.getPointerVersion(),
+                    realm.isRequiresCharacterSelection(),
+                    evaluatedAt.toString(),
+                    expiresAt.toString(),
+                    mintConnectScopeId(
+                        bootstrapContext, world.getSlug(), realm, evaluatedAt, expiresAt)))
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "account.bootstrap_characters")
+  public List<BootstrapCharacterDto> listBootstrapCharacters(
+      String bootstrapToken, String worldSlug, String realmSlug) {
+    BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
+    BootstrapCatalogProperties.Realm realm =
+        requireAdmissibleRealm(bootstrapContext, worldSlug, realmSlug);
+    return entityManagementClient
+        .listCharactersByAccount(realm.getTenantId(), bootstrapContext.accountId())
+        .stream()
+        .sorted(Comparator.comparing(net.firedevops.firemud.entitymanagement.v1.Character::getName))
+        .map(
+            character ->
+                new BootstrapCharacterDto(
+                    character.getId(), character.getName(), character.getLevel()))
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   @Timed(value = "account.connect_token")
   public ConnectTokenResult issueConnectToken(String bootstrapToken, ConnectTokenRequest request) {
-    if (bootstrapToken == null || bootstrapToken.isBlank()) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Missing bootstrap token");
-    }
-    Claims claims;
-    try {
-      claims = jwtUtil.parseToken(bootstrapToken).getPayload();
-    } catch (RuntimeException ex) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
-    }
-    String audience = claimText(claims.get("aud"));
-    if (!"player-bootstrap".equals(audience)) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
-    }
-    Long accountId = parseLong(claims.get("accountId"));
-    Long bootstrapTenantId = parseLong(claims.get("tenantId"));
-    if (accountId == null || bootstrapTenantId == null) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
-    }
-    Long storedAccountId = sessionService.getAccountId(bootstrapTenantId, bootstrapToken);
-    if (storedAccountId == null || !storedAccountId.equals(accountId)) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
-    }
-    if (!bootstrapTenantId.equals(request.tenantId())) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Tenant mismatch");
+    BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
+    ConnectScopeContext scopeContext = requireConnectScopeContext(request.connectScopeId());
+    validateConnectScopeAgainstBootstrap(bootstrapContext, scopeContext);
+    BootstrapCatalogProperties.Realm currentRealm =
+        requireAdmissibleRealm(
+            bootstrapContext, scopeContext.worldSlug(), scopeContext.realmSlug());
+    if (currentRealm.getTenantId() != scopeContext.tenantId()
+        || currentRealm.getGameInstanceId() != scopeContext.gameInstanceId()
+        || currentRealm.getPointerVersion() != scopeContext.pointerVersion()) {
+      throw new AuthenticationException(
+          "CONNECT_SCOPE_MISMATCH", "Selected gameplay target is no longer admissible");
     }
 
     RuntimeMembershipDto membership =
-        getTenantMembershipForRuntime(accountId, request.tenantId(), request.requestId());
+        getTenantMembershipForRuntime(
+            bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
     if (!membership.gameplayAdmissionAllowed()) {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
     }
     RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(request.tenantId(), request.requestId());
+        getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
     if (!entitlements.gameplayAvailable()) {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Gameplay is not available for this tenant");
     }
 
-    String jti = UUID.randomUUID().toString();
+    String jti =
+        stableId(
+            "gameplay-connect",
+            bootstrapContext.accountId(),
+            scopeContext.tenantId(),
+            scopeContext.gameInstanceId(),
+            scopeContext.realmSlug(),
+            request.requestId());
     long issuedAt = System.currentTimeMillis();
     long expiresAt = issuedAt + authProperties.getConnectTokenExpirationMs();
     String connectToken =
         mintToken(
-            String.valueOf(accountId),
+            String.valueOf(bootstrapContext.accountId()),
             authProperties.getConnectTokenExpirationMs(),
             Map.of(
                 "aud",
                 "gameplay-connect",
                 "accountId",
-                accountId,
+                bootstrapContext.accountId(),
                 "tenantId",
-                request.tenantId(),
+                scopeContext.tenantId(),
                 "gameInstanceId",
-                request.gameInstanceId(),
+                scopeContext.gameInstanceId(),
                 "realmSlug",
-                request.realmSlug() == null ? "" : request.realmSlug(),
+                scopeContext.realmSlug(),
+                "worldSlug",
+                scopeContext.worldSlug(),
                 "connectScopeId",
                 request.connectScopeId(),
+                "requestId",
+                request.requestId(),
                 "jti",
                 jti));
     sessionService.storeSession(
-        request.tenantId(), accountId, connectToken, authProperties.getConnectTokenExpirationMs());
+        scopeContext.tenantId(),
+        bootstrapContext.accountId(),
+        connectToken,
+        authProperties.getConnectTokenExpirationMs());
     logger.info(
-        "Issued connect token for account {} tenant {} gameInstance {} jti {}",
-        accountId,
-        request.tenantId(),
-        request.gameInstanceId(),
+        "Issued connect token for account {} tenant {} world {} realm {} gameInstance {} requestId {} jti {}",
+        bootstrapContext.accountId(),
+        scopeContext.tenantId(),
+        scopeContext.worldSlug(),
+        scopeContext.realmSlug(),
+        scopeContext.gameInstanceId(),
+        request.requestId(),
         jti);
     return new ConnectTokenResult(
-        accountId,
-        request.tenantId(),
-        request.gameInstanceId(),
-        request.realmSlug(),
+        bootstrapContext.accountId(),
+        scopeContext.tenantId(),
+        scopeContext.gameInstanceId(),
+        scopeContext.realmSlug(),
         request.connectScopeId(),
         connectToken,
         jti,
@@ -349,6 +425,158 @@ public class AccountServiceImpl implements AccountService {
             .orElse(0L);
     return new RuntimeEntitlementsDto(
         tenantId, gameplayAvailable, version, version, Instant.now().toString());
+  }
+
+  private BootstrapContext requireBootstrapContext(String bootstrapToken) {
+    if (bootstrapToken == null || bootstrapToken.isBlank()) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Missing bootstrap token");
+    }
+    Claims claims;
+    try {
+      claims = jwtUtil.parseToken(bootstrapToken).getPayload();
+    } catch (RuntimeException ex) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
+    }
+    if (!"player-bootstrap".equals(claimText(claims.get("aud")))) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
+    }
+    Long accountId = parseLong(claims.get("accountId"));
+    Long tenantId = parseLong(claims.get("tenantId"));
+    if (accountId == null || tenantId == null) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
+    }
+    Long storedAccountId = sessionService.getAccountId(tenantId, bootstrapToken);
+    if (storedAccountId == null || !storedAccountId.equals(accountId)) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
+    }
+    return new BootstrapContext(accountId, tenantId);
+  }
+
+  private List<BootstrapCatalogProperties.World> configuredWorlds() {
+    return bootstrapCatalogProperties.getWorlds() == null
+        ? List.of()
+        : bootstrapCatalogProperties.getWorlds();
+  }
+
+  private BootstrapCatalogProperties.World requireWorld(String worldSlug) {
+    return configuredWorlds().stream()
+        .filter(world -> Objects.equals(world.getSlug(), worldSlug))
+        .findFirst()
+        .orElseThrow(
+            () ->
+                new AuthenticationException(
+                    "ADMISSION_POINTER_UNAVAILABLE", "Unknown gameplay world selection"));
+  }
+
+  private BootstrapCatalogProperties.Realm requireAdmissibleRealm(
+      BootstrapContext bootstrapContext, String worldSlug, String realmSlug) {
+    BootstrapCatalogProperties.World world = requireWorld(worldSlug);
+    return world.getRealms().stream()
+        .filter(realm -> Objects.equals(realm.getSlug(), realmSlug))
+        .filter(realm -> isRealmAdmissible(bootstrapContext, realm))
+        .findFirst()
+        .orElseThrow(
+            () ->
+                new AuthenticationException(
+                    "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible"));
+  }
+
+  private boolean hasAdmissibleRealm(
+      BootstrapContext bootstrapContext, BootstrapCatalogProperties.World world) {
+    return world.getRealms().stream().anyMatch(realm -> isRealmAdmissible(bootstrapContext, realm));
+  }
+
+  private boolean isRealmAdmissible(
+      BootstrapContext bootstrapContext, BootstrapCatalogProperties.Realm realm) {
+    if (!realm.isVisible() || realm.getTenantId() != bootstrapContext.tenantId()) {
+      return false;
+    }
+    RuntimeMembershipDto membership =
+        getTenantMembershipForRuntime(
+            bootstrapContext.accountId(), realm.getTenantId(), "bootstrap-discovery");
+    if (!membership.gameplayAdmissionAllowed()) {
+      return false;
+    }
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(realm.getTenantId(), "bootstrap-discovery");
+    return entitlements.gameplayAvailable();
+  }
+
+  private String mintConnectScopeId(
+      BootstrapContext bootstrapContext,
+      String worldSlug,
+      BootstrapCatalogProperties.Realm realm,
+      Instant evaluatedAt,
+      Instant expiresAt) {
+    long expirationMs = Math.max(1L, expiresAt.toEpochMilli() - evaluatedAt.toEpochMilli());
+    return mintToken(
+        String.valueOf(bootstrapContext.accountId()),
+        expirationMs,
+        Map.of(
+            "aud",
+            "bootstrap-connect-scope",
+            "accountId",
+            bootstrapContext.accountId(),
+            "tenantId",
+            realm.getTenantId(),
+            "worldSlug",
+            worldSlug,
+            "realmSlug",
+            realm.getSlug(),
+            "gameInstanceId",
+            realm.getGameInstanceId(),
+            "pointerVersion",
+            realm.getPointerVersion(),
+            "evaluatedAt",
+            evaluatedAt.toString(),
+            "connectScopeExpiresAt",
+            expiresAt.toString(),
+            "jti",
+            stableId(
+                "connect-scope",
+                bootstrapContext.accountId(),
+                realm.getTenantId(),
+                worldSlug,
+                realm.getSlug(),
+                realm.getPointerVersion(),
+                evaluatedAt.toString())));
+  }
+
+  private ConnectScopeContext requireConnectScopeContext(String connectScopeId) {
+    Claims claims;
+    try {
+      claims = jwtUtil.parseToken(connectScopeId).getPayload();
+    } catch (RuntimeException ex) {
+      throw new AuthenticationException("CONNECT_SCOPE_INVALID", "Invalid connect scope", ex);
+    }
+    if (!"bootstrap-connect-scope".equals(claimText(claims.get("aud")))) {
+      throw new AuthenticationException("CONNECT_SCOPE_INVALID", "Invalid connect scope");
+    }
+    Long accountId = parseLong(claims.get("accountId"));
+    Long tenantId = parseLong(claims.get("tenantId"));
+    Long gameInstanceId = parseLong(claims.get("gameInstanceId"));
+    Long pointerVersion = parseLong(claims.get("pointerVersion"));
+    String worldSlug = claimText(claims.get("worldSlug"));
+    String realmSlug = claimText(claims.get("realmSlug"));
+    if (accountId == null
+        || tenantId == null
+        || gameInstanceId == null
+        || pointerVersion == null
+        || worldSlug.isBlank()
+        || realmSlug.isBlank()) {
+      throw new AuthenticationException("CONNECT_SCOPE_INVALID", "Invalid connect scope");
+    }
+    return new ConnectScopeContext(
+        accountId, tenantId, worldSlug, realmSlug, gameInstanceId, pointerVersion);
+  }
+
+  private void validateConnectScopeAgainstBootstrap(
+      BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
+    if (scopeContext.accountId() != bootstrapContext.accountId()
+        || scopeContext.tenantId() != bootstrapContext.tenantId()) {
+      throw new AuthenticationException(
+          "CONNECT_SCOPE_MISMATCH", "Selected gameplay target is no longer admissible");
+    }
   }
 
   private Optional<Account> findAccountForAuthentication(Long tenantId, String usernameOrEmail) {
@@ -411,6 +639,25 @@ public class AccountServiceImpl implements AccountService {
       return "";
     }
     return value.toString();
+  }
+
+  private String stableId(Object... components) {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      for (Object component : components) {
+        digest.update(String.valueOf(component).getBytes(StandardCharsets.UTF_8));
+        digest.update((byte) 0);
+      }
+      byte[] encoded = digest.digest();
+      StringBuilder builder = new StringBuilder(encoded.length * 2);
+      for (byte value : encoded) {
+        builder.append(Character.forDigit((value >> 4) & 0xF, 16));
+        builder.append(Character.forDigit(value & 0xF, 16));
+      }
+      return builder.toString();
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("Missing SHA-256 implementation", ex);
+    }
   }
 
   private boolean isGameplayAvailableStatus(String status) {
@@ -671,4 +918,14 @@ public class AccountServiceImpl implements AccountService {
           }
         });
   }
+
+  private record BootstrapContext(long accountId, long tenantId) {}
+
+  private record ConnectScopeContext(
+      long accountId,
+      long tenantId,
+      String worldSlug,
+      String realmSlug,
+      long gameInstanceId,
+      long pointerVersion) {}
 }

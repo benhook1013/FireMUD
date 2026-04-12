@@ -1,11 +1,16 @@
 package net.firedevops.firemud.accountservice.controller;
 
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.List;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
+import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
+import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
+import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.LoginRequest;
@@ -67,10 +72,8 @@ class AuthControllerTest {
 
   @Test
   void connectTokenReturnsMintedToken() throws Exception {
-    ConnectTokenRequest request =
-        new ConnectTokenRequest("scope-1", 1L, 42L, "production", "req-7");
-    when(accountService.issueConnectToken(
-            "boot123", new ConnectTokenRequest("scope-1", 1L, 42L, "production", "req-7")))
+    ConnectTokenRequest request = new ConnectTokenRequest("scope-1", "req-7");
+    when(accountService.issueConnectToken("boot123", new ConnectTokenRequest("scope-1", "req-7")))
         .thenReturn(
             new ConnectTokenResult(
                 1L,
@@ -93,6 +96,60 @@ class AuthControllerTest {
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.connectToken").value("conn123"))
         .andExpect(jsonPath("$.data.connectScopeId").value("scope-1"));
+  }
+
+  @Test
+  void listBootstrapWorldsReturnsVisibleWorlds() throws Exception {
+    when(accountService.listBootstrapWorlds("boot123"))
+        .thenReturn(List.of(new BootstrapWorldDto("demo", "Demo World")));
+
+    mockMvc
+        .perform(get("/auth/bootstrap/worlds").header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data[0].worldSlug").value("demo"));
+  }
+
+  @Test
+  void listBootstrapRealmsReturnsVisibleRealms() throws Exception {
+    when(accountService.listBootstrapRealms("boot123", "demo"))
+        .thenReturn(
+            List.of(
+                new BootstrapRealmDto(
+                    "demo",
+                    "production",
+                    "Live Realm",
+                    1L,
+                    42L,
+                    17L,
+                    false,
+                    "2026-03-30T00:00:00Z",
+                    "2026-03-30T00:02:00Z",
+                    "scope-1")));
+
+    mockMvc
+        .perform(
+            get("/auth/bootstrap/worlds/demo/realms")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data[0].realmSlug").value("production"))
+        .andExpect(jsonPath("$.data[0].connectScopeId").value("scope-1"));
+  }
+
+  @Test
+  void listBootstrapCharactersReturnsCharacters() throws Exception {
+    when(accountService.listBootstrapCharacters("boot123", "demo", "production"))
+        .thenReturn(List.of(new BootstrapCharacterDto("char-1", "Mara", 12)));
+
+    mockMvc
+        .perform(
+            get("/auth/bootstrap/worlds/demo/realms/production/characters")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data[0].characterId").value("char-1"))
+        .andExpect(jsonPath("$.data[0].characterName").value("Mara"));
   }
 
   @Test
