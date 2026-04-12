@@ -129,6 +129,27 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesRealmsWithWorldSelector() {
+    TextCommand command = parser.parse("REALMS sandbox");
+
+    assertEquals(TextCommandType.REALMS, command.type());
+    assertEquals(List.of("sandbox"), command.args());
+    assertTrue(command.payload() instanceof TextCommandPayload.RealmBrowseRequest);
+    assertEquals("sandbox", command.realmBrowsePayload().orElseThrow().worldSelector());
+  }
+
+  @Test
+  void parsesCharsWithOptionalRealmSelector() {
+    TextCommand command = parser.parse("CHARS sandbox preview");
+
+    assertEquals(TextCommandType.CHARS, command.type());
+    assertEquals(List.of("sandbox", "preview"), command.args());
+    assertTrue(command.payload() instanceof TextCommandPayload.CharacterBrowseRequest);
+    assertEquals("sandbox", command.characterBrowsePayload().orElseThrow().worldSelector());
+    assertEquals("preview", command.characterBrowsePayload().orElseThrow().realmSelector());
+  }
+
+  @Test
   void parsesHelpWithoutTopic() {
     TextCommand command = parser.parse("HELP");
 

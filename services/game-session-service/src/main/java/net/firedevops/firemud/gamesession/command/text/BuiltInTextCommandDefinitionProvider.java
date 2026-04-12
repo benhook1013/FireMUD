@@ -22,6 +22,22 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandActionCategory.META);
     register(
         definitions,
+        TextCommandType.REALMS,
+        List.of("realms"),
+        TextCommandDispatchGroup.WORLDS,
+        TextCommandStageRequirement.LOGIN,
+        TextCommandPromptPolicy.NEVER,
+        TextCommandActionCategory.META);
+    register(
+        definitions,
+        TextCommandType.CHARS,
+        List.of("chars"),
+        TextCommandDispatchGroup.WORLDS,
+        TextCommandStageRequirement.LOGIN,
+        TextCommandPromptPolicy.NEVER,
+        TextCommandActionCategory.META);
+    register(
+        definitions,
         TextCommandType.LOGIN,
         List.of("login", "logon"),
         TextCommandDispatchGroup.SESSION,

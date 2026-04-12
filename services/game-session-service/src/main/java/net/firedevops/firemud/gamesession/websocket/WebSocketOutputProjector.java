@@ -6,12 +6,14 @@ import java.util.List;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
+import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.NoticeOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputPayload;
 import net.firedevops.firemud.gamesession.presentation.PromptOutput;
+import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.TextMessageOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
@@ -97,6 +99,8 @@ public final class WebSocketOutputProjector {
       case ErrorOutput ignored -> "error";
       case LookViewOutput ignored -> "look_view";
       case WorldsViewOutput ignored -> "worlds_view";
+      case RealmBrowseViewOutput ignored -> "realms_view";
+      case CharacterBrowseViewOutput ignored -> "characters_view";
       default -> "unknown";
     };
   }

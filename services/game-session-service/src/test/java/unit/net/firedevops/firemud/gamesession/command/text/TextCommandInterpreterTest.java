@@ -343,7 +343,18 @@ class TextCommandInterpreterTest {
             lookCacheService,
             devIsolatedProperties,
             new TextPlayerOutputRenderer(new PresentationProperties()));
-    WorldsCommandHandler worldsHandler = new WorldsCommandHandler(worldCatalog);
+    when(entityManagementClient.listCharactersByAccount("22", "123"))
+        .thenReturn(
+            net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse.newBuilder()
+                .addCharacters(
+                    net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                        .setId("7001")
+                        .setName("Emberline")
+                        .setLevel(12)
+                        .build())
+                .build());
+    WorldsCommandHandler worldsHandler =
+        new WorldsCommandHandler(worldCatalog, entityManagementClient);
 
     LookResult lookResult =
         LookResult.newBuilder()
@@ -434,6 +445,28 @@ class TextCommandInterpreterTest {
     assertTrue(renderedResponse("WORLDS", interpretation).startsWith("OK WORLDS\n1) Demo World"));
     assertTrue(renderedResponse("WORLDS", interpretation).contains("Demo World"));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void realmsAreVisibleAfterLogin() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "REALMS demo", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertTrue(renderedResponse("REALMS demo", interpretation).contains("Live Realm"));
+  }
+
+  @Test
+  void charsAreVisibleAfterLogin() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "CHARS demo", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertTrue(renderedResponse("CHARS demo", interpretation).contains("Emberline"));
   }
 
   @Test

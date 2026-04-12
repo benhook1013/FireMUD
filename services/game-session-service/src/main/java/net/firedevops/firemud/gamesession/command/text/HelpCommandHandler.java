@@ -34,6 +34,16 @@ public class HelpCommandHandler {
           success(
               "PLAY <world> [realm] [character]\n"
                   + "Select the world to enter, optionally name a visible realm, and optionally choose a character.");
+      case "REALMS" ->
+          success(
+              "REALMS <world>\n"
+                  + "List visible realms for the selected world.\n"
+                  + "Use this before CHARS or PLAY when a world exposes more than one realm.");
+      case "CHARS" ->
+          success(
+              "CHARS <world> [realm]\n"
+                  + "List visible characters for the selected world and realm.\n"
+                  + "Use REALMS first when the world exposes more than one realm.");
       case "WHO" ->
           success(
               "WHO\n"

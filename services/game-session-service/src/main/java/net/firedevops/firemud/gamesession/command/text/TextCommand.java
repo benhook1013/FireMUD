@@ -30,6 +30,18 @@ public record TextCommand(
         : Optional.empty();
   }
 
+  public Optional<TextCommandPayload.RealmBrowseRequest> realmBrowsePayload() {
+    return payload instanceof TextCommandPayload.RealmBrowseRequest browseRequest
+        ? Optional.of(browseRequest)
+        : Optional.empty();
+  }
+
+  public Optional<TextCommandPayload.CharacterBrowseRequest> characterBrowsePayload() {
+    return payload instanceof TextCommandPayload.CharacterBrowseRequest browseRequest
+        ? Optional.of(browseRequest)
+        : Optional.empty();
+  }
+
   public Optional<TextCommandPayload.PlayRequest> playRequestPayload() {
     return payload instanceof TextCommandPayload.PlayRequest playRequest
         ? Optional.of(playRequest)

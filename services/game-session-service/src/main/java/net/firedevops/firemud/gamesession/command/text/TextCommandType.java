@@ -5,6 +5,8 @@ import java.util.Locale;
 /** Supported text commands exposed to Telnet and WebSocket clients. */
 public enum TextCommandType {
   WORLDS,
+  REALMS,
+  CHARS,
   LOGIN,
   LOGOUT,
   PLAY,
@@ -37,6 +39,8 @@ public enum TextCommandType {
     String normalized = token.trim().toUpperCase(Locale.ROOT);
     return switch (normalized) {
       case "WORLDS" -> WORLDS;
+      case "REALMS" -> REALMS;
+      case "CHARS" -> CHARS;
       case "LOGIN", "LOGON" -> LOGIN;
       case "LOGOUT", "LOGOFF", "QUIT" -> LOGOUT;
       case "PLAY" -> PLAY;

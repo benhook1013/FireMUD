@@ -57,6 +57,12 @@ public class TextPlayerOutputRenderer {
         if (output.payload() instanceof WorldsViewOutput worldsView) {
           yield renderWorldsView(worldsView);
         }
+        if (output.payload() instanceof RealmBrowseViewOutput realmsView) {
+          yield renderRealmsView(realmsView);
+        }
+        if (output.payload() instanceof CharacterBrowseViewOutput charactersView) {
+          yield renderCharactersView(charactersView);
+        }
         throw new IllegalArgumentException(
             "Unsupported view payload: " + output.payload().getClass().getName());
       }
@@ -275,6 +281,28 @@ public class TextPlayerOutputRenderer {
   private String renderWorldsView(WorldsViewOutput output) {
     return output.worlds().stream()
         .map(world -> world.ordinal() + ") " + world.displayName() + " (" + world.slug() + ")")
+        .collect(Collectors.joining("\n"));
+  }
+
+  private String renderRealmsView(RealmBrowseViewOutput output) {
+    return output.realms().stream()
+        .map(realm -> realm.ordinal() + ") " + realm.displayName() + " (" + realm.realmSlug() + ")")
+        .collect(Collectors.joining("\n"));
+  }
+
+  private String renderCharactersView(CharacterBrowseViewOutput output) {
+    if (output.characters().isEmpty()) {
+      return "No characters available for " + output.worldSlug() + " (" + output.realmSlug() + ").";
+    }
+    return output.characters().stream()
+        .map(
+            character ->
+                character.ordinal()
+                    + ") "
+                    + character.characterName()
+                    + " [lvl "
+                    + character.level()
+                    + "]")
         .collect(Collectors.joining("\n"));
   }
 

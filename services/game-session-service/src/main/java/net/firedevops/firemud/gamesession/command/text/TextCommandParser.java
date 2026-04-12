@@ -40,6 +40,8 @@ public class TextCommandParser {
         switch (type) {
           case WORLDS ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WORLDS"));
+          case REALMS -> parseRealms(tokens);
+          case CHARS -> parseChars(tokens);
           case LOGOUT -> new ParsedCommandData(List.of(), new TextCommandPayload.None());
           case AFK -> parseAfk(tokens);
           case HELP -> parseHelp(tokens);
@@ -82,6 +84,26 @@ public class TextCommandParser {
         && TextCommandPayload.fromLegacy(TextCommandType.PLAY, args)
             instanceof TextCommandPayload.PlayRequest playRequest) {
       return new ParsedCommandData(args, playRequest);
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+  }
+
+  private ParsedCommandData parseRealms(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (!args.isEmpty()
+        && TextCommandPayload.fromLegacy(TextCommandType.REALMS, args)
+            instanceof TextCommandPayload.RealmBrowseRequest browseRequest) {
+      return new ParsedCommandData(args, browseRequest);
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+  }
+
+  private ParsedCommandData parseChars(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (!args.isEmpty()
+        && TextCommandPayload.fromLegacy(TextCommandType.CHARS, args)
+            instanceof TextCommandPayload.CharacterBrowseRequest browseRequest) {
+      return new ParsedCommandData(args, browseRequest);
     }
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }

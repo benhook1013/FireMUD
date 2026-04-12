@@ -17,6 +17,8 @@ import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
@@ -119,6 +121,36 @@ public final class EntityManagementClient
           ex);
       return Optional.empty();
     }
+  }
+
+  public ListCharactersByAccountResponse listCharactersByAccount(
+      String tenantId, String accountId) {
+    ListCharactersByAccountRequest request =
+        ListCharactersByAccountRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setAccountId(accountId)
+            .build();
+    try {
+      return callStub().listCharactersByAccount(request);
+    } catch (StatusRuntimeException ex) {
+      logger.warn(
+          "Failed to call Entity Management list-characters endpoint tenantId={} accountId={}",
+          tenantId,
+          accountId,
+          ex);
+    } catch (Exception ex) {
+      logger.warn(
+          "Failed to call Entity Management list-characters endpoint tenantId={} accountId={}",
+          tenantId,
+          accountId,
+          ex);
+    }
+    return ListCharactersByAccountResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("CHARACTER_LIST_UNAVAILABLE")
+                .setMessage("Character list unavailable"))
+        .build();
   }
 
   public QueryInventoryResponse queryInventory(String tenantId, String characterId) {

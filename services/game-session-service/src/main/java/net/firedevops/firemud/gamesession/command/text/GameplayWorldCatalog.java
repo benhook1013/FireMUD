@@ -5,6 +5,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
+import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import org.springframework.stereotype.Component;
 
@@ -19,6 +20,11 @@ public final class GameplayWorldCatalog {
 
   public WorldsViewOutput browseView() {
     return new WorldsViewOutput(worldEntries());
+  }
+
+  public Optional<RealmBrowseViewOutput> browseRealms(String worldSelector) {
+    return resolveWorld(worldSelector)
+        .map(world -> new RealmBrowseViewOutput(world.getSlug(), realmEntries(world)));
   }
 
   public Optional<GameSessionProperties.WorldOption> resolveWorld(String selector) {
@@ -99,6 +105,24 @@ public final class GameplayWorldCatalog {
               world.getGameInstanceId(),
               world.isRequiresCharacterSelection()));
     }
-    return entries;
+    return List.copyOf(entries);
+  }
+
+  private List<RealmBrowseViewOutput.RealmEntry> realmEntries(
+      GameSessionProperties.WorldOption world) {
+    List<GameSessionProperties.RealmOption> realms = visibleRealms(world);
+    java.util.ArrayList<RealmBrowseViewOutput.RealmEntry> entries =
+        new java.util.ArrayList<>(realms.size());
+    for (int i = 0; i < realms.size(); i++) {
+      GameSessionProperties.RealmOption realm = realms.get(i);
+      entries.add(
+          new RealmBrowseViewOutput.RealmEntry(
+              i + 1,
+              realm.getSlug(),
+              realm.getDisplayName(),
+              realm.getGameInstanceId(),
+              realm.isRequiresCharacterSelection()));
+    }
+    return List.copyOf(entries);
   }
 }

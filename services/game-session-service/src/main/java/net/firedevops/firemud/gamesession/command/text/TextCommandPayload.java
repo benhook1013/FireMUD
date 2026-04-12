@@ -8,6 +8,8 @@ public sealed interface TextCommandPayload
     permits TextCommandPayload.None,
         TextCommandPayload.Tokens,
         TextCommandPayload.Credentials,
+        TextCommandPayload.RealmBrowseRequest,
+        TextCommandPayload.CharacterBrowseRequest,
         TextCommandPayload.PlayRequest,
         TextCommandPayload.AfkRequest,
         TextCommandPayload.ItemReference,
@@ -27,6 +29,11 @@ public sealed interface TextCommandPayload
   }
 
   record Credentials(String loginName, String password, String otp) implements TextCommandPayload {}
+
+  record RealmBrowseRequest(String worldSelector) implements TextCommandPayload {}
+
+  record CharacterBrowseRequest(String worldSelector, String realmSelector)
+      implements TextCommandPayload {}
 
   record PlayRequest(String worldSelector, String realmSelector, String characterSelector)
       implements TextCommandPayload {}
@@ -54,6 +61,14 @@ public sealed interface TextCommandPayload
       case NOOP, LOGOUT -> new None();
       case AFK -> new AfkRequest(true);
       case WORLDS, LOOK, QUICKLOOK, WHO, INVENTORY, EQUIPMENT -> new ViewRequest(type.name());
+      case REALMS ->
+          parseRealmBrowseRequest(safeArgs)
+              .<TextCommandPayload>map(request -> request)
+              .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
+      case CHARS ->
+          parseCharacterBrowseRequest(safeArgs)
+              .<TextCommandPayload>map(request -> request)
+              .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
       case HELP -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs);
       case GET, DROP ->
           parseQuantityAwareItemReference(safeArgs)
@@ -172,6 +187,30 @@ public sealed interface TextCommandPayload
       characterSelector = null;
     }
     return java.util.Optional.of(new PlayRequest(worldSelector, realmSelector, characterSelector));
+  }
+
+  private static java.util.Optional<RealmBrowseRequest> parseRealmBrowseRequest(List<String> args) {
+    if (args == null || args.isEmpty()) {
+      return java.util.Optional.empty();
+    }
+    String worldSelector = normalizeSelectorToken(args.get(0));
+    if (!StringUtils.hasText(worldSelector)) {
+      return java.util.Optional.empty();
+    }
+    return java.util.Optional.of(new RealmBrowseRequest(worldSelector));
+  }
+
+  private static java.util.Optional<CharacterBrowseRequest> parseCharacterBrowseRequest(
+      List<String> args) {
+    if (args == null || args.isEmpty()) {
+      return java.util.Optional.empty();
+    }
+    String worldSelector = normalizeSelectorToken(args.get(0));
+    if (!StringUtils.hasText(worldSelector)) {
+      return java.util.Optional.empty();
+    }
+    String realmSelector = args.size() > 1 ? normalizeSelectorToken(args.get(1)) : null;
+    return java.util.Optional.of(new CharacterBrowseRequest(worldSelector, realmSelector));
   }
 
   private static String normalizeSelectorToken(String value) {

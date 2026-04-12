@@ -198,7 +198,7 @@ class SessionResumptionFlowTest {
             accountRecentPresenceService,
             gameplayPresenceService,
             meterRegistry);
-    worldsHandler = new WorldsCommandHandler(worldCatalog);
+    worldsHandler = new WorldsCommandHandler(worldCatalog, entityManagementClient);
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     interpreter =
