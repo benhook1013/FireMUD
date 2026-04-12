@@ -25,9 +25,11 @@ import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.client.AccountClient;
+import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.command.text.LookTextRenderer;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -99,6 +101,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @MockitoBean private AccountClient accountClient;
+
+  @MockitoBean private EntityManagementClient entityManagementClient;
 
   @MockitoBean private GameInstanceRepository gameInstanceRepository;
 
@@ -226,6 +230,27 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .getTenantEntitlementsForRuntime(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.nullable(String.class));
+    org.mockito.Mockito.doReturn(
+            ListCharactersByAccountResponse.newBuilder()
+                .addCharacters(
+                    net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                        .setId("123")
+                        .setTenantId("22")
+                        .setAccountId("123")
+                        .setName("Emberline")
+                        .setLevel(12)
+                        .build())
+                .addCharacters(
+                    net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                        .setId("456")
+                        .setTenantId("22")
+                        .setAccountId("123")
+                        .setName("Sora")
+                        .setLevel(7)
+                        .build())
+                .build())
+        .when(entityManagementClient)
+        .listCharactersByAccount(eq("22"), eq("123"));
     when(commandService.enqueue(org.mockito.ArgumentMatchers.anyString(), eq("LOGIN"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(
@@ -298,22 +323,22 @@ class GameSessionWebSocketHandlerIntegrationTest {
     instance.setId(41L);
     instance.setTenantId(22L);
     instance.setOwnerAccountId(123L);
-    when(gameInstanceRepository.findById(41L)).thenReturn(Optional.of(instance));
+    org.mockito.Mockito.doReturn(Optional.of(instance)).when(gameInstanceRepository).findById(41L);
     instance = new GameInstance();
     instance.setId(42L);
     instance.setTenantId(22L);
     instance.setOwnerAccountId(123L);
-    when(gameInstanceRepository.findById(42L)).thenReturn(Optional.of(instance));
+    org.mockito.Mockito.doReturn(Optional.of(instance)).when(gameInstanceRepository).findById(42L);
     instance = new GameInstance();
     instance.setId(1L);
     instance.setTenantId(22L);
     instance.setOwnerAccountId(123L);
-    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    org.mockito.Mockito.doReturn(Optional.of(instance)).when(gameInstanceRepository).findById(1L);
     instance = new GameInstance();
     instance.setId(2L);
     instance.setTenantId(22L);
     instance.setOwnerAccountId(123L);
-    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+    org.mockito.Mockito.doReturn(Optional.of(instance)).when(gameInstanceRepository).findById(2L);
   }
 
   @Test
@@ -990,6 +1015,153 @@ class GameSessionWebSocketHandlerIntegrationTest {
             eq("123"), eq("22"), org.mockito.ArgumentMatchers.anyString());
     verify(accountClient)
         .getTenantEntitlementsForRuntime(eq("22"), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void websocketLoginCanBrowseRealmsAndCharactersBeforePlay() throws Exception {
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Game-Instance-Id", "41");
+    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    CountDownLatch loginAck = new CountDownLatch(1);
+    CountDownLatch latch = new CountDownLatch(3);
+    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
+
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                sessionRef.set(session);
+                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message)
+                  throws IOException {
+                String payload = message.getPayload();
+                payloads.add(payload);
+                if (payload.startsWith("OK LOGIN")) {
+                  loginAck.countDown();
+                  session.sendMessage(new TextMessage("REALMS demo"));
+                  session.sendMessage(new TextMessage("CHARS demo"));
+                }
+                latch.countDown();
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
+    assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
+    sessionRef.get().close();
+
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                payload.startsWith("OK REALMS") && payload.contains("Live Realm (production)"));
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                payload.startsWith("OK CHARS")
+                    && payload.contains("Emberline [lvl 12]")
+                    && payload.contains("Sora [lvl 7]"));
+    verify(commandService).enqueue("41", "LOGIN demo@example.com swordfish", false);
+    verify(commandService, never()).enqueue("41", "REALMS demo", false);
+    verify(commandService, never()).enqueue("41", "CHARS demo", false);
+    verify(entityManagementClient).listCharactersByAccount("22", "123");
+  }
+
+  @Test
+  void websocketFirstPartyStructuredLobbyBrowseIncludesRealmAndCharacterViews() throws Exception {
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Firemud-Connection-Mode", "first_party_web");
+    headers.add("X-Firemud-Transport-Session-Id", "1");
+    headers.add(
+        "X-Firemud-Connect-Context",
+        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
+            .generateToken(
+                "123",
+                java.util.Map.of(
+                    "tenantId", "22",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
+                    "gameInstanceId", "1",
+                    "connectScopeId", "scope-browse-1",
+                    "connectTokenJti", "connect-jti-browse-1",
+                    "connectRequestId", "connect-req-browse-1",
+                    "gatewayRequestId", "gateway-req-browse-1")));
+    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    CountDownLatch loginAck = new CountDownLatch(1);
+    CountDownLatch latch = new CountDownLatch(3);
+    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
+
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                sessionRef.set(session);
+                session.sendMessage(new TextMessage("LOGIN"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message)
+                  throws IOException {
+                String payload = message.getPayload();
+                payloads.add(payload);
+                if (isStructuredCommand(payload, "LOGIN")) {
+                  loginAck.countDown();
+                  session.sendMessage(new TextMessage("REALMS demo"));
+                  session.sendMessage(new TextMessage("CHARS demo"));
+                }
+                latch.countDown();
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
+    assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
+    sessionRef.get().close();
+
+    assertThat(payloads).anyMatch(payload -> isStructuredCommand(payload, "LOGIN"));
+    JsonNode realmsResult =
+        payloads.stream()
+            .map(GameSessionWebSocketHandlerIntegrationTest::json)
+            .filter(
+                payload ->
+                    "command_result".equals(payload.path("eventType").asText())
+                        && "REALMS".equals(payload.path("commandType").asText()))
+            .findFirst()
+            .orElseThrow();
+    assertThat(realmsResult.path("accepted").asBoolean()).isTrue();
+    assertThat(realmsResult.path("outputs").get(0).path("payloadType").asText())
+        .isEqualTo("realms_view");
+    assertThat(realmsResult.path("outputs").get(0).path("payload").path("worldSlug").asText())
+        .isEqualTo("demo");
+    assertThat(realmsResult.path("outputs").get(0).path("payload").path("realms")).hasSize(1);
+
+    JsonNode charsResult =
+        payloads.stream()
+            .map(GameSessionWebSocketHandlerIntegrationTest::json)
+            .filter(
+                payload ->
+                    "command_result".equals(payload.path("eventType").asText())
+                        && "CHARS".equals(payload.path("commandType").asText()))
+            .findFirst()
+            .orElseThrow();
+    assertThat(charsResult.path("accepted").asBoolean()).isTrue();
+    assertThat(charsResult.path("outputs").get(0).path("payloadType").asText())
+        .isEqualTo("characters_view");
+    assertThat(charsResult.path("outputs").get(0).path("payload").path("realmSlug").asText())
+        .isEqualTo("production");
+    assertThat(charsResult.path("outputs").get(0).path("payload").path("characters")).hasSize(2);
+    verify(entityManagementClient).listCharactersByAccount("22", "123");
   }
 
   @Test

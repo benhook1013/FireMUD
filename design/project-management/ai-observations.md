@@ -25,3 +25,8 @@ Entry format:
   - Context: updating `PLAY` guidance strings in `game-session-service` to become realm-aware after the new `09.1` bootstrap/connect-scope work
   - Observation: changing Java-side error text alone did not change rendered localized output because `TextPlayerOutputRenderer` prefers `messageKey` templates from `presentation-messages*.properties`, so reusing a generic key for a more specific guidance path silently produced stale or wrong user-facing text
   - Expected pattern: when a command path introduces a new user-visible guidance variant, add a distinct message key and update the locale bundles in the same change instead of assuming the raw fallback message will be rendered
+
+- `2026-04-12`: Runtime tenant admission cannot stay encoded as `accounts.tenant_id`
+  - Context: tracing `09.2` public-production onboarding from `PLAY` and connect-token issuance back into `account-service`
+  - Observation: the current runtime-membership path still answers "can this account play in tenant X?" by comparing `accounts.tenant_id` to the requested tenant, which makes first-join onboarding, multi-realm discovery, and future multi-tenant routing look implemented when they are really resting on a single-tenant shortcut
+  - Expected pattern: gameplay admission should read a dedicated membership/grant substrate and use explicit writer boundaries like `EnsurePublicProductionPlayerMembership(...)` rather than treating account ownership fields as the long-term runtime authority
