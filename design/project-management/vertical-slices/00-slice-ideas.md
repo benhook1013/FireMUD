@@ -13,3 +13,4 @@ Note: After choosing the next slice, add a corresponding numbered task list file
 
 - `08` Game Design Publishing and Runtime Activation now captures the publish/version/asset/launch control-plane domain that previously existed mostly as architecture-only planning.
 - `09` Multi-Tenancy, Realm Routing, and Runtime Boundaries now captures the tenant/realm/runtime-boundary domain that previously existed mostly as architecture and adjacent admission/reconnect notes.
+- `10` Scripting, Automation, and Runtime Orchestration now captures the scripting runtime/control-plane/execution domain that previously existed mostly as fragmented architecture and adjacent runtime slices.

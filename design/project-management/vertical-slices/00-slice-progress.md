@@ -52,20 +52,22 @@ These are not broad audit topics anymore; they are real future slices with known
    Remaining: the tenant/realm/runtime-boundary domain now has a canonical family, but implementation has not started; `09.1` through `09.4` are the first bounded cuts and should guide future admission/bootstrap/runtime-boundary work.
 2. [08 Game Design Publishing and Runtime Activation](./08-task-list-game-design-publishing-and-runtime-activation-vertical-slice.md)
    Remaining: the publish/version/asset/launch control-plane domain now has a canonical slice family, but implementation has not started; `08.1` through `08.4` are the first bounded cuts.
-3. [02.1.1 Email OTP and Text Auth Options](./02.1.1-task-list-email-otp-and-text-auth-options-vertical-slice.md)
-4. [02.1.2 Logout and Session Termination](./02.1.2-task-list-logout-and-session-termination-vertical-slice.md)
-5. [02.1.5 Admin and God Capability and Visibility](./02.1.5-task-list-admin-god-capability-and-visibility-vertical-slice.md)
-6. [02.1.4.1 Account Versus Character Social Scope](./02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
-7. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
-8. [02.13.7 Action Classification and Activity Semantics](./02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
-9. [02.13.10 Structured Transcript and Replay End State](./02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
-10. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
-11. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
-12. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
-13. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
-14. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
-15. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
-16. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
+3. [10 Scripting, Automation, and Runtime Orchestration](./10-task-list-scripting-automation-and-runtime-orchestration-vertical-slice.md)
+   Remaining: the scripting domain now has a canonical family instead of fragmented indirect coverage; `10.1` through `10.5` are the bounded runtime/control-plane cuts, while design-time publication boundaries remain intentionally anchored in `08.4`.
+4. [02.1.1 Email OTP and Text Auth Options](./02.1.1-task-list-email-otp-and-text-auth-options-vertical-slice.md)
+5. [02.1.2 Logout and Session Termination](./02.1.2-task-list-logout-and-session-termination-vertical-slice.md)
+6. [02.1.5 Admin and God Capability and Visibility](./02.1.5-task-list-admin-god-capability-and-visibility-vertical-slice.md)
+7. [02.1.4.1 Account Versus Character Social Scope](./02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
+8. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
+9. [02.13.7 Action Classification and Activity Semantics](./02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
+10. [02.13.10 Structured Transcript and Replay End State](./02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
+11. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
+12. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
+13. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
+14. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
+15. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
+16. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
+17. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
 
 ### 4. Discussion-gated follow-ups
 
@@ -123,6 +125,8 @@ If the goal is continued design-to-slice cleanup rather than code, do this next:
    Best next architecture-sensitive planning family because it affects admission, bootstrap, reconnect, and downstream runtime-state keying; start with `09.1`, then `09.2`, then `09.3`.
 2. `08` game-design publish/version/activation family
    Best next control-plane planning family after `09`; start with `08.1`, then `08.2`, then `08.3`.
+3. `10` scripting/automation/runtime-orchestration family
+   Best next runtime/control-plane planning family after `08` and `09`; start with `10.1`, then `10.2`, then `10.3`, keeping `08.4` as the publication-boundary companion rather than duplicating it.
 
 ## Operator-Proof / Audit Tails
 
