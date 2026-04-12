@@ -2,11 +2,15 @@
 
 ## Goal and Status
 
-Goal: give the scripting and automation domain one coherent slice family covering runtime ingress, scheduling, execution budgets, tick handoff, and operator visibility so future work stops being scattered across gameplay hardening, publish-control-plane, and service-local docs. Status: planned.
+Goal: give the scripting and automation domain one coherent slice family covering runtime ingress, scheduling, execution budgets, tick handoff, and operator visibility so future work stops being scattered across gameplay hardening, publish-control-plane, and service-local docs. Status: planned, discussion-gated before implementation.
 
 ## Why This Slice Exists
 
 FireMUD already has substantial scripting architecture and real implementation substrate, but planning coverage is still fragmented. The domain is too large and too central to keep treating timers, quotas, runtime execution, and rollout visibility as indirect side effects of other slice families.
+
+## Implementation Notes
+
+This family was introduced during design-to-slice coverage cleanup rather than from a dedicated prior discussion thread. The design direction is solid enough to decompose, but this `10` family requires a human discussion/review pass before implementation starts.
 
 ## Scope
 
