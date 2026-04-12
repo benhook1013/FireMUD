@@ -100,9 +100,21 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
     try {
       Jws<Claims> claims = jwtUtil.parseToken(connectToken);
       Claims payload = claims.getPayload();
+      String audience =
+          payload.getAudience().stream()
+              .findFirst()
+              .filter(StringUtils::hasText)
+              .orElseGet(() -> requiredClaim(payload, "aud"));
+      if (!"gameplay-connect".equals(audience)) {
+        throw new IllegalArgumentException("Invalid audience");
+      }
       String accountId = requiredClaim(payload, "accountId");
       String tenantId = requiredClaim(payload, "tenantId");
+      String worldSlug = requiredClaim(payload, "worldSlug");
+      String realmSlug = requiredClaim(payload, "realmSlug");
       String gameInstanceId = requiredClaim(payload, "gameInstanceId");
+      String connectScopeId = requiredClaim(payload, "connectScopeId");
+      String requestId = requiredClaim(payload, "requestId");
       String jti = requiredClaim(payload, "jti");
       return recordReplayOrReject(jti, payload.getExpiration().getTime())
           .then(
@@ -117,14 +129,18 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
                     String connectContext =
                         jwtUtil.generateToken(
                             accountId,
-                            Map.of(
-                                "accountId", accountId,
-                                "tenantId", tenantId,
-                                "gameInstanceId", gameInstanceId,
-                                "connectTokenJti", jti,
-                                "verifiedAt", verifiedAt.toEpochMilli(),
-                                "expiresAt", payload.getExpiration().getTime(),
-                                "gatewayRequestId", exchange.getRequest().getId()));
+                            Map.ofEntries(
+                                Map.entry("accountId", accountId),
+                                Map.entry("tenantId", tenantId),
+                                Map.entry("worldSlug", worldSlug),
+                                Map.entry("realmSlug", realmSlug),
+                                Map.entry("gameInstanceId", gameInstanceId),
+                                Map.entry("connectScopeId", connectScopeId),
+                                Map.entry("connectTokenJti", jti),
+                                Map.entry("connectRequestId", requestId),
+                                Map.entry("verifiedAt", verifiedAt.toEpochMilli()),
+                                Map.entry("expiresAt", payload.getExpiration().getTime()),
+                                Map.entry("gatewayRequestId", exchange.getRequest().getId())));
 
                     return chain.filter(
                         mutate(

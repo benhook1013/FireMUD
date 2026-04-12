@@ -43,8 +43,12 @@ public class FirstPartyConnectContextService {
           new FirstPartyConnectContext(
               accountId,
               tenantId,
+              stringClaim(claims, "worldSlug"),
+              stringClaim(claims, "realmSlug"),
               gameInstanceId,
+              stringClaim(claims, "connectScopeId"),
               stringClaim(claims, "connectTokenJti"),
+              stringClaim(claims, "connectRequestId"),
               stringClaim(claims, "gatewayRequestId")));
     } catch (IllegalArgumentException | JwtException ex) {
       logger.warn("Rejecting invalid first-party connect context", ex);

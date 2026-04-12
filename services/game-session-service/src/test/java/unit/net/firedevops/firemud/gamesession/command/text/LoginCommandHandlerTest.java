@@ -160,7 +160,10 @@ class LoginCommandHandlerTest {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(firstPartyConnectContextRegistry.find(1L))
-        .thenReturn(Optional.of(new FirstPartyConnectContext(77L, 22L, 1L, "jti-1", "req-1")));
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    77L, 22L, "demo", "production", 1L, "scope-1", "jti-1", "req-1", "gateway-1")));
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);

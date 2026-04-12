@@ -80,10 +80,24 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
           jwtUtil.generateToken(
               PROBE_ACCOUNT_ID,
               Map.of(
-                  "accountId", PROBE_ACCOUNT_ID,
-                  "tenantId", PROBE_TENANT_ID,
-                  "gameInstanceId", PROBE_GAME_INSTANCE_ID,
-                  "jti", "gateway-readiness-" + UUID.randomUUID())));
+                  "aud",
+                  "gameplay-connect",
+                  "accountId",
+                  PROBE_ACCOUNT_ID,
+                  "tenantId",
+                  PROBE_TENANT_ID,
+                  "worldSlug",
+                  "demo",
+                  "realmSlug",
+                  "production",
+                  "gameInstanceId",
+                  PROBE_GAME_INSTANCE_ID,
+                  "connectScopeId",
+                  "readiness-scope",
+                  "requestId",
+                  "readiness-request",
+                  "jti",
+                  "gateway-readiness-" + UUID.randomUUID())));
     }
     return builder
         .header(GAME_INSTANCE_ID_HEADER, "1")

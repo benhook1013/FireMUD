@@ -935,8 +935,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 "123",
                 java.util.Map.of(
                     "tenantId", "22",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
                     "gameInstanceId", "1",
+                    "connectScopeId", "scope-1",
                     "connectTokenJti", "connect-jti-1",
+                    "connectRequestId", "connect-req-1",
                     "gatewayRequestId", "gateway-req-1")));
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
     CountDownLatch latch = new CountDownLatch(2);
@@ -1012,8 +1016,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 "123",
                 java.util.Map.of(
                     "tenantId", "22",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
                     "gameInstanceId", "1",
+                    "connectScopeId", "scope-2",
                     "connectTokenJti", "connect-jti-2",
+                    "connectRequestId", "connect-req-2",
                     "gatewayRequestId", "gateway-req-2")));
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
     CountDownLatch latch = new CountDownLatch(4);
@@ -1102,8 +1110,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 "123",
                 java.util.Map.of(
                     "tenantId", "22",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
                     "gameInstanceId", "1",
+                    "connectScopeId", "scope-logout-1",
                     "connectTokenJti", "connect-jti-logout-1",
+                    "connectRequestId", "connect-req-logout-1",
                     "gatewayRequestId", "gateway-req-logout-1")));
     CountDownLatch firstResponses = new CountDownLatch(3);
     CountDownLatch firstClosed = new CountDownLatch(1);
@@ -1163,8 +1175,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 "123",
                 java.util.Map.of(
                     "tenantId", "22",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
                     "gameInstanceId", "1",
+                    "connectScopeId", "scope-logout-2",
                     "connectTokenJti", "connect-jti-logout-2",
+                    "connectRequestId", "connect-req-logout-2",
                     "gatewayRequestId", "gateway-req-logout-2")));
     java.util.List<String> secondPayloads = new java.util.concurrent.CopyOnWriteArrayList<>();
     CountDownLatch secondResponses = new CountDownLatch(2);
@@ -1300,8 +1316,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 "123",
                 java.util.Map.of(
                     "tenantId", "22",
+                    "worldSlug", "sandbox",
+                    "realmSlug", "production",
                     "gameInstanceId", "1",
+                    "connectScopeId", "scope-mismatch",
                     "connectTokenJti", "connect-jti-2",
+                    "connectRequestId", "connect-req-mismatch",
                     "gatewayRequestId", "gateway-req-2")));
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
     CountDownLatch latch = new CountDownLatch(2);

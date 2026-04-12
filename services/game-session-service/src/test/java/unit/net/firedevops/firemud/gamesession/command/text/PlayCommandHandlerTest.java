@@ -171,12 +171,33 @@ class PlayCommandHandlerTest {
         new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 41L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(firstPartyConnectContextRegistry.find(1L))
-        .thenReturn(Optional.of(new FirstPartyConnectContext(123L, 22L, 41L, "jti-1", "req-1")));
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    123L, 22L, "demo", "production", 41L, "scope-1", "jti-1", "req-1", "gw-1")));
 
     PlayCommandHandlingResult result =
         handler.handle(
             "1",
             new TextCommand(TextCommandType.PLAY, List.of("sandbox", "Sora"), "PLAY sandbox Sora"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+  }
+
+  @Test
+  void firstPartyPlayRejectsMismatchedWorldSlug() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 1L);
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    123L, 22L, "sandbox", "production", 1L, "scope-1", "jti-1", "req-1", "gw-1")));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");

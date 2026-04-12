@@ -254,7 +254,11 @@ public class PlayCommandHandler {
         .filter(
             connectContext ->
                 connectContext.tenantId() != context.tenantId()
-                    || connectContext.gameInstanceId() != selectedWorld.getGameInstanceId())
+                    || connectContext.gameInstanceId() != selectedWorld.getGameInstanceId()
+                    || (StringUtils.hasText(connectContext.worldSlug())
+                        && !selectedWorld.getSlug().equalsIgnoreCase(connectContext.worldSlug()))
+                    || (StringUtils.hasText(connectContext.realmSlug())
+                        && !"production".equalsIgnoreCase(connectContext.realmSlug())))
         .map(
             ignored ->
                 failure(
