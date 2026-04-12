@@ -30,9 +30,9 @@ public record TextCommand(
         : Optional.empty();
   }
 
-  public Optional<TextCommandPayload.Selection> selectionPayload() {
-    return payload instanceof TextCommandPayload.Selection selection
-        ? Optional.of(selection)
+  public Optional<TextCommandPayload.PlayRequest> playRequestPayload() {
+    return payload instanceof TextCommandPayload.PlayRequest playRequest
+        ? Optional.of(playRequest)
         : Optional.empty();
   }
 

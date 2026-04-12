@@ -668,7 +668,7 @@ class TextCommandInterpreterTest {
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("PLAY_REQUIRED", interpretation.commandResult().errorCode());
     assertEquals(
-        "ERROR PLAY_REQUIRED You must PLAY first. Use PLAY <world> [character].",
+        "ERROR PLAY_REQUIRED You must PLAY first. Use PLAY <world> [realm] [character].",
         renderedResponse("LOOK", interpretation));
     verify(commandService, never()).enqueue("1", "LOOK", false);
   }

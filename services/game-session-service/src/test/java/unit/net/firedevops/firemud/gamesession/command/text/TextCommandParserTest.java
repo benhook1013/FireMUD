@@ -103,14 +103,29 @@ class TextCommandParserTest {
   }
 
   @Test
-  void parsesPlayWithWorldAndOptionalCharacter() {
+  void parsesPlayWithWorldAndOptionalRealmOrCharacter() {
     TextCommand command = parser.parse("PLAY demo Emberline");
 
     assertEquals(TextCommandType.PLAY, command.type());
     assertEquals("PLAY", command.aliasUsed());
     assertEquals(List.of("demo", "Emberline"), command.args());
     assertEquals("PLAY demo Emberline", command.rawLine());
-    assertTrue(command.payload() instanceof TextCommandPayload.Selection);
+    assertTrue(command.payload() instanceof TextCommandPayload.PlayRequest);
+    assertEquals("demo", command.playRequestPayload().orElseThrow().worldSelector());
+    assertEquals("Emberline", command.playRequestPayload().orElseThrow().realmSelector());
+    assertEquals(null, command.playRequestPayload().orElseThrow().characterSelector());
+  }
+
+  @Test
+  void parsesPlayWithExplicitRealmAndCharacter() {
+    TextCommand command = parser.parse("PLAY sandbox preview Emberline");
+
+    assertEquals(TextCommandType.PLAY, command.type());
+    assertEquals(List.of("sandbox", "preview", "Emberline"), command.args());
+    assertTrue(command.payload() instanceof TextCommandPayload.PlayRequest);
+    assertEquals("sandbox", command.playRequestPayload().orElseThrow().worldSelector());
+    assertEquals("preview", command.playRequestPayload().orElseThrow().realmSelector());
+    assertEquals("Emberline", command.playRequestPayload().orElseThrow().characterSelector());
   }
 
   @Test

@@ -20,3 +20,8 @@ Entry format:
   - Context: implementing `09.1` bootstrap discovery and server-resolved connect scope in `account-service` while checking how the current `PLAY` path in `game-session-service` consumes world selection
   - Observation: the current text-command selection seam effectively treats gameplay target selection as `world + optional secondary`, which makes later realm-aware routing awkward and encourages temporary config-backed shortcuts because `world`, `realm`, and `character` are not modeled as first-class dimensions end-to-end
   - Expected pattern: canonical routing-sensitive command payloads should preserve the full selection structure they need for the target architecture instead of compressing multiple future dimensions into one optional slot
+
+- `2026-04-12`: Localized player-output variants need explicit message keys or updated bundles
+  - Context: updating `PLAY` guidance strings in `game-session-service` to become realm-aware after the new `09.1` bootstrap/connect-scope work
+  - Observation: changing Java-side error text alone did not change rendered localized output because `TextPlayerOutputRenderer` prefers `messageKey` templates from `presentation-messages*.properties`, so reusing a generic key for a more specific guidance path silently produced stale or wrong user-facing text
+  - Expected pattern: when a command path introduces a new user-visible guidance variant, add a distinct message key and update the locale bundles in the same change instead of assuming the raw fallback message will be rendered

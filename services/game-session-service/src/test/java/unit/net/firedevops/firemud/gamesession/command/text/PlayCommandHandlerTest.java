@@ -42,13 +42,24 @@ class PlayCommandHandlerTest {
   private final GameplayPresenceService gameplayPresenceService =
       Mockito.mock(GameplayPresenceService.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
-  private final GameplayWorldCatalog worldCatalog =
-      new GameplayWorldCatalog(new GameSessionProperties());
+  private final GameSessionProperties gameSessionProperties = new GameSessionProperties();
+  private final GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(gameSessionProperties);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private PlayCommandHandler handler;
 
   @BeforeEach
   void setUp() {
+    gameSessionProperties.setWorlds(
+        List.of(
+            new GameSessionProperties.WorldOption("demo", "Demo World", 1L, false),
+            new GameSessionProperties.WorldOption(
+                "sandbox",
+                "Builder Sandbox",
+                List.of(
+                    new GameSessionProperties.RealmOption(
+                        "production", "Live Realm", 2L, true, true),
+                    new GameSessionProperties.RealmOption(
+                        "preview", "Preview Realm", 41L, true, true)))));
     handler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -147,7 +158,9 @@ class PlayCommandHandlerTest {
         handler.handle(
             "1",
             new TextCommand(
-                TextCommandType.PLAY, List.of("sandbox", "Emberline"), "PLAY sandbox Emberline"));
+                TextCommandType.PLAY,
+                List.of("sandbox", "production", "Emberline"),
+                "PLAY sandbox production Emberline"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     Mockito.verify(sessionContextService)
@@ -179,7 +192,10 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result =
         handler.handle(
             "1",
-            new TextCommand(TextCommandType.PLAY, List.of("sandbox", "Sora"), "PLAY sandbox Sora"));
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("sandbox", "preview", "Sora"),
+                "PLAY sandbox preview Sora"));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
@@ -251,12 +267,62 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
     assertThat(result.commandResult().errorMessage())
-        .isEqualTo("Selection required. Use PLAY sandbox <character> or browse CHARS first.");
+        .isEqualTo(
+            "Selection required. Use PLAY sandbox <realm> [character] or browse REALMS first.");
     assertThat(
             new TextPlayerOutputRenderer(new PresentationProperties())
                 .render(result.outputs().get(0), "fr"))
         .isEqualTo(
-            "ERROR PLAY_SELECTION_REQUIRED Selection requise. Utilisez PLAY sandbox <character> ou consultez CHARS dabord.");
+            "ERROR PLAY_SELECTION_REQUIRED Selection requise. Utilisez PLAY sandbox <realm> [character] ou consultez REALMS dabord.");
+  }
+
+  @Test
+  void explicitRealmWithoutCharacterReturnsCharacterSelectionGuidance() {
+    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("sandbox", "preview"), "PLAY sandbox preview"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo(
+            "Selection required. Use PLAY sandbox preview <character> or browse CHARS sandbox preview first.");
+  }
+
+  @Test
+  void firstPartyPlayAcceptsNonProductionRealmWhenScopeMatches() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 41L);
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    123L, 22L, "sandbox", "preview", 41L, "scope-1", "jti-1", "req-1", "gw-1")));
+    when(entityManagementClient.findCharacterByName("22", "Sora"))
+        .thenReturn(
+            Optional.of(
+                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                    .setId("7002")
+                    .setName("Sora")
+                    .build()));
+    when(sessionContextService.findByGameplayIdentity(22L, 41L, 7002L))
+        .thenReturn(Optional.empty());
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("sandbox", "preview", "Sora"),
+                "PLAY sandbox preview Sora"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
   }
 
   @Test

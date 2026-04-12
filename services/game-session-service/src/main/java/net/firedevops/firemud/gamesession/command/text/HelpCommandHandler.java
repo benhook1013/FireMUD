@@ -29,11 +29,11 @@ public class HelpCommandHandler {
           success(
               "LOGIN <email> <password> [otp]\n"
                   + "Use LOGON as an alias if your client expects it.\n"
-                  + "After login, use PLAY <world> [character].");
+                  + "After login, use PLAY <world> [realm] [character].");
       case "PLAY" ->
           success(
-              "PLAY <world> [character]\n"
-                  + "Select the world to enter and optional character name.");
+              "PLAY <world> [realm] [character]\n"
+                  + "Select the world to enter, optionally name a visible realm, and optionally choose a character.");
       case "WHO" ->
           success(
               "WHO\n"

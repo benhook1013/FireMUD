@@ -8,7 +8,7 @@ public sealed interface TextCommandPayload
     permits TextCommandPayload.None,
         TextCommandPayload.Tokens,
         TextCommandPayload.Credentials,
-        TextCommandPayload.Selection,
+        TextCommandPayload.PlayRequest,
         TextCommandPayload.AfkRequest,
         TextCommandPayload.ItemReference,
         TextCommandPayload.ContainerTransfer,
@@ -28,7 +28,8 @@ public sealed interface TextCommandPayload
 
   record Credentials(String loginName, String password, String otp) implements TextCommandPayload {}
 
-  record Selection(String primary, String secondary) implements TextCommandPayload {}
+  record PlayRequest(String worldSelector, String realmSelector, String characterSelector)
+      implements TextCommandPayload {}
 
   record AfkRequest(Boolean enabled) implements TextCommandPayload {}
 
@@ -76,9 +77,9 @@ public sealed interface TextCommandPayload
                   safeArgs.get(0), safeArgs.get(1), safeArgs.size() > 2 ? safeArgs.get(2) : "")
               : new Tokens(safeArgs);
       case PLAY ->
-          !safeArgs.isEmpty()
-              ? new Selection(safeArgs.get(0), safeArgs.size() > 1 ? safeArgs.get(1) : null)
-              : new Tokens(safeArgs);
+          parsePlayRequest(safeArgs)
+              .<TextCommandPayload>map(request -> request)
+              .orElseGet(() -> new Tokens(safeArgs));
       case SAY ->
           !safeArgs.isEmpty() && StringUtils.hasText(safeArgs.get(0))
               ? new Message(safeArgs.get(0))
@@ -154,6 +155,31 @@ public sealed interface TextCommandPayload
       return java.util.Optional.empty();
     }
     return java.util.Optional.of(new ContainerView(containerReference));
+  }
+
+  private static java.util.Optional<PlayRequest> parsePlayRequest(List<String> args) {
+    if (args == null || args.isEmpty()) {
+      return java.util.Optional.empty();
+    }
+    String worldSelector = normalizeSelectorToken(args.get(0));
+    if (!StringUtils.hasText(worldSelector)) {
+      return java.util.Optional.empty();
+    }
+    String realmSelector = args.size() > 1 ? normalizeSelectorToken(args.get(1)) : null;
+    String characterSelector =
+        args.size() > 2 ? String.join(" ", args.subList(2, args.size())).trim() : null;
+    if (characterSelector != null && characterSelector.isBlank()) {
+      characterSelector = null;
+    }
+    return java.util.Optional.of(new PlayRequest(worldSelector, realmSelector, characterSelector));
+  }
+
+  private static String normalizeSelectorToken(String value) {
+    if (value == null) {
+      return null;
+    }
+    String normalized = value.trim();
+    return normalized.isEmpty() ? null : normalized;
   }
 
   private static int indexOfIgnoreCase(List<String> args, String token) {

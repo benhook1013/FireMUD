@@ -21,7 +21,7 @@ public final class GameplayWorldCatalog {
     return new WorldsViewOutput(worldEntries());
   }
 
-  public Optional<GameSessionProperties.WorldOption> resolve(String selector) {
+  public Optional<GameSessionProperties.WorldOption> resolveWorld(String selector) {
     if (selector == null || selector.isBlank()) {
       return Optional.empty();
     }
@@ -38,6 +38,51 @@ public final class GameplayWorldCatalog {
     return worlds.stream()
         .filter(world -> normalized.equals(world.getSlug().toLowerCase(Locale.ROOT)))
         .findFirst();
+  }
+
+  public Optional<GameSessionProperties.RealmOption> resolveRealm(
+      GameSessionProperties.WorldOption world, String selector) {
+    if (world == null || selector == null || selector.isBlank()) {
+      return Optional.empty();
+    }
+    String normalized = selector.trim().toLowerCase(Locale.ROOT);
+    return visibleRealms(world).stream()
+        .filter(realm -> normalized.equals(realm.getSlug().toLowerCase(Locale.ROOT)))
+        .findFirst();
+  }
+
+  public boolean hasVisibleRealm(GameSessionProperties.WorldOption world, String selector) {
+    return resolveRealm(world, selector).isPresent();
+  }
+
+  public Optional<GameSessionProperties.RealmOption> resolveDefaultRealm(
+      GameSessionProperties.WorldOption world) {
+    if (world == null) {
+      return Optional.empty();
+    }
+    List<GameSessionProperties.RealmOption> visibleRealms = visibleRealms(world);
+    if (visibleRealms.isEmpty()) {
+      return Optional.empty();
+    }
+    return visibleRealms.stream()
+        .filter(realm -> "production".equalsIgnoreCase(realm.getSlug()))
+        .findFirst()
+        .or(() -> Optional.of(visibleRealms.get(0)));
+  }
+
+  public boolean requiresExplicitRealmSelection(GameSessionProperties.WorldOption world) {
+    return visibleRealms(world).size() > 1;
+  }
+
+  private List<GameSessionProperties.RealmOption> visibleRealms(
+      GameSessionProperties.WorldOption world) {
+    if (world == null || world.getRealms() == null) {
+      return List.of();
+    }
+    return world.getRealms().stream()
+        .filter(Objects::nonNull)
+        .filter(GameSessionProperties.RealmOption::isVisible)
+        .toList();
   }
 
   private List<WorldsViewOutput.WorldEntry> worldEntries() {

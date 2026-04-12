@@ -78,10 +78,10 @@ public class TextCommandParser {
 
   private ParsedCommandData parsePlay(String[] tokens) {
     List<String> args = parseRemainingTokens(tokens);
-    if (!args.isEmpty()) {
-      return new ParsedCommandData(
-          args,
-          new TextCommandPayload.Selection(args.get(0), args.size() > 1 ? args.get(1) : null));
+    if (!args.isEmpty()
+        && TextCommandPayload.fromLegacy(TextCommandType.PLAY, args)
+            instanceof TextCommandPayload.PlayRequest playRequest) {
+      return new ParsedCommandData(args, playRequest);
     }
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }
