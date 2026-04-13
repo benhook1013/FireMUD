@@ -46,6 +46,7 @@ import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
+import net.firedevops.firemud.gamesession.config.PresenceProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -60,6 +61,7 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -331,7 +333,10 @@ class TextCommandInterpreterTest {
             meterRegistry);
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
-    WhoCommandHandler whoHandler = new WhoCommandHandler(gameplayPresenceService);
+    WhoCommandHandler whoHandler =
+        new WhoCommandHandler(
+            gameplayPresenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()));
     LookCommandHandler lookHandler =
         new LookCommandHandler(
             gameLogicClient,

@@ -1215,6 +1215,88 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
+  void websocketFirstPartyStructuredWhoIncludesActivityState() throws Exception {
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Firemud-Connection-Mode", "first_party_web");
+    headers.add("X-Firemud-Transport-Session-Id", "1");
+    headers.add(
+        "X-Firemud-Connect-Context",
+        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
+            .generateToken(
+                "123",
+                java.util.Map.of(
+                    "tenantId", "22",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
+                    "gameInstanceId", "1",
+                    "connectScopeId", "scope-who-1",
+                    "connectTokenJti", "connect-jti-who-1",
+                    "connectRequestId", "connect-req-who-1",
+                    "gatewayRequestId", "gateway-req-who-1")));
+    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    CountDownLatch playAck = new CountDownLatch(1);
+    CountDownLatch latch = new CountDownLatch(4);
+    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
+
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                sessionRef.set(session);
+                session.sendMessage(new TextMessage("LOGIN"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message)
+                  throws IOException {
+                String payload = message.getPayload();
+                payloads.add(payload);
+                if (isStructuredCommand(payload, "LOGIN")) {
+                  session.sendMessage(new TextMessage("PLAY demo"));
+                } else if (isStructuredCommand(payload, "PLAY")) {
+                  playAck.countDown();
+                  session.sendMessage(new TextMessage("AFK"));
+                } else if (isStructuredCommand(payload, "AFK")) {
+                  session.sendMessage(new TextMessage("WHO"));
+                }
+                latch.countDown();
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(playAck.await(5, TimeUnit.SECONDS)).isTrue();
+    assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
+    sessionRef.get().close();
+
+    JsonNode whoResult =
+        payloads.stream()
+            .map(GameSessionWebSocketHandlerIntegrationTest::json)
+            .filter(
+                payload ->
+                    "command_result".equals(payload.path("eventType").asText())
+                        && "WHO".equals(payload.path("commandType").asText()))
+            .findFirst()
+            .orElseThrow();
+    assertThat(whoResult.path("accepted").asBoolean()).isTrue();
+    assertThat(whoResult.path("outputs").get(0).path("payloadType").asText()).isEqualTo("who_view");
+    assertThat(whoResult.path("outputs").get(0).path("payload").path("players")).hasSize(1);
+    assertThat(
+            whoResult
+                .path("outputs")
+                .get(0)
+                .path("payload")
+                .path("players")
+                .get(0)
+                .path("activityState")
+                .asText())
+        .isEqualTo("EXPLICIT_AFK");
+  }
+
+  @Test
   void websocketFirstPartyReconnectReplaysBufferedScreenAndFreshLookAfterPlay() throws Exception {
     when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
         .thenReturn(

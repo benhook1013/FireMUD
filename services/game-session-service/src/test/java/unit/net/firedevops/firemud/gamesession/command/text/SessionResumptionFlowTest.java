@@ -29,6 +29,7 @@ import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
+import net.firedevops.firemud.gamesession.config.PresenceProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -43,6 +44,7 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -224,7 +226,9 @@ class SessionResumptionFlowTest {
             moveHandler,
             afkHandler,
             helpHandler,
-            new WhoCommandHandler(gameplayPresenceService),
+            new WhoCommandHandler(
+                gameplayPresenceService,
+                new GameplayPresenceActivityResolver(new PresenceProperties())),
             new InventoryCommandHandler(entityManagementClient),
             new EquipmentCommandHandler(entityManagementClient),
             new ContainerCommandHandler(entityManagementClient),

@@ -1,6 +1,6 @@
 # `09` Multi-Tenancy, Realm Routing, and Runtime Boundaries
 
-Goal: translate FireMUD's multi-tenancy and realm-routing architecture into one explicit slice family so tenant identity, player-addressable realms, admission-pointer resolution, public-production access, and realm-scoped runtime-state policy do not keep leaking across login, reconnect, bootstrap, and activation work as implicit assumptions. Status: planned.
+Goal: translate FireMUD's multi-tenancy and realm-routing architecture into one explicit slice family so tenant identity, player-addressable realms, admission-pointer resolution, public-production access, and realm-scoped runtime-state policy do not keep leaking across login, reconnect, bootstrap, and activation work as implicit assumptions. Status: in progress.
 
 ## Implementation Notes
 
@@ -11,7 +11,15 @@ This domain is already materially designed:
 - the runtime contracts for `GetAdmissionPointer`, `EnsurePublicProductionPlayerMembership`, bootstrap discovery, and connect-token issuance are already described.
 - the distinction between tenant-scoped identity and realm- or instance-scoped playable state is already locked, including shared-state versus isolated-state realms.
 
-The remaining problem is slice shape. These rules currently live across Multi-Tenancy, Account runtime-data, admission UX, reconnect, and first-party bootstrap docs instead of one coherent family.
+The first implementation cut is now real:
+
+- account-to-tenant membership is now an explicit runtime substrate instead of piggybacking on `accounts.tenant_id`;
+- bootstrap discovery and in-band lobby discovery now share one canonical gameplay world/realm catalog model;
+- first-party connect-token issuance and text-client `PLAY` now resolve tenant authority from the selected realm rather than from the initial login tenant;
+- public-production first join now exists as a concrete `EnsurePublicProductionPlayerMembership(...)` boundary in `account-service`;
+- `CHARS` and related browse surfaces now expose realm state policy explicitly and fail closed for isolated-state realms until realm-local roster storage exists.
+
+The remaining work is to finish the deeper runtime/control-plane follow-through instead of leaving the new family as design-only.
 
 ## Why This Slice Exists
 

@@ -63,6 +63,9 @@ public class TextPlayerOutputRenderer {
         if (output.payload() instanceof CharacterBrowseViewOutput charactersView) {
           yield renderCharactersView(charactersView);
         }
+        if (output.payload() instanceof WhoViewOutput whoView) {
+          yield renderWhoView(whoView);
+        }
         throw new IllegalArgumentException(
             "Unsupported view payload: " + output.payload().getClass().getName());
       }
@@ -330,6 +333,29 @@ public class TextPlayerOutputRenderer {
         + output.stateScope().toLowerCase(java.util.Locale.ROOT)
         + ", creation: "
         + output.characterCreationPolicy().toLowerCase(java.util.Locale.ROOT);
+  }
+
+  private String renderWhoView(WhoViewOutput output) {
+    return "Gods ["
+        + output.gods().size()
+        + "]: "
+        + renderWhoEntries(output.gods())
+        + "\nPlayers ["
+        + output.players().size()
+        + "]: "
+        + renderWhoEntries(output.players());
+  }
+
+  private String renderWhoEntries(List<WhoViewOutput.Entry> entries) {
+    return entries.stream()
+        .map(
+            entry ->
+                switch (entry.activityState()) {
+                  case "AUTO_AFK" -> entry.characterName() + " (idle)";
+                  case "EXPLICIT_AFK" -> entry.characterName() + " (AFK)";
+                  default -> entry.characterName();
+                })
+        .collect(Collectors.joining(", "));
   }
 
   private String renderInventoryView(

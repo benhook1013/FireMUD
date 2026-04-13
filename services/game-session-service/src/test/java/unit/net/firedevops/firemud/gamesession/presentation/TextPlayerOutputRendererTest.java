@@ -724,6 +724,32 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void renderAllFormatsWhoViewWithActivityTags() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.WHO, List.of(), "WHO"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.view(
+                    new WhoViewOutput(
+                        List.of(new WhoViewOutput.Entry(1, "Aster", "ACTIVE")),
+                        List.of(
+                            new WhoViewOutput.Entry(1, "Ben", "AUTO_AFK"),
+                            new WhoViewOutput.Entry(2, "Cara", "EXPLICIT_AFK"))))));
+
+    assertThat(rendered)
+        .isEqualTo("OK WHO\nGods [1]: Aster\nPlayers [2]: Ben (idle), Cara (AFK)\n\n");
+  }
+
+  @Test
   void explicitEffectivePresentationCanOverrideBaseBriefPolicy() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(

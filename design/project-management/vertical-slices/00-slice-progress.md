@@ -49,7 +49,7 @@ These are already partly real in code and should continue after the immediate ru
 These are not broad audit topics anymore; they are real future slices with known direction.
 
 1. [09 Multi-Tenancy, Realm Routing, and Runtime Boundaries](./09-task-list-multi-tenancy-realm-routing-and-runtime-boundaries-vertical-slice.md)
-   Remaining: the tenant/realm/runtime-boundary domain now has a canonical family, but implementation has not started; `09.1` through `09.4` are the first bounded cuts and should guide future admission/bootstrap/runtime-boundary work.
+   Remaining: the family is now actively underway with shared routing/catalog substrate, public-production membership creation, and first explicit realm-state policy enforcement; the main follow-through is final admission-pointer authority plus realm-/instance-aware roster/state namespaces.
 2. [08 Game Design Publishing and Runtime Activation](./08-task-list-game-design-publishing-and-runtime-activation-vertical-slice.md)
    Remaining: the publish/version/asset/launch control-plane domain now has a canonical slice family, but implementation has not started; `08.1` through `08.4` are the first bounded cuts.
 3. [10 Scripting, Automation, and Runtime Orchestration](./10-task-list-scripting-automation-and-runtime-orchestration-vertical-slice.md)
@@ -122,7 +122,7 @@ If you want the clearest immediate path, do these next:
 If the goal is continued design-to-slice cleanup rather than code, do this next:
 
 1. `09` multi-tenancy / realm-routing family
-   Best next architecture-sensitive planning family because it affects admission, bootstrap, reconnect, and downstream runtime-state keying; start with `09.1`, then `09.2`, then `09.3`.
+   Implementation is now underway; the next honest follow-through is final admission-pointer authority plus realm-/instance-aware roster/state namespaces rather than more family creation.
 2. `08` game-design publish/version/activation family
    Best next control-plane planning family after `09`; start with `08.1`, then `08.2`, then `08.3`.
 3. `10` scripting/automation/runtime-orchestration family

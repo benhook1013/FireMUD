@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.presentation.PromptOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.TextMessageOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
+import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
@@ -101,6 +102,7 @@ public final class WebSocketOutputProjector {
       case WorldsViewOutput ignored -> "worlds_view";
       case RealmBrowseViewOutput ignored -> "realms_view";
       case CharacterBrowseViewOutput ignored -> "characters_view";
+      case WhoViewOutput ignored -> "who_view";
       default -> "unknown";
     };
   }
