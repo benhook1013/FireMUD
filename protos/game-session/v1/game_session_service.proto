@@ -124,6 +124,10 @@ message AccountPresenceEntry {
   AccountPresenceActivityState activity_state = 6;
   int64 last_seen_at_ms = 7;
   AccountPresenceVisibilityPolicy visibility_policy = 8;
+  string world_slug = 9;
+  string world_display_name = 10;
+  string realm_slug = 11;
+  string realm_display_name = 12;
 }
 
 message QueryAccountPresenceResponse {

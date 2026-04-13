@@ -81,6 +81,10 @@ message FriendPresenceEntry {
   string character_name = 5;
   FriendPresenceActivityState activity_state = 6;
   int64 last_seen_at_ms = 7;
+  string world_slug = 8;
+  string world_display_name = 9;
+  string realm_slug = 10;
+  string realm_display_name = 11;
 }
 
 message ListFriendPresenceResponse {

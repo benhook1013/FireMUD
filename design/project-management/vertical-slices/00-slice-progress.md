@@ -13,7 +13,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 1. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: build on the now-live activity, AFK, and disconnect/reconnect lifecycle substrate with recent-presence policy and later `WHO` presentation consumers.
 2. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
-   Remaining: extend the now-live account-scoped friend presence substrate with broader social consumers, later privacy refinement, and richer presentation beyond raw runtime identifiers.
+   Remaining: extend the now-live account-scoped friend presence substrate with broader social consumers and later privacy refinement; canonical world/realm presentation is now live.
 3. [02.1.2 Logout and Session Termination](./02.1.2-task-list-logout-and-session-termination-vertical-slice.md)
    Remaining: mostly closed; the remaining tail is broader reconnect/recent-presence lifecycle proof rather than more logout-path semantics.
 4. [02.13.8 Built-In Command Registry and Dispatch Rollout](./02.13.8-task-list-built-in-command-registry-and-dispatch-rollout-vertical-slice.md)
@@ -32,7 +32,7 @@ These are already partly real in code and should continue after the immediate ru
 4. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: grow from the current bounded `WHO` plus explicit/auto-AFK substrate into the fuller activity model when that work becomes active.
 5. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
-   Remaining: grow the first account-scoped friend presence seam into later social consumers and richer presentation without reopening `WHO`.
+   Remaining: grow the first account-scoped friend presence seam into later social consumers and later privacy refinement without reopening `WHO`.
 6. [06 Task List Inventory, Containers, Equipment](./06-task-list-inventory-containers-equipment-vertical-slice.md)
    Remaining: complete the remaining `06.3` follow-through and later authored stackability.
 7. [06.3.1 Stable Item Instance Visible Ref Allocation](./06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
@@ -49,7 +49,7 @@ These are already partly real in code and should continue after the immediate ru
 These are not broad audit topics anymore; they are real future slices with known direction.
 
 1. [09 Multi-Tenancy, Realm Routing, and Runtime Boundaries](./09-task-list-multi-tenancy-realm-routing-and-runtime-boundaries-vertical-slice.md)
-   Remaining: the family is now actively underway with shared routing/catalog substrate, public-production membership creation, and the first real realm-aware roster substrate; the main follow-through is final admission-pointer authority plus the remaining downstream state namespaces beyond the scoped character/roster seam.
+   Remaining: the family is now actively underway with shared routing/catalog substrate, public-production membership creation, and the first real realm-aware roster substrate; inventory/equipment now follow that scoped character namespace, and the main follow-through is final admission-pointer authority plus progression/resources/loadout namespaces beyond it.
 2. [08 Game Design Publishing and Runtime Activation](./08-task-list-game-design-publishing-and-runtime-activation-vertical-slice.md)
    Remaining: the publish/version/asset/launch control-plane domain now has a canonical slice family, but implementation has not started; `08.1` through `08.4` are the first bounded cuts.
 3. [10 Scripting, Automation, and Runtime Orchestration](./10-task-list-scripting-automation-and-runtime-orchestration-vertical-slice.md)
@@ -111,7 +111,7 @@ If you want the clearest immediate path, do these next:
 1. `02.1.3` presence/WHO follow-through
    Best next gameplay-runtime batch because the activity and AFK substrate is now live and the remaining work is lifecycle proof, recent-presence policy, and later `WHO` presentation rather than vague design.
 2. `02.1.4` cross-game social presence follow-through
-   Best next social batch because the first account-scoped friend presence seam, honest `lastSeenAt`, and account-owned visibility-policy seam are now live, leaving broader consumers and richer presentation rather than substrate work.
+   Best next social batch because the first account-scoped friend presence seam, honest `lastSeenAt`, account-owned visibility-policy seam, and canonical world/realm labels are now live, leaving broader consumers and later privacy refinement rather than substrate work.
 3. `02.13.9` authored action definition and execution model
    Best next platform-shape batch because the provider-backed registry and alias seam are now live and the next honest step is the first typed authored-action model rather than more built-in-only growth.
 4. `02.1.2` logout and deliberate session termination

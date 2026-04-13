@@ -121,6 +121,10 @@ class GameSessionGrpcServiceTest {
                     7L,
                     true,
                     9L,
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
                     99L,
                     "Ben",
                     net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState
@@ -164,6 +168,10 @@ class GameSessionGrpcServiceTest {
     assertEquals(1, ref.get().getPresencesCount());
     assertEquals("7", ref.get().getPresences(0).getAccountId());
     assertEquals(true, ref.get().getPresences(0).getOnline());
+    assertEquals("demo", ref.get().getPresences(0).getWorldSlug());
+    assertEquals("Demo World", ref.get().getPresences(0).getWorldDisplayName());
+    assertEquals("production", ref.get().getPresences(0).getRealmSlug());
+    assertEquals("Live Realm", ref.get().getPresences(0).getRealmDisplayName());
     assertEquals("Ben", ref.get().getPresences(0).getCharacterName());
     assertEquals(
         Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),

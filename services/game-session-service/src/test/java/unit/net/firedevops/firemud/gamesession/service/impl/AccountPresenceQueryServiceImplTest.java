@@ -6,6 +6,8 @@ import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.util.List;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.config.PresenceProperties;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -29,11 +31,18 @@ class AccountPresenceQueryServiceImplTest {
         Mockito.mock(AccountRecentPresenceService.class);
     AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
         Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
+    GameplayCatalogProperties catalogProperties = new GameplayCatalogProperties();
+    GameplayWorldCatalog gameplayWorldCatalog = new GameplayWorldCatalog(catalogProperties);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
         new AccountPresenceQueryServiceImpl(
-            repository, presenceService, resolver, recentPresenceService, visibilityPolicyResolver);
+            repository,
+            presenceService,
+            resolver,
+            recentPresenceService,
+            visibilityPolicyResolver,
+            gameplayWorldCatalog);
 
     GameInstance running = new GameInstance();
     running.setId(11L);
@@ -62,7 +71,7 @@ class AccountPresenceQueryServiceImplTest {
                 new GameplayPresence(
                     11L,
                     1L,
-                    9L,
+                    2L,
                     3L,
                     99L,
                     "Ben",
@@ -79,7 +88,11 @@ class AccountPresenceQueryServiceImplTest {
     assertEquals(2, result.size());
     assertEquals(3L, result.get(0).accountId());
     assertEquals(true, result.get(0).online());
-    assertEquals(9L, result.get(0).gameInstanceId());
+    assertEquals(2L, result.get(0).gameInstanceId());
+    assertEquals("sandbox", result.get(0).worldSlug());
+    assertEquals("Builder Sandbox", result.get(0).worldDisplayName());
+    assertEquals("production", result.get(0).realmSlug());
+    assertEquals("Live Realm", result.get(0).realmDisplayName());
     assertEquals("Ben", result.get(0).characterName());
     assertEquals(
         net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState.EXPLICIT_AFK,

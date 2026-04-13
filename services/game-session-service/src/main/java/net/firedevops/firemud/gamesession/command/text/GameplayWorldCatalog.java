@@ -89,6 +89,23 @@ public final class GameplayWorldCatalog {
         .findFirst();
   }
 
+  public Optional<RuntimeRealmTarget> resolveRuntimeTarget(long tenantId, long gameInstanceId) {
+    return visibleWorlds().stream()
+        .flatMap(
+            world ->
+                visibleRealms(world).stream()
+                    .filter(realm -> realm.getTenantId() == tenantId)
+                    .filter(realm -> realm.getGameInstanceId() == gameInstanceId)
+                    .map(
+                        realm ->
+                            new RuntimeRealmTarget(
+                                world.getSlug(),
+                                world.getDisplayName(),
+                                realm.getSlug(),
+                                realm.getDisplayName())))
+        .findFirst();
+  }
+
   private List<GameplayCatalogProperties.Realm> visibleRealms(
       GameplayCatalogProperties.World world) {
     if (world == null || world.getRealms() == null) {
@@ -158,4 +175,7 @@ public final class GameplayWorldCatalog {
         .filter(world -> world.getSlug() != null && !world.getSlug().isBlank())
         .toList();
   }
+
+  public record RuntimeRealmTarget(
+      String worldSlug, String worldDisplayName, String realmSlug, String realmDisplayName) {}
 }

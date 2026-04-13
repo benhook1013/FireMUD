@@ -7,6 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
@@ -27,18 +28,21 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
   private final GameplayPresenceActivityResolver gameplayPresenceActivityResolver;
   private final AccountRecentPresenceService accountRecentPresenceService;
   private final AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver;
+  private final GameplayWorldCatalog gameplayWorldCatalog;
 
   public AccountPresenceQueryServiceImpl(
       GameInstanceRepository gameInstanceRepository,
       GameplayPresenceService gameplayPresenceService,
       GameplayPresenceActivityResolver gameplayPresenceActivityResolver,
       AccountRecentPresenceService accountRecentPresenceService,
-      AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver) {
+      AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver,
+      GameplayWorldCatalog gameplayWorldCatalog) {
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayPresenceService = gameplayPresenceService;
     this.gameplayPresenceActivityResolver = gameplayPresenceActivityResolver;
     this.accountRecentPresenceService = accountRecentPresenceService;
     this.visibilityPolicyResolver = visibilityPolicyResolver;
+    this.gameplayWorldCatalog = gameplayWorldCatalog;
   }
 
   @Override
@@ -73,12 +77,20 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       }
       GameplayPresenceActivityState activityState =
           gameplayPresenceActivityResolver.resolve(presence);
+      GameplayWorldCatalog.RuntimeRealmTarget runtimeTarget =
+          gameplayWorldCatalog
+              .resolveRuntimeTarget(tenantId, presence.gameInstanceId())
+              .orElse(null);
       results.put(
           instance.getOwnerAccountId(),
           new AccountPresenceSnapshot(
               instance.getOwnerAccountId(),
               true,
               presence.gameInstanceId(),
+              runtimeTarget == null ? null : runtimeTarget.worldSlug(),
+              runtimeTarget == null ? null : runtimeTarget.worldDisplayName(),
+              runtimeTarget == null ? null : runtimeTarget.realmSlug(),
+              runtimeTarget == null ? null : runtimeTarget.realmDisplayName(),
               presence.characterId(),
               presence.characterName(),
               activityState,
@@ -99,6 +111,10 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     return new AccountPresenceSnapshot(
         accountId,
         false,
+        null,
+        null,
+        null,
+        null,
         null,
         null,
         null,

@@ -430,6 +430,18 @@ public final class GameSessionGrpcService
         if (snapshot.gameInstanceId() != null) {
           entry.setGameInstanceId(Long.toString(snapshot.gameInstanceId()));
         }
+        if (snapshot.worldSlug() != null && !snapshot.worldSlug().isBlank()) {
+          entry.setWorldSlug(snapshot.worldSlug());
+        }
+        if (snapshot.worldDisplayName() != null && !snapshot.worldDisplayName().isBlank()) {
+          entry.setWorldDisplayName(snapshot.worldDisplayName());
+        }
+        if (snapshot.realmSlug() != null && !snapshot.realmSlug().isBlank()) {
+          entry.setRealmSlug(snapshot.realmSlug());
+        }
+        if (snapshot.realmDisplayName() != null && !snapshot.realmDisplayName().isBlank()) {
+          entry.setRealmDisplayName(snapshot.realmDisplayName());
+        }
         if (snapshot.characterId() != null) {
           entry.setCharacterId(Long.toString(snapshot.characterId()));
         }

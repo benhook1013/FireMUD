@@ -93,6 +93,10 @@ class FriendServiceImplTest {
                         .setAccountId("3")
                         .setOnline(true)
                         .setGameInstanceId("9")
+                        .setWorldSlug("demo")
+                        .setWorldDisplayName("Demo World")
+                        .setRealmSlug("production")
+                        .setRealmDisplayName("Live Realm")
                         .setCharacterId("99")
                         .setCharacterName("Ben")
                         .setLastSeenAtMs(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
@@ -109,6 +113,10 @@ class FriendServiceImplTest {
     assertEquals(1, result.size());
     assertEquals(3L, result.get(0).friendAccountId());
     assertEquals(true, result.get(0).online());
+    assertEquals("demo", result.get(0).worldSlug());
+    assertEquals("Demo World", result.get(0).worldDisplayName());
+    assertEquals("production", result.get(0).realmSlug());
+    assertEquals("Live Realm", result.get(0).realmDisplayName());
     assertEquals(FriendPresenceActivityState.AUTO_AFK, result.get(0).activityState());
     assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.get(0).lastSeenAt());
   }
@@ -135,6 +143,10 @@ class FriendServiceImplTest {
                         .setAccountId("3")
                         .setOnline(true)
                         .setGameInstanceId("9")
+                        .setWorldSlug("demo")
+                        .setWorldDisplayName("Demo World")
+                        .setRealmSlug("production")
+                        .setRealmDisplayName("Live Realm")
                         .setCharacterId("99")
                         .setCharacterName("Ben")
                         .setVisibilityPolicy(
@@ -160,6 +172,10 @@ class FriendServiceImplTest {
     assertEquals(true, result.get(0).online());
     assertEquals(null, result.get(0).characterName());
     assertEquals(null, result.get(0).gameInstanceId());
+    assertEquals(null, result.get(0).worldSlug());
+    assertEquals(null, result.get(0).worldDisplayName());
+    assertEquals(null, result.get(0).realmSlug());
+    assertEquals(null, result.get(0).realmDisplayName());
     assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.get(0).lastSeenAt());
     assertEquals(false, result.get(1).online());
     assertEquals(null, result.get(1).characterName());

@@ -181,6 +181,7 @@ class TextCommandInterpreterTest {
             Mockito.anyString(),
             Mockito.nullable(String.class),
             Mockito.nullable(String.class),
+            Mockito.nullable(String.class),
             Mockito.eq(1)))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
@@ -198,6 +199,7 @@ class TextCommandInterpreterTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),
+            Mockito.nullable(String.class),
             Mockito.nullable(String.class),
             Mockito.nullable(String.class),
             Mockito.eq(1)))

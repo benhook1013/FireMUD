@@ -207,6 +207,18 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
         if (presence.gameInstanceId() != null) {
           entry.setGameInstanceId(Long.toString(presence.gameInstanceId()));
         }
+        if (presence.worldSlug() != null && !presence.worldSlug().isBlank()) {
+          entry.setWorldSlug(presence.worldSlug());
+        }
+        if (presence.worldDisplayName() != null && !presence.worldDisplayName().isBlank()) {
+          entry.setWorldDisplayName(presence.worldDisplayName());
+        }
+        if (presence.realmSlug() != null && !presence.realmSlug().isBlank()) {
+          entry.setRealmSlug(presence.realmSlug());
+        }
+        if (presence.realmDisplayName() != null && !presence.realmDisplayName().isBlank()) {
+          entry.setRealmDisplayName(presence.realmDisplayName());
+        }
         if (presence.characterId() != null) {
           entry.setCharacterId(Long.toString(presence.characterId()));
         }

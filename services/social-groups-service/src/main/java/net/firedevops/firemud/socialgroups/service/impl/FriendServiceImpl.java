@@ -98,6 +98,10 @@ public class FriendServiceImpl implements FriendService {
               friendAccountId,
               visibleOnline(entry),
               visibleGameInstanceId(entry),
+              visibleWorldSlug(entry),
+              visibleWorldDisplayName(entry),
+              visibleRealmSlug(entry),
+              visibleRealmDisplayName(entry),
               visibleCharacterId(entry),
               visibleCharacterName(entry),
               visibleActivityState(entry),
@@ -109,7 +113,18 @@ public class FriendServiceImpl implements FriendService {
             friendAccountId ->
                 byAccountId.getOrDefault(
                     friendAccountId,
-                    new FriendPresenceDto(friendAccountId, false, null, null, null, null, null)))
+                    new FriendPresenceDto(
+                        friendAccountId,
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null)))
         .toList();
   }
 
@@ -145,6 +160,42 @@ public class FriendServiceImpl implements FriendService {
           ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
           null;
       default -> entry.getCharacterId().isBlank() ? null : Long.valueOf(entry.getCharacterId());
+    };
+  }
+
+  private String visibleWorldSlug(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getWorldSlug().isBlank() ? null : entry.getWorldSlug();
+    };
+  }
+
+  private String visibleWorldDisplayName(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getWorldDisplayName().isBlank() ? null : entry.getWorldDisplayName();
+    };
+  }
+
+  private String visibleRealmSlug(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getRealmSlug().isBlank() ? null : entry.getRealmSlug();
+    };
+  }
+
+  private String visibleRealmDisplayName(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getRealmDisplayName().isBlank() ? null : entry.getRealmDisplayName();
     };
   }
 
