@@ -123,6 +123,8 @@ class AuthControllerTest {
                     42L,
                     17L,
                     false,
+                    "SHARED",
+                    "ALLOW_NEW",
                     "2026-03-30T00:00:00Z",
                     "2026-03-30T00:02:00Z",
                     "scope-1")));
@@ -140,7 +142,8 @@ class AuthControllerTest {
   @Test
   void listBootstrapCharactersReturnsCharacters() throws Exception {
     when(accountService.listBootstrapCharacters("boot123", "demo", "production"))
-        .thenReturn(List.of(new BootstrapCharacterDto("char-1", "Mara", 12)));
+        .thenReturn(
+            List.of(new BootstrapCharacterDto("char-1", "Mara", 12, "SHARED", "ALLOW_NEW")));
 
     mockMvc
         .perform(

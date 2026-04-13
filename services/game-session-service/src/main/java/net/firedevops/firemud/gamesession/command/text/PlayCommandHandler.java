@@ -179,6 +179,11 @@ public class PlayCommandHandler {
       try (GameplayLoggingContext worldContext =
           GameplayLoggingContext.open(
               selectedTenantTag, Long.toString(selectedRealm.getGameInstanceId()), null, null)) {
+        Optional<PlayCommandHandlingResult> realmStateFailure =
+            validateRealmStatePolicy(selectedWorld, selectedRealm, selectedTenantTag);
+        if (realmStateFailure.isPresent()) {
+          return realmStateFailure.get();
+        }
         Optional<PlayCommandHandlingResult> connectScopeFailure =
             validateFirstPartyConnectScope(
                 context, selectedWorld, selectedRealm, selectedTenantTag);
@@ -311,6 +316,25 @@ public class PlayCommandHandler {
                     Long.toString(selectedRealm.getGameInstanceId()),
                     null,
                     null));
+  }
+
+  private Optional<PlayCommandHandlingResult> validateRealmStatePolicy(
+      GameplayCatalogProperties.World selectedWorld,
+      GameplayCatalogProperties.Realm selectedRealm,
+      String tenantTag) {
+    if (selectedRealm.getStateScope() != GameplayCatalogProperties.RealmStateScope.ISOLATED) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        failure(
+            "REALM_STATE_POLICY_UNSUPPORTED",
+            "The selected realm uses isolated gameplay state that is not yet supported by PLAY.",
+            "error.play.realm-state-unsupported",
+            Map.of("worldSlug", selectedWorld.getSlug(), "realmSlug", selectedRealm.getSlug()),
+            tenantTag,
+            Long.toString(selectedRealm.getGameInstanceId()),
+            null,
+            null));
   }
 
   private PlayCommandHandlingResult failure(

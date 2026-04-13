@@ -289,6 +289,8 @@ public class AccountServiceImpl implements AccountService {
                     realm.getGameInstanceId(),
                     realm.getPointerVersion(),
                     realm.isRequiresCharacterSelection(),
+                    realm.getStateScope().name(),
+                    realm.getCharacterCreationPolicy().name(),
                     evaluatedAt.toString(),
                     expiresAt.toString(),
                     mintConnectScopeId(
@@ -304,6 +306,7 @@ public class AccountServiceImpl implements AccountService {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
     GameplayCatalogProperties.Realm realm =
         requireAdmissibleRealm(bootstrapContext, worldSlug, realmSlug);
+    requireSupportedCharacterRoster(realm);
     return entityManagementClient
         .listCharactersByAccount(realm.getTenantId(), bootstrapContext.accountId())
         .stream()
@@ -311,7 +314,11 @@ public class AccountServiceImpl implements AccountService {
         .map(
             character ->
                 new BootstrapCharacterDto(
-                    character.getId(), character.getName(), character.getLevel()))
+                    character.getId(),
+                    character.getName(),
+                    character.getLevel(),
+                    realm.getStateScope().name(),
+                    realm.getCharacterCreationPolicy().name()))
         .toList();
   }
 
@@ -325,6 +332,7 @@ public class AccountServiceImpl implements AccountService {
     GameplayCatalogProperties.Realm currentRealm =
         requireAdmissibleRealm(
             bootstrapContext, scopeContext.worldSlug(), scopeContext.realmSlug());
+    requireSupportedCharacterRoster(currentRealm);
     if (currentRealm.getTenantId() != scopeContext.tenantId()
         || currentRealm.getGameInstanceId() != scopeContext.gameInstanceId()
         || currentRealm.getPointerVersion() != scopeContext.pointerVersion()) {
@@ -593,6 +601,14 @@ public class AccountServiceImpl implements AccountService {
     RuntimeEntitlementsDto entitlements =
         getTenantEntitlementsForRuntime(realm.getTenantId(), "bootstrap-discovery");
     return entitlements.gameplayAvailable();
+  }
+
+  private void requireSupportedCharacterRoster(GameplayCatalogProperties.Realm realm) {
+    if (realm.getStateScope() == GameplayCatalogProperties.RealmStateScope.ISOLATED) {
+      throw new AuthenticationException(
+          "REALM_STATE_POLICY_UNSUPPORTED",
+          "The selected realm uses isolated gameplay state that is not yet supported by bootstrap character discovery.");
+    }
   }
 
   private String mintConnectScopeId(

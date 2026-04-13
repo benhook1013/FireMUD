@@ -39,6 +39,8 @@ class WorldsCommandHandlerTest {
     assertThat(response.worldSlug()).isEqualTo("sandbox");
     assertThat(response.realms()).hasSize(1);
     assertThat(response.realms().get(0).realmSlug()).isEqualTo("production");
+    assertThat(response.realms().get(0).stateScope()).isEqualTo("SHARED");
+    assertThat(response.realms().get(0).characterCreationPolicy()).isEqualTo("ALLOW_NEW");
   }
 
   @Test
@@ -67,8 +69,38 @@ class WorldsCommandHandlerTest {
         ((WorldsCommandHandler.CharacterBrowseResult.Success) result).output();
     assertThat(output.worldSlug()).isEqualTo("demo");
     assertThat(output.realmSlug()).isEqualTo("production");
+    assertThat(output.stateScope()).isEqualTo("SHARED");
+    assertThat(output.characterCreationPolicy()).isEqualTo("ALLOW_NEW");
     assertThat(output.characters()).hasSize(1);
     assertThat(output.characters().get(0).characterName()).isEqualTo("Emberline");
+  }
+
+  @Test
+  void browseCharactersRejectsIsolatedStateRealm() {
+    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
+        .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
+        .setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.COPIED_ONLY);
+
+    WorldsCommandHandler.CharacterBrowseResult result =
+        handler.browseCharacters(
+            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
+            "demo",
+            null);
+
+    assertThat(result)
+        .isEqualTo(
+            new WorldsCommandHandler.CharacterBrowseResult.RealmStateUnsupported(
+                "demo", "production"));
   }
 
   private static GameplayCatalogProperties.World world(
@@ -83,6 +115,8 @@ class WorldsCommandHandlerTest {
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
+    realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
+    realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
     world.setRealms(List.of(realm));
     return world;
   }

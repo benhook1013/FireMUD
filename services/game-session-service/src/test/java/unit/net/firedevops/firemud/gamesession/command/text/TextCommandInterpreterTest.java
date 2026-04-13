@@ -460,6 +460,7 @@ class TextCommandInterpreterTest {
 
     assertTrue(interpretation.commandResult().accepted());
     assertTrue(renderedResponse("REALMS demo", interpretation).contains("Live Realm"));
+    assertTrue(renderedResponse("REALMS demo", interpretation).contains("[shared, allow_new]"));
   }
 
   @Test
@@ -471,6 +472,9 @@ class TextCommandInterpreterTest {
 
     assertTrue(interpretation.commandResult().accepted());
     assertTrue(renderedResponse("CHARS demo", interpretation).contains("Emberline"));
+    assertTrue(
+        renderedResponse("CHARS demo", interpretation)
+            .contains("Realm state: shared, creation: allow_new"));
   }
 
   @Test

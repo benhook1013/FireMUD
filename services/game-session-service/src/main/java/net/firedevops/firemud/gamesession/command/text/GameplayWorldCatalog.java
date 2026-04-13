@@ -122,7 +122,9 @@ public final class GameplayWorldCatalog {
               realm.getSlug(),
               realm.getDisplayName(),
               realm.getGameInstanceId(),
-              realm.isRequiresCharacterSelection()));
+              realm.isRequiresCharacterSelection(),
+              realm.getStateScope().name(),
+              realm.getCharacterCreationPolicy().name()));
     }
     return List.copyOf(entries);
   }

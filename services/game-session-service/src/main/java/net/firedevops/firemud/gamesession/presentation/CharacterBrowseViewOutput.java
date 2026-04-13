@@ -5,11 +5,17 @@ import java.util.Objects;
 
 /** Structured CHARS browse payload for late rendering. */
 public record CharacterBrowseViewOutput(
-    String worldSlug, String realmSlug, List<CharacterEntry> characters)
+    String worldSlug,
+    String realmSlug,
+    String stateScope,
+    String characterCreationPolicy,
+    List<CharacterEntry> characters)
     implements PlayerOutputPayload {
   public CharacterBrowseViewOutput {
     Objects.requireNonNull(worldSlug, "worldSlug must not be null");
     Objects.requireNonNull(realmSlug, "realmSlug must not be null");
+    Objects.requireNonNull(stateScope, "stateScope must not be null");
+    Objects.requireNonNull(characterCreationPolicy, "characterCreationPolicy must not be null");
     characters = List.copyOf(Objects.requireNonNull(characters, "characters must not be null"));
   }
 

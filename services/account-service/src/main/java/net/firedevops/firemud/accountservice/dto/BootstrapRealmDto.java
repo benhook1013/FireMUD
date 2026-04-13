@@ -9,6 +9,8 @@ public record BootstrapRealmDto(
     long gameInstanceId,
     long pointerVersion,
     boolean requiresCharacterSelection,
+    String stateScope,
+    String characterCreationPolicy,
     String evaluatedAt,
     String connectScopeExpiresAt,
     String connectScopeId) {}

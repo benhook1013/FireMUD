@@ -286,24 +286,50 @@ public class TextPlayerOutputRenderer {
 
   private String renderRealmsView(RealmBrowseViewOutput output) {
     return output.realms().stream()
-        .map(realm -> realm.ordinal() + ") " + realm.displayName() + " (" + realm.realmSlug() + ")")
+        .map(
+            realm ->
+                realm.ordinal()
+                    + ") "
+                    + realm.displayName()
+                    + " ("
+                    + realm.realmSlug()
+                    + ") ["
+                    + realm.stateScope().toLowerCase(java.util.Locale.ROOT)
+                    + ", "
+                    + realm.characterCreationPolicy().toLowerCase(java.util.Locale.ROOT)
+                    + "]")
         .collect(Collectors.joining("\n"));
   }
 
   private String renderCharactersView(CharacterBrowseViewOutput output) {
     if (output.characters().isEmpty()) {
-      return "No characters available for " + output.worldSlug() + " (" + output.realmSlug() + ").";
+      return "No characters available for "
+          + output.worldSlug()
+          + " ("
+          + output.realmSlug()
+          + "). ["
+          + output.stateScope().toLowerCase(java.util.Locale.ROOT)
+          + ", "
+          + output.characterCreationPolicy().toLowerCase(java.util.Locale.ROOT)
+          + "]";
     }
-    return output.characters().stream()
-        .map(
-            character ->
-                character.ordinal()
-                    + ") "
-                    + character.characterName()
-                    + " [lvl "
-                    + character.level()
-                    + "]")
-        .collect(Collectors.joining("\n"));
+    String roster =
+        output.characters().stream()
+            .map(
+                character ->
+                    character.ordinal()
+                        + ") "
+                        + character.characterName()
+                        + " [lvl "
+                        + character.level()
+                        + "]")
+            .collect(Collectors.joining("\n"));
+    return roster
+        + "\n\n"
+        + "Realm state: "
+        + output.stateScope().toLowerCase(java.util.Locale.ROOT)
+        + ", creation: "
+        + output.characterCreationPolicy().toLowerCase(java.util.Locale.ROOT);
   }
 
   private String renderInventoryView(

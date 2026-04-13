@@ -311,6 +311,35 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playRejectsIsolatedStateRealm() {
+    gameplayCatalogProperties
+        .getWorlds()
+        .get(1)
+        .getRealms()
+        .get(1)
+        .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
+    gameplayCatalogProperties
+        .getWorlds()
+        .get(1)
+        .getRealms()
+        .get(1)
+        .setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.COPIED_ONLY);
+    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("sandbox", "preview", "Emberline"),
+                "PLAY sandbox preview Emberline"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("REALM_STATE_POLICY_UNSUPPORTED");
+  }
+
+  @Test
   void firstPartyPlayAcceptsNonProductionRealmWhenScopeMatches() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 41L);
@@ -518,6 +547,8 @@ class PlayCommandHandlerTest {
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(visible);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
+    realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
+    realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
     return realm;
   }
 }

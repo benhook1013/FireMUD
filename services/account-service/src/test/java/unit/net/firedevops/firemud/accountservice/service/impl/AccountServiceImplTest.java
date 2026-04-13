@@ -43,6 +43,8 @@ import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.session.SessionService;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties.CharacterCreationPolicy;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties.RealmStateScope;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
@@ -489,6 +491,57 @@ class AccountServiceImplTest {
     assertEquals(1, characters.size());
     assertEquals("char-1", characters.getFirst().characterId());
     assertEquals("Mara", characters.getFirst().characterName());
+    assertEquals("SHARED", characters.getFirst().stateScope());
+    assertEquals("ALLOW_NEW", characters.getFirst().characterCreationPolicy());
+  }
+
+  @Test
+  void listBootstrapRealmsIncludesRealmStatePolicy() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+
+    var realms = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
+
+    assertEquals(1, realms.size());
+    assertEquals("SHARED", realms.getFirst().stateScope());
+    assertEquals("ALLOW_NEW", realms.getFirst().characterCreationPolicy());
+  }
+
+  @Test
+  void listBootstrapCharactersRejectsIsolatedStateRealm() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+
+    GameplayCatalogProperties.Realm isolatedRealm =
+        gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst();
+    isolatedRealm.setStateScope(RealmStateScope.ISOLATED);
+    isolatedRealm.setCharacterCreationPolicy(CharacterCreationPolicy.COPIED_ONLY);
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(bootstrap.bootstrapToken(), "demo", "production"));
+
+    assertEquals("REALM_STATE_POLICY_UNSUPPORTED", exception.getCode());
   }
 
   @Test

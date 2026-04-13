@@ -55,6 +55,9 @@ public class WorldsCommandHandler {
     }
 
     GameplayCatalogProperties.Realm realm = maybeRealm.orElseThrow();
+    if (realm.getStateScope() == GameplayCatalogProperties.RealmStateScope.ISOLATED) {
+      return CharacterBrowseResult.realmStateUnsupported(world.getSlug(), realm.getSlug());
+    }
     ListCharactersByAccountResponse response =
         entityManagementClient.listCharactersByAccount(
             Long.toString(realm.getTenantId()), Long.toString(sessionContext.accountId()));
@@ -70,7 +73,12 @@ public class WorldsCommandHandler {
               i + 1, character.getId(), character.getName(), character.getLevel()));
     }
     return CharacterBrowseResult.success(
-        new CharacterBrowseViewOutput(world.getSlug(), realm.getSlug(), entries));
+        new CharacterBrowseViewOutput(
+            world.getSlug(),
+            realm.getSlug(),
+            realm.getStateScope().name(),
+            realm.getCharacterCreationPolicy().name(),
+            entries));
   }
 
   public sealed interface CharacterBrowseResult
@@ -78,6 +86,7 @@ public class WorldsCommandHandler {
           CharacterBrowseResult.InvalidWorld,
           CharacterBrowseResult.InvalidRealm,
           CharacterBrowseResult.RealmSelectionRequired,
+          CharacterBrowseResult.RealmStateUnsupported,
           CharacterBrowseResult.Unavailable {
     static CharacterBrowseResult success(CharacterBrowseViewOutput output) {
       return new Success(output);
@@ -95,6 +104,10 @@ public class WorldsCommandHandler {
       return new RealmSelectionRequired(worldSlug);
     }
 
+    static CharacterBrowseResult realmStateUnsupported(String worldSlug, String realmSlug) {
+      return new RealmStateUnsupported(worldSlug, realmSlug);
+    }
+
     static CharacterBrowseResult unavailable() {
       return new Unavailable();
     }
@@ -106,6 +119,9 @@ public class WorldsCommandHandler {
     record InvalidRealm(String worldSlug) implements CharacterBrowseResult {}
 
     record RealmSelectionRequired(String worldSlug) implements CharacterBrowseResult {}
+
+    record RealmStateUnsupported(String worldSlug, String realmSlug)
+        implements CharacterBrowseResult {}
 
     record Unavailable() implements CharacterBrowseResult {}
   }

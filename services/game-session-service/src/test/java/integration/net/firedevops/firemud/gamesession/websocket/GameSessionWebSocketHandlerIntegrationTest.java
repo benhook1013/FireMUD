@@ -1079,13 +1079,15 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads)
         .anyMatch(
             payload ->
-                payload.startsWith("OK REALMS") && payload.contains("Live Realm (production)"));
+                payload.startsWith("OK REALMS")
+                    && payload.contains("Live Realm (production) [shared, allow_new]"));
     assertThat(payloads)
         .anyMatch(
             payload ->
                 payload.startsWith("OK CHARS")
                     && payload.contains("Emberline [lvl 12]")
-                    && payload.contains("Sora [lvl 7]"));
+                    && payload.contains("Sora [lvl 7]")
+                    && payload.contains("Realm state: shared, creation: allow_new"));
     verify(commandService).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService, never()).enqueue("41", "REALMS demo", false);
     verify(commandService, never()).enqueue("41", "CHARS demo", false);
@@ -1163,6 +1165,26 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(realmsResult.path("outputs").get(0).path("payload").path("worldSlug").asText())
         .isEqualTo("demo");
     assertThat(realmsResult.path("outputs").get(0).path("payload").path("realms")).hasSize(1);
+    assertThat(
+            realmsResult
+                .path("outputs")
+                .get(0)
+                .path("payload")
+                .path("realms")
+                .get(0)
+                .path("stateScope")
+                .asText())
+        .isEqualTo("SHARED");
+    assertThat(
+            realmsResult
+                .path("outputs")
+                .get(0)
+                .path("payload")
+                .path("realms")
+                .get(0)
+                .path("characterCreationPolicy")
+                .asText())
+        .isEqualTo("ALLOW_NEW");
 
     JsonNode charsResult =
         payloads.stream()
@@ -1178,6 +1200,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .isEqualTo("characters_view");
     assertThat(charsResult.path("outputs").get(0).path("payload").path("realmSlug").asText())
         .isEqualTo("production");
+    assertThat(charsResult.path("outputs").get(0).path("payload").path("stateScope").asText())
+        .isEqualTo("SHARED");
+    assertThat(
+            charsResult
+                .path("outputs")
+                .get(0)
+                .path("payload")
+                .path("characterCreationPolicy")
+                .asText())
+        .isEqualTo("ALLOW_NEW");
     assertThat(charsResult.path("outputs").get(0).path("payload").path("characters")).hasSize(2);
     verify(entityManagementClient).listCharactersByAccount("22", "123");
   }

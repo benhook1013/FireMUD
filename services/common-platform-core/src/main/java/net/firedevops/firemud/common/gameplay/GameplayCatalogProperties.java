@@ -49,7 +49,20 @@ public class GameplayCatalogProperties {
     realm.setPointerVersion(1L);
     realm.setVisible(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
+    realm.setStateScope(RealmStateScope.SHARED);
+    realm.setCharacterCreationPolicy(CharacterCreationPolicy.ALLOW_NEW);
     return realm;
+  }
+
+  public enum RealmStateScope {
+    SHARED,
+    ISOLATED
+  }
+
+  public enum CharacterCreationPolicy {
+    ALLOW_NEW,
+    COPIED_ONLY,
+    DISALLOWED
   }
 
   @Data
@@ -68,5 +81,7 @@ public class GameplayCatalogProperties {
     private long pointerVersion = 1L;
     private boolean visible = true;
     private boolean requiresCharacterSelection;
+    private RealmStateScope stateScope = RealmStateScope.SHARED;
+    private CharacterCreationPolicy characterCreationPolicy = CharacterCreationPolicy.ALLOW_NEW;
   }
 }
