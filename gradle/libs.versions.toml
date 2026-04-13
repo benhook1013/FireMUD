@@ -73,7 +73,7 @@ postgresql = { module = "org.postgresql:postgresql", version = "42.7.10" }
 aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.33" }
 h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
-springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "3.0.2" }
+springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "3.0.3" }
 stripe-java = { module = "com.stripe:stripe-java", version = "32.0.0" }
 otp-java = { module = "com.github.bastiaanjansen:otp-java", version = "2.1.0" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version = "2.0.17" }
