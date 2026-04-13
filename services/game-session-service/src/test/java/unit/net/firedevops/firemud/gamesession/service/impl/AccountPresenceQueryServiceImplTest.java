@@ -27,15 +27,13 @@ class AccountPresenceQueryServiceImplTest {
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
     AccountRecentPresenceService recentPresenceService =
         Mockito.mock(AccountRecentPresenceService.class);
+    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
+        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
         new AccountPresenceQueryServiceImpl(
-            repository,
-            presenceService,
-            resolver,
-            recentPresenceService,
-            new AccountPresenceVisibilityPolicyResolver());
+            repository, presenceService, resolver, recentPresenceService, visibilityPolicyResolver);
 
     GameInstance running = new GameInstance();
     running.setId(11L);
@@ -73,6 +71,8 @@ class AccountPresenceQueryServiceImplTest {
                     150L,
                     180L,
                     120L)));
+    when(visibilityPolicyResolver.resolve(1L, 3L, GameplayPresenceRole.PLAYER))
+        .thenReturn(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
 
     var result = service.queryAccountPresence(1L, 2L, List.of(3L, 4L));
 

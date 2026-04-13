@@ -11,7 +11,6 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
-import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
@@ -60,7 +59,7 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     Map<Long, AccountRecentPresenceState> recentStates =
         accountRecentPresenceService.findByAccountIds(tenantId, requestedIds);
     for (Long accountId : requestedIds) {
-      results.put(accountId, offline(accountId, recentStates.get(accountId)));
+      results.put(accountId, offline(tenantId, accountId, recentStates.get(accountId)));
     }
 
     List<GameInstance> runningInstances =
@@ -87,12 +86,16 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
                   ? Instant.ofEpochMilli(
                       recentStates.get(instance.getOwnerAccountId()).lastSeenAtEpochMs())
                   : null,
-              visibilityPolicyResolver.resolve(presence.role())));
+              recentStates.containsKey(instance.getOwnerAccountId())
+                  ? recentStates.get(instance.getOwnerAccountId()).visibilityPolicy()
+                  : visibilityPolicyResolver.resolve(
+                      tenantId, instance.getOwnerAccountId(), presence.role())));
     }
     return List.copyOf(new ArrayList<>(results.values()));
   }
 
-  private AccountPresenceSnapshot offline(long accountId, AccountRecentPresenceState recentState) {
+  private AccountPresenceSnapshot offline(
+      long tenantId, long accountId, AccountRecentPresenceState recentState) {
     return new AccountPresenceSnapshot(
         accountId,
         false,
@@ -102,7 +105,7 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
         null,
         recentState == null ? null : Instant.ofEpochMilli(recentState.lastSeenAtEpochMs()),
         recentState == null
-            ? AccountPresenceVisibilityPolicy.FRIENDS_ONLY
+            ? visibilityPolicyResolver.resolve(tenantId, accountId)
             : recentState.visibilityPolicy());
   }
 }

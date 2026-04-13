@@ -27,6 +27,7 @@ import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
+import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
@@ -244,13 +245,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               Long.valueOf(request.getTenantId()), Long.valueOf(request.getAccountId()));
       GetProfileResponse response =
           GetProfileResponse.newBuilder()
-              .setProfileJson(
-                  tools.jackson.databind.json.JsonMapper.builder()
-                      .build()
-                      .createObjectNode()
-                      .put("displayName", dto.displayName())
-                      .put("bio", dto.bio())
-                      .toString())
+              .setProfileJson(JsonMapper.builder().build().writeValueAsString(dto))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -272,12 +267,17 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       JsonNode node = JsonMapper.builder().build().readTree(request.getProfileJson());
       String displayName = node.path("displayName").asText(null);
       String bio = node.path("bio").asText(null);
+      String presenceVisibilityPolicy = node.path("presenceVisibilityPolicy").asText(null);
       accountService.updateProfile(
           new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
               Long.valueOf(request.getTenantId()),
               Long.valueOf(request.getAccountId()),
               displayName,
-              bio));
+              bio,
+              ProfilePresenceVisibilityPolicy.valueOf(
+                  presenceVisibilityPolicy == null
+                      ? ProfilePresenceVisibilityPolicy.FRIENDS_ONLY.name()
+                      : presenceVisibilityPolicy)));
       UpdateProfileResponse response = UpdateProfileResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

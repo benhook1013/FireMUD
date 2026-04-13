@@ -46,6 +46,7 @@ import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
 import net.firedevops.firemud.accountservice.entity.Profile;
+import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
@@ -157,6 +158,7 @@ public class AccountServiceImpl implements AccountService {
     account.setRole("player");
     Profile profile = new Profile();
     profile.setTenantId(request.tenantId());
+    profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
     AccountTenantMembership membership = new AccountTenantMembership();
     membership.setTenantId(request.tenantId());
     membership.setGameplayAdmissionAllowed(true);
@@ -842,6 +844,7 @@ public class AccountServiceImpl implements AccountService {
             .orElseThrow(() -> new IllegalArgumentException("Profile not found"));
     profile.setDisplayName(request.displayName());
     profile.setBio(request.bio());
+    profile.setPresenceVisibilityPolicy(request.presenceVisibilityPolicy());
     profile = profileRepository.save(profile);
     runAfterCommit(
         () ->

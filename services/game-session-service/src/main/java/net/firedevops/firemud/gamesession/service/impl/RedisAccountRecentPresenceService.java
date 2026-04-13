@@ -72,11 +72,13 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
       return;
     }
     AccountPresenceVisibilityPolicy policy =
-        gameplayPresenceService
-            .findConnectedBySessionId(context.sessionId())
-            .map(GameplayPresence::role)
-            .map(visibilityPolicyResolver::resolve)
-            .orElse(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
+        visibilityPolicyResolver.resolve(
+            context.tenantId(),
+            context.accountId(),
+            gameplayPresenceService
+                .findConnectedBySessionId(context.sessionId())
+                .map(GameplayPresence::role)
+                .orElse(null));
     write(context.tenantId(), context.accountId(), policy, currentTimeMillisSupplier.getAsLong());
   }
 
@@ -89,11 +91,13 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
                 write(
                     context.tenantId(),
                     context.accountId(),
-                    gameplayPresenceService
-                        .findConnectedBySessionId(sessionId)
-                        .map(GameplayPresence::role)
-                        .map(visibilityPolicyResolver::resolve)
-                        .orElse(AccountPresenceVisibilityPolicy.FRIENDS_ONLY),
+                    visibilityPolicyResolver.resolve(
+                        context.tenantId(),
+                        context.accountId(),
+                        gameplayPresenceService
+                            .findConnectedBySessionId(sessionId)
+                            .map(GameplayPresence::role)
+                            .orElse(null)),
                     currentTimeMillisSupplier.getAsLong()));
   }
 
@@ -106,11 +110,13 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
                 write(
                     context.tenantId(),
                     context.accountId(),
-                    gameplayPresenceService
-                        .findConnectedBySessionId(sessionId)
-                        .map(GameplayPresence::role)
-                        .map(visibilityPolicyResolver::resolve)
-                        .orElse(AccountPresenceVisibilityPolicy.FRIENDS_ONLY),
+                    visibilityPolicyResolver.resolve(
+                        context.tenantId(),
+                        context.accountId(),
+                        gameplayPresenceService
+                            .findConnectedBySessionId(sessionId)
+                            .map(GameplayPresence::role)
+                            .orElse(null)),
                     currentTimeMillisSupplier.getAsLong()));
   }
 

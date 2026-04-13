@@ -45,3 +45,8 @@ Entry format:
   - Context: validating the new `EnsurePublicProductionPlayerMembership(...)` boundary after the `09.2` membership/catalog batch
   - Observation: multiple cross-service suites still implemented only the older membership and entitlement RPCs in inline fake Account Service stubs, so behavior that should have failed closed on admission instead degraded into `MEMBERSHIP_AUTH_UNAVAILABLE` or socket timeouts because the fake authority no longer matched the real service boundary
   - Expected pattern: when a canonical service boundary grows, shared or inline cross-service fakes need to implement the new RPC set in the same change so tests continue exercising behavior rather than collapsing into artificial infrastructure failures
+
+- `2026-04-14`: Manual JSON projections on gRPC wrappers drift from DTO contracts
+  - Context: extending `account-service` profile data with cross-game presence visibility policy and consuming it from `game-session-service`
+  - Observation: `AccountGrpcService.getProfile(...)` was manually rebuilding a tiny JSON object with only `displayName` and `bio`, so the new `presenceVisibilityPolicy` field silently vanished from the cross-service contract even though the DTO, database, and tests all changed together
+  - Expected pattern: when a gRPC surface intentionally tunnels a DTO as JSON, serialize the canonical DTO directly or use one shared mapper/projection helper instead of hand-maintaining partial object-node projections field by field

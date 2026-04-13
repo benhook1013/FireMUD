@@ -58,11 +58,13 @@ public final class InMemoryAccountRecentPresenceService implements AccountRecent
       return;
     }
     AccountPresenceVisibilityPolicy policy =
-        gameplayPresenceService
-            .findConnectedBySessionId(context.sessionId())
-            .map(GameplayPresence::role)
-            .map(visibilityPolicyResolver::resolve)
-            .orElse(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
+        visibilityPolicyResolver.resolve(
+            context.tenantId(),
+            context.accountId(),
+            gameplayPresenceService
+                .findConnectedBySessionId(context.sessionId())
+                .map(GameplayPresence::role)
+                .orElse(null));
     record(context.tenantId(), context.accountId(), policy);
   }
 
@@ -75,11 +77,13 @@ public final class InMemoryAccountRecentPresenceService implements AccountRecent
                 record(
                     context.tenantId(),
                     context.accountId(),
-                    gameplayPresenceService
-                        .findConnectedBySessionId(sessionId)
-                        .map(GameplayPresence::role)
-                        .map(visibilityPolicyResolver::resolve)
-                        .orElse(AccountPresenceVisibilityPolicy.FRIENDS_ONLY)));
+                    visibilityPolicyResolver.resolve(
+                        context.tenantId(),
+                        context.accountId(),
+                        gameplayPresenceService
+                            .findConnectedBySessionId(sessionId)
+                            .map(GameplayPresence::role)
+                            .orElse(null))));
   }
 
   @Override
@@ -91,11 +95,13 @@ public final class InMemoryAccountRecentPresenceService implements AccountRecent
                 record(
                     context.tenantId(),
                     context.accountId(),
-                    gameplayPresenceService
-                        .findConnectedBySessionId(sessionId)
-                        .map(GameplayPresence::role)
-                        .map(visibilityPolicyResolver::resolve)
-                        .orElse(AccountPresenceVisibilityPolicy.FRIENDS_ONLY)));
+                    visibilityPolicyResolver.resolve(
+                        context.tenantId(),
+                        context.accountId(),
+                        gameplayPresenceService
+                            .findConnectedBySessionId(sessionId)
+                            .map(GameplayPresence::role)
+                            .orElse(null))));
   }
 
   @Override

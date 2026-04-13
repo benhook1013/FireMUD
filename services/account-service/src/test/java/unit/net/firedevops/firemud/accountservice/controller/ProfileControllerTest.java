@@ -12,6 +12,7 @@ import net.firedevops.firemud.accountservice.config.AuthConfig;
 import net.firedevops.firemud.accountservice.config.WebConfig;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
+import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.security.JwtAuthInterceptor;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -50,7 +51,8 @@ class ProfileControllerTest {
 
   @Test
   void getProfileReturnsDto() throws Exception {
-    ProfileDto dto = new ProfileDto(1L, 1L, 2L, "demo", "bio");
+    ProfileDto dto =
+        new ProfileDto(1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
     when(accountService.getProfile(1L, 2L)).thenReturn(dto);
 
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
@@ -66,8 +68,10 @@ class ProfileControllerTest {
 
   @Test
   void updateProfileReturnsDto() throws Exception {
-    UpdateProfileRequest req = new UpdateProfileRequest(1L, 2L, "demo", "bio");
-    ProfileDto dto = new ProfileDto(1L, 1L, 2L, "demo", "bio");
+    UpdateProfileRequest req =
+        new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+    ProfileDto dto =
+        new ProfileDto(1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
     when(accountService.updateProfile(req)).thenReturn(dto);
 
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
@@ -79,7 +83,8 @@ class ProfileControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.displayName").value("demo"));
+        .andExpect(jsonPath("$.data.displayName").value("demo"))
+        .andExpect(jsonPath("$.data.presenceVisibilityPolicy").value("PRIVATE"));
   }
 
   @Test

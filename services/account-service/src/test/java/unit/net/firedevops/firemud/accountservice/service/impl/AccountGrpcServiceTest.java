@@ -30,6 +30,7 @@ import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
+import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
@@ -185,7 +186,8 @@ class AccountGrpcServiceTest {
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.getProfile(1L, 2L))
         .thenReturn(
-            new net.firedevops.firemud.accountservice.dto.ProfileDto(1L, 1L, 2L, "demo", "bio"));
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<GetProfileResponse> ref = new AtomicReference<>();
@@ -210,6 +212,13 @@ class AccountGrpcServiceTest {
             .build()
             .readTree(ref.get().getProfileJson())
             .get("displayName")
+            .asText());
+    assertEquals(
+        "PRIVATE",
+        tools.jackson.databind.json.JsonMapper.builder()
+            .build()
+            .readTree(ref.get().getProfileJson())
+            .path("presenceVisibilityPolicy")
             .asText());
   }
 
@@ -337,7 +346,8 @@ class AccountGrpcServiceTest {
         UpdateProfileRequest.newBuilder()
             .setTenantId("1")
             .setAccountId("2")
-            .setProfileJson("{\"displayName\":\"demo\",\"bio\":\"bio\"}")
+            .setProfileJson(
+                "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
             .build(),
         new StreamObserver<UpdateProfileResponse>() {
           @Override

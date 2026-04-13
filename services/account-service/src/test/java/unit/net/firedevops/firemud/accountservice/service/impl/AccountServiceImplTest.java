@@ -28,6 +28,7 @@ import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
 import net.firedevops.firemud.accountservice.entity.Profile;
+import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
@@ -565,10 +566,12 @@ class AccountServiceImplTest {
     profile.setAccount(account);
     profile.setTenantId(1L);
     profile.setDisplayName("demo");
+    profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
     when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
     when(profileMapper.toDto(profile))
         .thenReturn(
-            new net.firedevops.firemud.accountservice.dto.ProfileDto(1L, 1L, 2L, "demo", null));
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                1L, 1L, 2L, "demo", null, ProfilePresenceVisibilityPolicy.FRIENDS_ONLY));
 
     var dto = service.getProfile(1L, 2L);
 
@@ -580,18 +583,21 @@ class AccountServiceImplTest {
     Profile profile = new Profile();
     profile.setAccount(new Account());
     profile.setTenantId(1L);
+    profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
     when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
     when(profileRepository.save(profile)).thenReturn(profile);
     when(profileMapper.toDto(profile))
         .thenReturn(
-            new net.firedevops.firemud.accountservice.dto.ProfileDto(1L, 1L, 2L, "demo", "bio"));
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
 
     var dto =
         service.updateProfile(
             new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-                1L, 2L, "demo", "bio"));
+                1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
 
     assertEquals("demo", dto.displayName());
+    assertEquals(ProfilePresenceVisibilityPolicy.PRIVATE, profile.getPresenceVisibilityPolicy());
     org.mockito.Mockito.verify(notificationService).sendNotification(1L, 2L, "Profile updated");
   }
 
