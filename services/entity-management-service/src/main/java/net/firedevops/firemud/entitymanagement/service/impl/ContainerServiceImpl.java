@@ -111,6 +111,7 @@ public class ContainerServiceImpl implements ContainerService {
       Long containerInstanceId,
       Long itemId,
       Long itemInstanceId,
+      String stackFamilyKey,
       int quantity) {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
@@ -120,8 +121,10 @@ public class ContainerServiceImpl implements ContainerService {
     Item item = requireItem(tenantId, itemId);
     containerHolderPolicySupport.requireCanContainItem(containerInstance, item);
     if (stackableItemSupport.usesStackStorage(item)) {
-      moveInventoryStackToContainer(tenantId, characterId, containerInstance, item, quantity);
-      return toStackMutationDto(containerInstance, item, quantity);
+      String selectedStackFamilyKey =
+          moveInventoryStackToContainer(
+              tenantId, characterId, containerInstance, item, stackFamilyKey, quantity);
+      return toStackMutationDto(containerInstance, item, selectedStackFamilyKey, quantity);
     }
     List<ItemInstance> carried =
         itemInstanceRepository
@@ -149,6 +152,7 @@ public class ContainerServiceImpl implements ContainerService {
       Long containerInstanceId,
       Long itemId,
       Long itemInstanceId,
+      String stackFamilyKey,
       int quantity) {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
@@ -157,8 +161,10 @@ public class ContainerServiceImpl implements ContainerService {
             tenantId, character.getId(), containerInstanceId);
     Item item = requireItem(tenantId, itemId);
     if (stackableItemSupport.usesStackStorage(item)) {
-      moveContainerStackToInventory(tenantId, character, containerInstance, item, quantity);
-      return toInventoryStackMutationDto(character, item, quantity);
+      String selectedStackFamilyKey =
+          moveContainerStackToInventory(
+              tenantId, character, containerInstance, item, stackFamilyKey, quantity);
+      return toInventoryStackMutationDto(character, item, selectedStackFamilyKey, quantity);
     }
     List<ItemInstance> contained =
         itemInstanceRepository.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(
@@ -249,7 +255,7 @@ public class ContainerServiceImpl implements ContainerService {
         stack.getItem().getDescription(),
         stack.getQuantity(),
         null,
-        null);
+        stackSelector(stack));
   }
 
   private ContainerContentEntryDto toMutationDto(ItemInstance instance, int quantity) {
@@ -266,7 +272,7 @@ public class ContainerServiceImpl implements ContainerService {
   }
 
   private ContainerContentEntryDto toStackMutationDto(
-      ContainerInstance containerInstance, Item item, int quantity) {
+      ContainerInstance containerInstance, Item item, String stackFamilyKey, int quantity) {
     return new ContainerContentEntryDto(
         containerInstance.getTenantId(),
         resolveCharacterId(containerInstance),
@@ -276,7 +282,7 @@ public class ContainerServiceImpl implements ContainerService {
         item.getDescription(),
         quantity,
         null,
-        null);
+        stackFamilyKey);
   }
 
   private InventoryEntryDto toInventoryMutationDto(ItemInstance instance, int quantity) {
@@ -293,7 +299,7 @@ public class ContainerServiceImpl implements ContainerService {
   }
 
   private InventoryEntryDto toInventoryStackMutationDto(
-      Character character, Item item, int quantity) {
+      Character character, Item item, String stackFamilyKey, int quantity) {
     return new InventoryEntryDto(
         character.getTenantId(),
         character.getId(),
@@ -303,18 +309,23 @@ public class ContainerServiceImpl implements ContainerService {
         quantity,
         null,
         null,
-        null);
+        stackFamilyKey);
   }
 
-  private void moveInventoryStackToContainer(
+  private String moveInventoryStackToContainer(
       Long tenantId,
       Long characterId,
       ContainerInstance containerInstance,
       Item item,
+      String stackFamilyKey,
       int quantity) {
     ItemStack source =
         requireSingleInventoryStackSource(
-            tenantId, characterId, item, "Not enough quantity to put into container");
+            tenantId,
+            characterId,
+            item,
+            normalizeStackFamilyKey(stackFamilyKey),
+            "Not enough quantity to put into container");
     requireStackQuantity(source, quantity, "Not enough quantity to put into container");
     decrementOrDelete(source, quantity);
     String compatibilityFingerprint = source.getCompatibilityFingerprint();
@@ -335,17 +346,23 @@ public class ContainerServiceImpl implements ContainerService {
                 });
     destination.setQuantity(destination.getQuantity() + quantity);
     itemStackRepository.save(destination);
+    return source.getStackFamilyKey();
   }
 
-  private void moveContainerStackToInventory(
+  private String moveContainerStackToInventory(
       Long tenantId,
       Character character,
       ContainerInstance containerInstance,
       Item item,
+      String stackFamilyKey,
       int quantity) {
     ItemStack source =
         requireSingleContainerStackSource(
-            tenantId, containerInstance.getId(), item, "Not enough quantity in container");
+            tenantId,
+            containerInstance.getId(),
+            item,
+            normalizeStackFamilyKey(stackFamilyKey),
+            "Not enough quantity in container");
     requireStackQuantity(source, quantity, "Not enough quantity in container");
     decrementOrDelete(source, quantity);
     String compatibilityFingerprint = source.getCompatibilityFingerprint();
@@ -366,29 +383,43 @@ public class ContainerServiceImpl implements ContainerService {
                 });
     destination.setQuantity(destination.getQuantity() + quantity);
     itemStackRepository.save(destination);
+    return source.getStackFamilyKey();
   }
 
   private ItemStack requireSingleInventoryStackSource(
-      Long tenantId, Long characterId, Item item, String notFoundMessage) {
+      Long tenantId, Long characterId, Item item, String stackFamilyKey, String notFoundMessage) {
     List<ItemStack> stacks =
         itemStackRepository
             .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
                 tenantId, characterId, item.getId());
-    return requireSingleStackSource(stacks, item, notFoundMessage);
+    return requireSingleStackSource(stacks, item, stackFamilyKey, notFoundMessage);
   }
 
   private ItemStack requireSingleContainerStackSource(
-      Long tenantId, Long containerInstanceId, Item item, String notFoundMessage) {
+      Long tenantId,
+      Long containerInstanceId,
+      Item item,
+      String stackFamilyKey,
+      String notFoundMessage) {
     List<ItemStack> stacks =
         itemStackRepository.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(
             tenantId, containerInstanceId, item.getId());
-    return requireSingleStackSource(stacks, item, notFoundMessage);
+    return requireSingleStackSource(stacks, item, stackFamilyKey, notFoundMessage);
   }
 
   private ItemStack requireSingleStackSource(
-      List<ItemStack> stacks, Item item, String notFoundMessage) {
+      List<ItemStack> stacks, Item item, String stackFamilyKey, String notFoundMessage) {
     if (stacks.isEmpty()) {
       throw new IllegalArgumentException(notFoundMessage);
+    }
+    if (stackFamilyKey != null) {
+      return stacks.stream()
+          .filter(
+              stack ->
+                  stackFamilyKey.equals(
+                      stackableItemSupport.normalizeStackFamilyKey(stack.getStackFamilyKey())))
+          .findFirst()
+          .orElseThrow(() -> new IllegalArgumentException(notFoundMessage));
     }
     if (stacks.size() > 1) {
       throw new IllegalArgumentException(
@@ -397,6 +428,14 @@ public class ContainerServiceImpl implements ContainerService {
               + "; explicit stack selection required");
     }
     return stacks.get(0);
+  }
+
+  private String stackSelector(ItemStack stack) {
+    return stackableItemSupport.normalizeStackFamilyKey(stack.getStackFamilyKey());
+  }
+
+  private String normalizeStackFamilyKey(String stackFamilyKey) {
+    return stackableItemSupport.normalizeStackFamilyKey(stackFamilyKey);
   }
 
   private Long resolveCharacterId(ContainerInstance containerInstance) {

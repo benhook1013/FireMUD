@@ -38,7 +38,7 @@ These are already partly real in code and should continue after the immediate ru
 7. [06.3.1 Stable Item Instance Visible Ref Allocation](./06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
 8. [06.3.2 Authored Stackability and Fungibility](./06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
-   Remaining: build on the now-live `stackFamilyKey` substrate with richer authored family sources and later explicit stack-family selector UX where one item definition can appear in multiple families in the same holder.
+   Remaining: build on the now-live `stackFamilyKey` substrate with richer authored family sources; explicit stack-family selector UX for ambiguous holder-local families is now live.
 9. [02.18 Service Boundary and Audit Hardening](./02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
    Remaining: keep `02.18.6` at operator-proof level and continue any later hardening only if real-load evidence justifies it.
 10. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
@@ -117,7 +117,7 @@ If you want the clearest immediate path, do these next:
 4. `02.1.2` logout and deliberate session termination
    Best next runtime tail because the core logout command is now live and the remaining work is proof/alignment across reconnect and transport variants rather than fresh design.
 5. `06.3.2` bounded authored compatibility-mode follow-up
-   Best next item-model batch if we want to extend the now-live stack-family substrate into real selector UX and richer authored family sourcing rather than staying on definition-only stack selection.
+   Best next item-model batch if we want to extend the now-live stack-family substrate into richer authored family sourcing and later authored compatibility modes beyond the now-live explicit selector UX.
 
 If the goal is continued design-to-slice cleanup rather than code, do this next:
 

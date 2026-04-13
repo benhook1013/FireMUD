@@ -146,6 +146,7 @@ message PutItemIntoContainerRequest {
   string item_id = 4;
   int32 quantity = 5;
   string item_instance_id = 6;
+  string stack_family_key = 7;
 }
 
 message PutItemIntoContainerResponse {
@@ -160,6 +161,7 @@ message TakeItemFromContainerRequest {
   string item_id = 4;
   int32 quantity = 5;
   string item_instance_id = 6;
+  string stack_family_key = 7;
 }
 
 message TakeItemFromContainerResponse {
@@ -200,6 +202,7 @@ message PickupItemFromRoomRequest {
   int32 quantity = 6;
   string container_instance_id = 7;
   string item_instance_id = 8;
+  string stack_family_key = 9;
 }
 
 message PickupItemFromRoomResponse {
@@ -217,6 +220,7 @@ message DropItemToRoomRequest {
   int32 quantity = 6;
   string container_instance_id = 7;
   string item_instance_id = 8;
+  string stack_family_key = 9;
 }
 
 message DropItemToRoomResponse {

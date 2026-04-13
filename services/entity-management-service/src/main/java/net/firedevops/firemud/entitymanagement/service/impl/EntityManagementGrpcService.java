@@ -614,6 +614,7 @@ public class EntityManagementGrpcService
               containerInstanceId,
               itemId,
               itemInstanceId,
+              blankToNull(request.getStackFamilyKey()),
               request.getQuantity());
       PutItemIntoContainerResponse response =
           PutItemIntoContainerResponse.newBuilder().setContainerItem(toProto(dto)).build();
@@ -684,6 +685,7 @@ public class EntityManagementGrpcService
               containerInstanceId,
               itemId,
               itemInstanceId,
+              blankToNull(request.getStackFamilyKey()),
               request.getQuantity());
       TakeItemFromContainerResponse response =
           TakeItemFromContainerResponse.newBuilder().setInventoryItem(toProto(dto)).build();
@@ -818,6 +820,7 @@ public class EntityManagementGrpcService
                   ? null
                   : Long.parseLong(request.getItemInstanceId()),
               request.getContainerInstanceId(),
+              blankToNull(request.getStackFamilyKey()),
               quantity);
       PickupItemFromRoomResponse response =
           PickupItemFromRoomResponse.newBuilder().setInventoryItem(toProto(dto)).build();
@@ -887,6 +890,7 @@ public class EntityManagementGrpcService
                   ? null
                   : Long.parseLong(request.getItemInstanceId()),
               request.getContainerInstanceId(),
+              blankToNull(request.getStackFamilyKey()),
               quantity);
       DropItemToRoomResponse response =
           DropItemToRoomResponse.newBuilder().setRoomGroundItem(toProto(dto)).build();
@@ -1012,6 +1016,10 @@ public class EntityManagementGrpcService
       throw new IllegalArgumentException("playableStateScope must be specified");
     }
     return playableStateScope;
+  }
+
+  private String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
   }
 
   private Character toProto(CharacterDto dto) {

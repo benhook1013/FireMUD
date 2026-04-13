@@ -50,3 +50,13 @@ Entry format:
   - Context: extending `account-service` profile data with cross-game presence visibility policy and consuming it from `game-session-service`
   - Observation: `AccountGrpcService.getProfile(...)` was manually rebuilding a tiny JSON object with only `displayName` and `bio`, so the new `presenceVisibilityPolicy` field silently vanished from the cross-service contract even though the DTO, database, and tests all changed together
   - Expected pattern: when a gRPC surface intentionally tunnels a DTO as JSON, serialize the canonical DTO directly or use one shared mapper/projection helper instead of hand-maintaining partial object-node projections field by field
+
+- `2026-04-14`: Platform authority docs need a matching de-duplication rule in implementation
+  - Context: SaaS/platform coherence review across `account-service` bootstrap discovery and `game-session-service` world/realm admission after the new `09.x` realm-routing work
+  - Observation: the architecture now says realm catalog and admission-pointer truth are control-plane/runtime authorities, but the repo still encodes that truth as duplicated Spring config in multiple services, which makes cutover, visibility, grants, and suspension behavior look coherent in docs while implementation still rests on a local single-game shortcut
+  - Expected pattern: when a design promotes a concern to canonical control-plane authority, CI or slice planning should actively eliminate duplicated per-service config copies of that concern instead of letting them coexist as a quiet fallback
+
+- `2026-04-14`: gRPC adapters should normalize absent proto scalars before crossing internal service seams
+  - Context: extending `06.3.2` stack-family selectors through the Entity Management gRPC boundary
+  - Observation: optional proto string fields such as `stackFamilyKey` arrive as `""` when unset, and letting that raw value flow into internal service mocks and implementations creates a false third state (`blank but set`) that the canonical Java seam does not actually want
+  - Expected pattern: gRPC adapters should collapse blank optional scalars to `null` or one canonical internal representation at the boundary, so downstream services and tests do not have to reason about transport-default noise

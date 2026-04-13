@@ -138,6 +138,7 @@ class InventoryServiceImplTest {
     Character character = character(1L, 11L);
     Item arrows = item(2L, 11L, "Arrows", false, null, true);
     ItemStack stack = stack(701L, 11L, character, arrows, 4);
+    stack.setStackFamilyKey("ammo/iron");
 
     when(characterRepo.findByIdAndTenantId(1L, 11L)).thenReturn(Optional.of(character));
     when(itemInstanceRepo
@@ -154,7 +155,7 @@ class InventoryServiceImplTest {
     assertEquals(1, result.getTotalElements());
     assertEquals(4, result.getContent().get(0).quantity());
     assertNull(result.getContent().get(0).itemInstanceId());
-    assertNull(result.getContent().get(0).visibleRef());
+    assertEquals("ammo/iron", result.getContent().get(0).visibleRef());
   }
 
   @Test
@@ -213,7 +214,7 @@ class InventoryServiceImplTest {
     when(itemInstanceRepo.save(Mockito.any(ItemInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var dropped = service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, 1);
+    var dropped = service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1);
 
     assertEquals("GI-1", first.getGameInstanceId());
     assertEquals("R-1", first.getRoomInstanceId());
@@ -260,11 +261,12 @@ class InventoryServiceImplTest {
     when(itemStackRepo.save(Mockito.any(ItemStack.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var dropped = service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, 2);
+    var dropped = service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 2);
 
     assertEquals(2, dropped.quantity());
     assertEquals(1, inventoryStack.getQuantity());
     assertNull(dropped.itemInstanceId());
+    assertEquals("ammo/iron", dropped.visibleRef());
     verify(itemStackRepo, Mockito.atLeastOnce()).save(Mockito.any(ItemStack.class));
   }
 
@@ -306,7 +308,7 @@ class InventoryServiceImplTest {
     IllegalArgumentException ex =
         assertThrows(
             IllegalArgumentException.class,
-            () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, 1));
+            () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1));
 
     assertEquals(
         "Multiple stack families exist for item 2; explicit stack selection required",
@@ -344,7 +346,7 @@ class InventoryServiceImplTest {
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, 1));
+        () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1));
   }
 
   @Test
@@ -379,7 +381,7 @@ class InventoryServiceImplTest {
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.pickupItemFromRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, 1));
+        () -> service.pickupItemFromRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1));
   }
 
   @Test
@@ -415,7 +417,7 @@ class InventoryServiceImplTest {
     IllegalArgumentException ex =
         assertThrows(
             IllegalArgumentException.class,
-            () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, 1));
+            () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1));
 
     assertEquals("Item already at destination", ex.getMessage());
   }
@@ -451,7 +453,55 @@ class InventoryServiceImplTest {
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, 41L, null, 2));
+        () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, 41L, null, null, 2));
+  }
+
+  @Test
+  void dropItemSelectsExplicitStackFamilyWhenMultipleFamiliesExist() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    InventoryServiceImpl service =
+        service(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            itemStackRepo,
+            visibleRefAllocator);
+
+    Character character = character(1L, 1L);
+    Item arrows = item(2L, 1L, "Arrows", false, null, true);
+    arrows.setStackCompatibilityMode(ItemStackCompatibilityMode.DEFINITION_AND_FAMILY);
+    ItemStack first = stack(41L, 1L, character, arrows, 3);
+    first.setStackFamilyKey("ammo/iron");
+    first.setCompatibilityFingerprint("item-definition:2:family:ammo/iron");
+    ItemStack second = stack(42L, 1L, character, arrows, 4);
+    second.setStackFamilyKey("ammo/steel");
+    second.setCompatibilityFingerprint("item-definition:2:family:ammo/steel");
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(arrows));
+    when(itemStackRepo
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
+                1L, 1L, 2L))
+        .thenReturn(List.of(first, second));
+    when(itemStackRepo
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
+                1L, "GI-1", "R-1", 2L, "item-definition:2:family:ammo/steel"))
+        .thenReturn(Optional.empty());
+    when(itemStackRepo.save(Mockito.any(ItemStack.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var dropped = service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, "ammo/steel", 2);
+
+    assertEquals("ammo/steel", dropped.visibleRef());
+    assertEquals(2, second.getQuantity());
+    assertEquals(3, first.getQuantity());
   }
 
   private InventoryServiceImpl service(
