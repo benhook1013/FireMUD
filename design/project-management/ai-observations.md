@@ -30,3 +30,18 @@ Entry format:
   - Context: tracing `09.2` public-production onboarding from `PLAY` and connect-token issuance back into `account-service`
   - Observation: the current runtime-membership path still answers "can this account play in tenant X?" by comparing `accounts.tenant_id` to the requested tenant, which makes first-join onboarding, multi-realm discovery, and future multi-tenant routing look implemented when they are really resting on a single-tenant shortcut
   - Expected pattern: gameplay admission should read a dedicated membership/grant substrate and use explicit writer boundaries like `EnsurePublicProductionPlayerMembership(...)` rather than treating account ownership fields as the long-term runtime authority
+
+- `2026-04-13`: Do not maintain separate local world/realm catalogs per service once routing becomes a first-class system
+  - Context: cohesion review across `account-service` bootstrap discovery and `game-session` lobby discovery after the `09.1` realm-aware command work
+  - Observation: `account-service` and `game-session` currently each keep their own world/realm config model, with different fields and different authority assumptions, which makes the player-facing flow look unified while hiding routing drift and duplicated cutover work
+  - Expected pattern: once world/realm selection is a canonical gameplay-routing concern, bootstrap discovery, lobby discovery, connect-token issuance, and `PLAY` should all read one shared routing substrate rather than maintaining per-service local catalogs
+
+- `2026-04-13`: Indexed Spring config overrides need null-safe catalog readers
+  - Context: `game-session-service` websocket integration coverage after switching to shared `GameplayCatalogProperties`
+  - Observation: test-only indexed property overrides that set only nested fields like `realms[0].tenant-id` can leave partially bound parent objects in the list, which made `GameplayWorldCatalog.resolveWorld(...)` crash on `null` slugs instead of treating the malformed entry as invisible
+  - Expected pattern: shared config-backed catalogs should filter out null or incomplete entries before command/runtime code touches them, and tests that override indexed config should provide full object definitions when the list is used as canonical routing input
+
+- `2026-04-13`: Cross-service fake authorities must track canonical RPC growth
+  - Context: validating the new `EnsurePublicProductionPlayerMembership(...)` boundary after the `09.2` membership/catalog batch
+  - Observation: multiple cross-service suites still implemented only the older membership and entitlement RPCs in inline fake Account Service stubs, so behavior that should have failed closed on admission instead degraded into `MEMBERSHIP_AUTH_UNAVAILABLE` or socket timeouts because the fake authority no longer matched the real service boundary
+  - Expected pattern: when a canonical service boundary grows, shared or inline cross-service fakes need to implement the new RPC set in the same change so tests continue exercising behavior rather than collapsing into artificial infrastructure failures

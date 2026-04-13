@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.Objects;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
@@ -34,20 +35,18 @@ public class WorldsCommandHandler {
   public CharacterBrowseResult browseCharacters(
       SessionContext sessionContext, String worldSelector, String realmSelector) {
     Objects.requireNonNull(sessionContext, "sessionContext must not be null");
-    java.util.Optional<net.firedevops.firemud.gamesession.config.GameSessionProperties.WorldOption>
-        maybeWorld = worldCatalog.resolveWorld(worldSelector);
+    java.util.Optional<GameplayCatalogProperties.World> maybeWorld =
+        worldCatalog.resolveWorld(worldSelector);
     if (maybeWorld.isEmpty()) {
       return CharacterBrowseResult.invalidWorld();
     }
-    net.firedevops.firemud.gamesession.config.GameSessionProperties.WorldOption world =
-        maybeWorld.orElseThrow();
-    java.util.Optional<net.firedevops.firemud.gamesession.config.GameSessionProperties.RealmOption>
-        maybeRealm =
-            StringUtils.hasText(realmSelector)
-                ? worldCatalog.resolveRealm(world, realmSelector)
-                : worldCatalog.requiresExplicitRealmSelection(world)
-                    ? java.util.Optional.empty()
-                    : worldCatalog.resolveDefaultRealm(world);
+    GameplayCatalogProperties.World world = maybeWorld.orElseThrow();
+    java.util.Optional<GameplayCatalogProperties.Realm> maybeRealm =
+        StringUtils.hasText(realmSelector)
+            ? worldCatalog.resolveRealm(world, realmSelector)
+            : worldCatalog.requiresExplicitRealmSelection(world)
+                ? java.util.Optional.empty()
+                : worldCatalog.resolveDefaultRealm(world);
     if (StringUtils.hasText(realmSelector) && maybeRealm.isEmpty()) {
       return CharacterBrowseResult.invalidRealm(world.getSlug());
     }
@@ -55,11 +54,10 @@ public class WorldsCommandHandler {
       return CharacterBrowseResult.realmSelectionRequired(world.getSlug());
     }
 
-    net.firedevops.firemud.gamesession.config.GameSessionProperties.RealmOption realm =
-        maybeRealm.orElseThrow();
+    GameplayCatalogProperties.Realm realm = maybeRealm.orElseThrow();
     ListCharactersByAccountResponse response =
         entityManagementClient.listCharactersByAccount(
-            Long.toString(sessionContext.tenantId()), Long.toString(sessionContext.accountId()));
+            Long.toString(realm.getTenantId()), Long.toString(sessionContext.accountId()));
     if (response.hasError()) {
       return CharacterBrowseResult.unavailable();
     }

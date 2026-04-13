@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession;
 
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.saga.persistence.EnableSagaEntityScan;
 import net.firedevops.firemud.gamesession.config.FirstPartyConnectContextProperties;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
@@ -18,6 +19,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 @EnableConfigurationProperties({
   GameSessionProperties.class,
+  GameplayCatalogProperties.class,
   GameLogicProperties.class,
   FirstPartyConnectContextProperties.class,
   PresentationProperties.class,

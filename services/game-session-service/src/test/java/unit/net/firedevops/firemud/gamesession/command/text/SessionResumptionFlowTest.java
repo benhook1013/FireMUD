@@ -17,6 +17,7 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
@@ -67,7 +68,10 @@ class SessionResumptionFlowTest {
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
   private final GameSessionProperties properties = new GameSessionProperties();
-  private final GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(properties);
+  private final GameplayCatalogProperties gameplayCatalogProperties =
+      new GameplayCatalogProperties();
+  private final GameplayWorldCatalog worldCatalog =
+      new GameplayWorldCatalog(gameplayCatalogProperties);
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
@@ -99,6 +103,8 @@ class SessionResumptionFlowTest {
 
   @BeforeEach
   void setUp() {
+    gameplayCatalogProperties.setWorlds(
+        List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
     when(instanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
@@ -350,6 +356,22 @@ class SessionResumptionFlowTest {
     assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.takeover").count());
     assertTrue(sessionContextService.findByTenantAndSessionId(22L, 2L).isPresent());
+  }
+
+  private static GameplayCatalogProperties.World world(
+      String slug, long tenantId, long gameInstanceId, boolean requiresCharacterSelection) {
+    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
+    world.setSlug(slug);
+    world.setDisplayName(slug);
+    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+    realm.setSlug("production");
+    realm.setDisplayName("Live Realm");
+    realm.setTenantId(tenantId);
+    realm.setGameInstanceId(gameInstanceId);
+    realm.setVisible(true);
+    realm.setRequiresCharacterSelection(requiresCharacterSelection);
+    world.setRealms(List.of(realm));
+    return world;
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {

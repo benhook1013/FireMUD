@@ -53,7 +53,7 @@ class AccountControllerTest {
   void createAccountReturnsDto() throws Exception {
     CreateAccountRequest request =
         new CreateAccountRequest(7L, "demo", "demo@example.com", "password");
-    AccountDto response = new AccountDto(1L, 7L, "demo", "demo@example.com", "player", true);
+    AccountDto response = new AccountDto(1L, "demo", "demo@example.com", "player", true);
     when(accountService.createAccount(request)).thenReturn(response);
 
     mockMvc
@@ -63,7 +63,6 @@ class AccountControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.tenantId").value(7))
         .andExpect(jsonPath("$.data.username").value("demo"));
   }
 

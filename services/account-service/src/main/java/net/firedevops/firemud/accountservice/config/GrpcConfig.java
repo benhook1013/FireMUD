@@ -19,6 +19,8 @@ public class GrpcConfig {
             AccountServiceGrpc.getAuthenticateMethod().getFullMethodName(),
             AccountServiceGrpc.getPingMethod().getFullMethodName(),
             AccountServiceGrpc.getGetTenantMembershipForRuntimeMethod().getFullMethodName(),
+            AccountServiceGrpc.getEnsurePublicProductionPlayerMembershipMethod()
+                .getFullMethodName(),
             AccountServiceGrpc.getGetTenantEntitlementsForRuntimeMethod().getFullMethodName()));
   }
 }

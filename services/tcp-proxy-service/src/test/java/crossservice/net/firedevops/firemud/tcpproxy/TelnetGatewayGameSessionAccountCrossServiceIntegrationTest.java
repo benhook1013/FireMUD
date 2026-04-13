@@ -25,6 +25,8 @@ import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
@@ -1121,6 +1123,23 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
               .setGameplayAvailable(gameplayAvailable.get())
               .setEntitlementVersion(1L)
               .setTenantBillingSequence(1L)
+              .setEvaluatedAt("2026-03-30T00:00:00Z")
+              .build());
+      responseObserver.onCompleted();
+    }
+
+    @Override
+    public void ensurePublicProductionPlayerMembership(
+        EnsurePublicProductionPlayerMembershipRequest request,
+        StreamObserver<EnsurePublicProductionPlayerMembershipResponse> responseObserver) {
+      responseObserver.onNext(
+          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
+              .setAccountId(request.getAccountId())
+              .setTenantId(request.getTenantId())
+              .setRealmSlug(request.getRealmSlug())
+              .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
+              .setMembershipVersion(1L)
+              .setCreated(gameplayAdmissionAllowed.get())
               .setEvaluatedAt("2026-03-30T00:00:00Z")
               .build());
       responseObserver.onCompleted();

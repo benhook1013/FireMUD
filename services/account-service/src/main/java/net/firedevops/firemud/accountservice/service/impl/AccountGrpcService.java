@@ -11,6 +11,8 @@ import net.firedevops.firemud.account.v1.CreateAccountRequest;
 import net.firedevops.firemud.account.v1.CreateAccountResponse;
 import net.firedevops.firemud.account.v1.DeleteAccountRequest;
 import net.firedevops.firemud.account.v1.DeleteAccountResponse;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.ExportAccountRequest;
 import net.firedevops.firemud.account.v1.ExportAccountResponse;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
@@ -154,6 +156,49 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       GetTenantMembershipForRuntimeResponse response =
           GetTenantMembershipForRuntimeResponse.newBuilder()
               .setError(appError("GetTenantMembershipForRuntime", "NOT_FOUND", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "accountGrpc.ensurePublicProductionPlayerMembership")
+  public void ensurePublicProductionPlayerMembership(
+      EnsurePublicProductionPlayerMembershipRequest request,
+      StreamObserver<EnsurePublicProductionPlayerMembershipResponse> responseObserver) {
+    try {
+      var dto =
+          accountService.ensurePublicProductionPlayerMembership(
+              Long.valueOf(request.getAccountId()),
+              Long.valueOf(request.getTenantId()),
+              request.getRealmSlug(),
+              request.getRequestId());
+      EnsurePublicProductionPlayerMembershipResponse response =
+          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
+              .setAccountId(String.valueOf(dto.accountId()))
+              .setTenantId(String.valueOf(dto.tenantId()))
+              .setRealmSlug(dto.realmSlug())
+              .setGameplayAdmissionAllowed(true)
+              .setMembershipVersion(dto.membershipVersion())
+              .setCreated(dto.created())
+              .setEvaluatedAt(dto.evaluatedAt())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthenticationException ex) {
+      EnsurePublicProductionPlayerMembershipResponse response =
+          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
+              .setError(
+                  appError("EnsurePublicProductionPlayerMembership", ex.getCode(), ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      EnsurePublicProductionPlayerMembershipResponse response =
+          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
+              .setError(
+                  appError("EnsurePublicProductionPlayerMembership", "NOT_FOUND", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

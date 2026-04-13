@@ -2,9 +2,10 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
-import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
@@ -15,9 +16,11 @@ import org.mockito.Mockito;
 class WorldsCommandHandlerTest {
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
+  private final GameplayCatalogProperties gameplayCatalogProperties =
+      new GameplayCatalogProperties();
   private final WorldsCommandHandler handler =
       new WorldsCommandHandler(
-          new GameplayWorldCatalog(new GameSessionProperties()), entityManagementClient);
+          new GameplayWorldCatalog(gameplayCatalogProperties), entityManagementClient);
 
   @Test
   void browseViewReturnsStructuredWorldList() {
@@ -40,6 +43,8 @@ class WorldsCommandHandlerTest {
 
   @Test
   void browseCharactersReturnsStructuredCharacterList() {
+    gameplayCatalogProperties.setWorlds(
+        List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
     Mockito.when(entityManagementClient.listCharactersByAccount("22", "123"))
         .thenReturn(
             ListCharactersByAccountResponse.newBuilder()
@@ -64,5 +69,21 @@ class WorldsCommandHandlerTest {
     assertThat(output.realmSlug()).isEqualTo("production");
     assertThat(output.characters()).hasSize(1);
     assertThat(output.characters().get(0).characterName()).isEqualTo("Emberline");
+  }
+
+  private static GameplayCatalogProperties.World world(
+      String slug, long tenantId, long gameInstanceId, boolean requiresCharacterSelection) {
+    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
+    world.setSlug(slug);
+    world.setDisplayName(slug);
+    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+    realm.setSlug("production");
+    realm.setDisplayName("Live Realm");
+    realm.setTenantId(tenantId);
+    realm.setGameInstanceId(gameInstanceId);
+    realm.setVisible(true);
+    realm.setRequiresCharacterSelection(requiresCharacterSelection);
+    world.setRealms(List.of(realm));
+    return world;
   }
 }

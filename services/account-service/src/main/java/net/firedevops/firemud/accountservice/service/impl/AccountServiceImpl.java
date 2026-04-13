@@ -23,7 +23,6 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.config.AuthProperties;
-import net.firedevops.firemud.accountservice.config.BootstrapCatalogProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
@@ -37,17 +36,20 @@ import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
+import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult;
 import net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
 import net.firedevops.firemud.accountservice.entity.Profile;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.accountservice.repository.ExternalAccountRepository;
 import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
@@ -59,11 +61,13 @@ import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtUtil;
 import org.slf4j.Logger;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -74,6 +78,7 @@ public class AccountServiceImpl implements AccountService {
   private static final Logger logger = LoggingUtil.getLogger(AccountServiceImpl.class);
 
   private final AccountRepository accountRepository;
+  private final AccountTenantMembershipRepository accountTenantMembershipRepository;
   private final AccountMapper accountMapper;
   private final ProfileRepository profileRepository;
   private final ProfileMapper profileMapper;
@@ -86,7 +91,7 @@ public class AccountServiceImpl implements AccountService {
   private final EmailService emailService;
   private final MailProperties mailProperties;
   private final AuthProperties authProperties;
-  private final BootstrapCatalogProperties bootstrapCatalogProperties;
+  private final GameplayCatalogProperties gameplayCatalogProperties;
   private final LoggingAdminClient loggingAdminClient;
   private final EntityManagementClient entityManagementClient;
   private final JwtUtil jwtUtil;
@@ -98,6 +103,7 @@ public class AccountServiceImpl implements AccountService {
       justification = "Dependencies are injected and kept internal")
   public AccountServiceImpl(
       AccountRepository accountRepository,
+      AccountTenantMembershipRepository accountTenantMembershipRepository,
       AccountMapper accountMapper,
       ProfileRepository profileRepository,
       ProfileMapper profileMapper,
@@ -110,13 +116,14 @@ public class AccountServiceImpl implements AccountService {
       EmailService emailService,
       MailProperties mailProperties,
       AuthProperties authProperties,
-      BootstrapCatalogProperties bootstrapCatalogProperties,
+      GameplayCatalogProperties gameplayCatalogProperties,
       LoggingAdminClient loggingAdminClient,
       EntityManagementClient entityManagementClient,
       JwtUtil jwtUtil,
       net.firedevops.firemud.accountservice.service.session.SessionService sessionService,
       SagaRunner sagaRunner) {
     this.accountRepository = accountRepository;
+    this.accountTenantMembershipRepository = accountTenantMembershipRepository;
     this.accountMapper = accountMapper;
     this.profileRepository = profileRepository;
     this.profileMapper = profileMapper;
@@ -129,7 +136,7 @@ public class AccountServiceImpl implements AccountService {
     this.emailService = emailService;
     this.mailProperties = mailProperties;
     this.authProperties = authProperties;
-    this.bootstrapCatalogProperties = bootstrapCatalogProperties;
+    this.gameplayCatalogProperties = gameplayCatalogProperties;
     this.loggingAdminClient = loggingAdminClient;
     this.entityManagementClient = entityManagementClient;
     this.jwtUtil = jwtUtil;
@@ -143,13 +150,15 @@ public class AccountServiceImpl implements AccountService {
   public AccountDto createAccount(CreateAccountRequest request) {
     logger.info("Creating account {} for tenant {}", request.username(), request.tenantId());
     Account account = new Account();
-    account.setTenantId(request.tenantId());
     account.setUsername(request.username());
     account.setEmail(request.email());
     account.setPasswordHash(hashPassword(request.password()));
     account.setRole("player");
     Profile profile = new Profile();
     profile.setTenantId(request.tenantId());
+    AccountTenantMembership membership = new AccountTenantMembership();
+    membership.setTenantId(request.tenantId());
+    membership.setGameplayAdmissionAllowed(true);
 
     SagaBuilder builder = new SagaBuilder("accountCreation");
     builder.step(
@@ -157,11 +166,14 @@ public class AccountServiceImpl implements AccountService {
         () -> {
           Account saved = accountRepository.save(account);
           account.setId(saved.getId());
+          membership.setAccount(saved);
+          accountTenantMembershipRepository.save(membership);
           profile.setAccount(saved);
           profileRepository.save(profile);
         },
         () -> {
           profileRepository.delete(profile);
+          accountTenantMembershipRepository.delete(membership);
           accountRepository.delete(account);
         });
     var saga = builder.build();
@@ -181,7 +193,7 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.authenticate")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
       Long tenantId, String username, String password, String otp) {
-    Optional<Account> accountOpt = findAccountForAuthentication(tenantId, username);
+    Optional<Account> accountOpt = findAccountForAuthentication(username);
     Account account =
         accountOpt.orElseThrow(
             () ->
@@ -191,6 +203,7 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials");
     }
+    requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
     if (account.getTwoFactorSecret() != null
         && ("admin".equals(account.getRole()) || "moderator".equals(account.getRole()))) {
       TOTPGenerator generator = new TOTPGenerator.Builder(account.getTwoFactorSecret()).build();
@@ -250,7 +263,7 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.bootstrap_worlds")
   public List<BootstrapWorldDto> listBootstrapWorlds(String bootstrapToken) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    return bootstrapCatalogProperties.getWorlds().stream()
+    return gameplayCatalogProperties.getWorlds().stream()
         .filter(world -> hasAdmissibleRealm(bootstrapContext, world))
         .map(world -> new BootstrapWorldDto(world.getSlug(), world.getDisplayName()))
         .toList();
@@ -261,7 +274,7 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.bootstrap_realms")
   public List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    BootstrapCatalogProperties.World world = requireWorld(worldSlug);
+    GameplayCatalogProperties.World world = requireWorld(worldSlug);
     Instant evaluatedAt = Instant.now();
     Instant expiresAt = evaluatedAt.plusMillis(authProperties.getConnectScopeExpirationMs());
     return world.getRealms().stream()
@@ -289,7 +302,7 @@ public class AccountServiceImpl implements AccountService {
   public List<BootstrapCharacterDto> listBootstrapCharacters(
       String bootstrapToken, String worldSlug, String realmSlug) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    BootstrapCatalogProperties.Realm realm =
+    GameplayCatalogProperties.Realm realm =
         requireAdmissibleRealm(bootstrapContext, worldSlug, realmSlug);
     return entityManagementClient
         .listCharactersByAccount(realm.getTenantId(), bootstrapContext.accountId())
@@ -309,7 +322,7 @@ public class AccountServiceImpl implements AccountService {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
     ConnectScopeContext scopeContext = requireConnectScopeContext(request.connectScopeId());
     validateConnectScopeAgainstBootstrap(bootstrapContext, scopeContext);
-    BootstrapCatalogProperties.Realm currentRealm =
+    GameplayCatalogProperties.Realm currentRealm =
         requireAdmissibleRealm(
             bootstrapContext, scopeContext.worldSlug(), scopeContext.realmSlug());
     if (currentRealm.getTenantId() != scopeContext.tenantId()
@@ -322,6 +335,17 @@ public class AccountServiceImpl implements AccountService {
     RuntimeMembershipDto membership =
         getTenantMembershipForRuntime(
             bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
+    if (!membership.gameplayAdmissionAllowed()
+        && isPublicProductionRealm(currentRealm)
+        && scopeContext.tenantId() == currentRealm.getTenantId()) {
+      membership =
+          toRuntimeMembership(
+              ensurePublicProductionPlayerMembership(
+                  bootstrapContext.accountId(),
+                  scopeContext.tenantId(),
+                  scopeContext.realmSlug(),
+                  request.requestId()));
+    }
     if (!membership.gameplayAdmissionAllowed()) {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
@@ -393,19 +417,88 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
+  @Transactional
+  @Timed(value = "account.public_production_membership")
+  public PublicProductionMembershipResult ensurePublicProductionPlayerMembership(
+      Long accountId, Long tenantId, String realmSlug, String requestId) {
+    requireAccount(accountId);
+    GameplayCatalogProperties.Realm realm = requirePublicProductionRealm(tenantId, realmSlug);
+    RuntimeEntitlementsDto entitlements = getTenantEntitlementsForRuntime(tenantId, requestId);
+    if (!entitlements.gameplayAvailable()) {
+      throw new AuthenticationException(
+          "GAMEPLAY_UNAVAILABLE", "Gameplay is not available for this tenant");
+    }
+
+    Optional<AccountTenantMembership> existing =
+        accountTenantMembershipRepository.findByAccountIdAndTenantId(accountId, tenantId);
+    if (existing.isPresent()) {
+      AccountTenantMembership membership = existing.orElseThrow();
+      if (!membership.isGameplayAdmissionAllowed()) {
+        throw new AuthenticationException(
+            "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
+      }
+      return new PublicProductionMembershipResult(
+          accountId,
+          tenantId,
+          realm.getSlug(),
+          membership.getId(),
+          false,
+          Instant.now().toString());
+    }
+
+    AccountTenantMembership created = new AccountTenantMembership();
+    created.setAccount(requireAccount(accountId));
+    created.setTenantId(tenantId);
+    created.setGameplayAdmissionAllowed(true);
+    try {
+      created = accountTenantMembershipRepository.saveAndFlush(created);
+    } catch (DataIntegrityViolationException ex) {
+      AccountTenantMembership concurrent =
+          accountTenantMembershipRepository
+              .findByAccountIdAndTenantId(accountId, tenantId)
+              .orElseThrow(() -> ex);
+      if (!concurrent.isGameplayAdmissionAllowed()) {
+        throw new AuthenticationException(
+            "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
+      }
+      return new PublicProductionMembershipResult(
+          accountId,
+          tenantId,
+          realm.getSlug(),
+          concurrent.getId(),
+          false,
+          Instant.now().toString());
+    }
+
+    long membershipVersion = created.getId();
+    runAfterCommit(
+        () ->
+            safeLogPublicProductionMembershipCreated(
+                tenantId, accountId, realm.getSlug(), membershipVersion, requestId));
+    logger.info(
+        "Created public-production gameplay membership for account {} tenant {} realm {} membershipVersion {} requestId {}",
+        accountId,
+        tenantId,
+        realm.getSlug(),
+        membershipVersion,
+        requestId);
+    return new PublicProductionMembershipResult(
+        accountId, tenantId, realm.getSlug(), membershipVersion, true, Instant.now().toString());
+  }
+
+  @Override
   @Transactional(readOnly = true)
   @Timed(value = "account.runtime_membership")
   public RuntimeMembershipDto getTenantMembershipForRuntime(
       Long accountId, Long tenantId, String requestId) {
-    Account account =
-        accountRepository
-            .findById(accountId)
-            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    requireAccount(accountId);
+    Optional<AccountTenantMembership> membership =
+        accountTenantMembershipRepository.findByAccountIdAndTenantId(accountId, tenantId);
     return new RuntimeMembershipDto(
-        account.getId(),
+        accountId,
         tenantId,
-        Objects.equals(account.getTenantId(), tenantId),
-        Math.max(1L, account.getId()),
+        membership.map(AccountTenantMembership::isGameplayAdmissionAllowed).orElse(false),
+        membership.map(AccountTenantMembership::getId).orElse(0L),
         Instant.now().toString());
   }
 
@@ -452,13 +545,13 @@ public class AccountServiceImpl implements AccountService {
     return new BootstrapContext(accountId, tenantId);
   }
 
-  private List<BootstrapCatalogProperties.World> configuredWorlds() {
-    return bootstrapCatalogProperties.getWorlds() == null
+  private List<GameplayCatalogProperties.World> configuredWorlds() {
+    return gameplayCatalogProperties.getWorlds() == null
         ? List.of()
-        : bootstrapCatalogProperties.getWorlds();
+        : gameplayCatalogProperties.getWorlds();
   }
 
-  private BootstrapCatalogProperties.World requireWorld(String worldSlug) {
+  private GameplayCatalogProperties.World requireWorld(String worldSlug) {
     return configuredWorlds().stream()
         .filter(world -> Objects.equals(world.getSlug(), worldSlug))
         .findFirst()
@@ -468,9 +561,9 @@ public class AccountServiceImpl implements AccountService {
                     "ADMISSION_POINTER_UNAVAILABLE", "Unknown gameplay world selection"));
   }
 
-  private BootstrapCatalogProperties.Realm requireAdmissibleRealm(
+  private GameplayCatalogProperties.Realm requireAdmissibleRealm(
       BootstrapContext bootstrapContext, String worldSlug, String realmSlug) {
-    BootstrapCatalogProperties.World world = requireWorld(worldSlug);
+    GameplayCatalogProperties.World world = requireWorld(worldSlug);
     return world.getRealms().stream()
         .filter(realm -> Objects.equals(realm.getSlug(), realmSlug))
         .filter(realm -> isRealmAdmissible(bootstrapContext, realm))
@@ -482,19 +575,19 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private boolean hasAdmissibleRealm(
-      BootstrapContext bootstrapContext, BootstrapCatalogProperties.World world) {
+      BootstrapContext bootstrapContext, GameplayCatalogProperties.World world) {
     return world.getRealms().stream().anyMatch(realm -> isRealmAdmissible(bootstrapContext, realm));
   }
 
   private boolean isRealmAdmissible(
-      BootstrapContext bootstrapContext, BootstrapCatalogProperties.Realm realm) {
-    if (!realm.isVisible() || realm.getTenantId() != bootstrapContext.tenantId()) {
+      BootstrapContext bootstrapContext, GameplayCatalogProperties.Realm realm) {
+    if (!realm.isVisible()) {
       return false;
     }
     RuntimeMembershipDto membership =
         getTenantMembershipForRuntime(
             bootstrapContext.accountId(), realm.getTenantId(), "bootstrap-discovery");
-    if (!membership.gameplayAdmissionAllowed()) {
+    if (!membership.gameplayAdmissionAllowed() && !isPublicProductionRealm(realm)) {
       return false;
     }
     RuntimeEntitlementsDto entitlements =
@@ -505,7 +598,7 @@ public class AccountServiceImpl implements AccountService {
   private String mintConnectScopeId(
       BootstrapContext bootstrapContext,
       String worldSlug,
-      BootstrapCatalogProperties.Realm realm,
+      GameplayCatalogProperties.Realm realm,
       Instant evaluatedAt,
       Instant expiresAt) {
     long expirationMs = Math.max(1L, expiresAt.toEpochMilli() - evaluatedAt.toEpochMilli());
@@ -572,26 +665,49 @@ public class AccountServiceImpl implements AccountService {
 
   private void validateConnectScopeAgainstBootstrap(
       BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
-    if (scopeContext.accountId() != bootstrapContext.accountId()
-        || scopeContext.tenantId() != bootstrapContext.tenantId()) {
+    if (scopeContext.accountId() != bootstrapContext.accountId()) {
       throw new AuthenticationException(
           "CONNECT_SCOPE_MISMATCH", "Selected gameplay target is no longer admissible");
     }
   }
 
-  private Optional<Account> findAccountForAuthentication(Long tenantId, String usernameOrEmail) {
-    Optional<Account> tenantUsernameMatch =
-        accountRepository.findByTenantIdAndUsername(tenantId, usernameOrEmail);
-    if (tenantUsernameMatch.isPresent()) {
-      return tenantUsernameMatch;
+  private Optional<Account> findAccountForAuthentication(String usernameOrEmail) {
+    Optional<Account> usernameMatch = accountRepository.findByUsername(usernameOrEmail);
+    if (usernameMatch.isPresent()) {
+      return usernameMatch;
     }
 
-    Optional<Account> tenantEmailMatch =
-        accountRepository.findByTenantIdAndEmail(tenantId, usernameOrEmail);
-    if (tenantEmailMatch.isPresent()) {
-      return tenantEmailMatch;
+    return accountRepository.findByEmail(usernameOrEmail);
+  }
+
+  private Account requireAccount(Long accountId) {
+    return accountRepository
+        .findById(accountId)
+        .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+  }
+
+  private Account requireAccountWithMembership(Long accountId, Long tenantId) {
+    Account account = requireAccount(accountId);
+    requireMembership(accountId, tenantId);
+    return account;
+  }
+
+  private void requireGameplayMembership(Long accountId, Long tenantId, String message) {
+    AccountTenantMembership membership =
+        accountTenantMembershipRepository
+            .findByAccountIdAndTenantId(accountId, tenantId)
+            .orElseThrow(() -> new IllegalArgumentException(message));
+    if (!membership.isGameplayAdmissionAllowed()) {
+      throw new IllegalArgumentException(message);
     }
-    return Optional.empty();
+  }
+
+  private void requireMembership(Long accountId, Long tenantId) {
+    requireGameplayMembership(accountId, tenantId, "Account not found");
+  }
+
+  private boolean hasAnyMembership(Long accountId) {
+    return accountTenantMembershipRepository.existsByAccountId(accountId);
   }
 
   private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {
@@ -678,6 +794,22 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
+  private void safeLogPublicProductionMembershipCreated(
+      Long tenantId, Long accountId, String realmSlug, long membershipVersion, String requestId) {
+    try {
+      loggingAdminClient.logPublicProductionMembershipCreated(
+          tenantId, accountId, realmSlug, membershipVersion, requestId);
+    } catch (RuntimeException ex) {
+      logger.warn(
+          "Failed to record public-production membership creation for tenant {} account {} realm {} requestId {}",
+          tenantId,
+          accountId,
+          realmSlug,
+          requestId,
+          ex);
+    }
+  }
+
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "account.get_profile")
@@ -711,11 +843,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.export")
   public AccountDataExportDto exportAccountData(Long tenantId, Long accountId) {
-    Account account =
-        accountRepository
-            .findById(accountId)
-            .filter(a -> a.getTenantId().equals(tenantId))
-            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    Account account = requireAccountWithMembership(accountId, tenantId);
     Profile profile =
         profileRepository.findByAccountIdAndTenantId(accountId, tenantId).orElse(null);
     return new AccountDataExportDto(
@@ -726,17 +854,16 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.delete")
   public void deleteAccount(Long tenantId, Long accountId) {
-    Account account =
-        accountRepository
-            .findById(accountId)
-            .filter(a -> a.getTenantId().equals(tenantId))
-            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    Account account = requireAccountWithMembership(accountId, tenantId);
     paymentTransactionRepository.deleteByAccountId(accountId, tenantId);
     subscriptionRepository.deleteByAccountId(accountId, tenantId);
     profileRepository
         .findByAccountIdAndTenantId(accountId, tenantId)
         .ifPresent(profileRepository::delete);
-    accountRepository.delete(account);
+    accountTenantMembershipRepository.deleteByAccountIdAndTenantId(accountId, tenantId);
+    if (!hasAnyMembership(accountId)) {
+      accountRepository.delete(account);
+    }
   }
 
   @Override
@@ -745,8 +872,9 @@ public class AccountServiceImpl implements AccountService {
   public void requestPasswordReset(PasswordResetRequest request) {
     net.firedevops.firemud.accountservice.entity.Account account =
         accountRepository
-            .findByTenantIdAndEmail(request.tenantId(), request.email())
+            .findByEmail(request.email())
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    requireMembership(account.getId(), request.tenantId());
     net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
         new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
     token.setAccount(account);
@@ -788,11 +916,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.request_email_verification")
   public void requestEmailVerification(Long tenantId, Long accountId) {
-    Account account =
-        accountRepository
-            .findById(accountId)
-            .filter(a -> a.getTenantId().equals(tenantId))
-            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    Account account = requireAccountWithMembership(accountId, tenantId);
     EmailVerificationToken token = new EmailVerificationToken();
     token.setAccount(account);
     token.setTenantId(tenantId);
@@ -834,11 +958,7 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.link_external")
   public void linkExternalAccount(
       net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest request) {
-    Account account =
-        accountRepository
-            .findById(request.accountId())
-            .filter(a -> a.getTenantId().equals(request.tenantId()))
-            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    Account account = requireAccountWithMembership(request.accountId(), request.tenantId());
 
     if (externalAccountRepository.existsByTenantIdAndAccountIdAndProvider(
         request.tenantId(), request.accountId(), request.provider())) {
@@ -860,8 +980,9 @@ public class AccountServiceImpl implements AccountService {
   public void sendUsernameReminder(UsernameRecoveryRequest request) {
     Account account =
         accountRepository
-            .findByTenantIdAndEmail(request.tenantId(), request.email())
+            .findByEmail(request.email())
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    requireMembership(account.getId(), request.tenantId());
     runAfterCommit(
         () ->
             emailService.sendEmail(
@@ -920,6 +1041,42 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private record BootstrapContext(long accountId, long tenantId) {}
+
+  private RuntimeMembershipDto toRuntimeMembership(PublicProductionMembershipResult result) {
+    return new RuntimeMembershipDto(
+        result.accountId(),
+        result.tenantId(),
+        true,
+        result.membershipVersion(),
+        result.evaluatedAt());
+  }
+
+  private GameplayCatalogProperties.Realm requirePublicProductionRealm(
+      Long tenantId, String realmSlug) {
+    GameplayCatalogProperties.Realm realm =
+        gameplayCatalogProperties.getWorlds().stream()
+            .filter(Objects::nonNull)
+            .flatMap(world -> world.getRealms().stream())
+            .filter(Objects::nonNull)
+            .filter(candidate -> candidate.getTenantId() == tenantId)
+            .filter(candidate -> Objects.equals(candidate.getSlug(), realmSlug))
+            .findFirst()
+            .orElseThrow(
+                () ->
+                    new AuthenticationException(
+                        "ADMISSION_POINTER_UNAVAILABLE",
+                        "Selected gameplay realm is not admissible"));
+    if (!isPublicProductionRealm(realm)) {
+      throw new AuthenticationException(
+          "PUBLIC_PRODUCTION_MEMBERSHIP_NOT_ALLOWED",
+          "Public membership creation is not allowed for this realm");
+    }
+    return realm;
+  }
+
+  private boolean isPublicProductionRealm(GameplayCatalogProperties.Realm realm) {
+    return realm.isVisible() && "production".equalsIgnoreCase(realm.getSlug());
+  }
 
   private record ConnectScopeContext(
       long accountId,

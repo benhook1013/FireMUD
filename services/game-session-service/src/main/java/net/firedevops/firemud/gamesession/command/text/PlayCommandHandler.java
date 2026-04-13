@@ -7,12 +7,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
-import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
@@ -142,7 +143,7 @@ public class PlayCommandHandler {
       }
 
       ResolvedPlaySelection selection = maybeSelection.orElseThrow();
-      Optional<GameSessionProperties.WorldOption> maybeWorld =
+      Optional<GameplayCatalogProperties.World> maybeWorld =
           gameplayWorldCatalog.resolveWorld(selection.worldSelector());
       if (maybeWorld.isEmpty()) {
         return failure(
@@ -156,8 +157,8 @@ public class PlayCommandHandler {
             null);
       }
 
-      GameSessionProperties.WorldOption selectedWorld = maybeWorld.get();
-      Optional<GameSessionProperties.RealmOption> maybeRealm =
+      GameplayCatalogProperties.World selectedWorld = maybeWorld.get();
+      Optional<GameplayCatalogProperties.Realm> maybeRealm =
           selection.explicitRealmSelector() != null
               ? gameplayWorldCatalog.resolveRealm(selectedWorld, selection.explicitRealmSelector())
               : selectDefaultRealm(context, selectedWorld);
@@ -173,21 +174,20 @@ public class PlayCommandHandler {
             null);
       }
 
-      GameSessionProperties.RealmOption selectedRealm = maybeRealm.orElseThrow();
+      GameplayCatalogProperties.Realm selectedRealm = maybeRealm.orElseThrow();
+      String selectedTenantTag = Long.toString(selectedRealm.getTenantId());
       try (GameplayLoggingContext worldContext =
           GameplayLoggingContext.open(
-              Long.toString(context.tenantId()),
-              Long.toString(selectedRealm.getGameInstanceId()),
-              null,
-              null)) {
+              selectedTenantTag, Long.toString(selectedRealm.getGameInstanceId()), null, null)) {
         Optional<PlayCommandHandlingResult> connectScopeFailure =
-            validateFirstPartyConnectScope(context, selectedWorld, selectedRealm, tenantTag);
+            validateFirstPartyConnectScope(
+                context, selectedWorld, selectedRealm, selectedTenantTag);
         if (connectScopeFailure.isPresent()) {
           return connectScopeFailure.get();
         }
         Optional<PlayCommandHandlingResult> authorityFailure =
             validateRuntimeAdmission(
-                context, selectedRealm, tenantTag, selection.characterSelector());
+                context, selectedRealm, selectedTenantTag, selection.characterSelector());
         if (authorityFailure.isPresent()) {
           return authorityFailure.get();
         }
@@ -208,7 +208,7 @@ public class PlayCommandHandler {
                   playUsage(selectedWorld, selectedRealm),
                   "charsUsage",
                   charsUsage(selectedWorld, selectedRealm)),
-              tenantTag,
+              selectedTenantTag,
               Long.toString(selectedRealm.getGameInstanceId()),
               null,
               null);
@@ -217,7 +217,7 @@ public class PlayCommandHandler {
         long characterId = resolveCharacterId(context, selectedRealm, character, characterName);
         try (GameplayLoggingContext gameplayContext =
             GameplayLoggingContext.open(
-                Long.toString(context.tenantId()),
+                selectedTenantTag,
                 Long.toString(gameInstanceId),
                 Long.toString(characterId),
                 null)) {
@@ -229,7 +229,7 @@ public class PlayCommandHandler {
             resumeCounter.increment();
             LOG.debug(
                 "PLAY resumed existing gameplay binding for tenant {} gameInstance {} character {} on session {}",
-                context.tenantId(),
+                selectedRealm.getTenantId(),
                 gameInstanceId,
                 characterId,
                 context.sessionId());
@@ -245,7 +245,7 @@ public class PlayCommandHandler {
 
           Optional<SessionContext> existingBinding =
               sessionContextService.findByGameplayIdentity(
-                  context.tenantId(), gameInstanceId, characterId);
+                  selectedRealm.getTenantId(), gameInstanceId, characterId);
           boolean resumedOrTookOver =
               existingBinding
                   .map(
@@ -262,7 +262,7 @@ public class PlayCommandHandler {
           SessionContext updated =
               new SessionContext(
                   context.sessionId(),
-                  context.tenantId(),
+                  selectedRealm.getTenantId(),
                   context.accountId(),
                   context.loginName(),
                   characterId,
@@ -287,14 +287,14 @@ public class PlayCommandHandler {
 
   private Optional<PlayCommandHandlingResult> validateFirstPartyConnectScope(
       SessionContext context,
-      GameSessionProperties.WorldOption selectedWorld,
-      GameSessionProperties.RealmOption selectedRealm,
+      GameplayCatalogProperties.World selectedWorld,
+      GameplayCatalogProperties.Realm selectedRealm,
       String tenantTag) {
     return firstPartyConnectContextRegistry
         .find(context.sessionId())
         .filter(
             connectContext ->
-                connectContext.tenantId() != context.tenantId()
+                connectContext.tenantId() != selectedRealm.getTenantId()
                     || connectContext.gameInstanceId() != selectedRealm.getGameInstanceId()
                     || (StringUtils.hasText(connectContext.worldSlug())
                         && !selectedWorld.getSlug().equalsIgnoreCase(connectContext.worldSlug()))
@@ -348,7 +348,7 @@ public class PlayCommandHandler {
 
   private long resolveCharacterId(
       SessionContext context,
-      GameSessionProperties.RealmOption selectedRealm,
+      GameplayCatalogProperties.Realm selectedRealm,
       String requestedCharacter,
       String characterName) {
     if (context.characterId() > 0) {
@@ -357,7 +357,7 @@ public class PlayCommandHandler {
     if (StringUtils.hasText(characterName)) {
       Optional<net.firedevops.firemud.entitymanagement.v1.Character> character =
           entityManagementClient.findCharacterByName(
-              Long.toString(context.tenantId()), characterName.trim());
+              Long.toString(selectedRealm.getTenantId()), characterName.trim());
       if (character.isPresent() && StringUtils.hasText(character.get().getId())) {
         return Long.parseLong(character.get().getId());
       }
@@ -367,7 +367,7 @@ public class PlayCommandHandler {
     }
     return Math.floorMod(
             Objects.hash(
-                context.tenantId(),
+                selectedRealm.getTenantId(),
                 selectedRealm.getGameInstanceId(),
                 characterName.trim().toLowerCase()),
             Integer.MAX_VALUE - 1)
@@ -395,7 +395,7 @@ public class PlayCommandHandler {
       resumeCounter.increment();
       LOG.debug(
           "PLAY resumed gameplay binding for tenant {} gameInstance {} character {} on session {}",
-          incoming.tenantId(),
+          existing.tenantId(),
           gameInstanceId,
           characterId,
           incoming.sessionId());
@@ -405,7 +405,7 @@ public class PlayCommandHandler {
     takeoverCounter.increment();
     LOG.info(
         "PLAY taking over gameplay binding tenant {} gameInstance {} character {} from session {} to {}",
-        incoming.tenantId(),
+        existing.tenantId(),
         gameInstanceId,
         characterId,
         existing.sessionId(),
@@ -437,7 +437,7 @@ public class PlayCommandHandler {
 
   private Optional<PlayCommandHandlingResult> validateRuntimeAdmission(
       SessionContext context,
-      GameSessionProperties.RealmOption selectedRealm,
+      GameplayCatalogProperties.Realm selectedRealm,
       String tenantTag,
       String requestedCharacter) {
     String requestId = context.sessionId() + ":" + UUID.randomUUID();
@@ -449,16 +449,19 @@ public class PlayCommandHandler {
             resolveCharacterName(context, requestedCharacter));
     GetTenantMembershipForRuntimeResponse membershipResponse =
         accountClient.getTenantMembershipForRuntime(
-            Long.toString(context.accountId()), Long.toString(context.tenantId()), requestId);
+            Long.toString(context.accountId()),
+            Long.toString(selectedRealm.getTenantId()),
+            requestId);
     Optional<PlayCommandHandlingResult> membershipFailure =
         validateMembershipResponse(
-            membershipResponse, context, tenantTag, selectedRealm, requestedCharacterId);
+            membershipResponse, context, tenantTag, selectedRealm, requestedCharacterId, requestId);
     if (membershipFailure.isPresent()) {
       return membershipFailure;
     }
 
     GetTenantEntitlementsForRuntimeResponse entitlementResponse =
-        accountClient.getTenantEntitlementsForRuntime(Long.toString(context.tenantId()), requestId);
+        accountClient.getTenantEntitlementsForRuntime(
+            Long.toString(selectedRealm.getTenantId()), requestId);
     return validateEntitlementsResponse(
         entitlementResponse, context, tenantTag, selectedRealm, requestedCharacterId);
   }
@@ -467,8 +470,9 @@ public class PlayCommandHandler {
       GetTenantMembershipForRuntimeResponse response,
       SessionContext context,
       String tenantTag,
-      GameSessionProperties.RealmOption selectedRealm,
-      long requestedCharacterId) {
+      GameplayCatalogProperties.Realm selectedRealm,
+      long requestedCharacterId,
+      String requestId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
       ErrorDetail error = maybeError.get();
@@ -508,6 +512,36 @@ public class PlayCommandHandler {
               null));
     }
     if (!response.getGameplayAdmissionAllowed()) {
+      if (isPublicProductionRealm(selectedRealm)) {
+        EnsurePublicProductionPlayerMembershipResponse ensured =
+            accountClient.ensurePublicProductionPlayerMembership(
+                Long.toString(context.accountId()),
+                Long.toString(selectedRealm.getTenantId()),
+                selectedRealm.getSlug(),
+                requestId);
+        Optional<ErrorDetail> ensureError = extractError(ensured.getError());
+        if (ensureError.isEmpty() && ensured.getGameplayAdmissionAllowed()) {
+          return Optional.empty();
+        }
+        if (ensureError.isPresent() && isAuthorityUnavailable(ensureError.get())) {
+          recordResumeDeniedIfApplicable(
+              context,
+              selectedRealm.getGameInstanceId(),
+              requestedCharacterId,
+              tenantTag,
+              "authority_unavailable");
+          return Optional.of(
+              failure(
+                  GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE,
+                  GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_MESSAGE,
+                  "error.play.membership-unavailable",
+                  Map.of(),
+                  tenantTag,
+                  Long.toString(selectedRealm.getGameInstanceId()),
+                  Long.toString(requestedCharacterId),
+                  null));
+        }
+      }
       recordResumeDeniedIfApplicable(
           context,
           selectedRealm.getGameInstanceId(),
@@ -532,7 +566,7 @@ public class PlayCommandHandler {
       GetTenantEntitlementsForRuntimeResponse response,
       SessionContext context,
       String tenantTag,
-      GameSessionProperties.RealmOption selectedRealm,
+      GameplayCatalogProperties.Realm selectedRealm,
       long requestedCharacterId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
@@ -585,9 +619,19 @@ public class PlayCommandHandler {
     return Optional.of(error);
   }
 
+  private boolean isPublicProductionRealm(GameplayCatalogProperties.Realm realm) {
+    return realm.isVisible() && "production".equalsIgnoreCase(realm.getSlug());
+  }
+
+  private boolean isAuthorityUnavailable(ErrorDetail error) {
+    String code = Optional.ofNullable(error.getCode()).orElse("");
+    return GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE.equalsIgnoreCase(code)
+        || "MEMBERSHIP_AUTH_UNAVAILABLE".equalsIgnoreCase(code);
+  }
+
   private boolean maybeRecordFreshEntryFallback(
       SessionContext context,
-      GameSessionProperties.RealmOption selectedRealm,
+      GameplayCatalogProperties.Realm selectedRealm,
       String requestedCharacter,
       long requestedGameInstanceId,
       long requestedCharacterId) {
@@ -606,7 +650,7 @@ public class PlayCommandHandler {
         .increment();
     LOG.info(
         "PLAY falling back to fresh entry for tenant {} gameInstance {} character {} on session {} because resumable context was stale or incomplete",
-        context.tenantId(),
+        selectedRealm.getTenantId(),
         selectedRealm.getGameInstanceId(),
         requestedCharacterId,
         context.sessionId());
@@ -632,7 +676,7 @@ public class PlayCommandHandler {
           new ResolvedPlaySelection(worldSelector.trim(), secondSelector, characterSelector));
     }
 
-    Optional<GameSessionProperties.WorldOption> maybeWorld =
+    Optional<GameplayCatalogProperties.World> maybeWorld =
         gameplayWorldCatalog.resolveWorld(worldSelector);
     if (maybeWorld.isPresent()
         && StringUtils.hasText(secondSelector)
@@ -642,13 +686,13 @@ public class PlayCommandHandler {
     return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), secondSelector, null));
   }
 
-  private Optional<GameSessionProperties.RealmOption> selectDefaultRealm(
-      SessionContext context, GameSessionProperties.WorldOption selectedWorld) {
+  private Optional<GameplayCatalogProperties.Realm> selectDefaultRealm(
+      SessionContext context, GameplayCatalogProperties.World selectedWorld) {
     Optional<FirstPartyConnectContext> connectContext =
         firstPartyConnectContextRegistry.find(context.sessionId());
     if (connectContext.isPresent()
         && StringUtils.hasText(connectContext.orElseThrow().realmSlug())) {
-      Optional<GameSessionProperties.RealmOption> hintedRealm =
+      Optional<GameplayCatalogProperties.Realm> hintedRealm =
           gameplayWorldCatalog.resolveRealm(
               selectedWorld, connectContext.orElseThrow().realmSlug());
       if (hintedRealm.isPresent()) {
@@ -661,15 +705,15 @@ public class PlayCommandHandler {
     return gameplayWorldCatalog.resolveDefaultRealm(selectedWorld);
   }
 
-  private String explicitRealmSelectionMessage(GameSessionProperties.WorldOption selectedWorld) {
+  private String explicitRealmSelectionMessage(GameplayCatalogProperties.World selectedWorld) {
     return "Selection required. Use PLAY "
         + selectedWorld.getSlug()
         + " <realm> [character] or browse REALMS first.";
   }
 
   private String characterSelectionMessage(
-      GameSessionProperties.WorldOption selectedWorld,
-      GameSessionProperties.RealmOption selectedRealm) {
+      GameplayCatalogProperties.World selectedWorld,
+      GameplayCatalogProperties.Realm selectedRealm) {
     return "Selection required. Use "
         + playUsage(selectedWorld, selectedRealm)
         + " or browse "
@@ -685,8 +729,8 @@ public class PlayCommandHandler {
   }
 
   private String playUsage(
-      GameSessionProperties.WorldOption selectedWorld,
-      GameSessionProperties.RealmOption selectedRealm) {
+      GameplayCatalogProperties.World selectedWorld,
+      GameplayCatalogProperties.Realm selectedRealm) {
     return "PLAY "
         + selectedWorld.getSlug()
         + ("production".equalsIgnoreCase(selectedRealm.getSlug())
@@ -696,8 +740,8 @@ public class PlayCommandHandler {
   }
 
   private String charsUsage(
-      GameSessionProperties.WorldOption selectedWorld,
-      GameSessionProperties.RealmOption selectedRealm) {
+      GameplayCatalogProperties.World selectedWorld,
+      GameplayCatalogProperties.Realm selectedRealm) {
     return "CHARS "
         + selectedWorld.getSlug()
         + ("production".equalsIgnoreCase(selectedRealm.getSlug())

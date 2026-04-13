@@ -4,17 +4,17 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
-import net.firedevops.firemud.gamesession.config.GameSessionProperties;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import org.springframework.stereotype.Component;
 
-/** Resolves the current public world list and selector forms used by WORLDS/PLAY. */
+/** Resolves the canonical public world list and selector forms used by WORLDS/PLAY. */
 @Component
 public final class GameplayWorldCatalog {
-  private final GameSessionProperties properties;
+  private final GameplayCatalogProperties properties;
 
-  public GameplayWorldCatalog(GameSessionProperties properties) {
+  public GameplayWorldCatalog(GameplayCatalogProperties properties) {
     this.properties = Objects.requireNonNull(properties, "properties must not be null");
   }
 
@@ -27,11 +27,11 @@ public final class GameplayWorldCatalog {
         .map(world -> new RealmBrowseViewOutput(world.getSlug(), realmEntries(world)));
   }
 
-  public Optional<GameSessionProperties.WorldOption> resolveWorld(String selector) {
+  public Optional<GameplayCatalogProperties.World> resolveWorld(String selector) {
     if (selector == null || selector.isBlank()) {
       return Optional.empty();
     }
-    List<GameSessionProperties.WorldOption> worlds = properties.getWorlds();
+    List<GameplayCatalogProperties.World> worlds = visibleWorlds();
     try {
       int index = Integer.parseInt(selector);
       if (index >= 1 && index <= worlds.size()) {
@@ -46,8 +46,8 @@ public final class GameplayWorldCatalog {
         .findFirst();
   }
 
-  public Optional<GameSessionProperties.RealmOption> resolveRealm(
-      GameSessionProperties.WorldOption world, String selector) {
+  public Optional<GameplayCatalogProperties.Realm> resolveRealm(
+      GameplayCatalogProperties.World world, String selector) {
     if (world == null || selector == null || selector.isBlank()) {
       return Optional.empty();
     }
@@ -57,16 +57,16 @@ public final class GameplayWorldCatalog {
         .findFirst();
   }
 
-  public boolean hasVisibleRealm(GameSessionProperties.WorldOption world, String selector) {
+  public boolean hasVisibleRealm(GameplayCatalogProperties.World world, String selector) {
     return resolveRealm(world, selector).isPresent();
   }
 
-  public Optional<GameSessionProperties.RealmOption> resolveDefaultRealm(
-      GameSessionProperties.WorldOption world) {
+  public Optional<GameplayCatalogProperties.Realm> resolveDefaultRealm(
+      GameplayCatalogProperties.World world) {
     if (world == null) {
       return Optional.empty();
     }
-    List<GameSessionProperties.RealmOption> visibleRealms = visibleRealms(world);
+    List<GameplayCatalogProperties.Realm> visibleRealms = visibleRealms(world);
     if (visibleRealms.isEmpty()) {
       return Optional.empty();
     }
@@ -76,45 +76,46 @@ public final class GameplayWorldCatalog {
         .or(() -> Optional.of(visibleRealms.get(0)));
   }
 
-  public boolean requiresExplicitRealmSelection(GameSessionProperties.WorldOption world) {
+  public boolean requiresExplicitRealmSelection(GameplayCatalogProperties.World world) {
     return visibleRealms(world).size() > 1;
   }
 
-  private List<GameSessionProperties.RealmOption> visibleRealms(
-      GameSessionProperties.WorldOption world) {
+  private List<GameplayCatalogProperties.Realm> visibleRealms(
+      GameplayCatalogProperties.World world) {
     if (world == null || world.getRealms() == null) {
       return List.of();
     }
     return world.getRealms().stream()
         .filter(Objects::nonNull)
-        .filter(GameSessionProperties.RealmOption::isVisible)
+        .filter(GameplayCatalogProperties.Realm::isVisible)
         .toList();
   }
 
   private List<WorldsViewOutput.WorldEntry> worldEntries() {
-    List<GameSessionProperties.WorldOption> worlds = properties.getWorlds();
+    List<GameplayCatalogProperties.World> worlds = visibleWorlds();
     java.util.ArrayList<WorldsViewOutput.WorldEntry> entries =
         new java.util.ArrayList<>(worlds.size());
     for (int i = 0; i < worlds.size(); i++) {
-      GameSessionProperties.WorldOption world = worlds.get(i);
+      GameplayCatalogProperties.World world = worlds.get(i);
+      GameplayCatalogProperties.Realm defaultRealm = defaultRealm(world);
       entries.add(
           new WorldsViewOutput.WorldEntry(
               i + 1,
               world.getSlug(),
               world.getDisplayName(),
-              world.getGameInstanceId(),
-              world.isRequiresCharacterSelection()));
+              defaultRealm.getGameInstanceId(),
+              defaultRealm.isRequiresCharacterSelection()));
     }
     return List.copyOf(entries);
   }
 
   private List<RealmBrowseViewOutput.RealmEntry> realmEntries(
-      GameSessionProperties.WorldOption world) {
-    List<GameSessionProperties.RealmOption> realms = visibleRealms(world);
+      GameplayCatalogProperties.World world) {
+    List<GameplayCatalogProperties.Realm> realms = visibleRealms(world);
     java.util.ArrayList<RealmBrowseViewOutput.RealmEntry> entries =
         new java.util.ArrayList<>(realms.size());
     for (int i = 0; i < realms.size(); i++) {
-      GameSessionProperties.RealmOption realm = realms.get(i);
+      GameplayCatalogProperties.Realm realm = realms.get(i);
       entries.add(
           new RealmBrowseViewOutput.RealmEntry(
               i + 1,
@@ -124,5 +125,26 @@ public final class GameplayWorldCatalog {
               realm.isRequiresCharacterSelection()));
     }
     return List.copyOf(entries);
+  }
+
+  private GameplayCatalogProperties.Realm defaultRealm(GameplayCatalogProperties.World world) {
+    return resolveDefaultRealm(world)
+        .orElseGet(
+            () -> {
+              GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+              realm.setSlug("production");
+              realm.setDisplayName("Live Realm");
+              return realm;
+            });
+  }
+
+  private List<GameplayCatalogProperties.World> visibleWorlds() {
+    if (properties.getWorlds() == null) {
+      return List.of();
+    }
+    return properties.getWorlds().stream()
+        .filter(Objects::nonNull)
+        .filter(world -> world.getSlug() != null && !world.getSlug().isBlank())
+        .toList();
   }
 }

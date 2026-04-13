@@ -1,4 +1,4 @@
-package net.firedevops.firemud.accountservice.config;
+package net.firedevops.firemud.common.gameplay;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -6,8 +6,8 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @Data
-@ConfigurationProperties(prefix = "firemud.auth.bootstrap")
-public class BootstrapCatalogProperties {
+@ConfigurationProperties(prefix = "firemud.gameplay.catalog")
+public class GameplayCatalogProperties {
   private List<World> worlds =
       new ArrayList<>(
           List.of(

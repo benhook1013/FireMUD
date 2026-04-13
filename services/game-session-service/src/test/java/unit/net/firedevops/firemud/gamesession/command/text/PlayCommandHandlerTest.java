@@ -6,12 +6,13 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
-import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -42,24 +43,27 @@ class PlayCommandHandlerTest {
   private final GameplayPresenceService gameplayPresenceService =
       Mockito.mock(GameplayPresenceService.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
-  private final GameSessionProperties gameSessionProperties = new GameSessionProperties();
-  private final GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(gameSessionProperties);
+  private final GameplayCatalogProperties gameplayCatalogProperties =
+      new GameplayCatalogProperties();
+  private final GameplayWorldCatalog worldCatalog =
+      new GameplayWorldCatalog(gameplayCatalogProperties);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private PlayCommandHandler handler;
 
   @BeforeEach
   void setUp() {
-    gameSessionProperties.setWorlds(
+    gameplayCatalogProperties.setWorlds(
         List.of(
-            new GameSessionProperties.WorldOption("demo", "Demo World", 1L, false),
-            new GameSessionProperties.WorldOption(
+            world(
+                "demo",
+                "Demo World",
+                List.of(realm("production", "Live Realm", 22L, 1L, true, false))),
+            world(
                 "sandbox",
                 "Builder Sandbox",
                 List.of(
-                    new GameSessionProperties.RealmOption(
-                        "production", "Live Realm", 2L, true, true),
-                    new GameSessionProperties.RealmOption(
-                        "preview", "Preview Realm", 41L, true, true)))));
+                    realm("production", "Live Realm", 22L, 2L, true, true),
+                    realm("preview", "Preview Realm", 22L, 41L, true, true)))));
     handler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -89,6 +93,18 @@ class PlayCommandHandlerTest {
                 .setGameplayAvailable(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
+                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .build());
+    when(accountClient.ensurePublicProductionPlayerMembership(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            EnsurePublicProductionPlayerMembershipResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setRealmSlug("production")
+                .setGameplayAdmissionAllowed(true)
+                .setMembershipVersion(3L)
+                .setCreated(true)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
   }
@@ -343,15 +359,42 @@ class PlayCommandHandlerTest {
                 .build());
 
     PlayCommandHandlingResult result =
-        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("sandbox", "preview", "Emberline"),
+                "PLAY sandbox preview Emberline"));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_ACCESS_DENIED");
-    assertThat(
-            meterRegistry
-                .counter("gamesession.session.resume_denied", "reason", "access_denied")
-                .count())
-        .isEqualTo(1.0);
+  }
+
+  @Test
+  void playCreatesPublicProductionMembershipWhenMissing() {
+    SessionContext context =
+        new SessionContext(
+            1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "room-1", "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipVersion(0L)
+                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .build());
+    when(sessionContextService.findByGameplayIdentity(22L, 1L, 123L)).thenReturn(Optional.empty());
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    Mockito.verify(accountClient)
+        .ensurePublicProductionPlayerMembership(
+            Mockito.eq("123"), Mockito.eq("22"), Mockito.eq("production"), Mockito.anyString());
   }
 
   @Test
@@ -450,5 +493,31 @@ class PlayCommandHandlerTest {
         .filter(text -> text != null && !text.isBlank())
         .reduce((left, right) -> left + "\n" + right)
         .orElse(null);
+  }
+
+  private static GameplayCatalogProperties.World world(
+      String slug, String displayName, List<GameplayCatalogProperties.Realm> realms) {
+    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
+    world.setSlug(slug);
+    world.setDisplayName(displayName);
+    world.setRealms(realms);
+    return world;
+  }
+
+  private static GameplayCatalogProperties.Realm realm(
+      String slug,
+      String displayName,
+      long tenantId,
+      long gameInstanceId,
+      boolean visible,
+      boolean requiresCharacterSelection) {
+    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+    realm.setSlug(slug);
+    realm.setDisplayName(displayName);
+    realm.setTenantId(tenantId);
+    realm.setGameInstanceId(gameInstanceId);
+    realm.setVisible(visible);
+    realm.setRequiresCharacterSelection(requiresCharacterSelection);
+    return realm;
   }
 }
