@@ -43,6 +43,7 @@ import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
@@ -147,7 +148,14 @@ public class EntityManagementGrpcService
       SessionContext.requireTenantAccess(tenantId);
       long accountId = Long.parseLong(request.getAccountId());
       var characters =
-          characterService.listForTenantAndAccount(tenantId, accountId, Pageable.unpaged()).stream()
+          characterService
+              .listForGameplayScope(
+                  tenantId,
+                  accountId,
+                  request.getGameInstanceId(),
+                  requirePlayableStateScope(request.getPlayableStateScope()),
+                  Pageable.unpaged())
+              .stream()
               .map(this::toProto)
               .collect(Collectors.toList());
       ListCharactersByAccountResponse response =
@@ -208,7 +216,11 @@ public class EntityManagementGrpcService
       SessionContext.requireTenantAccess(tenantId);
       FindCharacterByNameResponse.Builder builder = FindCharacterByNameResponse.newBuilder();
       characterService
-          .findByTenantAndName(tenantId, request.getName())
+          .findByGameplayScopeAndName(
+              tenantId,
+              request.getGameInstanceId(),
+              requirePlayableStateScope(request.getPlayableStateScope()),
+              request.getName())
           .map(this::toProto)
           .ifPresent(builder::setCharacter);
       responseObserver.onNext(builder.build());
@@ -264,10 +276,13 @@ public class EntityManagementGrpcService
       long tenantId = Long.parseLong(request.getTenantId());
       SessionContext.requireTenantAccess(tenantId);
       long accountId = Long.parseLong(request.getAccountId());
-      CharacterDto dto =
-          new CharacterDto(
-              null, tenantId, accountId, request.getName(), 1, 0, 10, 10, 10, 10, 100, 50);
-      CharacterDto created = characterService.create(dto);
+      CharacterDto created =
+          characterService.create(
+              tenantId,
+              accountId,
+              request.getName(),
+              request.getGameInstanceId(),
+              requirePlayableStateScope(request.getPlayableStateScope()));
       CreateCharacterResponse response =
           CreateCharacterResponse.newBuilder().setCharacterId(String.valueOf(created.id())).build();
       responseObserver.onNext(response);
@@ -988,6 +1003,15 @@ public class EntityManagementGrpcService
 
   private String appErrorCode(ResponseStatusException ex) {
     return ex.getStatusCode().value() == 403 ? "PERMISSION_DENIED" : "INVALID_ARGUMENT";
+  }
+
+  private PlayableStateScope requirePlayableStateScope(PlayableStateScope playableStateScope) {
+    if (playableStateScope == null
+        || playableStateScope == PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED
+        || playableStateScope == PlayableStateScope.UNRECOGNIZED) {
+      throw new IllegalArgumentException("playableStateScope must be specified");
+    }
+    return playableStateScope;
   }
 
   private Character toProto(CharacterDto dto) {

@@ -33,6 +33,8 @@ message CreateCharacterRequest {
   string tenant_id = 1;
   string account_id = 2;
   string name = 3;
+  string game_instance_id = 4;
+  PlayableStateScope playable_state_scope = 5;
 }
 
 message CreateCharacterResponse {
@@ -223,9 +225,17 @@ message DropItemToRoomResponse {
   shared.v1.ErrorDetail error = 3;
 }
 
+enum PlayableStateScope {
+  PLAYABLE_STATE_SCOPE_UNSPECIFIED = 0;
+  PLAYABLE_STATE_SCOPE_SHARED = 1;
+  PLAYABLE_STATE_SCOPE_ISOLATED = 2;
+}
+
 message ListCharactersByAccountRequest {
   string tenant_id = 1;
   string account_id = 2;
+  string game_instance_id = 3;
+  PlayableStateScope playable_state_scope = 4;
 }
 
 message Character {
@@ -251,6 +261,8 @@ message ListCharactersByAccountResponse {
 message FindCharacterByNameRequest {
   string tenant_id = 1;
   string name = 2;
+  string game_instance_id = 3;
+  PlayableStateScope playable_state_scope = 4;
 }
 
 message FindCharacterByNameResponse {

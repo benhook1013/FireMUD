@@ -66,6 +66,7 @@ import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.slf4j.Logger;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -306,9 +307,12 @@ public class AccountServiceImpl implements AccountService {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
     GameplayCatalogProperties.Realm realm =
         requireAdmissibleRealm(bootstrapContext, worldSlug, realmSlug);
-    requireSupportedCharacterRoster(realm);
     return entityManagementClient
-        .listCharactersByAccount(realm.getTenantId(), bootstrapContext.accountId())
+        .listCharactersByAccount(
+            realm.getTenantId(),
+            bootstrapContext.accountId(),
+            realm.getGameInstanceId(),
+            toPlayableStateScope(realm))
         .stream()
         .sorted(Comparator.comparing(net.firedevops.firemud.entitymanagement.v1.Character::getName))
         .map(
@@ -332,7 +336,6 @@ public class AccountServiceImpl implements AccountService {
     GameplayCatalogProperties.Realm currentRealm =
         requireAdmissibleRealm(
             bootstrapContext, scopeContext.worldSlug(), scopeContext.realmSlug());
-    requireSupportedCharacterRoster(currentRealm);
     if (currentRealm.getTenantId() != scopeContext.tenantId()
         || currentRealm.getGameInstanceId() != scopeContext.gameInstanceId()
         || currentRealm.getPointerVersion() != scopeContext.pointerVersion()) {
@@ -601,14 +604,6 @@ public class AccountServiceImpl implements AccountService {
     RuntimeEntitlementsDto entitlements =
         getTenantEntitlementsForRuntime(realm.getTenantId(), "bootstrap-discovery");
     return entitlements.gameplayAvailable();
-  }
-
-  private void requireSupportedCharacterRoster(GameplayCatalogProperties.Realm realm) {
-    if (realm.getStateScope() == GameplayCatalogProperties.RealmStateScope.ISOLATED) {
-      throw new AuthenticationException(
-          "REALM_STATE_POLICY_UNSUPPORTED",
-          "The selected realm uses isolated gameplay state that is not yet supported by bootstrap character discovery.");
-    }
   }
 
   private String mintConnectScopeId(
@@ -1092,6 +1087,13 @@ public class AccountServiceImpl implements AccountService {
 
   private boolean isPublicProductionRealm(GameplayCatalogProperties.Realm realm) {
     return realm.isVisible() && "production".equalsIgnoreCase(realm.getSlug());
+  }
+
+  private PlayableStateScope toPlayableStateScope(GameplayCatalogProperties.Realm realm) {
+    return switch (realm.getStateScope()) {
+      case SHARED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case ISOLATED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+    };
   }
 
   private record ConnectScopeContext(

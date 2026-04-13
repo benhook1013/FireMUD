@@ -26,6 +26,7 @@ import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.client.AccountClient;
@@ -268,7 +269,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
                         .build())
                 .build())
         .when(entityManagementClient)
-        .listCharactersByAccount(eq("22"), eq("123"));
+        .listCharactersByAccount(
+            eq("22"), eq("123"), eq("1"), eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
     when(commandService.enqueue(org.mockito.ArgumentMatchers.anyString(), eq("LOGIN"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(
@@ -1091,7 +1093,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(commandService).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService, never()).enqueue("41", "REALMS demo", false);
     verify(commandService, never()).enqueue("41", "CHARS demo", false);
-    verify(entityManagementClient).listCharactersByAccount("22", "123");
+    verify(entityManagementClient)
+        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -1211,7 +1214,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 .asText())
         .isEqualTo("ALLOW_NEW");
     assertThat(charsResult.path("outputs").get(0).path("payload").path("characters")).hasSize(2);
-    verify(entityManagementClient).listCharactersByAccount("22", "123");
+    verify(entityManagementClient)
+        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test

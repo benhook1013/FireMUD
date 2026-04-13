@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.command.text;
 import java.util.Objects;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
@@ -55,12 +56,12 @@ public class WorldsCommandHandler {
     }
 
     GameplayCatalogProperties.Realm realm = maybeRealm.orElseThrow();
-    if (realm.getStateScope() == GameplayCatalogProperties.RealmStateScope.ISOLATED) {
-      return CharacterBrowseResult.realmStateUnsupported(world.getSlug(), realm.getSlug());
-    }
     ListCharactersByAccountResponse response =
         entityManagementClient.listCharactersByAccount(
-            Long.toString(realm.getTenantId()), Long.toString(sessionContext.accountId()));
+            Long.toString(realm.getTenantId()),
+            Long.toString(sessionContext.accountId()),
+            Long.toString(realm.getGameInstanceId()),
+            toPlayableStateScope(realm));
     if (response.hasError()) {
       return CharacterBrowseResult.unavailable();
     }
@@ -86,7 +87,6 @@ public class WorldsCommandHandler {
           CharacterBrowseResult.InvalidWorld,
           CharacterBrowseResult.InvalidRealm,
           CharacterBrowseResult.RealmSelectionRequired,
-          CharacterBrowseResult.RealmStateUnsupported,
           CharacterBrowseResult.Unavailable {
     static CharacterBrowseResult success(CharacterBrowseViewOutput output) {
       return new Success(output);
@@ -104,10 +104,6 @@ public class WorldsCommandHandler {
       return new RealmSelectionRequired(worldSlug);
     }
 
-    static CharacterBrowseResult realmStateUnsupported(String worldSlug, String realmSlug) {
-      return new RealmStateUnsupported(worldSlug, realmSlug);
-    }
-
     static CharacterBrowseResult unavailable() {
       return new Unavailable();
     }
@@ -120,9 +116,13 @@ public class WorldsCommandHandler {
 
     record RealmSelectionRequired(String worldSlug) implements CharacterBrowseResult {}
 
-    record RealmStateUnsupported(String worldSlug, String realmSlug)
-        implements CharacterBrowseResult {}
-
     record Unavailable() implements CharacterBrowseResult {}
+  }
+
+  private PlayableStateScope toPlayableStateScope(GameplayCatalogProperties.Realm realm) {
+    return switch (realm.getStateScope()) {
+      case SHARED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case ISOLATED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+    };
   }
 }

@@ -11,6 +11,7 @@ import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipR
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
@@ -179,11 +180,6 @@ public class PlayCommandHandler {
       try (GameplayLoggingContext worldContext =
           GameplayLoggingContext.open(
               selectedTenantTag, Long.toString(selectedRealm.getGameInstanceId()), null, null)) {
-        Optional<PlayCommandHandlingResult> realmStateFailure =
-            validateRealmStatePolicy(selectedWorld, selectedRealm, selectedTenantTag);
-        if (realmStateFailure.isPresent()) {
-          return realmStateFailure.get();
-        }
         Optional<PlayCommandHandlingResult> connectScopeFailure =
             validateFirstPartyConnectScope(
                 context, selectedWorld, selectedRealm, selectedTenantTag);
@@ -318,25 +314,6 @@ public class PlayCommandHandler {
                     null));
   }
 
-  private Optional<PlayCommandHandlingResult> validateRealmStatePolicy(
-      GameplayCatalogProperties.World selectedWorld,
-      GameplayCatalogProperties.Realm selectedRealm,
-      String tenantTag) {
-    if (selectedRealm.getStateScope() != GameplayCatalogProperties.RealmStateScope.ISOLATED) {
-      return Optional.empty();
-    }
-    return Optional.of(
-        failure(
-            "REALM_STATE_POLICY_UNSUPPORTED",
-            "The selected realm uses isolated gameplay state that is not yet supported by PLAY.",
-            "error.play.realm-state-unsupported",
-            Map.of("worldSlug", selectedWorld.getSlug(), "realmSlug", selectedRealm.getSlug()),
-            tenantTag,
-            Long.toString(selectedRealm.getGameInstanceId()),
-            null,
-            null));
-  }
-
   private PlayCommandHandlingResult failure(
       String errorCode,
       String message,
@@ -381,7 +358,10 @@ public class PlayCommandHandler {
     if (StringUtils.hasText(characterName)) {
       Optional<net.firedevops.firemud.entitymanagement.v1.Character> character =
           entityManagementClient.findCharacterByName(
-              Long.toString(selectedRealm.getTenantId()), characterName.trim());
+              Long.toString(selectedRealm.getTenantId()),
+              Long.toString(selectedRealm.getGameInstanceId()),
+              toPlayableStateScope(selectedRealm),
+              characterName.trim());
       if (character.isPresent() && StringUtils.hasText(character.get().getId())) {
         return Long.parseLong(character.get().getId());
       }
@@ -645,6 +625,13 @@ public class PlayCommandHandler {
 
   private boolean isPublicProductionRealm(GameplayCatalogProperties.Realm realm) {
     return realm.isVisible() && "production".equalsIgnoreCase(realm.getSlug());
+  }
+
+  private PlayableStateScope toPlayableStateScope(GameplayCatalogProperties.Realm realm) {
+    return switch (realm.getStateScope()) {
+      case SHARED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case ISOLATED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+    };
   }
 
   private boolean isAuthorityUnavailable(ErrorDetail error) {

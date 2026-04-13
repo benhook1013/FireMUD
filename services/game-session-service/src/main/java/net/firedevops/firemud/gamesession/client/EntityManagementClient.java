@@ -31,6 +31,7 @@ import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
@@ -97,9 +98,15 @@ public final class EntityManagementClient
     return callStub().ping(PingRequest.newBuilder().build());
   }
 
-  public Optional<Character> findCharacterByName(String tenantId, String name) {
+  public Optional<Character> findCharacterByName(
+      String tenantId, String gameInstanceId, PlayableStateScope playableStateScope, String name) {
     FindCharacterByNameRequest request =
-        FindCharacterByNameRequest.newBuilder().setTenantId(tenantId).setName(name).build();
+        FindCharacterByNameRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setGameInstanceId(gameInstanceId)
+            .setPlayableStateScope(playableStateScope)
+            .setName(name)
+            .build();
     try {
       FindCharacterByNameResponse response =
           stub()
@@ -124,11 +131,16 @@ public final class EntityManagementClient
   }
 
   public ListCharactersByAccountResponse listCharactersByAccount(
-      String tenantId, String accountId) {
+      String tenantId,
+      String accountId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope) {
     ListCharactersByAccountRequest request =
         ListCharactersByAccountRequest.newBuilder()
             .setTenantId(tenantId)
             .setAccountId(accountId)
+            .setGameInstanceId(gameInstanceId)
+            .setPlayableStateScope(playableStateScope)
             .build();
     try {
       return callStub().listCharactersByAccount(request);

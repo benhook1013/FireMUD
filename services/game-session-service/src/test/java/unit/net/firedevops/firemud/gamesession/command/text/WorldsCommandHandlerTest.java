@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.List;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
@@ -47,7 +48,9 @@ class WorldsCommandHandlerTest {
   void browseCharactersReturnsStructuredCharacterList() {
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
-    Mockito.when(entityManagementClient.listCharactersByAccount("22", "123"))
+    Mockito.when(
+            entityManagementClient.listCharactersByAccount(
+                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(
@@ -76,7 +79,7 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void browseCharactersRejectsIsolatedStateRealm() {
+  void browseCharactersUsesIsolatedStateRealmRoster() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
     gameplayCatalogProperties
         .getWorlds()
@@ -90,6 +93,19 @@ class WorldsCommandHandlerTest {
         .getRealms()
         .getFirst()
         .setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.COPIED_ONLY);
+    gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setGameInstanceId(41L);
+    Mockito.when(
+            entityManagementClient.listCharactersByAccount(
+                "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
+        .thenReturn(
+            ListCharactersByAccountResponse.newBuilder()
+                .addCharacters(
+                    net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                        .setId("8001")
+                        .setName("Forkline")
+                        .setLevel(5)
+                        .build())
+                .build());
 
     WorldsCommandHandler.CharacterBrowseResult result =
         handler.browseCharacters(
@@ -97,10 +113,14 @@ class WorldsCommandHandlerTest {
             "demo",
             null);
 
-    assertThat(result)
-        .isEqualTo(
-            new WorldsCommandHandler.CharacterBrowseResult.RealmStateUnsupported(
-                "demo", "production"));
+    assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Success.class);
+    CharacterBrowseViewOutput output =
+        ((WorldsCommandHandler.CharacterBrowseResult.Success) result).output();
+    assertThat(output.stateScope()).isEqualTo("ISOLATED");
+    assertThat(output.characterCreationPolicy()).isEqualTo("COPIED_ONLY");
+    assertThat(output.characters())
+        .extracting(CharacterBrowseViewOutput.CharacterEntry::characterName)
+        .containsExactly("Forkline");
   }
 
   private static GameplayCatalogProperties.World world(

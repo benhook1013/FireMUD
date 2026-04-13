@@ -699,6 +699,10 @@ class EntityManagementGrpcServiceTest {
         net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
             .setTenantId("1")
             .setAccountId("bad")
+            .setGameInstanceId("44")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
             .build(),
         new StreamObserver<>() {
           @Override
@@ -723,7 +727,14 @@ class EntityManagementGrpcServiceTest {
     CharacterService characterService = Mockito.mock(CharacterService.class);
     EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
-    Mockito.when(characterService.listForTenantAndAccount(1L, 1L, Pageable.unpaged()))
+    Mockito.when(
+            characterService.listForGameplayScope(
+                1L,
+                1L,
+                "44",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                Pageable.unpaged()))
         .thenThrow(new RuntimeException("boom"));
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -747,6 +758,10 @@ class EntityManagementGrpcServiceTest {
         net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
             .setTenantId("1")
             .setAccountId("1")
+            .setGameInstanceId("44")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
             .build(),
         new StreamObserver<>() {
           @Override
@@ -793,6 +808,10 @@ class EntityManagementGrpcServiceTest {
     service.listCharactersByAccount(
         net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
             .setAccountId("1")
+            .setGameInstanceId("44")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
             .build(),
         new StreamObserver<>() {
           @Override

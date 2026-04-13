@@ -10,6 +10,7 @@ import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipR
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
@@ -114,7 +115,8 @@ class PlayCommandHandlerTest {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(entityManagementClient.findCharacterByName("22", "demo"))
+    when(entityManagementClient.findCharacterByName(
+            "22", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "demo"))
         .thenReturn(
             Optional.of(
                 net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
@@ -161,7 +163,8 @@ class PlayCommandHandlerTest {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(entityManagementClient.findCharacterByName("22", "Emberline"))
+    when(entityManagementClient.findCharacterByName(
+            "22", "2", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Emberline"))
         .thenReturn(
             Optional.of(
                 net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
@@ -335,8 +338,7 @@ class PlayCommandHandlerTest {
                 List.of("sandbox", "preview", "Emberline"),
                 "PLAY sandbox preview Emberline"));
 
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("REALM_STATE_POLICY_UNSUPPORTED");
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
   }
 
   @Test
@@ -349,7 +351,8 @@ class PlayCommandHandlerTest {
             Optional.of(
                 new FirstPartyConnectContext(
                     123L, 22L, "sandbox", "preview", 41L, "scope-1", "jti-1", "req-1", "gw-1")));
-    when(entityManagementClient.findCharacterByName("22", "Sora"))
+    when(entityManagementClient.findCharacterByName(
+            "22", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED, "Sora"))
         .thenReturn(
             Optional.of(
                 net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()

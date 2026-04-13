@@ -49,7 +49,7 @@ These are already partly real in code and should continue after the immediate ru
 These are not broad audit topics anymore; they are real future slices with known direction.
 
 1. [09 Multi-Tenancy, Realm Routing, and Runtime Boundaries](./09-task-list-multi-tenancy-realm-routing-and-runtime-boundaries-vertical-slice.md)
-   Remaining: the family is now actively underway with shared routing/catalog substrate, public-production membership creation, and first explicit realm-state policy enforcement; the main follow-through is final admission-pointer authority plus realm-/instance-aware roster/state namespaces.
+   Remaining: the family is now actively underway with shared routing/catalog substrate, public-production membership creation, and the first real realm-aware roster substrate; the main follow-through is final admission-pointer authority plus the remaining downstream state namespaces beyond the scoped character/roster seam.
 2. [08 Game Design Publishing and Runtime Activation](./08-task-list-game-design-publishing-and-runtime-activation-vertical-slice.md)
    Remaining: the publish/version/asset/launch control-plane domain now has a canonical slice family, but implementation has not started; `08.1` through `08.4` are the first bounded cuts.
 3. [10 Scripting, Automation, and Runtime Orchestration](./10-task-list-scripting-automation-and-runtime-orchestration-vertical-slice.md)

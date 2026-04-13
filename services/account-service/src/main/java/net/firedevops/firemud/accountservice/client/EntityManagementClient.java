@@ -13,6 +13,7 @@ import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.stereotype.Component;
 
 /** Blocking client for first-party bootstrap character discovery. */
@@ -50,13 +51,16 @@ public class EntityManagementClient
         EntityManagementServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
-  public List<Character> listCharactersByAccount(long tenantId, long accountId) {
+  public List<Character> listCharactersByAccount(
+      long tenantId, long accountId, long gameInstanceId, PlayableStateScope playableStateScope) {
     ListCharactersByAccountResponse response =
         stub()
             .listCharactersByAccount(
                 ListCharactersByAccountRequest.newBuilder()
                     .setTenantId(Long.toString(tenantId))
                     .setAccountId(Long.toString(accountId))
+                    .setGameInstanceId(Long.toString(gameInstanceId))
+                    .setPlayableStateScope(playableStateScope)
                     .build());
     if (response.hasError()) {
       throw new IllegalStateException(

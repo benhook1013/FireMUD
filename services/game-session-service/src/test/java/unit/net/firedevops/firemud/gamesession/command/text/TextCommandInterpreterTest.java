@@ -31,6 +31,7 @@ import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
@@ -352,7 +353,8 @@ class TextCommandInterpreterTest {
             lookCacheService,
             devIsolatedProperties,
             new TextPlayerOutputRenderer(new PresentationProperties()));
-    when(entityManagementClient.listCharactersByAccount("22", "123"))
+    when(entityManagementClient.listCharactersByAccount(
+            "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(
             net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(

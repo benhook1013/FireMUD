@@ -47,6 +47,7 @@ import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties.Characte
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties.RealmStateScope;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
@@ -479,7 +480,8 @@ class AccountServiceImplTest {
             .setName("Mara")
             .setLevel(12)
             .build();
-    when(entityManagementClient.listCharactersByAccount(7L, 11L))
+    when(entityManagementClient.listCharactersByAccount(
+            7L, 11L, 44L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(java.util.List.of(character));
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
@@ -517,7 +519,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void listBootstrapCharactersRejectsIsolatedStateRealm() {
+  void listBootstrapCharactersUsesIsolatedRealmRoster() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -531,17 +533,28 @@ class AccountServiceImplTest {
         gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst();
     isolatedRealm.setStateScope(RealmStateScope.ISOLATED);
     isolatedRealm.setCharacterCreationPolicy(CharacterCreationPolicy.COPIED_ONLY);
+    isolatedRealm.setGameInstanceId(91L);
+    net.firedevops.firemud.entitymanagement.v1.Character character =
+        net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+            .setId("char-iso-1")
+            .setName("ForkMara")
+            .setLevel(4)
+            .build();
+    when(entityManagementClient.listCharactersByAccount(
+            7L, 11L, 91L, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
+        .thenReturn(java.util.List.of(character));
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
 
-    AuthenticationException exception =
-        assertThrows(
-            AuthenticationException.class,
-            () ->
-                service.listBootstrapCharacters(bootstrap.bootstrapToken(), "demo", "production"));
+    var characters =
+        service.listBootstrapCharacters(bootstrap.bootstrapToken(), "demo", "production");
 
-    assertEquals("REALM_STATE_POLICY_UNSUPPORTED", exception.getCode());
+    assertEquals(1, characters.size());
+    assertEquals("char-iso-1", characters.getFirst().characterId());
+    assertEquals("ForkMara", characters.getFirst().characterName());
+    assertEquals("ISOLATED", characters.getFirst().stateScope());
+    assertEquals("COPIED_ONLY", characters.getFirst().characterCreationPolicy());
   }
 
   @Test

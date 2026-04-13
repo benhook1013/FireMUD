@@ -80,6 +80,15 @@ public final class GameplayWorldCatalog {
     return visibleRealms(world).size() > 1;
   }
 
+  public Optional<GameplayCatalogProperties.Realm> resolveRealmByRuntimeTarget(
+      long tenantId, long gameInstanceId) {
+    return visibleWorlds().stream()
+        .flatMap(world -> visibleRealms(world).stream())
+        .filter(realm -> realm.getTenantId() == tenantId)
+        .filter(realm -> realm.getGameInstanceId() == gameInstanceId)
+        .findFirst();
+  }
+
   private List<GameplayCatalogProperties.Realm> visibleRealms(
       GameplayCatalogProperties.World world) {
     if (world == null || world.getRealms() == null) {

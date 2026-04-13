@@ -83,14 +83,6 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
               "Selection required. Use REALMS "
                   + realmSelectionRequired.worldSlug()
                   + " before CHARS.");
-      case WorldsCommandHandler.CharacterBrowseResult.RealmStateUnsupported unsupported ->
-          errorResult(
-              "REALM_STATE_POLICY_UNSUPPORTED",
-              "CHARS is not available for "
-                  + unsupported.worldSlug()
-                  + " ("
-                  + unsupported.realmSlug()
-                  + ") until isolated-state character rosters are implemented.");
       case WorldsCommandHandler.CharacterBrowseResult.Unavailable ignored ->
           errorResult(
               "CHARACTER_LIST_UNAVAILABLE", "Character list unavailable. Retry CHARS shortly.");
