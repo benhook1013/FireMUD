@@ -155,7 +155,7 @@ Pointer freshness and cutover rules:
 - The React frontend loads per-tenant, version-scoped assets from a published
   `manifest.json` in object storage; the Game Design Service is not queried at
   runtime.
-- See [Game Customization Options](./game-customization-options.md) and the
+- See [Game Customization](./system-architecture-game-customization.md) and the
   [Frontend Architecture](./system-architecture-frontend.md) for details.
 
 ## Tenant Configuration & Scaling

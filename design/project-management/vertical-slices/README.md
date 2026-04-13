@@ -10,7 +10,6 @@
 
 ## Documents
 
-- [00-slice-ideas.md](./00-slice-ideas.md) – Brainstormed candidate slices and prioritization notes.
 - [01-task-list-telnet-to-gameplay-vertical-slice.md](./01-task-list-telnet-to-gameplay-vertical-slice.md) – Initial Telnet-to-gameplay pipeline, from TCP proxy through core services.
 - [02-task-list-login-and-session-vertical-slice.md](./02-task-list-login-and-session-vertical-slice.md) – Player login, session management, and related smoke tests.
 - [02.1-task-list-login-session-hardening-vertical-slice.md](./02.1-task-list-login-session-hardening-vertical-slice.md) – Bounded follow-up slice to reduce `dev-isolated` reliance and harden the current login/session runtime path.

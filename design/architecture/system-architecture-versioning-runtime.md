@@ -608,7 +608,7 @@ For API versioning conventions see [gRPC Protocol Guidelines](./system-architect
 ## Related Documentation
 
 - [Database Migrations](./system-architecture-database-migrations.md)
-- [Game Customization Options](./game-customization-options.md)
+- [Game Customization](./system-architecture-game-customization.md)
 - [Game Session Service](./microservices/game-session-service/README.md)
 - [Service Responsibility Matrix](./service-responsibility-matrix.md)
 - [System Architecture Overview](./system-architecture-overview.md)

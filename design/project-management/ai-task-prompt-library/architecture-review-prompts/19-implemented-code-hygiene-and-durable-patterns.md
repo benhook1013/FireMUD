@@ -1,5 +1,20 @@
 # Architecture Review Prompt: Implemented Code Hygiene and Durable Patterns
 
+Best used for:
+
+- reviewing framework, lifecycle, transaction, persistence, RPC, and configuration patterns in already-implemented code
+
+Read the following sources first. Follow references only when a listed doc clearly delegates a canonical contract needed to judge a finding. Then inspect the concrete code paths implicated by the docs and current branch state.
+
+- `design/architecture/system-architecture-overview.md`
+- `design/architecture/service-responsibility-matrix.md`
+- `design/architecture/microservices/game-session-service/README.md`
+- `design/architecture/microservices/entity-management-service/README.md`
+- `design/architecture/microservices/world-management-service/README.md`
+- `design/project-management/service-status-game-session-service.md`
+- `design/project-management/service-status-entity-management-service.md`
+- `design/project-management/service-status-world-management-service.md`
+
 Review the current FireMUD branch for code hygiene, consistency, and durable implementation patterns, especially in Spring, Spring Boot, Spring Data, and gRPC usage.
 
 Context:

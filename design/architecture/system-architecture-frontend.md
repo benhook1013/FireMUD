@@ -181,7 +181,7 @@ RTK Query works out of the box with Redux Toolkit and TypeScript. API code gener
 
 ## Game-Specific Customization
 
-See [Game Customization Options](./game-customization-options.md) for the broader design.
+See [Game Customization](./system-architecture-game-customization.md) for the broader design.
 Game-specific themes rely on the multi-tenant model described in [Multi-Tenancy](./system-architecture-multi-tenancy.md).
 
 FireMUD aims to let each hosted game supply its own UI styling and layout tweaks.

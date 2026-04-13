@@ -1,5 +1,24 @@
 # Architecture Review Prompt: Race Conditions, Replay Safety, Idempotency, and Crash Safety
 
+Best used for:
+
+- reviewing corruption risk, replay/idempotency holes, ownership/fencing weaknesses, and crash-recovery gaps across implemented systems
+
+Read the following sources first. Follow references only when a listed doc clearly delegates a canonical contract needed to judge a finding. Then inspect the concrete code paths implicated by the docs and current branch state.
+
+- `design/architecture/system-architecture-ticks.md`
+- `design/architecture/system-architecture-transactions.md`
+- `design/architecture/system-architecture-redis.md`
+- `design/architecture/system-architecture-tick-failures-and-operations.md`
+- `design/architecture/system-architecture-backup-recovery.md`
+- `design/project-management/vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md`
+- `design/project-management/vertical-slices/02.18.7-task-list-durable-command-ingress-and-status-ledger-vertical-slice.md`
+- `design/project-management/vertical-slices/02.18.8-task-list-tick-batch-and-effect-ledger-hardening-vertical-slice.md`
+- `design/project-management/vertical-slices/02.18.9-task-list-region-epoch-fencing-and-runtime-ownership-vertical-slice.md`
+- `design/project-management/service-status-game-session-service.md`
+- `design/project-management/service-status-entity-management-service.md`
+- `design/project-management/service-status-automation-scripting-service.md`
+
 Discuss and review FireMUD's protections related to race conditions, replayability, idempotency, atomicity, and any other behavior that could result in data corruption or operator-hostile recovery work.
 
 Context:

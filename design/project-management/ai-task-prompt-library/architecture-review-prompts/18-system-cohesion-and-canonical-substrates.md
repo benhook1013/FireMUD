@@ -1,5 +1,20 @@
 # Architecture Review Prompt: System Cohesion and Canonical Substrates
 
+Best used for:
+
+- reviewing whether recently implemented systems land on the right shared substrates and authorities, rather than merely working locally
+
+Read the following sources first. Follow references only when a listed doc clearly delegates a canonical contract needed to judge a finding. Then inspect the concrete code paths implicated by the docs and current branch state.
+
+- `design/architecture/system-architecture-overview.md`
+- `design/architecture/service-responsibility-matrix.md`
+- `design/architecture/repository-structure.md`
+- `design/project-management/vertical-slices/00-slice-progress.md`
+- `design/project-management/vertical-slices/00-design-area-slice-coverage.md`
+- `design/project-management/service-status-game-session-service.md`
+- `design/project-management/service-status-spring-cloud-gateway.md`
+- `design/project-management/service-status-account-service.md`
+
 Review the current FireMUD branch for system cohesion, canonical-substrate quality, and "proper implementation first" alignment across recently implemented slices.
 
 Context:

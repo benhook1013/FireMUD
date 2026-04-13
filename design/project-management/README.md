@@ -9,7 +9,6 @@ Key files include:
 - [**task-list.md**](./task-list.md) – Planning index for active vertical slices and service-status summaries.
 - [**vertical-slices/**](./vertical-slices/) – Active working task lists for implementation slices.
 - [**service-status-*.md**](./service-status-account-service.md) – High-level per-service implementation summaries.
-- [**smoke-tests/**](./smoke-tests/README.md) – Smoke-test planning material and expected command/output references.
 - [**slice-support/**](./slice-support/README.md) – Slice-specific developer workflows, regression notes, instrumentation references, and playtesting support docs.
 - [**ai-task-prompt-library/**](./ai-task-prompt-library/) – Reusable prompt material for architecture and implementation review workflows.
 - [**design-assumptions.md**](./design-assumptions.md) – Product and implementation assumptions that inform planning.

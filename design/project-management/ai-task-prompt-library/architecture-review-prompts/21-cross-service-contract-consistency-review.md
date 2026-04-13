@@ -1,5 +1,23 @@
 # Architecture Review Prompt: Cross-Service Contract Consistency Review
 
+Best used for:
+
+- reviewing whether neighboring services still agree on shared contract shape, identity, lifecycle, ownership, and error semantics
+
+Read the following sources first. Follow references only when a listed doc clearly delegates a canonical contract needed to judge a finding. Then inspect the concrete service interfaces and code paths implicated by the docs and current branch state.
+
+- `design/architecture/system-architecture-overview.md`
+- `design/architecture/service-responsibility-matrix.md`
+- `design/architecture/system-architecture-jwt-and-token-contracts.md`
+- `design/architecture/system-architecture-authentication.md`
+- `design/architecture/system-architecture-multi-tenancy.md`
+- `design/project-management/vertical-slices/00-slice-progress.md`
+- `design/project-management/service-status-account-service.md`
+- `design/project-management/service-status-game-session-service.md`
+- `design/project-management/service-status-world-management-service.md`
+- `design/project-management/service-status-entity-management-service.md`
+- `design/project-management/service-status-spring-cloud-gateway.md`
+
 Review the current FireMUD branch for cross-service contract consistency across gRPC, REST, events, Redis-backed runtime handoff, and shared identity or ownership seams.
 
 Context:

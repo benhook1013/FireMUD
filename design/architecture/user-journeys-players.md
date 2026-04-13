@@ -252,7 +252,7 @@ Player → Account Service → Logging & Admin Service (audit)
 
 - [Authentication & Authorization](./system-architecture-authentication.md)
 - [Game Creator Guide](../user-guides/game-creator-guide.md)
-- [Game Customization Options](./game-customization-options.md)
+- [Game Customization](./system-architecture-game-customization.md)
 - [Logging & Monitoring Overview](./system-architecture-logging-monitoring.md)
 - [Moderation Policies](./microservices/logging-admin-service/moderation-policies.md)
 - [Multi-Tenancy](./system-architecture-multi-tenancy.md)

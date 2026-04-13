@@ -40,8 +40,7 @@ Open or amend the architecture docs before implementation when a change would al
 
 ## Runtime Architecture
 
-- [**game-customization-options.md**](./game-customization-options.md) – Ways hosted games can change appearance and behavior.
-- [**performance-optimization.md**](./performance-optimization.md) – Database and network tuning tips.
+- [**system-architecture-game-customization.md**](./system-architecture-game-customization.md) – Ways hosted games can change appearance and behavior.
 - [**system-architecture-authentication.md**](./system-architecture-authentication.md) – Authentication mechanisms and session handling.
 - [**system-architecture-database-migrations.md**](./system-architecture-database-migrations.md) – Managing schema changes per service.
 - [**system-architecture-frontend.md**](./system-architecture-frontend.md) – React UI structure and state management.

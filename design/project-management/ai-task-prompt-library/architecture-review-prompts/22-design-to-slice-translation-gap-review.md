@@ -1,5 +1,9 @@
 # Architecture Review Prompt: Design-to-Slice Translation Gap Review
 
+Best used for:
+
+- reviewing whether major designed or implemented domains are still missing, underrepresented, or misleadingly tracked in the slice system
+
 Review FireMUD's current design, slice planning, and implementation-tracking docs to find important architecture domains that are missing, underrepresented, or misleadingly represented in the slice system.
 
 Context:
@@ -9,13 +13,19 @@ Context:
 - FireMUD uses vertical slices to translate broad architecture into implementation-directed work.
 - The goal is not to review one feature or one service. The goal is to check whether the tracked slice system still reflects the actual designed system and current implementation reality.
 
-Required source inputs:
+Read the following sources first. Follow references only when a listed doc clearly delegates a canonical contract needed to judge whether a domain is missing, under-sliced, or misleadingly tracked. Do not reread the entire design tree unless the listed docs clearly require it.
 
-- `design/architecture/`
-- `design/project-management/vertical-slices/`
+- `design/architecture/system-architecture-overview.md`
+- `design/architecture/service-responsibility-matrix.md`
+- `design/architecture/system-architecture-authentication.md`
+- `design/architecture/system-architecture-multi-tenancy.md`
+- `design/architecture/system-architecture-versioning-runtime.md`
+- `design/architecture/system-architecture-frontend.md`
+- `design/architecture/system-architecture-scripting.md`
+- `design/architecture/system-architecture-security.md`
+- `design/architecture/system-architecture-backup-recovery.md`
 - `design/project-management/service-status-*.md`
 - `design/project-management/task-list.md`
-- `design/project-management/vertical-slices/00-slice-ideas.md`
 - `design/project-management/vertical-slices/00-slice-progress.md`
 - `design/project-management/vertical-slices/00-design-area-slice-coverage.md`
 
