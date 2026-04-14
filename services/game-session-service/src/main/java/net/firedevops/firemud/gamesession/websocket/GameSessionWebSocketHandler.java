@@ -20,11 +20,10 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
-import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
-import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
@@ -51,8 +50,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
   private final FirstPartyConnectContextService firstPartyConnectContextService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
-  private final AccountRecentPresenceService accountRecentPresenceService;
-  private final GameplayPresenceService gameplayPresenceService;
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final ScreenBufferService screenBufferService;
   private final TextPlayerOutputRenderer outputRenderer;
   private final WebSocketOutputProjector outputProjector;
@@ -70,8 +68,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       ActiveTransportSessionRegistry activeTransportSessionRegistry,
       FirstPartyConnectContextService firstPartyConnectContextService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
-      AccountRecentPresenceService accountRecentPresenceService,
-      GameplayPresenceService gameplayPresenceService,
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       ScreenBufferService screenBufferService,
       TextPlayerOutputRenderer outputRenderer,
       WebSocketOutputProjector outputProjector,
@@ -86,8 +83,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.activeTransportSessionRegistry = activeTransportSessionRegistry;
     this.firstPartyConnectContextService = firstPartyConnectContextService;
     this.firstPartyConnectContextRegistry = firstPartyConnectContextRegistry;
-    this.accountRecentPresenceService = accountRecentPresenceService;
-    this.gameplayPresenceService = gameplayPresenceService;
+    this.gameplayPresenceLifecycleService = gameplayPresenceLifecycleService;
     this.screenBufferService = screenBufferService;
     this.outputRenderer = outputRenderer;
     this.outputProjector = outputProjector;
@@ -120,8 +116,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               activeTransportSessionRegistry.unregister(sessionId, session);
               firstPartyConnectContextRegistry.unregister(sessionId);
               promptBurstCoordinator.evict(Long.toString(sessionId));
-              accountRecentPresenceService.recordDisconnect(sessionId);
-              gameplayPresenceService.removeBySessionId(sessionId);
+              gameplayPresenceLifecycleService.recordDisconnected(sessionId);
             });
   }
 
@@ -276,9 +271,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     parseNumericSessionId(sessionId)
         .ifPresent(
             numericSessionId -> {
-              gameplayPresenceService.recordCommandActivity(
+              gameplayPresenceLifecycleService.recordActivity(
                   numericSessionId, interpretation.meaningfulGameplayActivity());
-              accountRecentPresenceService.recordActivity(numericSessionId);
             });
   }
 

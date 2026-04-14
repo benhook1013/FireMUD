@@ -11,7 +11,7 @@ It intentionally omits completed slices and uses the individual slice docs as th
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
 1. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
-   Remaining: build on the now-live activity, AFK, and disconnect/reconnect lifecycle substrate with recent-presence policy and later `WHO` presentation consumers.
+   Remaining: build on the now-live activity, AFK, and canonical presence-lifecycle substrate with recent-presence policy, takeover proof, and later `WHO` presentation consumers.
 2. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
    Remaining: extend the now-live account-scoped friend presence substrate with broader social consumers and later privacy refinement; canonical world/realm presentation is now live.
 3. [02.1.2 Logout and Session Termination](./02.1.2-task-list-logout-and-session-termination-vertical-slice.md)
@@ -30,7 +30,7 @@ These are already partly real in code and should continue after the immediate ru
 3. [02.13.9 Authored Action Definition and Execution Model](./02.13.9-task-list-authored-action-definition-and-execution-model-vertical-slice.md)
    Remaining: define the first typed authored-action record and land the first non-built-in command-definition provider on the now-live shared registry-plus-alias seam.
 4. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
-   Remaining: grow from the current bounded `WHO` plus explicit/auto-AFK substrate into the fuller activity model when that work becomes active.
+   Remaining: grow from the current bounded `WHO` plus explicit/auto-AFK and canonical lifecycle substrate into the fuller activity model when that work becomes active.
 5. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
    Remaining: grow the first account-scoped friend presence seam into later social consumers and later privacy refinement without reopening `WHO`.
 6. [06 Task List Inventory, Containers, Equipment](./06-task-list-inventory-containers-equipment-vertical-slice.md)
@@ -109,7 +109,7 @@ These are not major design problems, but they are not fully closed.
 If you want the clearest immediate path, do these next:
 
 1. `02.1.3` presence/WHO follow-through
-   Best next gameplay-runtime batch because the activity and AFK substrate is now live and the remaining work is lifecycle proof, recent-presence policy, and later `WHO` presentation rather than vague design.
+   Best next gameplay-runtime batch because the activity, AFK, and canonical lifecycle substrate are now live and the remaining work is recent-presence policy, takeover proof, and later `WHO` presentation rather than vague design.
 2. `02.1.4` cross-game social presence follow-through
    Best next social batch because the first account-scoped friend presence seam, honest `lastSeenAt`, account-owned visibility-policy seam, and canonical world/realm labels are now live, leaving broader consumers and later privacy refinement rather than substrate work.
 3. `02.13.9` authored action definition and execution model

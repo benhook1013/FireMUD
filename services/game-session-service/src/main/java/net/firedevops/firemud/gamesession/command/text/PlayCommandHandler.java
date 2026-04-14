@@ -17,9 +17,9 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
-import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -48,10 +48,8 @@ public class PlayCommandHandler {
   private final AccountClient accountClient;
   private final EntityManagementClient entityManagementClient;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
-  private final AccountRecentPresenceService accountRecentPresenceService;
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final MeterRegistry meterRegistry;
-  private final net.firedevops.firemud.gamesession.service.GameplayPresenceService
-      gameplayPresenceService;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
 
@@ -63,8 +61,7 @@ public class PlayCommandHandler {
       AccountClient accountClient,
       EntityManagementClient entityManagementClient,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
-      AccountRecentPresenceService accountRecentPresenceService,
-      net.firedevops.firemud.gamesession.service.GameplayPresenceService gameplayPresenceService,
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       MeterRegistry meterRegistry) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
@@ -81,11 +78,9 @@ public class PlayCommandHandler {
     this.firstPartyConnectContextRegistry =
         Objects.requireNonNull(
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
-    this.accountRecentPresenceService =
+    this.gameplayPresenceLifecycleService =
         Objects.requireNonNull(
-            accountRecentPresenceService, "accountRecentPresenceService must not be null");
-    this.gameplayPresenceService =
-        Objects.requireNonNull(gameplayPresenceService, "gameplayPresenceService must not be null");
+            gameplayPresenceLifecycleService, "gameplayPresenceLifecycleService must not be null");
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
     this.takeoverCounter = this.meterRegistry.counter(TAKEOVER_METRIC);
     this.resumeCounter = this.meterRegistry.counter(RESUME_METRIC);
@@ -274,8 +269,7 @@ public class PlayCommandHandler {
                   context.localeTag(),
                   context.bootstrapGameInstanceId());
           sessionContextService.save(updated);
-          gameplayPresenceService.registerConnected(updated);
-          accountRecentPresenceService.recordConnected(updated);
+          gameplayPresenceLifecycleService.registerConnected(updated);
 
           return new PlayCommandHandlingResult(
               CommandEnqueueResult.success(),
@@ -414,7 +408,7 @@ public class PlayCommandHandler {
         characterId,
         existing.sessionId(),
         incoming.sessionId());
-    gameplayPresenceService.removeBySessionId(existing.sessionId());
+    gameplayPresenceLifecycleService.recordDisconnected(existing.sessionId());
     sessionContextService.deleteBySessionId(existing.tenantId(), existing.sessionId());
     return true;
   }

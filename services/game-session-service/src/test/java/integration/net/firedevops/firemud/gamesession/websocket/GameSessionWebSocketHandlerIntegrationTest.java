@@ -36,6 +36,7 @@ import net.firedevops.firemud.gamesession.command.text.LookTextRenderer;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
@@ -144,6 +145,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @MockitoBean private SetOperations<String, Object> redisSetOperations;
 
   @Autowired private SessionContextService sessionContextService;
+
+  @Autowired private AccountRecentPresenceService accountRecentPresenceService;
 
   @Autowired private GameplayPresenceService gameplayPresenceService;
 
@@ -703,6 +706,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     firstSession.close();
     assertThat(waitForPresenceCount(22L, 1L, 0)).isTrue();
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isPresent();
+    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
 
     WebSocketHttpHeaders secondHeaders = new WebSocketHttpHeaders();
     secondHeaders.add("X-Game-Instance-Id", "42");
@@ -1472,6 +1476,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(firstCloseStatus.get()).isNotNull();
     assertThat(firstCloseStatus.get().getReason()).isEqualTo("LOGOUT");
     assertThat(cleared.get()).isTrue();
+    assertThat(waitForPresenceCount(22L, 1L, 0)).isTrue();
+    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
 
     WebSocketHttpHeaders secondHeaders = new WebSocketHttpHeaders();
     secondHeaders.add("X-Firemud-Connection-Mode", "first_party_web");

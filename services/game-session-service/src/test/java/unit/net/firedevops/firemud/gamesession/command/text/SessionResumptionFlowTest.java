@@ -45,11 +45,13 @@ import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedGameInstanceRegistry;
+import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
@@ -100,6 +102,9 @@ class SessionResumptionFlowTest {
   private final GameplayPresenceService gameplayPresenceService =
       new InMemoryGameplayPresenceService(
           new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
+      new DefaultGameplayPresenceLifecycleService(
+          gameplayPresenceService, accountRecentPresenceService);
   private WorldsCommandHandler worldsHandler;
   private TextCommandInterpreter interpreter;
 
@@ -203,8 +208,7 @@ class SessionResumptionFlowTest {
             accountClient,
             entityManagementClient,
             firstPartyConnectContextRegistry,
-            accountRecentPresenceService,
-            gameplayPresenceService,
+            gameplayPresenceLifecycleService,
             meterRegistry);
     worldsHandler = new WorldsCommandHandler(worldCatalog, entityManagementClient);
     AfkCommandHandler afkHandler =
@@ -218,8 +222,7 @@ class SessionResumptionFlowTest {
                 sessionAuthenticationService,
                 sessionContextService,
                 gameInstanceService,
-                gameplayPresenceService,
-                accountRecentPresenceService,
+                gameplayPresenceLifecycleService,
                 firstPartyConnectContextRegistry,
                 screenBufferService),
             playHandler,

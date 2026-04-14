@@ -7,10 +7,9 @@ import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
-import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
-import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -22,8 +21,7 @@ public final class LogoutCommandHandler {
   private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
   private final GameInstanceService gameInstanceService;
-  private final GameplayPresenceService gameplayPresenceService;
-  private final AccountRecentPresenceService accountRecentPresenceService;
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final ScreenBufferService screenBufferService;
 
@@ -31,8 +29,7 @@ public final class LogoutCommandHandler {
       SessionAuthenticationService sessionAuthenticationService,
       SessionContextService sessionContextService,
       GameInstanceService gameInstanceService,
-      GameplayPresenceService gameplayPresenceService,
-      AccountRecentPresenceService accountRecentPresenceService,
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       ScreenBufferService screenBufferService) {
     this.sessionAuthenticationService =
@@ -42,11 +39,9 @@ public final class LogoutCommandHandler {
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
     this.gameInstanceService =
         Objects.requireNonNull(gameInstanceService, "gameInstanceService must not be null");
-    this.gameplayPresenceService =
-        Objects.requireNonNull(gameplayPresenceService, "gameplayPresenceService must not be null");
-    this.accountRecentPresenceService =
+    this.gameplayPresenceLifecycleService =
         Objects.requireNonNull(
-            accountRecentPresenceService, "accountRecentPresenceService must not be null");
+            gameplayPresenceLifecycleService, "gameplayPresenceLifecycleService must not be null");
     this.firstPartyConnectContextRegistry =
         Objects.requireNonNull(
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
@@ -71,8 +66,7 @@ public final class LogoutCommandHandler {
         screenBufferService.clear(
             context.tenantId(), context.gameInstanceId(), context.characterId());
       }
-      accountRecentPresenceService.recordDisconnect(context.sessionId());
-      gameplayPresenceService.removeBySessionId(context.sessionId());
+      gameplayPresenceLifecycleService.recordDisconnected(context.sessionId());
       firstPartyConnectContextRegistry.unregister(context.sessionId());
       sessionContextService.deleteBySessionId(context.tenantId(), context.sessionId());
       return new LogoutCommandHandlingResult(

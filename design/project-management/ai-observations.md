@@ -60,3 +60,8 @@ Entry format:
   - Context: extending `06.3.2` stack-family selectors through the Entity Management gRPC boundary
   - Observation: optional proto string fields such as `stackFamilyKey` arrive as `""` when unset, and letting that raw value flow into internal service mocks and implementations creates a false third state (`blank but set`) that the canonical Java seam does not actually want
   - Expected pattern: gRPC adapters should collapse blank optional scalars to `null` or one canonical internal representation at the boundary, so downstream services and tests do not have to reason about transport-default noise
+
+- `2026-04-14`: Dual presence stores need one lifecycle coordinator, not repeated paired calls
+  - Context: `02.1.3` follow-through in `game-session-service` after presence and recent-presence seams had spread across `PLAY`, websocket close, TCP proxy disconnect handling, and `LOGOUT`
+  - Observation: when live presence and bounded recent-presence are both updated directly from multiple handlers, the system keeps working only as long as every caller remembers the same order and pairing, which makes future lifecycle changes easy to miss and hard to prove
+  - Expected pattern: route connect, activity, and disconnect mutations through one authoritative lifecycle service so handler code stays thin and proof coverage can target one canonical seam

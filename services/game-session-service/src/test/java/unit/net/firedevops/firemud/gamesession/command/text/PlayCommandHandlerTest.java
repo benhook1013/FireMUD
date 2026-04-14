@@ -18,10 +18,9 @@ import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
-import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
-import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -39,10 +38,8 @@ class PlayCommandHandlerTest {
       Mockito.mock(EntityManagementClient.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
-  private final AccountRecentPresenceService accountRecentPresenceService =
-      Mockito.mock(AccountRecentPresenceService.class);
-  private final GameplayPresenceService gameplayPresenceService =
-      Mockito.mock(GameplayPresenceService.class);
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
+      Mockito.mock(GameplayPresenceLifecycleService.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final GameplayCatalogProperties gameplayCatalogProperties =
       new GameplayCatalogProperties();
@@ -74,8 +71,7 @@ class PlayCommandHandlerTest {
             accountClient,
             entityManagementClient,
             firstPartyConnectContextRegistry,
-            accountRecentPresenceService,
-            gameplayPresenceService,
+            gameplayPresenceLifecycleService,
             meterRegistry);
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -143,7 +139,7 @@ class PlayCommandHandlerTest {
                 gameLogicProperties.getDefaultRoomId(),
                 "jwt-token",
                 0L));
-    Mockito.verify(gameplayPresenceService)
+    Mockito.verify(gameplayPresenceLifecycleService)
         .registerConnected(
             new SessionContext(
                 1L,
