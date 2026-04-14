@@ -43,6 +43,7 @@ import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
+import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
@@ -819,66 +820,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             .run(toCommandLineArgs(gameSessionProps(gameLogicPort, accountPort)));
 
     JdbcTemplate jdbc = new JdbcTemplate(context.getBean(DataSource.class));
-    jdbc.execute(
-        """
-        CREATE TABLE IF NOT EXISTS game_instances (
-          id BIGSERIAL PRIMARY KEY,
-          tenant_id BIGINT NOT NULL,
-          runtime_version VARCHAR(100) NOT NULL,
-          script_patch_version VARCHAR(100),
-          game_template_id BIGINT,
-          launch_descriptor_id VARCHAR(64),
-          version_id BIGINT,
-          release_bundle_id BIGINT,
-          version_state_epoch BIGINT,
-          generation_config_revision VARCHAR(128),
-          script_patch_pinned_at TIMESTAMP NULL,
-          script_patch_pinned_by VARCHAR(200) NULL,
-          script_patch_pinned_reason VARCHAR(500) NULL,
-          owner_account_id BIGINT NOT NULL,
-          status VARCHAR(20) NOT NULL
-        )
-        """);
-    jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS game_template_id BIGINT");
-    jdbc.execute(
-        "ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS launch_descriptor_id VARCHAR(64)");
-    jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS version_id BIGINT");
-    jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS release_bundle_id BIGINT");
-    jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS version_state_epoch BIGINT");
-    jdbc.execute(
-        "ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS generation_config_revision VARCHAR(128)");
     long insertedId =
-        Optional.ofNullable(
-                jdbc.queryForObject(
-                    """
-                    INSERT INTO game_instances (
-                      tenant_id,
-                      runtime_version,
-                      script_patch_version,
-                      game_template_id,
-                      launch_descriptor_id,
-                      version_id,
-                      release_bundle_id,
-                      version_state_epoch,
-                      generation_config_revision,
-                      owner_account_id,
-                      status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-                    """,
-                    Long.class,
-                    TENANT_ID,
-                    "0.1.0",
-                    "initial",
-                    7L,
-                    "stub-launch-descriptor",
-                    7L,
-                    700L,
-                    700L,
-                    "genrev:test:7",
-                    ACCOUNT_ID,
-                    "ACTIVE"))
-            .orElseThrow(
-                () -> new IllegalStateException("Game instance insert did not return an id"));
+        GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, ACCOUNT_ID, 7L);
     int port = ((WebServerApplicationContext) context).getWebServer().getPort();
     return new GameSessionHolder(context, port, insertedId);
   }

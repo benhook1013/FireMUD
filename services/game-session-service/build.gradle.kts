@@ -59,6 +59,7 @@ dependencies {
     testFixturesImplementation("io.grpc:grpc-protobuf:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")
     testFixturesImplementation("com.google.protobuf:protobuf-java:${libs.versions.protobuf.get()}")
+    testFixturesImplementation(libs.spring.boot.starter.jdbc)
     testImplementation(libs.grpc.inprocess)
     testImplementation(project(":game-logic-service"))
 }
