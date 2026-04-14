@@ -14,6 +14,8 @@ service GameDesignService {
   rpc PublishScriptPatchVersion(PublishScriptPatchVersionRequest)
       returns (PublishScriptPatchVersionResponse);
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
+  rpc GetPublishedReleaseBundle(GetPublishedReleaseBundleRequest)
+      returns (GetPublishedReleaseBundleResponse);
   rpc GetScopedSettingsOverrides(GetScopedSettingsOverridesRequest)
       returns (GetScopedSettingsOverridesResponse);
   rpc PutSettingsDomainOverride(PutSettingsDomainOverrideRequest)
@@ -64,12 +66,35 @@ message ListVersionsResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
+message GetPublishedReleaseBundleRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+}
+
+message GetPublishedReleaseBundleResponse {
+  PublishedReleaseBundle bundle = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
 message Version {
   int64 id = 1;
   int32 version_number = 2;
   string script_patch_version = 3;
   bool is_script_only = 4;
   string notes = 5;
+}
+
+message PublishedReleaseBundle {
+  int64 id = 1;
+  int64 version_id = 2;
+  int32 version_number = 3;
+  string attestation_schema_version = 4;
+  string publish_workflow_id = 5;
+  string manifest_hash = 6;
+  repeated string required_manifest_asset_keys = 7;
+  bool is_script_only = 8;
+  string script_patch_version = 9;
+  string published_at = 10;
 }
 
 message PingRequest {}

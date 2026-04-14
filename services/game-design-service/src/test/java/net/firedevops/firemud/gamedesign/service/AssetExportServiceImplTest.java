@@ -48,7 +48,7 @@ class AssetExportServiceImplTest {
     asset.setData("data".getBytes(StandardCharsets.UTF_8));
     when(repository.findByTenantId("t")).thenReturn(List.of(asset));
 
-    service.exportAssets("t", 1);
+    ExportedAssetManifest manifest = service.exportAssets("t", 1);
 
     verify(s3Client)
         .putObject(
@@ -58,5 +58,6 @@ class AssetExportServiceImplTest {
         .putObject(
             argThat((PutObjectRequest r) -> r.key().equals("t/1/manifest.json")),
             any(RequestBody.class));
+    org.junit.jupiter.api.Assertions.assertEquals(2, manifest.requiredManifestAssetKeys().size());
   }
 }

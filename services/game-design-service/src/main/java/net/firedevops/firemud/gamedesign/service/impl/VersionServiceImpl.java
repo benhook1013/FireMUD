@@ -4,8 +4,10 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
@@ -13,13 +15,13 @@ import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
+import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @SuppressFBWarnings(
@@ -33,6 +35,7 @@ public class VersionServiceImpl implements VersionService {
   private final VersionMapper versionMapper;
   private final AutomationScriptingClient scriptingClient;
   private final AssetExportService assetExportService;
+  private final PublishedReleaseBundleService publishedReleaseBundleService;
 
   @Autowired
   public VersionServiceImpl(
@@ -40,12 +43,14 @@ public class VersionServiceImpl implements VersionService {
       GameRepository gameRepository,
       VersionMapper versionMapper,
       AutomationScriptingClient scriptingClient,
-      AssetExportService assetExportService) {
+      AssetExportService assetExportService,
+      PublishedReleaseBundleService publishedReleaseBundleService) {
     this.versionRepository = versionRepository;
     this.gameRepository = gameRepository;
     this.versionMapper = versionMapper;
     this.scriptingClient = scriptingClient;
     this.assetExportService = assetExportService;
+    this.publishedReleaseBundleService = publishedReleaseBundleService;
   }
 
   @Override
@@ -61,11 +66,19 @@ public class VersionServiceImpl implements VersionService {
     version.setTenantId(game.getTenantId());
     version.setNotes(notes);
     version.setVersionNumber(calculateNextNumber(tenantId));
-    versionRepository.save(version);
-    runAfterCommit(
-        "export version assets",
-        () -> assetExportService.exportAssets(tenantId, version.getVersionNumber()));
-    return versionMapper.toDto(version);
+    Version saved = versionRepository.save(version);
+    VersionDto dto = versionMapper.toDto(saved);
+    String publishWorkflowId = UUID.randomUUID().toString();
+    try {
+      ExportedAssetManifest exportedManifest =
+          assetExportService.exportAssets(tenantId, saved.getVersionNumber());
+      publishedReleaseBundleService.createFullVersionBundle(
+          dto, publishWorkflowId, exportedManifest);
+      return dto;
+    } catch (RuntimeException ex) {
+      cleanupExportedAssets(tenantId, saved.getVersionNumber());
+      throw ex;
+    }
   }
 
   @Override
@@ -90,13 +103,13 @@ public class VersionServiceImpl implements VersionService {
     version.setBaseVersionId(baseVersionId);
     version.setScriptOnly(true);
 
-    versionRepository.save(version);
-    runAfterCommit(
+    Version saved = versionRepository.save(version);
+    runSafely(
         "notify script patch version update",
         () ->
             scriptingClient.notifyScriptVersionUpdate(
                 String.valueOf(game.getTenantId()), scriptPatchVersion, List.of()));
-    return versionMapper.toDto(version);
+    return versionMapper.toDto(saved);
   }
 
   @Override
@@ -111,6 +124,12 @@ public class VersionServiceImpl implements VersionService {
         .toList();
   }
 
+  @Override
+  @Transactional(readOnly = true)
+  public PublishedReleaseBundleDto getPublishedReleaseBundle(String tenantId, long versionId) {
+    return publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, versionId);
+  }
+
   private int calculateNextNumber(String tenantId) {
     return versionRepository
             .findTopByTenantIdOrderByVersionNumberDesc(tenantId)
@@ -119,18 +138,16 @@ public class VersionServiceImpl implements VersionService {
         + 1;
   }
 
-  private void runAfterCommit(String actionName, Runnable action) {
-    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-      runSafely(actionName, action);
-      return;
+  private void cleanupExportedAssets(String tenantId, int versionNumber) {
+    try {
+      assetExportService.deleteExportedAssets(tenantId, versionNumber);
+    } catch (RuntimeException ex) {
+      logger.warn(
+          "Failed to clean exported assets after publish failure tenant={} version={}",
+          tenantId,
+          versionNumber,
+          ex);
     }
-    TransactionSynchronizationManager.registerSynchronization(
-        new TransactionSynchronization() {
-          @Override
-          public void afterCommit() {
-            runSafely(actionName, action);
-          }
-        });
   }
 
   private void runSafely(String actionName, Runnable action) {

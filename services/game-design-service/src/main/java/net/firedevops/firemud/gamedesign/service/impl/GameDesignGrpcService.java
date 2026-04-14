@@ -9,6 +9,7 @@ import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
+import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.service.PingService;
@@ -18,6 +19,8 @@ import net.firedevops.firemud.gamedesign.service.VersionService;
 import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideRequest;
 import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideResponse;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesRequest;
 import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesResponse;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
@@ -178,6 +181,55 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               meterRegistry, logger, "ListVersions", "INVALID_ARGUMENT", ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "ListVersions", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.getPublishedReleaseBundle")
+  public void getPublishedReleaseBundle(
+      GetPublishedReleaseBundleRequest request,
+      StreamObserver<GetPublishedReleaseBundleResponse> responseObserver) {
+    GetPublishedReleaseBundleResponse.Builder builder =
+        GetPublishedReleaseBundleResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      PublishedReleaseBundleDto bundle =
+          versionService.getPublishedReleaseBundle(request.getTenantId(), request.getVersionId());
+      builder.setBundle(
+          net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
+              .setId(bundle.id())
+              .setVersionId(bundle.versionId())
+              .setVersionNumber(bundle.versionNumber())
+              .setAttestationSchemaVersion(bundle.attestationSchemaVersion())
+              .setPublishWorkflowId(bundle.publishWorkflowId())
+              .setManifestHash(bundle.manifestHash())
+              .addAllRequiredManifestAssetKeys(bundle.requiredManifestAssetKeys())
+              .setIsScriptOnly(bundle.scriptOnly())
+              .setScriptPatchVersion(
+                  bundle.scriptPatchVersion() == null ? "" : bundle.scriptPatchVersion())
+              .setPublishedAt(bundle.publishedAt().toString())
+              .build());
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetPublishedReleaseBundle",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetPublishedReleaseBundle",
+              "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "GetPublishedReleaseBundle", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();

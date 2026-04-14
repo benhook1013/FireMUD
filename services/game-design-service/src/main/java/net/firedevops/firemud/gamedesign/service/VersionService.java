@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.service;
 
 import java.util.List;
+import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 
 public interface VersionService {
@@ -11,4 +12,6 @@ public interface VersionService {
       throws Exception;
 
   List<VersionDto> listVersions(String tenantId);
+
+  PublishedReleaseBundleDto getPublishedReleaseBundle(String tenantId, long versionId);
 }

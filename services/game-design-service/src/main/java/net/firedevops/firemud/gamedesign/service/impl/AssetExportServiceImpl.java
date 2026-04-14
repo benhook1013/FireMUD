@@ -3,6 +3,9 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -10,6 +13,7 @@ import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
 import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
+import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -50,10 +54,11 @@ public class AssetExportServiceImpl implements AssetExportService {
 
   @Override
   @Timed("gamedesign.asset.export")
-  public void exportAssets(String tenantId, int version) {
+  public ExportedAssetManifest exportAssets(String tenantId, int version) {
     String prefix = tenantId + "/" + version + "/";
     List<GameAsset> assets = repository.findByTenantId(tenantId);
     Map<String, String> manifest = new HashMap<>();
+    ArrayList<String> requiredManifestAssetKeys = new ArrayList<>();
     for (GameAsset asset : assets) {
       String key = prefix + asset.getFileName();
       s3Client.putObject(
@@ -65,6 +70,7 @@ public class AssetExportServiceImpl implements AssetExportService {
           RequestBody.fromBytes(asset.getData()));
       String url = properties.getEndpoint() + "/" + properties.getBucket() + "/" + key;
       manifest.put(asset.getFileName(), url);
+      requiredManifestAssetKeys.add(asset.getFileName());
     }
     try {
       String manifestJson = objectMapper.writeValueAsString(manifest);
@@ -75,6 +81,9 @@ public class AssetExportServiceImpl implements AssetExportService {
               .contentType("application/json")
               .build(),
           RequestBody.fromString(manifestJson, StandardCharsets.UTF_8));
+      requiredManifestAssetKeys.add("manifest.json");
+      return new ExportedAssetManifest(
+          sha256(manifestJson), List.copyOf(requiredManifestAssetKeys));
     } catch (Exception e) {
       throw new IllegalStateException("Failed to write manifest", e);
     }
@@ -97,5 +106,19 @@ public class AssetExportServiceImpl implements AssetExportService {
             .bucket(properties.getBucket())
             .key(prefix + "manifest.json")
             .build());
+  }
+
+  private String sha256(String value) {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+      StringBuilder builder = new StringBuilder(bytes.length * 2);
+      for (byte current : bytes) {
+        builder.append(String.format("%02x", current));
+      }
+      return builder.toString();
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("SHA-256 unavailable", ex);
+    }
   }
 }

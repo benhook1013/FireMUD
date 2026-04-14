@@ -65,3 +65,8 @@ Entry format:
   - Context: `02.1.3` follow-through in `game-session-service` after presence and recent-presence seams had spread across `PLAY`, websocket close, TCP proxy disconnect handling, and `LOGOUT`
   - Observation: when live presence and bounded recent-presence are both updated directly from multiple handlers, the system keeps working only as long as every caller remembers the same order and pairing, which makes future lifecycle changes easy to miss and hard to prove
   - Expected pattern: route connect, activity, and disconnect mutations through one authoritative lifecycle service so handler code stays thin and proof coverage can target one canonical seam
+
+- `2026-04-14`: Publish completion cannot be modeled as "persist version now, best-effort export later"
+  - Context: starting `08.1` in `game-design-service`, where full publish created a `version` row and then swallowed asset-export failures in an after-commit callback
+  - Observation: that shape lets the system report a version as published even when export or release attestation never succeeded, which is exactly the kind of half-complete launchable state the design is trying to eliminate
+  - Expected pattern: full publish should finish only after required exported artifacts and immutable release attestation both exist, and failures in that path should fail closed instead of degrading into warning-only background behavior
