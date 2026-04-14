@@ -15,6 +15,9 @@ service GameSessionService {
   rpc EnqueueCommand(EnqueueCommandRequest) returns (EnqueueCommandResponse);
   rpc QueryState(QueryStateRequest) returns (QueryStateResponse);
   rpc QueryAccountPresence(QueryAccountPresenceRequest) returns (QueryAccountPresenceResponse);
+  rpc ListGameplayWorlds(ListGameplayWorldsRequest) returns (ListGameplayWorldsResponse);
+  rpc ListGameplayRealms(ListGameplayRealmsRequest) returns (ListGameplayRealmsResponse);
+  rpc GetAdmissionPointer(GetAdmissionPointerRequest) returns (GetAdmissionPointerResponse);
   rpc ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse);
   // Pause tick execution so a consistent pg_dump can be taken.
   rpc PauseTicks(PauseTicksRequest) returns (PauseTicksResponse);
@@ -131,6 +134,62 @@ message AccountPresenceEntry {
 
 message QueryAccountPresenceResponse {
   repeated AccountPresenceEntry presences = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListGameplayWorldsRequest {}
+
+message GameplayWorld {
+  string world_slug = 1;
+  string display_name = 2;
+}
+
+message ListGameplayWorldsResponse {
+  repeated GameplayWorld worlds = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListGameplayRealmsRequest {
+  string world_slug = 1;
+}
+
+message GameplayRealm {
+  string world_slug = 1;
+  string realm_slug = 2;
+  string display_name = 3;
+  string tenant_id = 4;
+  string game_instance_id = 5;
+  int64 pointer_version = 6;
+  bool requires_character_selection = 7;
+  string state_scope = 8;
+  string character_creation_policy = 9;
+}
+
+message ListGameplayRealmsResponse {
+  repeated GameplayRealm realms = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetAdmissionPointerRequest {
+  string world_slug = 1;
+  string realm_slug = 2;
+}
+
+message GameplayAdmissionPointer {
+  string world_slug = 1;
+  string world_display_name = 2;
+  string realm_slug = 3;
+  string realm_display_name = 4;
+  string tenant_id = 5;
+  string game_instance_id = 6;
+  int64 pointer_version = 7;
+  bool requires_character_selection = 8;
+  string state_scope = 9;
+  string character_creation_policy = 10;
+}
+
+message GetAdmissionPointerResponse {
+  GameplayAdmissionPointer admission_pointer = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

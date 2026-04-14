@@ -5,9 +5,11 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
@@ -26,8 +28,14 @@ import net.firedevops.firemud.gamesession.v1.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.v1.EnqueueCommandRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueCommandResponse;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.GetAdmissionPointerRequest;
+import net.firedevops.firemud.gamesession.v1.GetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.GetTickStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetTickStatusResponse;
+import net.firedevops.firemud.gamesession.v1.ListGameplayRealmsRequest;
+import net.firedevops.firemud.gamesession.v1.ListGameplayRealmsResponse;
+import net.firedevops.firemud.gamesession.v1.ListGameplayWorldsRequest;
+import net.firedevops.firemud.gamesession.v1.ListGameplayWorldsResponse;
 import net.firedevops.firemud.gamesession.v1.PauseTicksRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksResponse;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
@@ -65,6 +73,7 @@ public final class GameSessionGrpcService
   private final TextCommandInterpreter textCommandInterpreter;
   private final GameInstanceRepository gameInstanceRepository;
   private final AccountPresenceQueryService accountPresenceQueryService;
+  private final GameplayWorldCatalog gameplayWorldCatalog;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -86,6 +95,7 @@ public final class GameSessionGrpcService
       TextCommandInterpreter textCommandInterpreter,
       GameInstanceRepository gameInstanceRepository,
       AccountPresenceQueryService accountPresenceQueryService,
+      GameplayWorldCatalog gameplayWorldCatalog,
       TickService tickService,
       MeterRegistry meterRegistry,
       IpConnectionLimiter ipConnectionLimiter) {
@@ -95,9 +105,56 @@ public final class GameSessionGrpcService
     this.textCommandInterpreter = textCommandInterpreter;
     this.gameInstanceRepository = gameInstanceRepository;
     this.accountPresenceQueryService = accountPresenceQueryService;
+    this.gameplayWorldCatalog = gameplayWorldCatalog;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
     this.ipConnectionLimiter = ipConnectionLimiter;
+  }
+
+  GameSessionGrpcService(
+      PingService pingService,
+      GameInstanceService gameInstanceService,
+      FeatureFlagService featureFlagService,
+      TextCommandInterpreter textCommandInterpreter,
+      GameInstanceRepository gameInstanceRepository,
+      GameplayWorldCatalog gameplayWorldCatalog,
+      TickService tickService,
+      MeterRegistry meterRegistry,
+      IpConnectionLimiter ipConnectionLimiter) {
+    this(
+        pingService,
+        gameInstanceService,
+        featureFlagService,
+        textCommandInterpreter,
+        gameInstanceRepository,
+        (tenantId, viewerAccountId, accountIds) -> List.of(),
+        gameplayWorldCatalog,
+        tickService,
+        meterRegistry,
+        ipConnectionLimiter);
+  }
+
+  GameSessionGrpcService(
+      PingService pingService,
+      GameInstanceService gameInstanceService,
+      FeatureFlagService featureFlagService,
+      TextCommandInterpreter textCommandInterpreter,
+      GameInstanceRepository gameInstanceRepository,
+      AccountPresenceQueryService accountPresenceQueryService,
+      TickService tickService,
+      MeterRegistry meterRegistry,
+      IpConnectionLimiter ipConnectionLimiter) {
+    this(
+        pingService,
+        gameInstanceService,
+        featureFlagService,
+        textCommandInterpreter,
+        gameInstanceRepository,
+        accountPresenceQueryService,
+        new GameplayWorldCatalog(new GameplayCatalogProperties()),
+        tickService,
+        meterRegistry,
+        ipConnectionLimiter);
   }
 
   GameSessionGrpcService(
@@ -115,7 +172,7 @@ public final class GameSessionGrpcService
         featureFlagService,
         textCommandInterpreter,
         gameInstanceRepository,
-        (tenantId, viewerAccountId, accountIds) -> List.of(),
+        new GameplayWorldCatalog(new GameplayCatalogProperties()),
         tickService,
         meterRegistry,
         ipConnectionLimiter);
@@ -484,6 +541,98 @@ public final class GameSessionGrpcService
   }
 
   @Override
+  @Timed(value = "gamesessionGrpc.listGameplayWorlds")
+  public void listGameplayWorlds(
+      ListGameplayWorldsRequest request,
+      StreamObserver<ListGameplayWorldsResponse> responseObserver) {
+    ListGameplayWorldsResponse response =
+        ListGameplayWorldsResponse.newBuilder()
+            .addAllWorlds(
+                gameplayWorldCatalog.visibleWorlds().stream()
+                    .map(
+                        world ->
+                            net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
+                                .setWorldSlug(world.getSlug())
+                                .setDisplayName(world.getDisplayName())
+                                .build())
+                    .toList())
+            .build();
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.listGameplayRealms")
+  public void listGameplayRealms(
+      ListGameplayRealmsRequest request,
+      StreamObserver<ListGameplayRealmsResponse> responseObserver) {
+    try {
+      GameplayCatalogProperties.World world =
+          gameplayWorldCatalog
+              .resolveWorld(request.getWorldSlug())
+              .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
+      ListGameplayRealmsResponse response =
+          ListGameplayRealmsResponse.newBuilder()
+              .addAllRealms(
+                  gameplayWorldCatalog.visibleRealms(world).stream()
+                      .map(realm -> toGameplayRealm(world.getSlug(), realm))
+                      .toList())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ListGameplayRealmsResponse response =
+          ListGameplayRealmsResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.getAdmissionPointer")
+  public void getAdmissionPointer(
+      GetAdmissionPointerRequest request,
+      StreamObserver<GetAdmissionPointerResponse> responseObserver) {
+    try {
+      GameplayCatalogProperties.World world =
+          gameplayWorldCatalog
+              .resolveWorld(request.getWorldSlug())
+              .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
+      GameplayCatalogProperties.Realm realm =
+          gameplayWorldCatalog
+              .resolveRealm(world, request.getRealmSlug())
+              .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
+      GetAdmissionPointerResponse response =
+          GetAdmissionPointerResponse.newBuilder()
+              .setAdmissionPointer(
+                  net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                      .setWorldSlug(world.getSlug())
+                      .setWorldDisplayName(world.getDisplayName())
+                      .setRealmSlug(realm.getSlug())
+                      .setRealmDisplayName(realm.getDisplayName())
+                      .setTenantId(Long.toString(realm.getTenantId()))
+                      .setGameInstanceId(Long.toString(realm.getGameInstanceId()))
+                      .setPointerVersion(realm.getPointerVersion())
+                      .setRequiresCharacterSelection(realm.isRequiresCharacterSelection())
+                      .setStateScope(realm.getStateScope().name())
+                      .setCharacterCreationPolicy(realm.getCharacterCreationPolicy().name())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      GetAdmissionPointerResponse response =
+          GetAdmissionPointerResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
   @Timed(value = "gamesessionGrpc.toggleFeatureFlag")
   public void toggleFeatureFlag(
       ToggleFeatureFlagRequest request,
@@ -639,6 +788,21 @@ public final class GameSessionGrpcService
     } catch (NumberFormatException ex) {
       return false;
     }
+  }
+
+  private net.firedevops.firemud.gamesession.v1.GameplayRealm toGameplayRealm(
+      String worldSlug, GameplayCatalogProperties.Realm realm) {
+    return net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+        .setWorldSlug(worldSlug)
+        .setRealmSlug(realm.getSlug())
+        .setDisplayName(realm.getDisplayName())
+        .setTenantId(Long.toString(realm.getTenantId()))
+        .setGameInstanceId(Long.toString(realm.getGameInstanceId()))
+        .setPointerVersion(realm.getPointerVersion())
+        .setRequiresCharacterSelection(realm.isRequiresCharacterSelection())
+        .setStateScope(realm.getStateScope().name())
+        .setCharacterCreationPolicy(realm.getCharacterCreationPolicy().name())
+        .build();
   }
 
   private static final class AuthorizationException extends RuntimeException {

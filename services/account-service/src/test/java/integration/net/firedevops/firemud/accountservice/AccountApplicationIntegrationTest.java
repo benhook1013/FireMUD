@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
+import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
@@ -53,6 +54,7 @@ class AccountApplicationIntegrationTest {
   @LocalServerPort private int port;
 
   @MockitoBean private EntityManagementClient entityManagementClient;
+  @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private LoggingAdminClient loggingAdminClient;
   @MockitoBean private JavaMailSender mailSender;
 

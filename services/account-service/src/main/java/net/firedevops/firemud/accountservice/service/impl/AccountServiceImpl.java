@@ -21,6 +21,7 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
+import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.config.AuthProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
@@ -95,6 +96,7 @@ public class AccountServiceImpl implements AccountService {
   private final AuthProperties authProperties;
   private final GameplayCatalogProperties gameplayCatalogProperties;
   private final LoggingAdminClient loggingAdminClient;
+  private final GameSessionClient gameSessionClient;
   private final EntityManagementClient entityManagementClient;
   private final JwtUtil jwtUtil;
   private final net.firedevops.firemud.accountservice.service.session.SessionService sessionService;
@@ -120,6 +122,7 @@ public class AccountServiceImpl implements AccountService {
       AuthProperties authProperties,
       GameplayCatalogProperties gameplayCatalogProperties,
       LoggingAdminClient loggingAdminClient,
+      GameSessionClient gameSessionClient,
       EntityManagementClient entityManagementClient,
       JwtUtil jwtUtil,
       net.firedevops.firemud.accountservice.service.session.SessionService sessionService,
@@ -140,6 +143,7 @@ public class AccountServiceImpl implements AccountService {
     this.authProperties = authProperties;
     this.gameplayCatalogProperties = gameplayCatalogProperties;
     this.loggingAdminClient = loggingAdminClient;
+    this.gameSessionClient = gameSessionClient;
     this.entityManagementClient = entityManagementClient;
     this.jwtUtil = jwtUtil;
     this.sessionService = sessionService;
@@ -266,9 +270,9 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.bootstrap_worlds")
   public List<BootstrapWorldDto> listBootstrapWorlds(String bootstrapToken) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    return gameplayCatalogProperties.getWorlds().stream()
-        .filter(world -> hasAdmissibleRealm(bootstrapContext, world))
-        .map(world -> new BootstrapWorldDto(world.getSlug(), world.getDisplayName()))
+    return gameSessionClient.listGameplayWorlds().stream()
+        .filter(world -> hasAdmissibleRealm(bootstrapContext, world.getWorldSlug()))
+        .map(world -> new BootstrapWorldDto(world.getWorldSlug(), world.getDisplayName()))
         .toList();
   }
 
@@ -277,27 +281,25 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.bootstrap_realms")
   public List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    GameplayCatalogProperties.World world = requireWorld(worldSlug);
     Instant evaluatedAt = Instant.now();
     Instant expiresAt = evaluatedAt.plusMillis(authProperties.getConnectScopeExpirationMs());
-    return world.getRealms().stream()
+    return gameSessionClient.listGameplayRealms(worldSlug).stream()
         .filter(realm -> isRealmAdmissible(bootstrapContext, realm))
         .map(
             realm ->
                 new BootstrapRealmDto(
-                    world.getSlug(),
-                    realm.getSlug(),
+                    realm.getWorldSlug(),
+                    realm.getRealmSlug(),
                     realm.getDisplayName(),
-                    realm.getTenantId(),
-                    realm.getGameInstanceId(),
+                    Long.parseLong(realm.getTenantId()),
+                    Long.parseLong(realm.getGameInstanceId()),
                     realm.getPointerVersion(),
-                    realm.isRequiresCharacterSelection(),
-                    realm.getStateScope().name(),
-                    realm.getCharacterCreationPolicy().name(),
+                    realm.getRequiresCharacterSelection(),
+                    realm.getStateScope(),
+                    realm.getCharacterCreationPolicy(),
                     evaluatedAt.toString(),
                     expiresAt.toString(),
-                    mintConnectScopeId(
-                        bootstrapContext, world.getSlug(), realm, evaluatedAt, expiresAt)))
+                    mintConnectScopeId(bootstrapContext, realm, evaluatedAt, expiresAt)))
         .toList();
   }
 
@@ -307,13 +309,13 @@ public class AccountServiceImpl implements AccountService {
   public List<BootstrapCharacterDto> listBootstrapCharacters(
       String bootstrapToken, String worldSlug, String realmSlug) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    GameplayCatalogProperties.Realm realm =
+    net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm =
         requireAdmissibleRealm(bootstrapContext, worldSlug, realmSlug);
     return entityManagementClient
         .listCharactersByAccount(
-            realm.getTenantId(),
+            Long.parseLong(realm.getTenantId()),
             bootstrapContext.accountId(),
-            realm.getGameInstanceId(),
+            Long.parseLong(realm.getGameInstanceId()),
             toPlayableStateScope(realm))
         .stream()
         .sorted(Comparator.comparing(net.firedevops.firemud.entitymanagement.v1.Character::getName))
@@ -323,8 +325,8 @@ public class AccountServiceImpl implements AccountService {
                     character.getId(),
                     character.getName(),
                     character.getLevel(),
-                    realm.getStateScope().name(),
-                    realm.getCharacterCreationPolicy().name()))
+                    realm.getStateScope(),
+                    realm.getCharacterCreationPolicy()))
         .toList();
   }
 
@@ -335,11 +337,11 @@ public class AccountServiceImpl implements AccountService {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
     ConnectScopeContext scopeContext = requireConnectScopeContext(request.connectScopeId());
     validateConnectScopeAgainstBootstrap(bootstrapContext, scopeContext);
-    GameplayCatalogProperties.Realm currentRealm =
+    net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer currentRealm =
         requireAdmissibleRealm(
             bootstrapContext, scopeContext.worldSlug(), scopeContext.realmSlug());
-    if (currentRealm.getTenantId() != scopeContext.tenantId()
-        || currentRealm.getGameInstanceId() != scopeContext.gameInstanceId()
+    if (Long.parseLong(currentRealm.getTenantId()) != scopeContext.tenantId()
+        || Long.parseLong(currentRealm.getGameInstanceId()) != scopeContext.gameInstanceId()
         || currentRealm.getPointerVersion() != scopeContext.pointerVersion()) {
       throw new AuthenticationException(
           "CONNECT_SCOPE_MISMATCH", "Selected gameplay target is no longer admissible");
@@ -350,7 +352,7 @@ public class AccountServiceImpl implements AccountService {
             bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
     if (!membership.gameplayAdmissionAllowed()
         && isPublicProductionRealm(currentRealm)
-        && scopeContext.tenantId() == currentRealm.getTenantId()) {
+        && scopeContext.tenantId() == Long.parseLong(currentRealm.getTenantId())) {
       membership =
           toRuntimeMembership(
               ensurePublicProductionPlayerMembership(
@@ -558,38 +560,29 @@ public class AccountServiceImpl implements AccountService {
     return new BootstrapContext(accountId, tenantId);
   }
 
-  private List<GameplayCatalogProperties.World> configuredWorlds() {
-    return gameplayCatalogProperties.getWorlds() == null
-        ? List.of()
-        : gameplayCatalogProperties.getWorlds();
-  }
-
-  private GameplayCatalogProperties.World requireWorld(String worldSlug) {
-    return configuredWorlds().stream()
-        .filter(world -> Objects.equals(world.getSlug(), worldSlug))
-        .findFirst()
-        .orElseThrow(
-            () ->
-                new AuthenticationException(
-                    "ADMISSION_POINTER_UNAVAILABLE", "Unknown gameplay world selection"));
-  }
-
-  private GameplayCatalogProperties.Realm requireAdmissibleRealm(
+  private net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer requireAdmissibleRealm(
       BootstrapContext bootstrapContext, String worldSlug, String realmSlug) {
-    GameplayCatalogProperties.World world = requireWorld(worldSlug);
-    return world.getRealms().stream()
-        .filter(realm -> Objects.equals(realm.getSlug(), realmSlug))
-        .filter(realm -> isRealmAdmissible(bootstrapContext, realm))
-        .findFirst()
-        .orElseThrow(
-            () ->
-                new AuthenticationException(
-                    "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible"));
+    try {
+      net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm =
+          gameSessionClient.getAdmissionPointer(worldSlug, realmSlug);
+      if (!isRealmAdmissible(bootstrapContext, realm)) {
+        throw new AuthenticationException(
+            "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible");
+      }
+      return realm;
+    } catch (IllegalStateException ex) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible", ex);
+    }
   }
 
-  private boolean hasAdmissibleRealm(
-      BootstrapContext bootstrapContext, GameplayCatalogProperties.World world) {
-    return world.getRealms().stream().anyMatch(realm -> isRealmAdmissible(bootstrapContext, realm));
+  private boolean hasAdmissibleRealm(BootstrapContext bootstrapContext, String worldSlug) {
+    try {
+      return gameSessionClient.listGameplayRealms(worldSlug).stream()
+          .anyMatch(realm -> isRealmAdmissible(bootstrapContext, realm));
+    } catch (IllegalStateException ex) {
+      return false;
+    }
   }
 
   private boolean isRealmAdmissible(
@@ -608,10 +601,41 @@ public class AccountServiceImpl implements AccountService {
     return entitlements.gameplayAvailable();
   }
 
+  private boolean isRealmAdmissible(
+      BootstrapContext bootstrapContext,
+      net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {
+    RuntimeMembershipDto membership =
+        getTenantMembershipForRuntime(
+            bootstrapContext.accountId(),
+            Long.parseLong(realm.getTenantId()),
+            "bootstrap-discovery");
+    if (!membership.gameplayAdmissionAllowed() && !isPublicProductionRealm(realm)) {
+      return false;
+    }
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(Long.parseLong(realm.getTenantId()), "bootstrap-discovery");
+    return entitlements.gameplayAvailable();
+  }
+
+  private boolean isRealmAdmissible(
+      BootstrapContext bootstrapContext,
+      net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm) {
+    RuntimeMembershipDto membership =
+        getTenantMembershipForRuntime(
+            bootstrapContext.accountId(),
+            Long.parseLong(realm.getTenantId()),
+            "bootstrap-discovery");
+    if (!membership.gameplayAdmissionAllowed() && !isPublicProductionRealm(realm)) {
+      return false;
+    }
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(Long.parseLong(realm.getTenantId()), "bootstrap-discovery");
+    return entitlements.gameplayAvailable();
+  }
+
   private String mintConnectScopeId(
       BootstrapContext bootstrapContext,
-      String worldSlug,
-      GameplayCatalogProperties.Realm realm,
+      net.firedevops.firemud.gamesession.v1.GameplayRealm realm,
       Instant evaluatedAt,
       Instant expiresAt) {
     long expirationMs = Math.max(1L, expiresAt.toEpochMilli() - evaluatedAt.toEpochMilli());
@@ -624,13 +648,13 @@ public class AccountServiceImpl implements AccountService {
             "accountId",
             bootstrapContext.accountId(),
             "tenantId",
-            realm.getTenantId(),
+            Long.parseLong(realm.getTenantId()),
             "worldSlug",
-            worldSlug,
+            realm.getWorldSlug(),
             "realmSlug",
-            realm.getSlug(),
+            realm.getRealmSlug(),
             "gameInstanceId",
-            realm.getGameInstanceId(),
+            Long.parseLong(realm.getGameInstanceId()),
             "pointerVersion",
             realm.getPointerVersion(),
             "evaluatedAt",
@@ -642,8 +666,8 @@ public class AccountServiceImpl implements AccountService {
                 "connect-scope",
                 bootstrapContext.accountId(),
                 realm.getTenantId(),
-                worldSlug,
-                realm.getSlug(),
+                realm.getWorldSlug(),
+                realm.getRealmSlug(),
                 realm.getPointerVersion(),
                 evaluatedAt.toString())));
   }
@@ -1092,10 +1116,28 @@ public class AccountServiceImpl implements AccountService {
     return realm.isVisible() && "production".equalsIgnoreCase(realm.getSlug());
   }
 
+  private boolean isPublicProductionRealm(
+      net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {
+    return "production".equalsIgnoreCase(realm.getRealmSlug());
+  }
+
+  private boolean isPublicProductionRealm(
+      net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm) {
+    return "production".equalsIgnoreCase(realm.getRealmSlug());
+  }
+
   private PlayableStateScope toPlayableStateScope(GameplayCatalogProperties.Realm realm) {
     return switch (realm.getStateScope()) {
       case SHARED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
       case ISOLATED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+    };
+  }
+
+  private PlayableStateScope toPlayableStateScope(
+      net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm) {
+    return switch (realm.getStateScope()) {
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
     };
   }
 

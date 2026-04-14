@@ -106,7 +106,7 @@ public final class GameplayWorldCatalog {
         .findFirst();
   }
 
-  private List<GameplayCatalogProperties.Realm> visibleRealms(
+  public List<GameplayCatalogProperties.Realm> visibleRealms(
       GameplayCatalogProperties.World world) {
     if (world == null || world.getRealms() == null) {
       return List.of();
@@ -166,7 +166,7 @@ public final class GameplayWorldCatalog {
             });
   }
 
-  private List<GameplayCatalogProperties.World> visibleWorlds() {
+  public List<GameplayCatalogProperties.World> visibleWorlds() {
     if (properties.getWorlds() == null) {
       return List.of();
     }

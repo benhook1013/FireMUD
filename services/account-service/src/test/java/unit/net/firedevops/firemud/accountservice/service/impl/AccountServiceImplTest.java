@@ -13,6 +13,7 @@ import io.grpc.StatusRuntimeException;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
+import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.config.AuthProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
@@ -44,8 +45,6 @@ import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.session.SessionService;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties.CharacterCreationPolicy;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties.RealmStateScope;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -67,6 +66,7 @@ class AccountServiceImplTest {
   private final GameplayCatalogProperties gameplayCatalogProperties =
       new GameplayCatalogProperties();
   @Mock private LoggingAdminClient loggingAdminClient;
+  @Mock private GameSessionClient gameSessionClient;
   @Mock private EntityManagementClient entityManagementClient;
   @Mock private SessionService sessionService;
   @Mock private SagaRunner sagaRunner;
@@ -103,6 +103,41 @@ class AccountServiceImplTest {
     realm.setPointerVersion(17L);
     world.setRealms(java.util.List.of(realm));
     gameplayCatalogProperties.setWorlds(new java.util.ArrayList<>(java.util.List.of(world)));
+    when(gameSessionClient.listGameplayWorlds())
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
+                    .setWorldSlug("demo")
+                    .setDisplayName("Demo World")
+                    .build()));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setDisplayName("Live Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("44")
+                    .setPointerVersion(17L)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    when(gameSessionClient.getAdmissionPointer("demo", "production"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("production")
+                .setRealmDisplayName("Live Realm")
+                .setTenantId("7")
+                .setGameInstanceId("44")
+                .setPointerVersion(17L)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("SHARED")
+                .setCharacterCreationPolicy("ALLOW_NEW")
+                .build());
     when(mailProperties.getResetUrl()).thenReturn("http://reset/%s");
     when(mailProperties.getVerificationUrl()).thenReturn("http://verify/%s");
     service =
@@ -123,6 +158,7 @@ class AccountServiceImplTest {
             authProperties,
             gameplayCatalogProperties,
             loggingAdminClient,
+            gameSessionClient,
             entityManagementClient,
             jwtUtil,
             sessionService,
@@ -530,11 +566,34 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
         .thenReturn(Optional.of(membership(account, 7L)));
 
-    GameplayCatalogProperties.Realm isolatedRealm =
-        gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst();
-    isolatedRealm.setStateScope(RealmStateScope.ISOLATED);
-    isolatedRealm.setCharacterCreationPolicy(CharacterCreationPolicy.COPIED_ONLY);
-    isolatedRealm.setGameInstanceId(91L);
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setDisplayName("Live Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("91")
+                    .setPointerVersion(17L)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("ISOLATED")
+                    .setCharacterCreationPolicy("COPIED_ONLY")
+                    .build()));
+    when(gameSessionClient.getAdmissionPointer("demo", "production"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("production")
+                .setRealmDisplayName("Live Realm")
+                .setTenantId("7")
+                .setGameInstanceId("91")
+                .setPointerVersion(17L)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("ISOLATED")
+                .setCharacterCreationPolicy("COPIED_ONLY")
+                .build());
     net.firedevops.firemud.entitymanagement.v1.Character character =
         net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
             .setId("char-iso-1")
