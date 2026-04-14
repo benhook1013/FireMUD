@@ -270,6 +270,12 @@ Control-plane purge APIs are required:
 
 Logging & Admin, CI, and runbooks must consume these control-plane APIs instead of reconstructing state from `version_asset_artifact` table reads plus bucket inspection.
 
+Implementation notes:
+
+- `GetVersionAssetArtifactState` and `RepairPublishedVersionAssets` are now live in `game-design-service`.
+- `version_asset_artifact` is now a persisted control-plane row and full-version publish updates it through `EXPORTED_UNATTESTED` and `PUBLISHED`.
+- purge APIs and workflow-status reads are still pending.
+
 A basic repository (`GameAssetRepository`) and service implementation
 (`GameAssetServiceImpl`) persist uploads using Spring Data JPA.
 

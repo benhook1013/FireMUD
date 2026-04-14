@@ -15,7 +15,9 @@ import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
+import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
+import net.firedevops.firemud.gamedesign.v1.ArtifactState;
 import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideRequest;
 import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideResponse;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
@@ -25,6 +27,8 @@ import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesRequest;
 import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
 import net.firedevops.firemud.gamedesign.v1.PingRequest;
@@ -35,6 +39,8 @@ import net.firedevops.firemud.gamedesign.v1.PublishVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PutSettingsDomainOverrideRequest;
 import net.firedevops.firemud.gamedesign.v1.PutSettingsDomainOverrideResponse;
+import net.firedevops.firemud.gamedesign.v1.RepairPublishedVersionAssetsRequest;
+import net.firedevops.firemud.gamedesign.v1.RepairPublishedVersionAssetsResponse;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionResponse;
 import org.slf4j.Logger;
@@ -48,6 +54,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   private final PingService pingService;
   private final RevisionService revisionService;
   private final VersionService versionService;
+  private final VersionAssetArtifactService versionAssetArtifactService;
   private final SettingsAuthorityService settingsAuthorityService;
 
   @SuppressFBWarnings(
@@ -304,6 +311,90 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   }
 
   @Override
+  @Timed(value = "gamedesignGrpc.getVersionAssetArtifactState")
+  public void getVersionAssetArtifactState(
+      GetVersionAssetArtifactStateRequest request,
+      StreamObserver<GetVersionAssetArtifactStateResponse> responseObserver) {
+    GetVersionAssetArtifactStateResponse.Builder builder =
+        GetVersionAssetArtifactStateResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      builder.setArtifactState(
+          toProto(
+              versionAssetArtifactService.getState(request.getTenantId(), request.getVersionId())));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetVersionAssetArtifactState",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetVersionAssetArtifactState",
+              "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "GetVersionAssetArtifactState", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.repairPublishedVersionAssets")
+  public void repairPublishedVersionAssets(
+      RepairPublishedVersionAssetsRequest request,
+      StreamObserver<RepairPublishedVersionAssetsResponse> responseObserver) {
+    RepairPublishedVersionAssetsResponse.Builder builder =
+        RepairPublishedVersionAssetsResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      builder.setArtifactState(
+          toProto(
+              versionAssetArtifactService.repairPublishedVersionAssets(
+                  request.getTenantId(),
+                  request.getVersionId(),
+                  request.getExpectedArtifactStateEpoch(),
+                  request.getRepairWorkflowId())));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "RepairPublishedVersionAssets",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "RepairPublishedVersionAssets",
+              "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (IllegalStateException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "RepairPublishedVersionAssets",
+              ex.getMessage(),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "RepairPublishedVersionAssets", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
   @Timed(value = "gamedesignGrpc.getScopedSettingsOverrides")
   public void getScopedSettingsOverrides(
       GetScopedSettingsOverridesRequest request,
@@ -421,5 +512,20 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
+  }
+
+  private net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState toProto(
+      net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto state) {
+    return net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+        .setTenantId(state.tenantId())
+        .setVersionId(state.versionId())
+        .setArtifactState(ArtifactState.valueOf("ARTIFACT_STATE_" + state.artifactState()))
+        .setStateEpoch(state.stateEpoch())
+        .setManifestHash(state.manifestHash() == null ? "" : state.manifestHash())
+        .setLastWorkflowId(state.lastWorkflowId() == null ? "" : state.lastWorkflowId())
+        .setLastErrorCode(state.lastErrorCode() == null ? "" : state.lastErrorCode())
+        .setLastErrorMessage(state.lastErrorMessage() == null ? "" : state.lastErrorMessage())
+        .setUpdatedAt(state.updatedAt().toString())
+        .build();
   }
 }

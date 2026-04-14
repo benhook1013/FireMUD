@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
+import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
@@ -38,6 +39,7 @@ class VersionServiceImplTest {
   @Mock private PublishAttemptService publishAttemptService;
   @Mock private PublishGateService publishGateService;
   @Mock private ControlPlaneDigestService controlPlaneDigestService;
+  @Mock private VersionAssetArtifactService versionAssetArtifactService;
   @Mock private PublishedReleaseBundleService publishedReleaseBundleService;
 
   private VersionServiceImpl service;
@@ -56,6 +58,7 @@ class VersionServiceImplTest {
             publishAttemptService,
             publishGateService,
             controlPlaneDigestService,
+            versionAssetArtifactService,
             publishedReleaseBundleService);
   }
 
@@ -88,6 +91,19 @@ class VersionServiceImplTest {
                 "GAME_DESIGN_CONTROL_PLANE", "10", "version:10", "digest-1", 1, null, null));
     when(publishGateService.collectFullVersionParticipantDigests(any(VersionDto.class)))
         .thenReturn(participantDigests);
+    when(versionAssetArtifactService.markExportedUnattested(
+            any(String.class), any(Long.class), any(String.class), any(String.class)))
+        .thenReturn(
+            new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
+                "tenant-1",
+                10L,
+                "EXPORTED_UNATTESTED",
+                1L,
+                "abc123",
+                "workflow-1",
+                null,
+                null,
+                java.time.LocalDateTime.now()));
     when(publishedReleaseBundleService.createFullVersionBundle(
             any(VersionDto.class),
             any(String.class),
@@ -105,6 +121,23 @@ class VersionServiceImplTest {
                 List.of("logo.png", "manifest.json"),
                 participantDigests,
                 false,
+                null,
+                java.time.LocalDateTime.now()));
+    when(versionAssetArtifactService.markPublished(
+            any(String.class),
+            any(Long.class),
+            any(Long.class),
+            any(String.class),
+            any(String.class)))
+        .thenReturn(
+            new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
+                "tenant-1",
+                10L,
+                "PUBLISHED",
+                2L,
+                "abc123",
+                "workflow-1",
+                null,
                 null,
                 java.time.LocalDateTime.now()));
 
@@ -192,6 +225,19 @@ class VersionServiceImplTest {
             List.of(
                 new PublishParticipantDigestDto(
                     "GAME_DESIGN_CONTROL_PLANE", "10", "version:10", "digest-1", 1, null, null)));
+    when(versionAssetArtifactService.markExportedUnattested(
+            any(String.class), any(Long.class), any(String.class), any(String.class)))
+        .thenReturn(
+            new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
+                "tenant-1",
+                10L,
+                "EXPORTED_UNATTESTED",
+                1L,
+                "abc123",
+                "workflow-1",
+                null,
+                null,
+                java.time.LocalDateTime.now()));
     org.mockito.Mockito.doThrow(new IllegalStateException("bundle failed"))
         .when(publishedReleaseBundleService)
         .createFullVersionBundle(

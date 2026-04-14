@@ -23,6 +23,7 @@ import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
+import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,6 +45,7 @@ public class VersionServiceImpl implements VersionService {
   private final PublishAttemptService publishAttemptService;
   private final PublishGateService publishGateService;
   private final ControlPlaneDigestService controlPlaneDigestService;
+  private final VersionAssetArtifactService versionAssetArtifactService;
   private final PublishedReleaseBundleService publishedReleaseBundleService;
 
   @Autowired
@@ -56,6 +58,7 @@ public class VersionServiceImpl implements VersionService {
       PublishAttemptService publishAttemptService,
       PublishGateService publishGateService,
       ControlPlaneDigestService controlPlaneDigestService,
+      VersionAssetArtifactService versionAssetArtifactService,
       PublishedReleaseBundleService publishedReleaseBundleService) {
     this.versionRepository = versionRepository;
     this.gameRepository = gameRepository;
@@ -65,6 +68,7 @@ public class VersionServiceImpl implements VersionService {
     this.publishAttemptService = publishAttemptService;
     this.publishGateService = publishGateService;
     this.controlPlaneDigestService = controlPlaneDigestService;
+    this.versionAssetArtifactService = versionAssetArtifactService;
     this.publishedReleaseBundleService = publishedReleaseBundleService;
   }
 
@@ -85,19 +89,40 @@ public class VersionServiceImpl implements VersionService {
     VersionDto dto = versionMapper.toDto(saved);
     String publishWorkflowId = UUID.randomUUID().toString();
     publishAttemptService.createAttempt(dto, PublishType.FULL_VERSION, publishWorkflowId);
+    ExportedAssetManifest exportedManifest = null;
+    Long exportedStateEpoch = null;
     try {
       List<PublishParticipantDigestDto> participantDigests =
           publishGateService.collectFullVersionParticipantDigests(dto);
       publishAttemptService.recordParticipantDigests(publishWorkflowId, participantDigests);
       publishGateService.assertGatePassed(dto, participantDigests);
-      ExportedAssetManifest exportedManifest =
-          assetExportService.exportAssets(tenantId, saved.getVersionNumber());
+      exportedManifest = assetExportService.exportAssets(tenantId, saved.getVersionNumber());
+      exportedStateEpoch =
+          versionAssetArtifactService
+              .markExportedUnattested(
+                  dto.tenantId(), dto.id(), publishWorkflowId, exportedManifest.manifestHash())
+              .stateEpoch();
       publishedReleaseBundleService.createFullVersionBundle(
           dto, publishWorkflowId, exportedManifest, participantDigests);
+      versionAssetArtifactService.markPublished(
+          dto.tenantId(),
+          dto.id(),
+          exportedStateEpoch,
+          publishWorkflowId,
+          exportedManifest.manifestHash());
       publishAttemptService.markSucceeded(publishWorkflowId);
       return dto;
     } catch (RuntimeException ex) {
       publishAttemptService.markFailed(publishWorkflowId, "PUBLISH_GATE_FAILED", ex.getMessage());
+      if (exportedManifest != null) {
+        versionAssetArtifactService.markFailed(
+            dto.tenantId(),
+            dto.id(),
+            publishWorkflowId,
+            exportedManifest.manifestHash(),
+            "PUBLISH_FAILED",
+            ex.getMessage());
+      }
       cleanupExportedAssets(tenantId, saved.getVersionNumber());
       versionRepository.delete(saved);
       throw ex;

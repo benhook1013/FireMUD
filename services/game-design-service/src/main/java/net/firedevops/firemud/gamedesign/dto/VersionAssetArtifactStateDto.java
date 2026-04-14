@@ -1,0 +1,14 @@
+package net.firedevops.firemud.gamedesign.dto;
+
+import java.time.LocalDateTime;
+
+public record VersionAssetArtifactStateDto(
+    String tenantId,
+    Long versionId,
+    String artifactState,
+    long stateEpoch,
+    String manifestHash,
+    String lastWorkflowId,
+    String lastErrorCode,
+    String lastErrorMessage,
+    LocalDateTime updatedAt) {}

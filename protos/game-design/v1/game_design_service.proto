@@ -18,6 +18,10 @@ service GameDesignService {
       returns (GetDesignControlPlaneDigestResponse);
   rpc GetPublishedReleaseBundle(GetPublishedReleaseBundleRequest)
       returns (GetPublishedReleaseBundleResponse);
+  rpc GetVersionAssetArtifactState(GetVersionAssetArtifactStateRequest)
+      returns (GetVersionAssetArtifactStateResponse);
+  rpc RepairPublishedVersionAssets(RepairPublishedVersionAssetsRequest)
+      returns (RepairPublishedVersionAssetsResponse);
   rpc GetScopedSettingsOverrides(GetScopedSettingsOverridesRequest)
       returns (GetScopedSettingsOverridesResponse);
   rpc PutSettingsDomainOverride(PutSettingsDomainOverrideRequest)
@@ -91,6 +95,28 @@ message GetPublishedReleaseBundleResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
+message GetVersionAssetArtifactStateRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+}
+
+message GetVersionAssetArtifactStateResponse {
+  VersionAssetArtifactState artifact_state = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message RepairPublishedVersionAssetsRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  int64 expected_artifact_state_epoch = 3;
+  string repair_workflow_id = 4;
+}
+
+message RepairPublishedVersionAssetsResponse {
+  VersionAssetArtifactState artifact_state = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
 message Version {
   int64 id = 1;
   int32 version_number = 2;
@@ -127,6 +153,30 @@ message ParticipantDigest {
   string applied_commit_id = 3;
   string content_digest = 4;
   int32 digest_schema_version = 5;
+}
+
+enum ArtifactState {
+  ARTIFACT_STATE_UNSPECIFIED = 0;
+  ARTIFACT_STATE_STAGED = 1;
+  ARTIFACT_STATE_EXPORTED_UNATTESTED = 2;
+  ARTIFACT_STATE_PUBLISHED = 3;
+  ARTIFACT_STATE_FAILED = 4;
+  ARTIFACT_STATE_TOMBSTONED = 5;
+  ARTIFACT_STATE_PURGE_IN_PROGRESS = 6;
+  ARTIFACT_STATE_PURGE_FAILED = 7;
+  ARTIFACT_STATE_PURGED = 8;
+}
+
+message VersionAssetArtifactState {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  ArtifactState artifact_state = 3;
+  int64 state_epoch = 4;
+  string manifest_hash = 5;
+  string last_workflow_id = 6;
+  string last_error_code = 7;
+  string last_error_message = 8;
+  string updated_at = 9;
 }
 
 message PingRequest {}

@@ -14,11 +14,14 @@ import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
+import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
@@ -27,6 +30,8 @@ class GameDesignGrpcServiceTest {
   private final PingService pingService = Mockito.mock(PingService.class);
   private final RevisionService revisionService = Mockito.mock(RevisionService.class);
   private final VersionService versionService = Mockito.mock(VersionService.class);
+  private final VersionAssetArtifactService versionAssetArtifactService =
+      Mockito.mock(VersionAssetArtifactService.class);
   private final SettingsAuthorityService settingsAuthorityService =
       Mockito.mock(SettingsAuthorityService.class);
   private final GameDesignGrpcService service =
@@ -34,6 +39,7 @@ class GameDesignGrpcServiceTest {
           pingService,
           revisionService,
           versionService,
+          versionAssetArtifactService,
           settingsAuthorityService,
           new SimpleMeterRegistry());
 
@@ -103,6 +109,49 @@ class GameDesignGrpcServiceTest {
     }
 
     assertEquals("digest-1", ref.get().getDigest().getContentDigest());
+  }
+
+  @Test
+  void getVersionAssetArtifactStateReturnsArtifactProof() {
+    Mockito.when(versionAssetArtifactService.getState("tenant-1", 7L))
+        .thenReturn(
+            new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
+                "tenant-1",
+                7L,
+                "PUBLISHED",
+                2L,
+                "hash-1",
+                "workflow-1",
+                null,
+                null,
+                LocalDateTime.parse("2026-04-14T12:00:00")));
+
+    AtomicReference<GetVersionAssetArtifactStateResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getVersionAssetArtifactState(
+          GetVersionAssetArtifactStateRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(GetVersionAssetArtifactStateResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+              throw new AssertionError(t);
+            }
+
+            @Override
+            public void onCompleted() {}
+          });
+    }
+
+    assertEquals(
+        "ARTIFACT_STATE_PUBLISHED", ref.get().getArtifactState().getArtifactState().name());
+    assertEquals("hash-1", ref.get().getArtifactState().getManifestHash());
   }
 
   private static StreamObserver<GetPublishedReleaseBundleResponse> observerFor(

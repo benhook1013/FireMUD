@@ -89,6 +89,11 @@ When using a self-hosted MinIO cluster as the asset store:
    - The Game Design and Game Session services have already marked the version
      as retired.
 
+Current implementation notes:
+
+- `GetVersionAssetArtifactState` and `RepairPublishedVersionAssets` are now live in `game-design-service`.
+- the purge-specific APIs (`CanDeleteVersionAssets`, `BeginPurgeVersionAssets`, `FinalizePurgeVersionAssets`, `GetVersionAssetPurgeStatus`) are still design-canonical but not implemented yet, so purge must still wait for that control-plane coverage rather than being inferred complete from the repair path.
+
 ## Handling Failed Publish Versions
 
 Occasionally the asset-export step of `PublishVersion` may fail in a way that
