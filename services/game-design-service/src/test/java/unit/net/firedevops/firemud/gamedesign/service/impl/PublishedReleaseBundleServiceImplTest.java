@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
@@ -46,13 +47,17 @@ class PublishedReleaseBundleServiceImplTest {
         service.createFullVersionBundle(
             version,
             "workflow-1",
-            new ExportedAssetManifest("abc123", List.of("logo.png", "manifest.json")));
+            new ExportedAssetManifest("abc123", List.of("logo.png", "manifest.json")),
+            List.of(
+                new PublishParticipantDigestDto(
+                    "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-1", 1, null, null)));
 
     assertEquals(11L, dto.id());
     assertEquals("tenant-1", dto.tenantId());
     assertEquals(7L, dto.versionId());
     assertEquals("abc123", dto.manifestHash());
     assertEquals(List.of("logo.png", "manifest.json"), dto.requiredManifestAssetKeys());
+    assertEquals(1, dto.participantDigests().size());
     assertEquals("v1", dto.attestationSchemaVersion());
   }
 
@@ -69,6 +74,7 @@ class PublishedReleaseBundleServiceImplTest {
             service.createFullVersionBundle(
                 version,
                 "workflow-1",
-                new ExportedAssetManifest("abc123", List.of("manifest.json"))));
+                new ExportedAssetManifest("abc123", List.of("manifest.json")),
+                List.of()));
   }
 }

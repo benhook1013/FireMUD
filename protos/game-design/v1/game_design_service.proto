@@ -14,6 +14,8 @@ service GameDesignService {
   rpc PublishScriptPatchVersion(PublishScriptPatchVersionRequest)
       returns (PublishScriptPatchVersionResponse);
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
+  rpc GetDesignControlPlaneDigest(GetDesignControlPlaneDigestRequest)
+      returns (GetDesignControlPlaneDigestResponse);
   rpc GetPublishedReleaseBundle(GetPublishedReleaseBundleRequest)
       returns (GetPublishedReleaseBundleResponse);
   rpc GetScopedSettingsOverrides(GetScopedSettingsOverridesRequest)
@@ -66,6 +68,19 @@ message ListVersionsResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
+message GetDesignControlPlaneDigestRequest {
+  string tenant_id = 1;
+  oneof scope {
+    int64 version_id = 2;
+    string script_patch_version = 3;
+  }
+}
+
+message GetDesignControlPlaneDigestResponse {
+  DesignControlPlaneDigest digest = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
 message GetPublishedReleaseBundleRequest {
   string tenant_id = 1;
   int64 version_id = 2;
@@ -95,6 +110,23 @@ message PublishedReleaseBundle {
   bool is_script_only = 8;
   string script_patch_version = 9;
   string published_at = 10;
+  repeated ParticipantDigest participant_digests = 11;
+}
+
+message DesignControlPlaneDigest {
+  string tenant_id = 1;
+  string scope_value = 2;
+  string applied_commit_id = 3;
+  string content_digest = 4;
+  int32 digest_schema_version = 5;
+}
+
+message ParticipantDigest {
+  string participant_key = 1;
+  string scope_value = 2;
+  string applied_commit_id = 3;
+  string content_digest = 4;
+  int32 digest_schema_version = 5;
 }
 
 message PingRequest {}

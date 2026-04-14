@@ -12,6 +12,7 @@ public record PublishedReleaseBundleDto(
     String publishWorkflowId,
     String manifestHash,
     List<String> requiredManifestAssetKeys,
+    List<PublishParticipantDigestDto> participantDigests,
     boolean scriptOnly,
     String scriptPatchVersion,
     LocalDateTime publishedAt) {}

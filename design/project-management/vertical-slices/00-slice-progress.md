@@ -51,7 +51,7 @@ These are not broad audit topics anymore; they are real future slices with known
 1. [09 Multi-Tenancy, Realm Routing, and Runtime Boundaries](./09-task-list-multi-tenancy-realm-routing-and-runtime-boundaries-vertical-slice.md)
    Remaining: the family is now actively underway with shared routing/catalog substrate, public-production membership creation, and the first real realm-aware roster substrate; inventory/equipment now follow that scoped character namespace, and the main follow-through is final admission-pointer authority plus progression/resources/loadout namespaces beyond it.
 2. [08 Game Design Publishing and Runtime Activation](./08-task-list-game-design-publishing-and-runtime-activation-vertical-slice.md)
-   Remaining: the first `08.1` release-bundle substrate is now live in `game-design-service`, but digest-gate orchestration and the rest of `08.1` through `08.4` remain open.
+   Remaining: `08.1` now has the release-bundle seam, durable publish-attempt plus participant-observation storage, Game Design control-plane digest RPC, and script-patch gating on the canonical framework; the main remaining work is full-version participant coverage plus recorded-digest comparison, then `08.2` / `08.3` / `08.4`.
 3. [10 Scripting, Automation, and Runtime Orchestration](./10-task-list-scripting-automation-and-runtime-orchestration-vertical-slice.md)
    Remaining: the scripting domain now has a canonical family instead of fragmented indirect coverage; `10.1` through `10.5` are the bounded runtime/control-plane cuts, while design-time publication boundaries remain intentionally anchored in `08.4`.
 4. [02.1.1 Email OTP and Text Auth Options](./02.1.1-task-list-email-otp-and-text-auth-options-vertical-slice.md)
@@ -124,7 +124,7 @@ If the goal is continued design-to-slice cleanup rather than code, do this next:
 1. `09` multi-tenancy / realm-routing family
    Implementation is now underway; the next honest follow-through is final admission-pointer authority plus realm-/instance-aware roster/state namespaces rather than more family creation.
 2. `08` game-design publish/version/activation family
-   Best next control-plane implementation family after `09`; the first `08.1` attestation seam is now live, so the next honest work is digest-gate orchestration and then `08.2` / `08.3`.
+   Best next control-plane implementation family after `09`; `08.1` now has the canonical publish-attempt framework and script-patch gating, so the next honest work is full-version participant coverage / digest comparison and then `08.2` / `08.3`.
 3. `10` scripting/automation/runtime-orchestration family
    Best next runtime/control-plane planning family after `08` and `09`; start with `10.1`, then `10.2`, then `10.3`, keeping `08.4` as the publication-boundary companion rather than duplicating it.
 

@@ -1,6 +1,6 @@
 # `08` Game Design Publishing and Runtime Activation
 
-Goal: translate FireMUD's already-rich design-time versioning, asset publication, and launch-control-plane architecture into one explicit slice family so publish, attestation, activation preflight, and patch/plugin rollout do not keep growing as scattered notes across Game Design, World Management, and runtime docs. Status: planned.
+Goal: translate FireMUD's already-rich design-time versioning, asset publication, and launch-control-plane architecture into one explicit slice family so publish, attestation, activation preflight, and patch/plugin rollout do not keep growing as scattered notes across Game Design, World Management, and runtime docs. Status: in progress.
 
 ## Implementation Notes
 
@@ -13,6 +13,13 @@ This domain is heavily designed already, but still under-sliced relative to its 
 - script-only patch and plugin publication are already intentionally separate from runtime pinning and activation, but that separation is not yet represented as dedicated slice planning.
 
 The problem is not missing architecture. The problem is that the architecture still lacks a coherent vertical-slice family, which makes implementation planning look thinner than the real target-state contract.
+
+That is no longer just planning work: the family is now active in code.
+
+- `08.1` now has a live immutable release-bundle attestation seam in `game-design-service`;
+- the canonical publish-attempt / participant-observation framework is also now live;
+- script-patch publish already uses that same framework with real Automation & Scripting plus Game Design control-plane digests;
+- full-version publish still fails closed until the missing required domain digest participants exist, which keeps the family honest instead of pretending the gate is complete.
 
 ## Why This Slice Exists
 

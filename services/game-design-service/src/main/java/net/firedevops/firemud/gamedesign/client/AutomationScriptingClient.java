@@ -5,12 +5,14 @@ import java.io.IOException;
 import java.util.List;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
+import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateRequest;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for Automation & Scripting Service. */
@@ -58,5 +60,34 @@ public class AutomationScriptingClient
             .addAllAffectedScripts(scripts)
             .build();
     stub().notifyScriptVersionUpdate(request);
+  }
+
+  public PublishParticipantDigestDto getDraftDesignDigestForScriptPatch(
+      String tenantId, String scriptPatchVersion) {
+    var response =
+        stub()
+            .getDraftDesignDigest(
+                GetDraftDesignDigestRequest.newBuilder()
+                    .setTenantId(tenantId)
+                    .setScriptPatchVersion(scriptPatchVersion)
+                    .build());
+    if (response.hasError() && !response.getError().getCode().isBlank()) {
+      return new PublishParticipantDigestDto(
+          "AUTOMATION_SCRIPTING",
+          scriptPatchVersion,
+          null,
+          null,
+          null,
+          response.getError().getCode(),
+          response.getError().getMessage());
+    }
+    return new PublishParticipantDigestDto(
+        "AUTOMATION_SCRIPTING",
+        response.getScriptPatchVersion(),
+        response.getAppliedCommitId(),
+        response.getContentDigest(),
+        response.getDigestSchemaVersion(),
+        null,
+        null);
   }
 }

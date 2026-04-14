@@ -7,15 +7,21 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
+import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
+import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
+import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import org.slf4j.Logger;
@@ -35,6 +41,9 @@ public class VersionServiceImpl implements VersionService {
   private final VersionMapper versionMapper;
   private final AutomationScriptingClient scriptingClient;
   private final AssetExportService assetExportService;
+  private final PublishAttemptService publishAttemptService;
+  private final PublishGateService publishGateService;
+  private final ControlPlaneDigestService controlPlaneDigestService;
   private final PublishedReleaseBundleService publishedReleaseBundleService;
 
   @Autowired
@@ -44,12 +53,18 @@ public class VersionServiceImpl implements VersionService {
       VersionMapper versionMapper,
       AutomationScriptingClient scriptingClient,
       AssetExportService assetExportService,
+      PublishAttemptService publishAttemptService,
+      PublishGateService publishGateService,
+      ControlPlaneDigestService controlPlaneDigestService,
       PublishedReleaseBundleService publishedReleaseBundleService) {
     this.versionRepository = versionRepository;
     this.gameRepository = gameRepository;
     this.versionMapper = versionMapper;
     this.scriptingClient = scriptingClient;
     this.assetExportService = assetExportService;
+    this.publishAttemptService = publishAttemptService;
+    this.publishGateService = publishGateService;
+    this.controlPlaneDigestService = controlPlaneDigestService;
     this.publishedReleaseBundleService = publishedReleaseBundleService;
   }
 
@@ -69,14 +84,22 @@ public class VersionServiceImpl implements VersionService {
     Version saved = versionRepository.save(version);
     VersionDto dto = versionMapper.toDto(saved);
     String publishWorkflowId = UUID.randomUUID().toString();
+    publishAttemptService.createAttempt(dto, PublishType.FULL_VERSION, publishWorkflowId);
     try {
+      List<PublishParticipantDigestDto> participantDigests =
+          publishGateService.collectFullVersionParticipantDigests(dto);
+      publishAttemptService.recordParticipantDigests(publishWorkflowId, participantDigests);
+      publishGateService.assertGatePassed(dto, participantDigests);
       ExportedAssetManifest exportedManifest =
           assetExportService.exportAssets(tenantId, saved.getVersionNumber());
       publishedReleaseBundleService.createFullVersionBundle(
-          dto, publishWorkflowId, exportedManifest);
+          dto, publishWorkflowId, exportedManifest, participantDigests);
+      publishAttemptService.markSucceeded(publishWorkflowId);
       return dto;
     } catch (RuntimeException ex) {
+      publishAttemptService.markFailed(publishWorkflowId, "PUBLISH_GATE_FAILED", ex.getMessage());
       cleanupExportedAssets(tenantId, saved.getVersionNumber());
+      versionRepository.delete(saved);
       throw ex;
     }
   }
@@ -104,12 +127,26 @@ public class VersionServiceImpl implements VersionService {
     version.setScriptOnly(true);
 
     Version saved = versionRepository.save(version);
-    runSafely(
-        "notify script patch version update",
-        () ->
-            scriptingClient.notifyScriptVersionUpdate(
-                String.valueOf(game.getTenantId()), scriptPatchVersion, List.of()));
-    return versionMapper.toDto(saved);
+    VersionDto dto = versionMapper.toDto(saved);
+    String publishWorkflowId = UUID.randomUUID().toString();
+    publishAttemptService.createAttempt(dto, PublishType.SCRIPT_PATCH, publishWorkflowId);
+    try {
+      List<PublishParticipantDigestDto> participantDigests =
+          publishGateService.collectScriptPatchParticipantDigests(dto);
+      publishAttemptService.recordParticipantDigests(publishWorkflowId, participantDigests);
+      publishGateService.assertGatePassed(dto, participantDigests);
+      runSafely(
+          "notify script patch version update",
+          () ->
+              scriptingClient.notifyScriptVersionUpdate(
+                  String.valueOf(game.getTenantId()), scriptPatchVersion, List.of()));
+      publishAttemptService.markSucceeded(publishWorkflowId);
+      return dto;
+    } catch (RuntimeException ex) {
+      publishAttemptService.markFailed(publishWorkflowId, "PUBLISH_GATE_FAILED", ex.getMessage());
+      versionRepository.delete(saved);
+      throw ex;
+    }
   }
 
   @Override
@@ -122,6 +159,29 @@ public class VersionServiceImpl implements VersionService {
     return versionRepository.findAllByTenantIdOrderByVersionNumberAsc(game.getTenantId()).stream()
         .map(versionMapper::toDto)
         .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public DesignControlPlaneDigestDto getDesignControlPlaneDigest(String tenantId, Long versionId) {
+    Version version =
+        versionRepository
+            .findById(versionId)
+            .filter(found -> found.getTenantId().equals(tenantId))
+            .orElseThrow(() -> new IllegalArgumentException("version not found"));
+    return controlPlaneDigestService.getDigestForVersion(versionMapper.toDto(version));
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public DesignControlPlaneDigestDto getDesignControlPlaneDigestForScriptPatch(
+      String tenantId, String scriptPatchVersion) {
+    Version version =
+        versionRepository
+            .findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
+                tenantId, scriptPatchVersion)
+            .orElseThrow(() -> new IllegalArgumentException("script patch version not found"));
+    return controlPlaneDigestService.getDigestForScriptPatch(versionMapper.toDto(version));
   }
 
   @Override

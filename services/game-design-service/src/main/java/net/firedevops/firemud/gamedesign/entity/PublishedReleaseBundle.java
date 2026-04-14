@@ -40,6 +40,10 @@ public class PublishedReleaseBundle {
   @Column(nullable = false)
   private String requiredManifestAssetKeysJson;
 
+  @Lob
+  @Column(nullable = false)
+  private String participantDigestsJson = "[]";
+
   @Column(nullable = false)
   private boolean scriptOnly;
 

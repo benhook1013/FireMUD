@@ -19,6 +19,8 @@ import net.firedevops.firemud.gamedesign.service.VersionService;
 import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideRequest;
 import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideResponse;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
+import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesRequest;
@@ -187,6 +189,53 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   }
 
   @Override
+  @Timed(value = "gamedesignGrpc.getDesignControlPlaneDigest")
+  public void getDesignControlPlaneDigest(
+      GetDesignControlPlaneDigestRequest request,
+      StreamObserver<GetDesignControlPlaneDigestResponse> responseObserver) {
+    GetDesignControlPlaneDigestResponse.Builder builder =
+        GetDesignControlPlaneDigestResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      var digest =
+          request.getScopeCase() == GetDesignControlPlaneDigestRequest.ScopeCase.VERSION_ID
+              ? versionService.getDesignControlPlaneDigest(
+                  request.getTenantId(), request.getVersionId())
+              : versionService.getDesignControlPlaneDigestForScriptPatch(
+                  request.getTenantId(), request.getScriptPatchVersion());
+      builder.setDigest(
+          net.firedevops.firemud.gamedesign.v1.DesignControlPlaneDigest.newBuilder()
+              .setTenantId(digest.tenantId())
+              .setScopeValue(digest.scopeValue())
+              .setAppliedCommitId(digest.appliedCommitId())
+              .setContentDigest(digest.contentDigest())
+              .setDigestSchemaVersion(digest.digestSchemaVersion())
+              .build());
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetDesignControlPlaneDigest",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetDesignControlPlaneDigest",
+              "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "GetDesignControlPlaneDigest", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
   @Timed(value = "gamedesignGrpc.getPublishedReleaseBundle")
   public void getPublishedReleaseBundle(
       GetPublishedReleaseBundleRequest request,
@@ -206,6 +255,25 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               .setPublishWorkflowId(bundle.publishWorkflowId())
               .setManifestHash(bundle.manifestHash())
               .addAllRequiredManifestAssetKeys(bundle.requiredManifestAssetKeys())
+              .addAllParticipantDigests(
+                  bundle.participantDigests().stream()
+                      .map(
+                          digest ->
+                              net.firedevops.firemud.gamedesign.v1.ParticipantDigest.newBuilder()
+                                  .setParticipantKey(digest.participantKey())
+                                  .setScopeValue(digest.scopeValue())
+                                  .setAppliedCommitId(
+                                      digest.appliedCommitId() == null
+                                          ? ""
+                                          : digest.appliedCommitId())
+                                  .setContentDigest(
+                                      digest.contentDigest() == null ? "" : digest.contentDigest())
+                                  .setDigestSchemaVersion(
+                                      digest.digestSchemaVersion() == null
+                                          ? 0
+                                          : digest.digestSchemaVersion())
+                                  .build())
+                      .toList())
               .setIsScriptOnly(bundle.scriptOnly())
               .setScriptPatchVersion(
                   bundle.scriptPatchVersion() == null ? "" : bundle.scriptPatchVersion())

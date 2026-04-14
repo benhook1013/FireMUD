@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import java.util.List;
 import java.util.Objects;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
@@ -28,9 +29,13 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
   @Override
   @Transactional
   public PublishedReleaseBundleDto createFullVersionBundle(
-      VersionDto version, String publishWorkflowId, ExportedAssetManifest exportedManifest) {
+      VersionDto version,
+      String publishWorkflowId,
+      ExportedAssetManifest exportedManifest,
+      List<PublishParticipantDigestDto> participantDigests) {
     Objects.requireNonNull(version, "version must not be null");
     Objects.requireNonNull(exportedManifest, "exportedManifest must not be null");
+    Objects.requireNonNull(participantDigests, "participantDigests must not be null");
     repository
         .findByTenantIdAndVersionId(version.tenantId(), version.id())
         .ifPresent(
@@ -46,6 +51,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     entity.setManifestHash(exportedManifest.manifestHash());
     entity.setRequiredManifestAssetKeysJson(
         serializeKeys(exportedManifest.requiredManifestAssetKeys()));
+    entity.setParticipantDigestsJson(serializeParticipantDigests(participantDigests));
     entity.setScriptOnly(version.scriptOnly());
     entity.setScriptPatchVersion(version.scriptPatchVersion());
     return toDto(repository.save(entity));
@@ -70,6 +76,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         entity.getPublishWorkflowId(),
         entity.getManifestHash(),
         deserializeKeys(entity.getRequiredManifestAssetKeysJson()),
+        deserializeParticipantDigests(entity.getParticipantDigestsJson()),
         entity.isScriptOnly(),
         entity.getScriptPatchVersion(),
         entity.getPublishedAt());
@@ -85,5 +92,21 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     }
     return objectMapper.readValue(
         json, objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+  }
+
+  private String serializeParticipantDigests(List<PublishParticipantDigestDto> participantDigests) {
+    return objectMapper.writeValueAsString(
+        participantDigests == null ? List.of() : List.copyOf(participantDigests));
+  }
+
+  private List<PublishParticipantDigestDto> deserializeParticipantDigests(String json) {
+    if (json == null || json.isBlank()) {
+      return List.of();
+    }
+    return objectMapper.readValue(
+        json,
+        objectMapper
+            .getTypeFactory()
+            .constructCollectionType(List.class, PublishParticipantDigestDto.class));
   }
 }

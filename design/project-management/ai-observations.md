@@ -70,3 +70,8 @@ Entry format:
   - Context: starting `08.1` in `game-design-service`, where full publish created a `version` row and then swallowed asset-export failures in an after-commit callback
   - Observation: that shape lets the system report a version as published even when export or release attestation never succeeded, which is exactly the kind of half-complete launchable state the design is trying to eliminate
   - Expected pattern: full publish should finish only after required exported artifacts and immutable release attestation both exist, and failures in that path should fail closed instead of degrading into warning-only background behavior
+
+- `2026-04-14`: Failure-audit ledgers need their own transaction boundary when the main operation is expected to roll back
+  - Context: implementing the `08.1` durable `publish_attempt` / participant-observation framework in `game-design-service`
+  - Observation: if failed publish-attempt rows and participant observations are written in the same transaction as the publish operation itself, the exact audit trail you wanted to keep for diagnosis disappears with the rollback, leaving only logs and making the durable ledger misleadingly sparse
+  - Expected pattern: durable failure/audit ledgers that are meant to explain rolled-back operations should use an explicit independent transaction boundary or equivalent commit mechanism so failure evidence survives the main operation rollback

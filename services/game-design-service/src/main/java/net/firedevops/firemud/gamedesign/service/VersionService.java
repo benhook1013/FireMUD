@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.service;
 
 import java.util.List;
+import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 
@@ -12,6 +13,11 @@ public interface VersionService {
       throws Exception;
 
   List<VersionDto> listVersions(String tenantId);
+
+  DesignControlPlaneDigestDto getDesignControlPlaneDigest(String tenantId, Long versionId);
+
+  DesignControlPlaneDigestDto getDesignControlPlaneDigestForScriptPatch(
+      String tenantId, String scriptPatchVersion);
 
   PublishedReleaseBundleDto getPublishedReleaseBundle(String tenantId, long versionId);
 }

@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.service.PingService;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
+import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
 import net.firedevops.firemud.automationscripting.v1.PingRequest;
 import net.firedevops.firemud.automationscripting.v1.PingResponse;
@@ -22,12 +23,15 @@ class AutomationScriptingGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenReturn("pong");
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
+    ScriptDesignDigestService scriptDesignDigestService =
+        Mockito.mock(ScriptDesignDigestService.class);
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             pingService,
             scriptService,
+            scriptDesignDigestService,
             versionService,
             formationService,
             new SimpleMeterRegistry());
@@ -56,12 +60,15 @@ class AutomationScriptingGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenThrow(new IllegalArgumentException("bad"));
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
+    ScriptDesignDigestService scriptDesignDigestService =
+        Mockito.mock(ScriptDesignDigestService.class);
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             pingService,
             scriptService,
+            scriptDesignDigestService,
             versionService,
             formationService,
             new SimpleMeterRegistry());
@@ -92,12 +99,15 @@ class AutomationScriptingGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenThrow(new RuntimeException("boom"));
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
+    ScriptDesignDigestService scriptDesignDigestService =
+        Mockito.mock(ScriptDesignDigestService.class);
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             pingService,
             scriptService,
+            scriptDesignDigestService,
             versionService,
             formationService,
             new SimpleMeterRegistry());

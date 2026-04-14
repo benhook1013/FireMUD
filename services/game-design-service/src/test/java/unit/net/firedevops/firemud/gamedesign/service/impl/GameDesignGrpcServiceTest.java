@@ -8,11 +8,15 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
+import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
+import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import org.junit.jupiter.api.Test;
@@ -46,6 +50,9 @@ class GameDesignGrpcServiceTest {
                 "workflow-1",
                 "abc123",
                 List.of("logo.png", "manifest.json"),
+                List.of(
+                    new PublishParticipantDigestDto(
+                        "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-1", 1, null, null)),
                 false,
                 null,
                 LocalDateTime.parse("2026-04-14T12:00:00")));
@@ -64,6 +71,38 @@ class GameDesignGrpcServiceTest {
     assertEquals(11L, ref.get().getBundle().getId());
     assertEquals("abc123", ref.get().getBundle().getManifestHash());
     assertEquals(2, ref.get().getBundle().getRequiredManifestAssetKeysCount());
+    assertEquals(1, ref.get().getBundle().getParticipantDigestsCount());
+  }
+
+  @Test
+  void getDesignControlPlaneDigestReturnsCanonicalDigest() {
+    Mockito.when(versionService.getDesignControlPlaneDigest("tenant-1", 7L))
+        .thenReturn(new DesignControlPlaneDigestDto("tenant-1", "7", "version:7", "digest-1", 1));
+
+    AtomicReference<GetDesignControlPlaneDigestResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getDesignControlPlaneDigest(
+          GetDesignControlPlaneDigestRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(GetDesignControlPlaneDigestResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+              throw new AssertionError(t);
+            }
+
+            @Override
+            public void onCompleted() {}
+          });
+    }
+
+    assertEquals("digest-1", ref.get().getDigest().getContentDigest());
   }
 
   private static StreamObserver<GetPublishedReleaseBundleResponse> observerFor(

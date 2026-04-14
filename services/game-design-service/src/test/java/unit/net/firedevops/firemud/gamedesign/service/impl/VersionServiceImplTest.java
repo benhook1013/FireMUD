@@ -9,6 +9,8 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
@@ -17,7 +19,10 @@ import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
+import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
+import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +35,9 @@ class VersionServiceImplTest {
   @Mock private GameRepository gameRepository;
   @Mock private AutomationScriptingClient scriptingClient;
   @Mock private AssetExportService assetExportService;
+  @Mock private PublishAttemptService publishAttemptService;
+  @Mock private PublishGateService publishGateService;
+  @Mock private ControlPlaneDigestService controlPlaneDigestService;
   @Mock private PublishedReleaseBundleService publishedReleaseBundleService;
 
   private VersionServiceImpl service;
@@ -45,6 +53,9 @@ class VersionServiceImplTest {
             mapper,
             scriptingClient,
             assetExportService,
+            publishAttemptService,
+            publishGateService,
+            controlPlaneDigestService,
             publishedReleaseBundleService);
   }
 
@@ -71,8 +82,17 @@ class VersionServiceImplTest {
     ExportedAssetManifest exportedManifest =
         new ExportedAssetManifest("abc123", List.of("logo.png", "manifest.json"));
     when(assetExportService.exportAssets("tenant-1", 8)).thenReturn(exportedManifest);
+    List<PublishParticipantDigestDto> participantDigests =
+        List.of(
+            new PublishParticipantDigestDto(
+                "GAME_DESIGN_CONTROL_PLANE", "10", "version:10", "digest-1", 1, null, null));
+    when(publishGateService.collectFullVersionParticipantDigests(any(VersionDto.class)))
+        .thenReturn(participantDigests);
     when(publishedReleaseBundleService.createFullVersionBundle(
-            any(VersionDto.class), any(String.class), any(ExportedAssetManifest.class)))
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(List.class)))
         .thenReturn(
             new PublishedReleaseBundleDto(
                 1L,
@@ -83,6 +103,7 @@ class VersionServiceImplTest {
                 "workflow-1",
                 "abc123",
                 List.of("logo.png", "manifest.json"),
+                participantDigests,
                 false,
                 null,
                 java.time.LocalDateTime.now()));
@@ -96,7 +117,10 @@ class VersionServiceImplTest {
     verify(assetExportService).exportAssets("tenant-1", 8);
     verify(publishedReleaseBundleService)
         .createFullVersionBundle(
-            any(VersionDto.class), any(String.class), any(ExportedAssetManifest.class));
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(List.class));
   }
 
   @Test
@@ -120,6 +144,25 @@ class VersionServiceImplTest {
     saved.setScriptPatchVersion("patch-2");
     saved.setNotes("notes");
     when(versionRepository.save(any(Version.class))).thenReturn(saved);
+    when(publishGateService.collectScriptPatchParticipantDigests(any(VersionDto.class)))
+        .thenReturn(
+            List.of(
+                new PublishParticipantDigestDto(
+                    "AUTOMATION_SCRIPTING",
+                    "patch-2",
+                    "script-patch:patch-2",
+                    "digest-1",
+                    1,
+                    null,
+                    null),
+                new PublishParticipantDigestDto(
+                    "GAME_DESIGN_CONTROL_PLANE",
+                    "patch-2",
+                    "script-patch:patch-2",
+                    "digest-2",
+                    1,
+                    null,
+                    null)));
 
     VersionDto dto = service.publishScriptPatchVersion("tenant-1", 3L, "patch-2", "notes");
 
@@ -144,15 +187,38 @@ class VersionServiceImplTest {
     when(versionRepository.save(any(Version.class))).thenReturn(saved);
     when(assetExportService.exportAssets("tenant-1", 1))
         .thenReturn(new ExportedAssetManifest("abc123", List.of("manifest.json")));
+    when(publishGateService.collectFullVersionParticipantDigests(any(VersionDto.class)))
+        .thenReturn(
+            List.of(
+                new PublishParticipantDigestDto(
+                    "GAME_DESIGN_CONTROL_PLANE", "10", "version:10", "digest-1", 1, null, null)));
     org.mockito.Mockito.doThrow(new IllegalStateException("bundle failed"))
         .when(publishedReleaseBundleService)
         .createFullVersionBundle(
-            any(VersionDto.class), any(String.class), any(ExportedAssetManifest.class));
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(List.class));
 
     org.junit.jupiter.api.Assertions.assertThrows(
         IllegalStateException.class, () -> service.publishVersion("tenant-1", "notes"));
 
     verify(assetExportService).deleteExportedAssets("tenant-1", 1);
+  }
+
+  @Test
+  void getDesignControlPlaneDigestUsesStoredVersionScope() {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionNumber(8);
+    when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
+    when(controlPlaneDigestService.getDigestForVersion(any(VersionDto.class)))
+        .thenReturn(new DesignControlPlaneDigestDto("tenant-1", "7", "version:7", "digest-1", 1));
+
+    DesignControlPlaneDigestDto dto = service.getDesignControlPlaneDigest("tenant-1", 7L);
+
+    assertEquals("digest-1", dto.contentDigest());
   }
 
   @Test
