@@ -11,6 +11,8 @@ import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
+import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
+import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
@@ -22,6 +24,8 @@ import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
@@ -30,6 +34,8 @@ class GameDesignGrpcServiceTest {
   private final PingService pingService = Mockito.mock(PingService.class);
   private final RevisionService revisionService = Mockito.mock(RevisionService.class);
   private final VersionService versionService = Mockito.mock(VersionService.class);
+  private final LaunchDescriptorService launchDescriptorService =
+      Mockito.mock(LaunchDescriptorService.class);
   private final VersionAssetArtifactService versionAssetArtifactService =
       Mockito.mock(VersionAssetArtifactService.class);
   private final SettingsAuthorityService settingsAuthorityService =
@@ -39,6 +45,7 @@ class GameDesignGrpcServiceTest {
           pingService,
           revisionService,
           versionService,
+          launchDescriptorService,
           versionAssetArtifactService,
           settingsAuthorityService,
           new SimpleMeterRegistry());
@@ -59,6 +66,7 @@ class GameDesignGrpcServiceTest {
                 List.of(
                     new PublishParticipantDigestDto(
                         "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-1", 1, null, null)),
+                "genrev-1",
                 false,
                 null,
                 LocalDateTime.parse("2026-04-14T12:00:00")));
@@ -76,8 +84,56 @@ class GameDesignGrpcServiceTest {
     assertEquals("", ref.get().getError().getCode());
     assertEquals(11L, ref.get().getBundle().getId());
     assertEquals("abc123", ref.get().getBundle().getManifestHash());
+    assertEquals("genrev-1", ref.get().getBundle().getGenerationConfigRevision());
     assertEquals(2, ref.get().getBundle().getRequiredManifestAssetKeysCount());
     assertEquals(1, ref.get().getBundle().getParticipantDigestsCount());
+  }
+
+  @Test
+  void resolveLaunchDescriptorReturnsDeterministicDescriptor() {
+    Mockito.when(
+            launchDescriptorService.resolveLaunchDescriptor(
+                "tenant-1", 9L, "cp-1", null, null, null, null))
+        .thenReturn(
+            new ResolvedLaunchDescriptorDto(
+                "ld-1",
+                "tenant-1",
+                9L,
+                "cp-1",
+                7L,
+                "patch-1",
+                "{}",
+                "genrev-1",
+                11L,
+                11L,
+                "prb:tenant-1:7:11"));
+
+    AtomicReference<ResolveLaunchDescriptorResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.resolveLaunchDescriptor(
+          ResolveLaunchDescriptorRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setGameTemplateId(9L)
+              .setControlPlaneRequestId("cp-1")
+              .build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(ResolveLaunchDescriptorResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+              throw new AssertionError(t);
+            }
+
+            @Override
+            public void onCompleted() {}
+          });
+    }
+
+    assertEquals("ld-1", ref.get().getLaunchDescriptor().getLaunchDescriptorId());
+    assertEquals("genrev-1", ref.get().getLaunchDescriptor().getGenerationConfigRevision());
   }
 
   @Test

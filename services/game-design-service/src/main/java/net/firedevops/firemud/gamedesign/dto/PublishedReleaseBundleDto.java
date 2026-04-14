@@ -13,6 +13,7 @@ public record PublishedReleaseBundleDto(
     String manifestHash,
     List<String> requiredManifestAssetKeys,
     List<PublishParticipantDigestDto> participantDigests,
+    String generationConfigRevision,
     boolean scriptOnly,
     String scriptPatchVersion,
     LocalDateTime publishedAt) {}

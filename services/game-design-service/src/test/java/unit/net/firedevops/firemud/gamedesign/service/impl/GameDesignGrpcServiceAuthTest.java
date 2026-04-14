@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
@@ -34,6 +35,7 @@ class GameDesignGrpcServiceAuthTest {
             Mockito.mock(PingService.class),
             Mockito.mock(RevisionService.class),
             Mockito.mock(VersionService.class),
+            Mockito.mock(LaunchDescriptorService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
             new SimpleMeterRegistry());

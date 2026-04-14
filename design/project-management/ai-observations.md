@@ -75,3 +75,8 @@ Entry format:
   - Context: implementing the `08.1` durable `publish_attempt` / participant-observation framework in `game-design-service`
   - Observation: if failed publish-attempt rows and participant observations are written in the same transaction as the publish operation itself, the exact audit trail you wanted to keep for diagnosis disappears with the rollback, leaving only logs and making the durable ledger misleadingly sparse
   - Expected pattern: durable failure/audit ledgers that are meant to explain rolled-back operations should use an explicit independent transaction boundary or equivalent commit mechanism so failure evidence survives the main operation rollback
+
+- `2026-04-14`: Cross-service tests that disable Flyway need one shared canonical schema helper for runtime tables
+  - Context: landing `08.3` launch-descriptor/preflight changes while validating tcp-proxy and game-session cross-service proofs
+  - Observation: several cross-service suites run `game-session-service` under the `test` profile with Flyway disabled and then hand-create `game_instances`, so the new launch-descriptor columns existed in the real service schema but not in the test-only manual table definitions, causing misleading websocket/login failures far away from the actual contract change
+  - Expected pattern: cross-service suites that bypass migrations should derive runtime-table setup from one shared helper or fixture that tracks the canonical entity shape, rather than duplicating hand-written `CREATE TABLE` fragments in each test class

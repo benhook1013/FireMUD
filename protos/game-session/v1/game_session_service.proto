@@ -44,10 +44,9 @@ service GameSessionControlPlaneService {
 
 message StartSessionRequest {
   string tenant_id = 1;
-  string runtime_version = 2;
-  string script_patch_version = 3;
+  string game_template_id = 2;
+  string control_plane_request_id = 3;
   string client_ip = 4;
-  string game_instance_id = 5;
   string owner_account_id = 6;
 }
 

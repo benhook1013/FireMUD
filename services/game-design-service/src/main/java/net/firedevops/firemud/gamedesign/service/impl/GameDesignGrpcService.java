@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
+import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
@@ -41,6 +42,8 @@ import net.firedevops.firemud.gamedesign.v1.PutSettingsDomainOverrideRequest;
 import net.firedevops.firemud.gamedesign.v1.PutSettingsDomainOverrideResponse;
 import net.firedevops.firemud.gamedesign.v1.RepairPublishedVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.RepairPublishedVersionAssetsResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionResponse;
 import org.slf4j.Logger;
@@ -54,6 +57,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   private final PingService pingService;
   private final RevisionService revisionService;
   private final VersionService versionService;
+  private final LaunchDescriptorService launchDescriptorService;
   private final VersionAssetArtifactService versionAssetArtifactService;
   private final SettingsAuthorityService settingsAuthorityService;
 
@@ -281,6 +285,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
                                           : digest.digestSchemaVersion())
                                   .build())
                       .toList())
+              .setGenerationConfigRevision(bundle.generationConfigRevision())
               .setIsScriptOnly(bundle.scriptOnly())
               .setScriptPatchVersion(
                   bundle.scriptPatchVersion() == null ? "" : bundle.scriptPatchVersion())
@@ -305,6 +310,66 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     } catch (Exception ex) {
       builder.setError(
           GrpcAppErrors.internal(meterRegistry, logger, "GetPublishedReleaseBundle", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.resolveLaunchDescriptor")
+  public void resolveLaunchDescriptor(
+      ResolveLaunchDescriptorRequest request,
+      StreamObserver<ResolveLaunchDescriptorResponse> responseObserver) {
+    ResolveLaunchDescriptorResponse.Builder builder = ResolveLaunchDescriptorResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      var descriptor =
+          launchDescriptorService.resolveLaunchDescriptor(
+              request.getTenantId(),
+              request.getGameTemplateId(),
+              request.getControlPlaneRequestId(),
+              request.hasRequestedScriptPatchVersion()
+                  ? request.getRequestedScriptPatchVersion()
+                  : null,
+              request.hasSourceVersionId() ? request.getSourceVersionId() : null,
+              request.hasTargetVersionId() ? request.getTargetVersionId() : null,
+              request.hasRequestedRuntimeFlagsJson()
+                  ? request.getRequestedRuntimeFlagsJson()
+                  : null);
+      builder.setLaunchDescriptor(
+          net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
+              .setLaunchDescriptorId(descriptor.launchDescriptorId())
+              .setTenantId(descriptor.tenantId())
+              .setGameTemplateId(descriptor.gameTemplateId())
+              .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
+              .setVersionId(descriptor.versionId())
+              .setScriptPatchVersion(
+                  descriptor.scriptPatchVersion() == null ? "" : descriptor.scriptPatchVersion())
+              .setRuntimeFlagsJson(descriptor.runtimeFlagsJson())
+              .setGenerationConfigRevision(descriptor.generationConfigRevision())
+              .setVersionStateEpoch(descriptor.versionStateEpoch())
+              .setReleaseBundleId(descriptor.releaseBundleId())
+              .setPublishedReleaseBundleRef(descriptor.publishedReleaseBundleRef())
+              .build());
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ResolveLaunchDescriptor",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ResolveLaunchDescriptor",
+              "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "ResolveLaunchDescriptor", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();

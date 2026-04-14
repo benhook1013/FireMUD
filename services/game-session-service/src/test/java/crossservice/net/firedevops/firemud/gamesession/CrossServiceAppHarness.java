@@ -179,20 +179,28 @@ public final class CrossServiceAppHarness {
           return new GameInstanceDto(
               -1L,
               request.tenantId(),
-              request.runtimeVersion(),
-              request.scriptPatchVersion(),
+              "stub-template-" + request.gameTemplateId(),
+              null,
+              request.gameTemplateId(),
+              null,
+              null,
+              null,
+              null,
+              null,
               request.ownerAccountId(),
               "RUNNING");
         }
 
         @Override
         public GameInstanceDto stopSession(long sessionId) {
-          return new GameInstanceDto(sessionId, 0L, "stub", null, 0L, "STOPPED");
+          return new GameInstanceDto(
+              sessionId, 0L, "stub", null, null, null, null, null, null, null, 0L, "STOPPED");
         }
 
         @Override
         public GameInstanceDto restartSession(long sessionId) {
-          return new GameInstanceDto(sessionId, 0L, "stub", null, 0L, "RUNNING");
+          return new GameInstanceDto(
+              sessionId, 0L, "stub", null, null, null, null, null, null, null, 0L, "RUNNING");
         }
       };
     }

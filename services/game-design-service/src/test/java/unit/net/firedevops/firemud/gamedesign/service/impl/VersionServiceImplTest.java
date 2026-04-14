@@ -108,6 +108,7 @@ class VersionServiceImplTest {
             any(VersionDto.class),
             any(String.class),
             any(ExportedAssetManifest.class),
+            any(String.class),
             any(List.class)))
         .thenReturn(
             new PublishedReleaseBundleDto(
@@ -120,6 +121,7 @@ class VersionServiceImplTest {
                 "abc123",
                 List.of("logo.png", "manifest.json"),
                 participantDigests,
+                "genrev-tenant-1-10",
                 false,
                 null,
                 java.time.LocalDateTime.now()));
@@ -153,6 +155,7 @@ class VersionServiceImplTest {
             any(VersionDto.class),
             any(String.class),
             any(ExportedAssetManifest.class),
+            any(String.class),
             any(List.class));
   }
 
@@ -244,6 +247,7 @@ class VersionServiceImplTest {
             any(VersionDto.class),
             any(String.class),
             any(ExportedAssetManifest.class),
+            any(String.class),
             any(List.class));
 
     org.junit.jupiter.api.Assertions.assertThrows(

@@ -14,6 +14,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
+import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
@@ -28,6 +31,7 @@ class GameInstanceServiceImplTest {
   private GameInstanceRepository repository;
   private GameInstanceMapper mapper;
   private SessionStateService stateService;
+  private GameDesignClient gameDesignClient;
   private SimpleMeterRegistry meterRegistry;
   private GameInstanceServiceImpl service;
   private Map<Long, GameInstance> store;
@@ -38,6 +42,7 @@ class GameInstanceServiceImplTest {
     repository = mock(GameInstanceRepository.class);
     mapper = mock(GameInstanceMapper.class);
     stateService = mock(SessionStateService.class);
+    gameDesignClient = mock(GameDesignClient.class);
     meterRegistry = new SimpleMeterRegistry();
     store = new HashMap<>();
     nextId = new AtomicLong(10L);
@@ -46,6 +51,7 @@ class GameInstanceServiceImplTest {
             repository,
             mapper,
             stateService,
+            gameDesignClient,
             null,
             null,
             null,
@@ -55,22 +61,23 @@ class GameInstanceServiceImplTest {
             immediateTransactionOperations());
     configureRepositoryPersistence();
     configureMapper();
+    configureLaunchPreflight();
   }
 
   @Test
   void startSessionSavesState() {
-    StartSessionRequest request = new StartSessionRequest(1L, "v1", null, 42L);
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-1", 42L);
 
     GameInstanceDto dto = service.startSession(request);
 
     assertEquals("RUNNING", dto.status());
     verify(repository, never()).findFirstByTenantIdAndOwnerAccountIdAndStatus(1L, 42L, "RUNNING");
-    verify(stateService).saveState(dto);
+    verify(stateService).saveState(any(GameInstanceDto.class));
   }
 
   @Test
   void startSessionStopsExistingRunningSessionOnlyWithinTenantAndOwner() {
-    StartSessionRequest request = new StartSessionRequest(2L, "v1", null, 42L);
+    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-2", 42L);
     GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
     when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
         .thenReturn(Optional.of(existing));
@@ -78,7 +85,7 @@ class GameInstanceServiceImplTest {
     GameInstanceDto dto = service.startSession(request, true);
 
     verify(repository).findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING");
-    verify(stateService).saveState(dto);
+    verify(stateService).saveState(any(GameInstanceDto.class));
     verify(stateService).deleteState(2L, 7L);
     assertEquals("STOPPED", store.get(7L).getStatus());
     assertEquals("RUNNING", store.get(dto.id()).getStatus());
@@ -86,12 +93,12 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionWithoutReplacementLeavesExistingSessionRunning() {
-    StartSessionRequest request = new StartSessionRequest(2L, "v1", null, 42L);
+    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-3", 42L);
 
     GameInstanceDto dto = service.startSession(request, false);
 
     verify(repository, never()).findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING");
-    verify(stateService).saveState(dto);
+    verify(stateService).saveState(any(GameInstanceDto.class));
   }
 
   @Test
@@ -107,7 +114,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionFailsFastWhenStateSaveFails() {
-    StartSessionRequest request = new StartSessionRequest(1L, "v1", null, 42L);
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-4", 42L);
     doThrow(new IllegalStateException("redis down")).when(stateService).saveState(any());
 
     assertThrows(IllegalStateException.class, () -> service.startSession(request));
@@ -119,7 +126,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionWithReplacementRestoresExistingRunningStateWhenNewStateSaveFails() {
-    StartSessionRequest request = new StartSessionRequest(2L, "v1", null, 42L);
+    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-5", 42L);
     GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
     when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
         .thenReturn(Optional.of(existing));
@@ -196,9 +203,46 @@ class GameInstanceServiceImplTest {
                   entity.getTenantId(),
                   entity.getRuntimeVersion(),
                   entity.getScriptPatchVersion(),
+                  entity.getGameTemplateId(),
+                  entity.getLaunchDescriptorId(),
+                  entity.getVersionId(),
+                  entity.getReleaseBundleId(),
+                  entity.getVersionStateEpoch(),
+                  entity.getGenerationConfigRevision(),
                   entity.getOwnerAccountId(),
                   entity.getStatus());
             });
+  }
+
+  private void configureLaunchPreflight() {
+    when(gameDesignClient.resolveLaunchDescriptor(any(Long.class), any(Long.class), any()))
+        .thenAnswer(
+            invocation ->
+                ResolveLaunchDescriptorResponse.newBuilder()
+                    .setLaunchDescriptor(
+                        net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
+                            .setLaunchDescriptorId("ld-" + invocation.getArgument(2, String.class))
+                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setGameTemplateId(invocation.getArgument(1, Long.class))
+                            .setControlPlaneRequestId(invocation.getArgument(2, String.class))
+                            .setVersionId(11L)
+                            .setRuntimeFlagsJson("{}")
+                            .setGenerationConfigRevision("genrev-11")
+                            .setVersionStateEpoch(77L)
+                            .setReleaseBundleId(77L)
+                            .setPublishedReleaseBundleRef("prb:tenant:11:77")
+                            .build())
+                    .build());
+    when(gameDesignClient.getPublishedReleaseBundle(any(Long.class), any(Long.class)))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
+                        .setId(77L)
+                        .setVersionId(11L)
+                        .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
   }
 
   private GameInstance persistExisting(

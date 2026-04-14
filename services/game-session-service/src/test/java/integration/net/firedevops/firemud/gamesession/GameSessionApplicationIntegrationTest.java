@@ -9,6 +9,7 @@ import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
@@ -67,6 +68,7 @@ class GameSessionApplicationIntegrationTest {
   @MockitoBean private GameLogicClient gameLogicClient;
   @MockitoBean private WorldManagementClient worldManagementClient;
   @MockitoBean private EntityManagementClient entityManagementClient;
+  @MockitoBean private GameDesignClient gameDesignClient;
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private SharedSettingsAuthorityReader sharedSettingsAuthorityReader;
 
@@ -75,7 +77,35 @@ class GameSessionApplicationIntegrationTest {
 
   @Test
   void startSessionUsesRealHttpAndPersistencePath() throws Exception {
-    StartSessionRequest request = new StartSessionRequest(42L, "1.0.0", "patch-1", 100L);
+    when(gameDesignClient.resolveLaunchDescriptor(42L, 7L, "cp-1"))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse.newBuilder()
+                .setLaunchDescriptor(
+                    net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
+                        .setLaunchDescriptorId("ld-1")
+                        .setTenantId("42")
+                        .setGameTemplateId(7L)
+                        .setControlPlaneRequestId("cp-1")
+                        .setVersionId(11L)
+                        .setScriptPatchVersion("patch-1")
+                        .setRuntimeFlagsJson("{}")
+                        .setGenerationConfigRevision("genrev-11")
+                        .setVersionStateEpoch(77L)
+                        .setReleaseBundleId(77L)
+                        .setPublishedReleaseBundleRef("prb:42:11:77")
+                        .build())
+                .build());
+    when(gameDesignClient.getPublishedReleaseBundle(42L, 11L))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
+                        .setId(77L)
+                        .setVersionId(11L)
+                        .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
+    StartSessionRequest request = new StartSessionRequest(42L, 7L, "cp-1", 100L);
 
     String responseBody =
         HttpTestSupport.postJsonBodyUnchecked(
@@ -87,8 +117,14 @@ class GameSessionApplicationIntegrationTest {
     assertThat(body.status()).isEqualTo(ResultStatus.SUCCESS);
     assertThat(body.data()).isNotNull();
     assertThat(body.data().tenantId()).isEqualTo(42L);
-    assertThat(body.data().runtimeVersion()).isEqualTo("1.0.0");
+    assertThat(body.data().runtimeVersion()).isEqualTo("11");
     assertThat(body.data().scriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(body.data().gameTemplateId()).isEqualTo(7L);
+    assertThat(body.data().launchDescriptorId()).isEqualTo("ld-1");
+    assertThat(body.data().versionId()).isEqualTo(11L);
+    assertThat(body.data().releaseBundleId()).isEqualTo(77L);
+    assertThat(body.data().versionStateEpoch()).isEqualTo(77L);
+    assertThat(body.data().generationConfigRevision()).isEqualTo("genrev-11");
     assertThat(body.data().ownerAccountId()).isEqualTo(100L);
     assertThat(body.data().status()).isEqualTo("RUNNING");
     assertThat(body.data().id()).isPositive();

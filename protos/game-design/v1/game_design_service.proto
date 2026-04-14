@@ -18,6 +18,8 @@ service GameDesignService {
       returns (GetDesignControlPlaneDigestResponse);
   rpc GetPublishedReleaseBundle(GetPublishedReleaseBundleRequest)
       returns (GetPublishedReleaseBundleResponse);
+  rpc ResolveLaunchDescriptor(ResolveLaunchDescriptorRequest)
+      returns (ResolveLaunchDescriptorResponse);
   rpc GetVersionAssetArtifactState(GetVersionAssetArtifactStateRequest)
       returns (GetVersionAssetArtifactStateResponse);
   rpc RepairPublishedVersionAssets(RepairPublishedVersionAssetsRequest)
@@ -95,6 +97,21 @@ message GetPublishedReleaseBundleResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
+message ResolveLaunchDescriptorRequest {
+  string tenant_id = 1;
+  int64 game_template_id = 2;
+  string control_plane_request_id = 3;
+  optional string requested_script_patch_version = 4;
+  optional int64 source_version_id = 5;
+  optional int64 target_version_id = 6;
+  optional string requested_runtime_flags_json = 7;
+}
+
+message ResolveLaunchDescriptorResponse {
+  LaunchDescriptor launch_descriptor = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
 message GetVersionAssetArtifactStateRequest {
   string tenant_id = 1;
   int64 version_id = 2;
@@ -137,6 +154,21 @@ message PublishedReleaseBundle {
   string script_patch_version = 9;
   string published_at = 10;
   repeated ParticipantDigest participant_digests = 11;
+  string generation_config_revision = 12;
+}
+
+message LaunchDescriptor {
+  string launch_descriptor_id = 1;
+  string tenant_id = 2;
+  int64 game_template_id = 3;
+  string control_plane_request_id = 4;
+  int64 version_id = 5;
+  string script_patch_version = 6;
+  string runtime_flags_json = 7;
+  string generation_config_revision = 8;
+  int64 version_state_epoch = 9;
+  int64 release_bundle_id = 10;
+  string published_release_bundle_ref = 11;
 }
 
 message DesignControlPlaneDigest {

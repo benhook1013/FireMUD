@@ -32,6 +32,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
       VersionDto version,
       String publishWorkflowId,
       ExportedAssetManifest exportedManifest,
+      String generationConfigRevision,
       List<PublishParticipantDigestDto> participantDigests) {
     Objects.requireNonNull(version, "version must not be null");
     Objects.requireNonNull(exportedManifest, "exportedManifest must not be null");
@@ -49,6 +50,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     entity.setAttestationSchemaVersion(ATTESTATION_SCHEMA_VERSION);
     entity.setPublishWorkflowId(publishWorkflowId);
     entity.setManifestHash(exportedManifest.manifestHash());
+    entity.setGenerationConfigRevision(generationConfigRevision);
     entity.setRequiredManifestAssetKeysJson(
         serializeKeys(exportedManifest.requiredManifestAssetKeys()));
     entity.setParticipantDigestsJson(serializeParticipantDigests(participantDigests));
@@ -77,6 +79,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         entity.getManifestHash(),
         deserializeKeys(entity.getRequiredManifestAssetKeysJson()),
         deserializeParticipantDigests(entity.getParticipantDigestsJson()),
+        entity.getGenerationConfigRevision(),
         entity.isScriptOnly(),
         entity.getScriptPatchVersion(),
         entity.getPublishedAt());

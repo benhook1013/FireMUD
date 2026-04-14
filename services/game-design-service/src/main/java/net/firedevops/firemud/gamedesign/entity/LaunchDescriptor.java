@@ -12,47 +12,49 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "published_release_bundle")
-public class PublishedReleaseBundle {
+@Table(name = "launch_descriptor")
+public class LaunchDescriptor {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
+
+  @Column(nullable = false, length = 64, unique = true)
+  private String launchDescriptorId;
 
   @Column(nullable = false, length = 36)
   private String tenantId;
 
   @Column(nullable = false)
-  private Long versionId;
-
-  @Column(nullable = false)
-  private int versionNumber;
-
-  @Column(nullable = false, length = 16)
-  private String attestationSchemaVersion;
+  private Long gameTemplateId;
 
   @Column(nullable = false, length = 64)
-  private String publishWorkflowId;
+  private String controlPlaneRequestId;
 
   @Column(nullable = false, length = 128)
-  private String manifestHash;
-
-  @Column(nullable = false, length = 128)
-  private String generationConfigRevision;
-
-  @Lob
-  @Column(nullable = false)
-  private String requiredManifestAssetKeysJson;
-
-  @Lob
-  @Column(nullable = false)
-  private String participantDigestsJson = "[]";
+  private String requestHash;
 
   @Column(nullable = false)
-  private boolean scriptOnly;
+  private Long versionId;
 
   @Column(length = 100)
   private String scriptPatchVersion;
 
+  @Lob
   @Column(nullable = false)
-  private LocalDateTime publishedAt = LocalDateTime.now();
+  private String runtimeFlagsJson;
+
+  @Column(nullable = false, length = 128)
+  private String generationConfigRevision;
+
+  @Column(nullable = false)
+  private Long versionStateEpoch;
+
+  @Column(nullable = false)
+  private Long releaseBundleId;
+
+  @Column(nullable = false, length = 128)
+  private String publishedReleaseBundleRef;
+
+  @Column(nullable = false)
+  private LocalDateTime createdAt = LocalDateTime.now();
 }

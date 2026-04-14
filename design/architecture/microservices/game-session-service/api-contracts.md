@@ -30,7 +30,7 @@ The internal front-end to lease-owner path is a fenced gameplay contract, not a 
 ## gRPC APIs
 
 - `Ping` – basic connectivity check.
-- `StartSession` – spins up a game instance from a published version. Despite the name, this operates on game instances, not player gameplay sessions; gameplay sessions are per-player contexts backed by `session:game:*` keys.
+- `StartSession` – spins up a game instance from a template-driven launch descriptor. Despite the name, this operates on game instances, not player gameplay sessions; gameplay sessions are per-player contexts backed by `session:game:*` keys.
 - `StopSession` – stops a running game instance.
 - `RestartSession` – restarts a stopped game instance.
 - `EnqueueCommand` – adds a player action to the next tick's queue.
@@ -45,7 +45,7 @@ Service definitions reside in [../../../../protos/game-session/v1](../../../../p
 ### REST endpoints
 
 - `GET /ping` – basic health check returning `"pong"`.
-- `POST /sessions` – operator/bootstrap convenience for creating a new game instance from a published version. This is not the canonical player gameplay-admission seam and does not apply the full gRPC `StartSession` admission policy surface.
+- `POST /sessions` – operator/bootstrap convenience for creating a new game instance from a template-driven launch attempt. This is not the canonical player gameplay-admission seam and does apply the same launch-descriptor preflight seam as the gRPC `StartSession` path.
 - `POST /sessions/{id}/stop` – stop a running session.
 - `POST /sessions/{id}/restart` – restart a stopped session.
 - `POST /sessions/{id}/refresh-roles` – refresh the player's roles for an active session.
@@ -61,7 +61,7 @@ To start a session via REST:
 ```bash
 curl -X POST http://localhost:8080/sessions \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":"demo","runtimeVersion":"v42","scriptPatchVersion":"v42-script.3"}'
+  -d '{"tenantId":"1","gameTemplateId":"7","controlPlaneRequestId":"cp-req-1001","ownerAccountId":123}'
 ```
 
 ### gRPC examples
@@ -71,9 +71,22 @@ grpcurl -plaintext localhost:6565 game_session.v1.GameSessionService/Ping
 ```
 
 ```bash
-grpcurl -plaintext -d '{"tenantId":"demo","runtimeVersion":"v42","scriptPatchVersion":"v42-script.3"}' \
+grpcurl -plaintext -d '{"tenantId":"1","gameTemplateId":"7","controlPlaneRequestId":"cp-req-1001","ownerAccountId":"123"}' \
   localhost:6565 game_session.v1.GameSessionService/StartSession
 ```
+
+`StartSession` now requires one control-plane launch attempt identity instead of trusting caller-supplied runtime-version and patch fields:
+
+- request fields:
+  - `tenantId`
+  - `gameTemplateId`
+  - `controlPlaneRequestId`
+  - `ownerAccountId`
+  - optional `clientIp`
+- behavior:
+  - Game Session must call Game Design `ResolveLaunchDescriptor(...)` before creating any `gameInstanceId` row
+  - Game Session must then read `GetPublishedReleaseBundle(tenantId, versionId)` and fail closed if the attested bundle does not match the resolved descriptor
+  - successful `game_instances` rows persist the resolved `gameTemplateId`, `launchDescriptorId`, `versionId`, `releaseBundleId`, `versionStateEpoch`, and `generationConfigRevision`
 
 ## Command Front Door Ownership
 

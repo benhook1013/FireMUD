@@ -17,6 +17,7 @@ import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
@@ -75,6 +76,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
   @Autowired private GameInstanceServiceImpl service;
 
   @MockitoBean private GameLogicClient gameLogicClient;
+  @MockitoBean private GameDesignClient gameDesignClient;
   @MockitoBean private WorldManagementClient worldManagementClient;
   @MockitoBean private EntityManagementClient entityManagementClient;
   @MockitoBean private AccountClient accountClient;
@@ -108,9 +110,71 @@ class GameInstanceServiceLifecycleIntegrationTest {
                   entity.getTenantId(),
                   entity.getRuntimeVersion(),
                   entity.getScriptPatchVersion(),
+                  entity.getGameTemplateId(),
+                  entity.getLaunchDescriptorId(),
+                  entity.getVersionId(),
+                  entity.getReleaseBundleId(),
+                  entity.getVersionStateEpoch(),
+                  entity.getGenerationConfigRevision(),
                   entity.getOwnerAccountId(),
                   entity.getStatus());
             });
+    when(gameDesignClient.resolveLaunchDescriptor(42L, 7L, "cp-1"))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse.newBuilder()
+                .setLaunchDescriptor(
+                    net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
+                        .setLaunchDescriptorId("ld-1")
+                        .setTenantId("42")
+                        .setGameTemplateId(7L)
+                        .setControlPlaneRequestId("cp-1")
+                        .setVersionId(11L)
+                        .setScriptPatchVersion("patch-1")
+                        .setRuntimeFlagsJson("{}")
+                        .setGenerationConfigRevision("genrev-11")
+                        .setVersionStateEpoch(77L)
+                        .setReleaseBundleId(77L)
+                        .setPublishedReleaseBundleRef("prb:42:11:77")
+                        .build())
+                .build());
+    when(gameDesignClient.resolveLaunchDescriptor(42L, 7L, "cp-2"))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse.newBuilder()
+                .setLaunchDescriptor(
+                    net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
+                        .setLaunchDescriptorId("ld-2")
+                        .setTenantId("42")
+                        .setGameTemplateId(7L)
+                        .setControlPlaneRequestId("cp-2")
+                        .setVersionId(12L)
+                        .setScriptPatchVersion("patch-2")
+                        .setRuntimeFlagsJson("{}")
+                        .setGenerationConfigRevision("genrev-12")
+                        .setVersionStateEpoch(78L)
+                        .setReleaseBundleId(78L)
+                        .setPublishedReleaseBundleRef("prb:42:12:78")
+                        .build())
+                .build());
+    when(gameDesignClient.getPublishedReleaseBundle(42L, 11L))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
+                        .setId(77L)
+                        .setVersionId(11L)
+                        .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
+    when(gameDesignClient.getPublishedReleaseBundle(42L, 12L))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
+                        .setId(78L)
+                        .setVersionId(12L)
+                        .setGenerationConfigRevision("genrev-12")
+                        .build())
+                .build());
   }
 
   @Test
@@ -119,8 +183,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
         .when(sessionStateService)
         .saveState(any());
 
-    assertThatThrownBy(
-            () -> service.startSession(new StartSessionRequest(42L, "1.0.0", "patch-1", 100L)))
+    assertThatThrownBy(() -> service.startSession(new StartSessionRequest(42L, 7L, "cp-1", 100L)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("state propagation failed");
 
@@ -192,8 +255,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
         .saveState(any());
 
     assertThatThrownBy(
-            () ->
-                service.startSession(new StartSessionRequest(42L, "1.0.1", "patch-2", 100L), true))
+            () -> service.startSession(new StartSessionRequest(42L, 7L, "cp-2", 100L), true))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("state propagation failed");
 

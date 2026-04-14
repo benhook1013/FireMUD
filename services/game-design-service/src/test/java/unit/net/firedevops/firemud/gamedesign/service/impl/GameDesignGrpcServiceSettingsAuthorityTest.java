@@ -11,6 +11,7 @@ import java.util.Map;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
+import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
@@ -33,6 +34,8 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
   private final PingService pingService = Mockito.mock(PingService.class);
   private final RevisionService revisionService = Mockito.mock(RevisionService.class);
   private final VersionService versionService = Mockito.mock(VersionService.class);
+  private final LaunchDescriptorService launchDescriptorService =
+      Mockito.mock(LaunchDescriptorService.class);
   private final VersionAssetArtifactService versionAssetArtifactService =
       Mockito.mock(VersionAssetArtifactService.class);
   private final SettingsAuthorityService settingsAuthorityService =
@@ -48,6 +51,7 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
             pingService,
             revisionService,
             versionService,
+            launchDescriptorService,
             versionAssetArtifactService,
             settingsAuthorityService,
             new SimpleMeterRegistry());

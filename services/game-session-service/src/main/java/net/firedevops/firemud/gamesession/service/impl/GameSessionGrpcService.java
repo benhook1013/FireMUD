@@ -162,8 +162,8 @@ public final class GameSessionGrpcService
       StartSessionRequest dto =
           new StartSessionRequest(
               tenantId,
-              request.getRuntimeVersion(),
-              request.getScriptPatchVersion(),
+              Long.parseLong(request.getGameTemplateId()),
+              request.getControlPlaneRequestId(),
               ownerAccountId);
       GameInstanceDto instance = gameInstanceService.startSession(dto, false);
       boolean transferredRegistration = false;

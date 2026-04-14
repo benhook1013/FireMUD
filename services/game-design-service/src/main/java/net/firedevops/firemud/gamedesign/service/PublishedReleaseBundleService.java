@@ -9,6 +9,7 @@ public interface PublishedReleaseBundleService {
       VersionDto version,
       String publishWorkflowId,
       ExportedAssetManifest exportedManifest,
+      String generationConfigRevision,
       java.util.List<PublishParticipantDigestDto> participantDigests);
 
   PublishedReleaseBundleDto getPublishedReleaseBundle(String tenantId, long versionId);

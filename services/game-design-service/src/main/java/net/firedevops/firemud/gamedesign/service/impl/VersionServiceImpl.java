@@ -102,8 +102,9 @@ public class VersionServiceImpl implements VersionService {
               .markExportedUnattested(
                   dto.tenantId(), dto.id(), publishWorkflowId, exportedManifest.manifestHash())
               .stateEpoch();
+      String generationConfigRevision = generationConfigRevision(dto, exportedManifest);
       publishedReleaseBundleService.createFullVersionBundle(
-          dto, publishWorkflowId, exportedManifest, participantDigests);
+          dto, publishWorkflowId, exportedManifest, generationConfigRevision, participantDigests);
       versionAssetArtifactService.markPublished(
           dto.tenantId(),
           dto.id(),
@@ -241,5 +242,15 @@ public class VersionServiceImpl implements VersionService {
     } catch (RuntimeException ex) {
       logger.warn("Failed to {}", actionName, ex);
     }
+  }
+
+  private String generationConfigRevision(
+      VersionDto version, ExportedAssetManifest exportedManifest) {
+    return "genrev:"
+        + version.tenantId()
+        + ":"
+        + version.id()
+        + ":"
+        + exportedManifest.manifestHash();
   }
 }

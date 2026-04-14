@@ -48,6 +48,7 @@ class PublishedReleaseBundleServiceImplTest {
             version,
             "workflow-1",
             new ExportedAssetManifest("abc123", List.of("logo.png", "manifest.json")),
+            "genrev-1",
             List.of(
                 new PublishParticipantDigestDto(
                     "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-1", 1, null, null)));
@@ -56,6 +57,7 @@ class PublishedReleaseBundleServiceImplTest {
     assertEquals("tenant-1", dto.tenantId());
     assertEquals(7L, dto.versionId());
     assertEquals("abc123", dto.manifestHash());
+    assertEquals("genrev-1", dto.generationConfigRevision());
     assertEquals(List.of("logo.png", "manifest.json"), dto.requiredManifestAssetKeys());
     assertEquals(1, dto.participantDigests().size());
     assertEquals("v1", dto.attestationSchemaVersion());
@@ -75,6 +77,7 @@ class PublishedReleaseBundleServiceImplTest {
                 version,
                 "workflow-1",
                 new ExportedAssetManifest("abc123", List.of("manifest.json")),
+                "genrev-1",
                 List.of()));
   }
 }

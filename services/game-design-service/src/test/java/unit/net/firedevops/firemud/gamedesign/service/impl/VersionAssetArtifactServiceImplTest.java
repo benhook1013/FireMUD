@@ -80,6 +80,7 @@ class VersionAssetArtifactServiceImplTest {
                 "attested",
                 List.of("manifest.json"),
                 List.of(),
+                "genrev-1",
                 false,
                 null,
                 LocalDateTime.now()));
