@@ -22,6 +22,16 @@ service GameDesignService {
       returns (ResolveLaunchDescriptorResponse);
   rpc GetVersionAssetArtifactState(GetVersionAssetArtifactStateRequest)
       returns (GetVersionAssetArtifactStateResponse);
+  rpc TombstoneVersionAssets(TombstoneVersionAssetsRequest)
+      returns (TombstoneVersionAssetsResponse);
+  rpc CanDeleteVersionAssets(CanDeleteVersionAssetsRequest)
+      returns (CanDeleteVersionAssetsResponse);
+  rpc BeginPurgeVersionAssets(BeginPurgeVersionAssetsRequest)
+      returns (BeginPurgeVersionAssetsResponse);
+  rpc FinalizePurgeVersionAssets(FinalizePurgeVersionAssetsRequest)
+      returns (FinalizePurgeVersionAssetsResponse);
+  rpc GetVersionAssetPurgeStatus(GetVersionAssetPurgeStatusRequest)
+      returns (GetVersionAssetPurgeStatusResponse);
   rpc RepairPublishedVersionAssets(RepairPublishedVersionAssetsRequest)
       returns (RepairPublishedVersionAssetsResponse);
   rpc GetScopedSettingsOverrides(GetScopedSettingsOverridesRequest)
@@ -122,6 +132,65 @@ message GetVersionAssetArtifactStateResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
+message TombstoneVersionAssetsRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  int64 expected_artifact_state_epoch = 3;
+  string tombstone_workflow_id = 4;
+}
+
+message TombstoneVersionAssetsResponse {
+  VersionAssetArtifactState artifact_state = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message CanDeleteVersionAssetsRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+}
+
+message CanDeleteVersionAssetsResponse {
+  VersionAssetDeletionEligibility eligibility = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message BeginPurgeVersionAssetsRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  int64 expected_artifact_state_epoch = 3;
+}
+
+message BeginPurgeVersionAssetsResponse {
+  VersionAssetArtifactState artifact_state = 1;
+  VersionAssetPurgeWorkflowStatus purge_status = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message FinalizePurgeVersionAssetsRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  string purge_workflow_id = 3;
+  int64 expected_artifact_state_epoch = 4;
+}
+
+message FinalizePurgeVersionAssetsResponse {
+  VersionAssetArtifactState artifact_state = 1;
+  VersionAssetPurgeWorkflowStatus purge_status = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message GetVersionAssetPurgeStatusRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  string purge_workflow_id = 3;
+}
+
+message GetVersionAssetPurgeStatusResponse {
+  VersionAssetArtifactState artifact_state = 1;
+  VersionAssetPurgeWorkflowStatus purge_status = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
 message RepairPublishedVersionAssetsRequest {
   string tenant_id = 1;
   int64 version_id = 2;
@@ -209,6 +278,30 @@ message VersionAssetArtifactState {
   string last_error_code = 7;
   string last_error_message = 8;
   string updated_at = 9;
+  repeated string exported_manifest_asset_keys = 10;
+}
+
+message VersionAssetDeletionEligibility {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  bool deletable = 3;
+  ArtifactState current_artifact_state = 4;
+  int64 current_state_epoch = 5;
+  string failure_code = 6;
+  string failure_message = 7;
+}
+
+message VersionAssetPurgeWorkflowStatus {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  string purge_workflow_id = 3;
+  string workflow_status = 4;
+  int64 started_from_state_epoch = 5;
+  string requested_at = 6;
+  string updated_at = 7;
+  string completed_at = 8;
+  string last_error_code = 9;
+  string last_error_message = 10;
 }
 
 message PingRequest {}

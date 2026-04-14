@@ -26,6 +26,8 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
+import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsRequest;
+import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
@@ -180,7 +182,8 @@ class GameDesignGrpcServiceTest {
                 "workflow-1",
                 null,
                 null,
-                LocalDateTime.parse("2026-04-14T12:00:00")));
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                List.of("logo.png", "manifest.json")));
 
     AtomicReference<GetVersionAssetArtifactStateResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -208,6 +211,53 @@ class GameDesignGrpcServiceTest {
     assertEquals(
         "ARTIFACT_STATE_PUBLISHED", ref.get().getArtifactState().getArtifactState().name());
     assertEquals("hash-1", ref.get().getArtifactState().getManifestHash());
+    assertEquals(2, ref.get().getArtifactState().getExportedManifestAssetKeysCount());
+  }
+
+  @Test
+  void tombstoneVersionAssetsReturnsStructuredStateTransition() {
+    Mockito.when(versionAssetArtifactService.tombstoneVersionAssets("tenant-1", 7L, 3L, "wf-1"))
+        .thenReturn(
+            new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
+                "tenant-1",
+                7L,
+                "TOMBSTONED",
+                4L,
+                "hash-1",
+                "wf-1",
+                null,
+                null,
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                List.of("manifest.json")));
+
+    AtomicReference<TombstoneVersionAssetsResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.tombstoneVersionAssets(
+          TombstoneVersionAssetsRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .setExpectedArtifactStateEpoch(3L)
+              .setTombstoneWorkflowId("wf-1")
+              .build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(TombstoneVersionAssetsResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+              throw new AssertionError(t);
+            }
+
+            @Override
+            public void onCompleted() {}
+          });
+    }
+
+    assertEquals(
+        "ARTIFACT_STATE_TOMBSTONED", ref.get().getArtifactState().getArtifactState().name());
+    assertEquals("wf-1", ref.get().getArtifactState().getLastWorkflowId());
   }
 
   private static StreamObserver<GetPublishedReleaseBundleResponse> observerFor(

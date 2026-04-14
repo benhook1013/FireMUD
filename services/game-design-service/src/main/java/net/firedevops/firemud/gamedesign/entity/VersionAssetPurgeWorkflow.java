@@ -10,12 +10,12 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.Data;
-import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
+import net.firedevops.firemud.gamedesign.model.VersionAssetPurgeWorkflowStatus;
 
 @Data
 @Entity
-@Table(name = "version_asset_artifact")
-public class VersionAssetArtifact {
+@Table(name = "version_asset_purge_workflow")
+public class VersionAssetPurgeWorkflow {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
@@ -26,18 +26,15 @@ public class VersionAssetArtifact {
   @Column(nullable = false)
   private Long versionId;
 
+  @Column(nullable = false, length = 64, unique = true)
+  private String purgeWorkflowId;
+
   @Enumerated(EnumType.STRING)
   @Column(nullable = false, length = 32)
-  private VersionAssetArtifactState artifactState;
+  private VersionAssetPurgeWorkflowStatus workflowStatus;
 
   @Column(nullable = false)
-  private long stateEpoch;
-
-  @Column(length = 128)
-  private String manifestHash;
-
-  @Column(length = 64)
-  private String lastWorkflowId;
+  private long startedFromStateEpoch;
 
   @Column(length = 64)
   private String lastErrorCode;
@@ -45,9 +42,11 @@ public class VersionAssetArtifact {
   @Column(length = 512)
   private String lastErrorMessage;
 
-  @Column(nullable = false, columnDefinition = "TEXT")
-  private String exportedManifestAssetKeysJson = "[]";
+  @Column(nullable = false)
+  private LocalDateTime requestedAt = LocalDateTime.now();
 
   @Column(nullable = false)
   private LocalDateTime updatedAt = LocalDateTime.now();
+
+  private LocalDateTime completedAt;
 }

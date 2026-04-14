@@ -99,8 +99,7 @@ public class VersionServiceImpl implements VersionService {
       exportedManifest = assetExportService.exportAssets(tenantId, saved.getVersionNumber());
       exportedStateEpoch =
           versionAssetArtifactService
-              .markExportedUnattested(
-                  dto.tenantId(), dto.id(), publishWorkflowId, exportedManifest.manifestHash())
+              .markExportedUnattested(dto.tenantId(), dto.id(), publishWorkflowId, exportedManifest)
               .stateEpoch();
       String generationConfigRevision = generationConfigRevision(dto, exportedManifest);
       publishedReleaseBundleService.createFullVersionBundle(
@@ -120,11 +119,11 @@ public class VersionServiceImpl implements VersionService {
             dto.tenantId(),
             dto.id(),
             publishWorkflowId,
-            exportedManifest.manifestHash(),
+            exportedManifest,
             "PUBLISH_FAILED",
             ex.getMessage());
       }
-      cleanupExportedAssets(tenantId, saved.getVersionNumber());
+      cleanupExportedAssets(tenantId, saved.getVersionNumber(), exportedManifest);
       versionRepository.delete(saved);
       throw ex;
     }
@@ -224,9 +223,13 @@ public class VersionServiceImpl implements VersionService {
         + 1;
   }
 
-  private void cleanupExportedAssets(String tenantId, int versionNumber) {
+  private void cleanupExportedAssets(
+      String tenantId, int versionNumber, ExportedAssetManifest exportedManifest) {
     try {
-      assetExportService.deleteExportedAssets(tenantId, versionNumber);
+      if (exportedManifest != null) {
+        assetExportService.deleteExportedAssets(
+            tenantId, versionNumber, exportedManifest.requiredManifestAssetKeys());
+      }
     } catch (RuntimeException ex) {
       logger.warn(
           "Failed to clean exported assets after publish failure tenant={} version={}",

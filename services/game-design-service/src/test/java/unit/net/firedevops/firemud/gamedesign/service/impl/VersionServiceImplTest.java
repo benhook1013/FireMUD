@@ -92,7 +92,10 @@ class VersionServiceImplTest {
     when(publishGateService.collectFullVersionParticipantDigests(any(VersionDto.class)))
         .thenReturn(participantDigests);
     when(versionAssetArtifactService.markExportedUnattested(
-            any(String.class), any(Long.class), any(String.class), any(String.class)))
+            any(String.class),
+            any(Long.class),
+            any(String.class),
+            any(ExportedAssetManifest.class)))
         .thenReturn(
             new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
                 "tenant-1",
@@ -103,7 +106,8 @@ class VersionServiceImplTest {
                 "workflow-1",
                 null,
                 null,
-                java.time.LocalDateTime.now()));
+                java.time.LocalDateTime.now(),
+                List.of("logo.png", "manifest.json")));
     when(publishedReleaseBundleService.createFullVersionBundle(
             any(VersionDto.class),
             any(String.class),
@@ -141,7 +145,8 @@ class VersionServiceImplTest {
                 "workflow-1",
                 null,
                 null,
-                java.time.LocalDateTime.now()));
+                java.time.LocalDateTime.now(),
+                List.of("logo.png", "manifest.json")));
 
     VersionDto dto = service.publishVersion("tenant-1", "notes");
 
@@ -229,7 +234,10 @@ class VersionServiceImplTest {
                 new PublishParticipantDigestDto(
                     "GAME_DESIGN_CONTROL_PLANE", "10", "version:10", "digest-1", 1, null, null)));
     when(versionAssetArtifactService.markExportedUnattested(
-            any(String.class), any(Long.class), any(String.class), any(String.class)))
+            any(String.class),
+            any(Long.class),
+            any(String.class),
+            any(ExportedAssetManifest.class)))
         .thenReturn(
             new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
                 "tenant-1",
@@ -240,7 +248,8 @@ class VersionServiceImplTest {
                 "workflow-1",
                 null,
                 null,
-                java.time.LocalDateTime.now()));
+                java.time.LocalDateTime.now(),
+                List.of("manifest.json")));
     org.mockito.Mockito.doThrow(new IllegalStateException("bundle failed"))
         .when(publishedReleaseBundleService)
         .createFullVersionBundle(
@@ -253,7 +262,7 @@ class VersionServiceImplTest {
     org.junit.jupiter.api.Assertions.assertThrows(
         IllegalStateException.class, () -> service.publishVersion("tenant-1", "notes"));
 
-    verify(assetExportService).deleteExportedAssets("tenant-1", 1);
+    verify(assetExportService).deleteExportedAssets("tenant-1", 1, List.of("manifest.json"));
   }
 
   @Test

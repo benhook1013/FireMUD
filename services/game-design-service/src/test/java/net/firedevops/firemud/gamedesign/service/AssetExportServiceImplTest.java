@@ -18,6 +18,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import tools.jackson.databind.ObjectMapper;
 
@@ -59,5 +60,15 @@ class AssetExportServiceImplTest {
             argThat((PutObjectRequest r) -> r.key().equals("t/1/manifest.json")),
             any(RequestBody.class));
     org.junit.jupiter.api.Assertions.assertEquals(2, manifest.requiredManifestAssetKeys().size());
+  }
+
+  @Test
+  void deleteExportedAssetsUsesExactManifestKeyList() {
+    service.deleteExportedAssets("t", 1, List.of("logo.png", "manifest.json"));
+
+    verify(s3Client)
+        .deleteObject(argThat((DeleteObjectRequest r) -> r.key().equals("t/1/logo.png")));
+    verify(s3Client)
+        .deleteObject(argThat((DeleteObjectRequest r) -> r.key().equals("t/1/manifest.json")));
   }
 }

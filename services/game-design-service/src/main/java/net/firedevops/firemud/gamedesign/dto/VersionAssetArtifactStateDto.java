@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.dto;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 public record VersionAssetArtifactStateDto(
     String tenantId,
@@ -11,4 +12,5 @@ public record VersionAssetArtifactStateDto(
     String lastWorkflowId,
     String lastErrorCode,
     String lastErrorMessage,
-    LocalDateTime updatedAt) {}
+    LocalDateTime updatedAt,
+    List<String> exportedManifestAssetKeys) {}

@@ -7,6 +7,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
@@ -91,21 +92,15 @@ public class AssetExportServiceImpl implements AssetExportService {
 
   @Override
   @Timed("gamedesign.asset.delete")
-  public void deleteExportedAssets(String tenantId, int version) {
+  public void deleteExportedAssets(String tenantId, int version, List<String> manifestAssetKeys) {
     String prefix = tenantId + "/" + version + "/";
-    List<GameAsset> assets = repository.findByTenantId(tenantId);
-    for (GameAsset asset : assets) {
+    for (String assetKey : new LinkedHashSet<>(manifestAssetKeys)) {
       s3Client.deleteObject(
           DeleteObjectRequest.builder()
               .bucket(properties.getBucket())
-              .key(prefix + asset.getFileName())
+              .key(prefix + assetKey)
               .build());
     }
-    s3Client.deleteObject(
-        DeleteObjectRequest.builder()
-            .bucket(properties.getBucket())
-            .key(prefix + "manifest.json")
-            .build());
   }
 
   private String sha256(String value) {

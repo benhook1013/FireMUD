@@ -272,9 +272,10 @@ Logging & Admin, CI, and runbooks must consume these control-plane APIs instead 
 
 Implementation notes:
 
-- `GetVersionAssetArtifactState` and `RepairPublishedVersionAssets` are now live in `game-design-service`.
+- `GetVersionAssetArtifactState`, `RepairPublishedVersionAssets`, `TombstoneVersionAssets`, `CanDeleteVersionAssets`, `BeginPurgeVersionAssets`, `FinalizePurgeVersionAssets`, and `GetVersionAssetPurgeStatus` are now live in `game-design-service`.
 - `version_asset_artifact` is now a persisted control-plane row and full-version publish updates it through `EXPORTED_UNATTESTED` and `PUBLISHED`.
-- purge APIs and workflow-status reads are still pending.
+- the persisted artifact row now stores the exact exported manifest asset keys so cleanup, repair, and purge use exported proof rather than current draft-asset listings.
+- `version_asset_purge_workflow` is now the retained workflow-status surface for purge start/finalization outcomes.
 
 A basic repository (`GameAssetRepository`) and service implementation
 (`GameAssetServiceImpl`) persist uploads using Spring Data JPA.
