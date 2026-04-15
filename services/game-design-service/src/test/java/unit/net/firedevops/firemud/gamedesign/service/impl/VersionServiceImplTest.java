@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +17,7 @@ import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
@@ -76,12 +78,23 @@ class VersionServiceImplTest {
     when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
         .thenReturn(Optional.of(latest));
 
-    Version saved = new Version();
-    saved.setId(10L);
-    saved.setTenantId("tenant-1");
-    saved.setVersionNumber(8);
-    saved.setNotes("notes");
-    when(versionRepository.save(any(Version.class))).thenReturn(saved);
+    Version savedDraft = new Version();
+    savedDraft.setId(10L);
+    savedDraft.setTenantId("tenant-1");
+    savedDraft.setVersionNumber(8);
+    savedDraft.setNotes("notes");
+    savedDraft.setVersionState(VersionLifecycleState.DRAFT);
+    savedDraft.setVersionStateEpoch(1L);
+    savedDraft.setUpdatedAt(java.time.LocalDateTime.now());
+    Version savedPublished = new Version();
+    savedPublished.setId(10L);
+    savedPublished.setTenantId("tenant-1");
+    savedPublished.setVersionNumber(8);
+    savedPublished.setNotes("notes");
+    savedPublished.setVersionState(VersionLifecycleState.PUBLISHED);
+    savedPublished.setVersionStateEpoch(2L);
+    savedPublished.setUpdatedAt(java.time.LocalDateTime.now());
+    when(versionRepository.save(any(Version.class))).thenReturn(savedDraft, savedPublished);
     ExportedAssetManifest exportedManifest =
         new ExportedAssetManifest("abc123", List.of("logo.png", "manifest.json"));
     when(assetExportService.exportAssets("tenant-1", 8)).thenReturn(exportedManifest);
@@ -151,9 +164,11 @@ class VersionServiceImplTest {
     VersionDto dto = service.publishVersion("tenant-1", "notes");
 
     assertEquals(8, dto.versionNumber());
+    assertEquals(VersionLifecycleState.PUBLISHED, dto.versionState());
+    assertEquals(2L, dto.versionStateEpoch());
     verify(gameRepository).findByTenantIdForUpdate("tenant-1");
     verify(versionRepository).findTopByTenantIdOrderByVersionNumberDesc("tenant-1");
-    verify(versionRepository).save(any(Version.class));
+    verify(versionRepository, times(2)).save(any(Version.class));
     verify(assetExportService).exportAssets("tenant-1", 8);
     verify(publishedReleaseBundleService)
         .createFullVersionBundle(
@@ -178,13 +193,25 @@ class VersionServiceImplTest {
     when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
         .thenReturn(Optional.of(latest));
 
-    Version saved = new Version();
-    saved.setId(11L);
-    saved.setTenantId("tenant-1");
-    saved.setVersionNumber(8);
-    saved.setScriptPatchVersion("patch-2");
-    saved.setNotes("notes");
-    when(versionRepository.save(any(Version.class))).thenReturn(saved);
+    Version savedDraft = new Version();
+    savedDraft.setId(11L);
+    savedDraft.setTenantId("tenant-1");
+    savedDraft.setVersionNumber(8);
+    savedDraft.setScriptPatchVersion("patch-2");
+    savedDraft.setNotes("notes");
+    savedDraft.setVersionState(VersionLifecycleState.DRAFT);
+    savedDraft.setVersionStateEpoch(1L);
+    savedDraft.setUpdatedAt(java.time.LocalDateTime.now());
+    Version savedPublished = new Version();
+    savedPublished.setId(11L);
+    savedPublished.setTenantId("tenant-1");
+    savedPublished.setVersionNumber(8);
+    savedPublished.setScriptPatchVersion("patch-2");
+    savedPublished.setNotes("notes");
+    savedPublished.setVersionState(VersionLifecycleState.PUBLISHED);
+    savedPublished.setVersionStateEpoch(2L);
+    savedPublished.setUpdatedAt(java.time.LocalDateTime.now());
+    when(versionRepository.save(any(Version.class))).thenReturn(savedDraft, savedPublished);
     when(publishGateService.collectScriptPatchParticipantDigests(any(VersionDto.class)))
         .thenReturn(
             List.of(
@@ -208,7 +235,8 @@ class VersionServiceImplTest {
     VersionDto dto = service.publishScriptPatchVersion("tenant-1", 3L, "patch-2", "notes");
 
     assertEquals(8, dto.versionNumber());
-    verify(versionRepository).save(any(Version.class));
+    assertEquals(VersionLifecycleState.PUBLISHED, dto.versionState());
+    verify(versionRepository, times(2)).save(any(Version.class));
     verify(scriptingClient).notifyScriptVersionUpdate("tenant-1", "patch-2", java.util.List.of());
   }
 
@@ -221,11 +249,14 @@ class VersionServiceImplTest {
     when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
         .thenReturn(Optional.empty());
 
-    Version saved = new Version();
-    saved.setId(10L);
-    saved.setTenantId("tenant-1");
-    saved.setVersionNumber(1);
-    when(versionRepository.save(any(Version.class))).thenReturn(saved);
+    Version savedDraft = new Version();
+    savedDraft.setId(10L);
+    savedDraft.setTenantId("tenant-1");
+    savedDraft.setVersionNumber(1);
+    savedDraft.setVersionState(VersionLifecycleState.DRAFT);
+    savedDraft.setVersionStateEpoch(1L);
+    savedDraft.setUpdatedAt(java.time.LocalDateTime.now());
+    when(versionRepository.save(any(Version.class))).thenReturn(savedDraft);
     when(assetExportService.exportAssets("tenant-1", 1))
         .thenReturn(new ExportedAssetManifest("abc123", List.of("manifest.json")));
     when(publishGateService.collectFullVersionParticipantDigests(any(VersionDto.class)))
@@ -271,7 +302,10 @@ class VersionServiceImplTest {
     version.setId(7L);
     version.setTenantId("tenant-1");
     version.setVersionNumber(8);
-    when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    version.setVersionStateEpoch(2L);
+    version.setUpdatedAt(java.time.LocalDateTime.now());
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
     when(controlPlaneDigestService.getDigestForVersion(any(VersionDto.class)))
         .thenReturn(new DesignControlPlaneDigestDto("tenant-1", "7", "version:7", "digest-1", 1));
 
@@ -291,10 +325,16 @@ class VersionServiceImplTest {
     one.setId(1L);
     one.setTenantId("tenant-1");
     one.setVersionNumber(1);
+    one.setVersionState(VersionLifecycleState.PUBLISHED);
+    one.setVersionStateEpoch(2L);
+    one.setUpdatedAt(java.time.LocalDateTime.now());
     Version two = new Version();
     two.setId(2L);
     two.setTenantId("tenant-1");
     two.setVersionNumber(2);
+    two.setVersionState(VersionLifecycleState.PUBLISHED);
+    two.setVersionStateEpoch(2L);
+    two.setUpdatedAt(java.time.LocalDateTime.now());
     when(versionRepository.findAllByTenantIdOrderByVersionNumberAsc("tenant-1"))
         .thenReturn(List.of(one, two));
 

@@ -23,6 +23,8 @@ import net.firedevops.firemud.gamedesign.v1.BeginPurgeVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.BeginPurgeVersionAssetsResponse;
 import net.firedevops.firemud.gamedesign.v1.CanDeleteVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.CanDeleteVersionAssetsResponse;
+import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateRequest;
+import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideRequest;
 import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideResponse;
 import net.firedevops.firemud.gamedesign.v1.FinalizePurgeVersionAssetsRequest;
@@ -38,6 +40,8 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetPurgeStatusRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetPurgeStatusResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
+import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
 import net.firedevops.firemud.gamedesign.v1.PingRequest;
@@ -56,6 +60,7 @@ import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionResponse;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsResponse;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
@@ -326,6 +331,72 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   }
 
   @Override
+  @Timed(value = "gamedesignGrpc.getVersionState")
+  public void getVersionState(
+      GetVersionStateRequest request, StreamObserver<GetVersionStateResponse> responseObserver) {
+    GetVersionStateResponse.Builder builder = GetVersionStateResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      builder.setVersionState(
+          toProtoVersionState(
+              versionService.getVersionState(request.getTenantId(), request.getVersionId())));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "GetVersionState", "PERMISSION_DENIED", ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "GetVersionState", "INVALID_ARGUMENT", ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "GetVersionState", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.compareAndSetVersionState")
+  public void compareAndSetVersionState(
+      CompareAndSetVersionStateRequest request,
+      StreamObserver<CompareAndSetVersionStateResponse> responseObserver) {
+    CompareAndSetVersionStateResponse.Builder builder =
+        CompareAndSetVersionStateResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      var state =
+          versionService.compareAndSetVersionState(
+              request.getTenantId(),
+              request.getVersionId(),
+              request.getExpectedVersionStateEpoch(),
+              fromProtoVersionState(request.getNewState()),
+              request.getReason());
+      builder.setVersionState(toProtoVersionState(state)).setUpdated(true);
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "CompareAndSetVersionState",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "CompareAndSetVersionState",
+              "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "CompareAndSetVersionState", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
   @Timed(value = "gamedesignGrpc.resolveLaunchDescriptor")
   public void resolveLaunchDescriptor(
       ResolveLaunchDescriptorRequest request,
@@ -383,6 +454,46 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
+  }
+
+  private net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot toProtoVersionState(
+      net.firedevops.firemud.gamedesign.dto.VersionStateDto state) {
+    return net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot.newBuilder()
+        .setTenantId(state.tenantId())
+        .setVersionId(state.versionId())
+        .setVersionState(toProtoVersionLifecycleState(state.versionState()))
+        .setVersionStateEpoch(state.versionStateEpoch())
+        .setUpdatedAt(state.updatedAt().toString())
+        .build();
+  }
+
+  private VersionLifecycleState toProtoVersionLifecycleState(
+      net.firedevops.firemud.gamedesign.model.VersionLifecycleState state) {
+    return switch (state) {
+      case DRAFT -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT;
+      case PUBLISHED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED;
+      case ACTIVE -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE;
+      case FAILED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_FAILED;
+      case RETIRED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_RETIRED;
+    };
+  }
+
+  private net.firedevops.firemud.gamedesign.model.VersionLifecycleState fromProtoVersionState(
+      VersionLifecycleState state) {
+    return switch (state) {
+      case VERSION_LIFECYCLE_STATE_DRAFT ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.DRAFT;
+      case VERSION_LIFECYCLE_STATE_PUBLISHED ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.PUBLISHED;
+      case VERSION_LIFECYCLE_STATE_ACTIVE ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.ACTIVE;
+      case VERSION_LIFECYCLE_STATE_FAILED ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.FAILED;
+      case VERSION_LIFECYCLE_STATE_RETIRED ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.RETIRED;
+      case VERSION_LIFECYCLE_STATE_UNSPECIFIED, UNRECOGNIZED ->
+          throw new IllegalArgumentException("INVALID_ARGUMENT: new version state is required");
+    };
   }
 
   @Override

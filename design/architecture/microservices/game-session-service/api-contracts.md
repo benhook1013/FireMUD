@@ -86,6 +86,7 @@ grpcurl -plaintext -d '{"tenantId":"1","gameTemplateId":"7","controlPlaneRequest
 - behavior:
   - Game Session must call Game Design `ResolveLaunchDescriptor(...)` before creating any `gameInstanceId` row
   - Game Session must then read `GetPublishedReleaseBundle(tenantId, versionId)` and fail closed if the attested bundle does not match the resolved descriptor
+  - Game Session must then re-read authoritative `GetVersionState(tenantId, versionId)` and fail closed on non-activation-eligible state or `versionStateEpoch` mismatch
   - successful `game_instances` rows persist the resolved `gameTemplateId`, `launchDescriptorId`, `versionId`, `releaseBundleId`, `versionStateEpoch`, and `generationConfigRevision`
 
 ## Command Front Door Ownership

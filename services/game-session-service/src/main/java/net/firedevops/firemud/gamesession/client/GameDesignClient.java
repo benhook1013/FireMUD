@@ -10,6 +10,8 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
+import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import org.springframework.stereotype.Component;
@@ -65,6 +67,15 @@ public final class GameDesignClient
     return callStub()
         .getPublishedReleaseBundle(
             GetPublishedReleaseBundleRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setVersionId(versionId)
+                .build());
+  }
+
+  public GetVersionStateResponse getVersionState(long tenantId, long versionId) {
+    return callStub()
+        .getVersionState(
+            GetVersionStateRequest.newBuilder()
                 .setTenantId(Long.toString(tenantId))
                 .setVersionId(versionId)
                 .build());

@@ -11,6 +11,7 @@ import java.util.Optional;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +34,18 @@ class PublishedReleaseBundleServiceImplTest {
   @Test
   void createFullVersionBundlePersistsImmutableAttestation() {
     VersionDto version =
-        new VersionDto(7L, "tenant-1", 8, null, null, false, "notes", LocalDateTime.now());
+        new VersionDto(
+            7L,
+            "tenant-1",
+            8,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            null,
+            null,
+            false,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
     when(repository.save(any(PublishedReleaseBundle.class)))
         .thenAnswer(
@@ -66,7 +78,18 @@ class PublishedReleaseBundleServiceImplTest {
   @Test
   void createFullVersionBundleRejectsDuplicateAttestation() {
     VersionDto version =
-        new VersionDto(7L, "tenant-1", 8, null, null, false, "notes", LocalDateTime.now());
+        new VersionDto(
+            7L,
+            "tenant-1",
+            8,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            null,
+            null,
+            false,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L))
         .thenReturn(Optional.of(new PublishedReleaseBundle()));
 

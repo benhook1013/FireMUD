@@ -18,6 +18,9 @@ service GameDesignService {
       returns (GetDesignControlPlaneDigestResponse);
   rpc GetPublishedReleaseBundle(GetPublishedReleaseBundleRequest)
       returns (GetPublishedReleaseBundleResponse);
+  rpc GetVersionState(GetVersionStateRequest) returns (GetVersionStateResponse);
+  rpc CompareAndSetVersionState(CompareAndSetVersionStateRequest)
+      returns (CompareAndSetVersionStateResponse);
   rpc ResolveLaunchDescriptor(ResolveLaunchDescriptorRequest)
       returns (ResolveLaunchDescriptorResponse);
   rpc GetVersionAssetArtifactState(GetVersionAssetArtifactStateRequest)
@@ -105,6 +108,30 @@ message GetPublishedReleaseBundleRequest {
 message GetPublishedReleaseBundleResponse {
   PublishedReleaseBundle bundle = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message GetVersionStateRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+}
+
+message GetVersionStateResponse {
+  VersionStateSnapshot version_state = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message CompareAndSetVersionStateRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  int64 expected_version_state_epoch = 3;
+  VersionLifecycleState new_state = 4;
+  string reason = 5;
+}
+
+message CompareAndSetVersionStateResponse {
+  VersionStateSnapshot version_state = 1;
+  bool updated = 2;
+  shared.v1.ErrorDetail error = 3;
 }
 
 message ResolveLaunchDescriptorRequest {
@@ -248,12 +275,29 @@ message DesignControlPlaneDigest {
   int32 digest_schema_version = 5;
 }
 
+message VersionStateSnapshot {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  VersionLifecycleState version_state = 3;
+  int64 version_state_epoch = 4;
+  string updated_at = 5;
+}
+
 message ParticipantDigest {
   string participant_key = 1;
   string scope_value = 2;
   string applied_commit_id = 3;
   string content_digest = 4;
   int32 digest_schema_version = 5;
+}
+
+enum VersionLifecycleState {
+  VERSION_LIFECYCLE_STATE_UNSPECIFIED = 0;
+  VERSION_LIFECYCLE_STATE_DRAFT = 1;
+  VERSION_LIFECYCLE_STATE_PUBLISHED = 2;
+  VERSION_LIFECYCLE_STATE_ACTIVE = 3;
+  VERSION_LIFECYCLE_STATE_FAILED = 4;
+  VERSION_LIFECYCLE_STATE_RETIRED = 5;
 }
 
 enum ArtifactState {

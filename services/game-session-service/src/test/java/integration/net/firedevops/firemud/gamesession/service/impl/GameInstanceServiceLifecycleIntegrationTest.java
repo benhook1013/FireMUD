@@ -165,6 +165,20 @@ class GameInstanceServiceLifecycleIntegrationTest {
                         .setGenerationConfigRevision("genrev-11")
                         .build())
                 .build());
+    when(gameDesignClient.getVersionState(42L, 11L))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse.newBuilder()
+                .setVersionState(
+                    net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot.newBuilder()
+                        .setTenantId("42")
+                        .setVersionId(11L)
+                        .setVersionState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setVersionStateEpoch(77L)
+                        .setUpdatedAt("2026-04-15T10:00:00")
+                        .build())
+                .build());
     when(gameDesignClient.getPublishedReleaseBundle(42L, 12L))
         .thenReturn(
             net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse.newBuilder()
@@ -173,6 +187,20 @@ class GameInstanceServiceLifecycleIntegrationTest {
                         .setId(78L)
                         .setVersionId(12L)
                         .setGenerationConfigRevision("genrev-12")
+                        .build())
+                .build());
+    when(gameDesignClient.getVersionState(42L, 12L))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse.newBuilder()
+                .setVersionState(
+                    net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot.newBuilder()
+                        .setTenantId("42")
+                        .setVersionId(12L)
+                        .setVersionState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setVersionStateEpoch(78L)
+                        .setUpdatedAt("2026-04-15T10:00:00")
                         .build())
                 .build());
   }

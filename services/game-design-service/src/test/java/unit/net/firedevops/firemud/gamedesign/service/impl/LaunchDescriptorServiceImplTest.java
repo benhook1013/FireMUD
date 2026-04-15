@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamedesign.entity.GameTemplate;
 import net.firedevops.firemud.gamedesign.entity.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.TemplateReferencePhase;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
 import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -61,6 +62,9 @@ class LaunchDescriptorServiceImplTest {
     version.setId(7L);
     version.setTenantId("tenant-1");
     version.setVersionNumber(8);
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    version.setVersionStateEpoch(17L);
+    version.setUpdatedAt(LocalDateTime.now());
     when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
     when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
         .thenReturn(
@@ -87,6 +91,7 @@ class LaunchDescriptorServiceImplTest {
     assertEquals("tenant-1", descriptor.tenantId());
     assertEquals(7L, descriptor.versionId());
     assertEquals("genrev-1", descriptor.generationConfigRevision());
+    assertEquals(17L, descriptor.versionStateEpoch());
     assertEquals(11L, descriptor.releaseBundleId());
   }
 

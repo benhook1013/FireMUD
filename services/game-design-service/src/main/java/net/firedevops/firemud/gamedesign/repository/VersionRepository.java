@@ -12,6 +12,8 @@ public interface VersionRepository extends JpaRepository<Version, Long> {
 
   Optional<Version> findTopByTenantIdOrderByVersionNumberDesc(String tenantId);
 
+  Optional<Version> findByTenantIdAndId(String tenantId, Long id);
+
   Optional<Version> findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
       String tenantId, String scriptPatchVersion);
 }

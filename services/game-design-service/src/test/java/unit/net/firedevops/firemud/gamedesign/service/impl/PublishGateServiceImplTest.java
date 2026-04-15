@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamedesign.client.WorldManagementClient;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,7 +45,18 @@ class PublishGateServiceImplTest {
   @Test
   void collectFullVersionParticipantDigestsPassesWhenParticipantsConverge() {
     VersionDto version =
-        new VersionDto(7L, "tenant-1", 8, null, null, false, "notes", LocalDateTime.now());
+        new VersionDto(
+            7L,
+            "tenant-1",
+            8,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            null,
+            null,
+            false,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
     when(worldManagementClient.getDraftDesignDigestForVersion("tenant-1", 7L))
         .thenReturn(
             new PublishParticipantDigestDto(
@@ -75,7 +87,18 @@ class PublishGateServiceImplTest {
   @Test
   void fullVersionGateFailsClosedForUnsupportedSchema() {
     VersionDto version =
-        new VersionDto(7L, "tenant-1", 8, null, null, false, "notes", LocalDateTime.now());
+        new VersionDto(
+            7L,
+            "tenant-1",
+            8,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            null,
+            null,
+            false,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
     List<PublishParticipantDigestDto> digests =
         List.of(
             new PublishParticipantDigestDto(
@@ -95,7 +118,18 @@ class PublishGateServiceImplTest {
   @Test
   void scriptPatchGatePassesWhenParticipantsConverge() {
     VersionDto version =
-        new VersionDto(9L, "tenant-1", 10, "patch-1", 7L, true, "notes", LocalDateTime.now());
+        new VersionDto(
+            9L,
+            "tenant-1",
+            10,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            "patch-1",
+            7L,
+            true,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
     when(controlPlaneDigestService.getDigestForScriptPatch(version))
         .thenReturn(
             new DesignControlPlaneDigestDto(

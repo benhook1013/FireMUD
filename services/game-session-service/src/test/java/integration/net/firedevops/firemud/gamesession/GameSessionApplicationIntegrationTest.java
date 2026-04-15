@@ -105,6 +105,20 @@ class GameSessionApplicationIntegrationTest {
                         .setGenerationConfigRevision("genrev-11")
                         .build())
                 .build());
+    when(gameDesignClient.getVersionState(42L, 11L))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse.newBuilder()
+                .setVersionState(
+                    net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot.newBuilder()
+                        .setTenantId("42")
+                        .setVersionId(11L)
+                        .setVersionState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setVersionStateEpoch(77L)
+                        .setUpdatedAt("2026-04-15T10:00:00")
+                        .build())
+                .build());
     StartSessionRequest request = new StartSessionRequest(42L, 7L, "cp-1", 100L);
 
     String responseBody =

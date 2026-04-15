@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.GameTemplate;
 import net.firedevops.firemud.gamedesign.entity.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.model.TemplateReferencePhase;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
 import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -97,15 +98,23 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
                         found.getId(),
                         found.getTenantId(),
                         found.getVersionNumber(),
+                        found.getVersionState(),
+                        found.getVersionStateEpoch(),
                         found.getScriptPatchVersion(),
                         found.getBaseVersionId(),
                         found.isScriptOnly(),
                         found.getNotes(),
-                        found.getCreatedAt()))
+                        found.getCreatedAt(),
+                        found.getUpdatedAt()))
             .orElseThrow(
                 () ->
                     new IllegalArgumentException(
                         "INVALID_TEMPLATE_CONFIGURATION: target version not found"));
+    if (version.versionState() != VersionLifecycleState.PUBLISHED
+        && version.versionState() != VersionLifecycleState.ACTIVE) {
+      throw new IllegalArgumentException(
+          "VERSION_STATE_EPOCH_STALE: resolved version is not activation-eligible");
+    }
     String resolvedScriptPatchVersion =
         resolveScriptPatchVersion(template, requestedScriptPatchVersion, version);
     String resolvedRuntimeFlagsJson = resolveRuntimeFlagsJson(template, requestedRuntimeFlagsJson);
@@ -121,7 +130,7 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     descriptor.setScriptPatchVersion(resolvedScriptPatchVersion);
     descriptor.setRuntimeFlagsJson(resolvedRuntimeFlagsJson);
     descriptor.setGenerationConfigRevision(bundle.generationConfigRevision());
-    descriptor.setVersionStateEpoch(bundle.id());
+    descriptor.setVersionStateEpoch(version.versionStateEpoch());
     descriptor.setReleaseBundleId(bundle.id());
     descriptor.setPublishedReleaseBundleRef(
         releaseBundleRef(tenantId, bundle.id(), resolvedVersionId));

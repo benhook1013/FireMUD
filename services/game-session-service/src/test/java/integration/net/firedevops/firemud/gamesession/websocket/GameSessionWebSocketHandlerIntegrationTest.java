@@ -1676,12 +1676,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
     session.close();
 
-    assertThat(isStructuredCommand(payloads.get(0), "LOGIN")).isTrue();
+    JsonNode loginFailure = json(payloads.get(0));
+    assertThat(loginFailure.path("eventType").asText()).isEqualTo("command_result");
+    assertThat(loginFailure.path("commandType").asText()).isEqualTo("LOGIN");
+    assertThat(loginFailure.path("accepted").asBoolean()).isFalse();
+    assertThat(loginFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
     JsonNode playFailure = json(payloads.get(1));
     assertThat(playFailure.path("eventType").asText()).isEqualTo("command_result");
     assertThat(playFailure.path("commandType").asText()).isEqualTo("PLAY");
     assertThat(playFailure.path("accepted").asBoolean()).isFalse();
-    assertThat(playFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+    assertThat(playFailure.path("errorCode").asText()).isEqualTo("LOGIN_REQUIRED");
     assertThat(playFailure.path("outputs").isArray()).isTrue();
   }
 

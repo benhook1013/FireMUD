@@ -243,6 +243,20 @@ class GameInstanceServiceImplTest {
                         .setGenerationConfigRevision("genrev-11")
                         .build())
                 .build());
+    when(gameDesignClient.getVersionState(any(Long.class), any(Long.class)))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse.newBuilder()
+                .setVersionState(
+                    net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot.newBuilder()
+                        .setTenantId("1")
+                        .setVersionId(11L)
+                        .setVersionState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setVersionStateEpoch(77L)
+                        .setUpdatedAt("2026-04-15T10:00:00")
+                        .build())
+                .build());
   }
 
   private GameInstance persistExisting(

@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -11,10 +12,12 @@ import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
+import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
 import net.firedevops.firemud.gamedesign.model.PublishType;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
@@ -85,6 +88,9 @@ public class VersionServiceImpl implements VersionService {
     version.setTenantId(game.getTenantId());
     version.setNotes(notes);
     version.setVersionNumber(calculateNextNumber(tenantId));
+    version.setVersionState(VersionLifecycleState.DRAFT);
+    version.setVersionStateEpoch(1L);
+    version.setUpdatedAt(LocalDateTime.now());
     Version saved = versionRepository.save(version);
     VersionDto dto = versionMapper.toDto(saved);
     String publishWorkflowId = UUID.randomUUID().toString();
@@ -104,6 +110,10 @@ public class VersionServiceImpl implements VersionService {
       String generationConfigRevision = generationConfigRevision(dto, exportedManifest);
       publishedReleaseBundleService.createFullVersionBundle(
           dto, publishWorkflowId, exportedManifest, generationConfigRevision, participantDigests);
+      saved.setVersionState(VersionLifecycleState.PUBLISHED);
+      saved.setVersionStateEpoch(saved.getVersionStateEpoch() + 1L);
+      saved.setUpdatedAt(LocalDateTime.now());
+      saved = versionRepository.save(saved);
       versionAssetArtifactService.markPublished(
           dto.tenantId(),
           dto.id(),
@@ -111,7 +121,7 @@ public class VersionServiceImpl implements VersionService {
           publishWorkflowId,
           exportedManifest.manifestHash());
       publishAttemptService.markSucceeded(publishWorkflowId);
-      return dto;
+      return versionMapper.toDto(saved);
     } catch (RuntimeException ex) {
       publishAttemptService.markFailed(publishWorkflowId, "PUBLISH_GATE_FAILED", ex.getMessage());
       if (exportedManifest != null) {
@@ -147,9 +157,12 @@ public class VersionServiceImpl implements VersionService {
     version.setTenantId(game.getTenantId());
     version.setNotes(notes);
     version.setVersionNumber(calculateNextNumber(tenantId));
+    version.setVersionState(VersionLifecycleState.DRAFT);
+    version.setVersionStateEpoch(1L);
     version.setScriptPatchVersion(scriptPatchVersion);
     version.setBaseVersionId(baseVersionId);
     version.setScriptOnly(true);
+    version.setUpdatedAt(LocalDateTime.now());
 
     Version saved = versionRepository.save(version);
     VersionDto dto = versionMapper.toDto(saved);
@@ -165,8 +178,12 @@ public class VersionServiceImpl implements VersionService {
           () ->
               scriptingClient.notifyScriptVersionUpdate(
                   String.valueOf(game.getTenantId()), scriptPatchVersion, List.of()));
+      saved.setVersionState(VersionLifecycleState.PUBLISHED);
+      saved.setVersionStateEpoch(saved.getVersionStateEpoch() + 1L);
+      saved.setUpdatedAt(LocalDateTime.now());
+      saved = versionRepository.save(saved);
       publishAttemptService.markSucceeded(publishWorkflowId);
-      return dto;
+      return versionMapper.toDto(saved);
     } catch (RuntimeException ex) {
       publishAttemptService.markFailed(publishWorkflowId, "PUBLISH_GATE_FAILED", ex.getMessage());
       versionRepository.delete(saved);
@@ -189,11 +206,7 @@ public class VersionServiceImpl implements VersionService {
   @Override
   @Transactional(readOnly = true)
   public DesignControlPlaneDigestDto getDesignControlPlaneDigest(String tenantId, Long versionId) {
-    Version version =
-        versionRepository
-            .findById(versionId)
-            .filter(found -> found.getTenantId().equals(tenantId))
-            .orElseThrow(() -> new IllegalArgumentException("version not found"));
+    Version version = requireTenantVersion(tenantId, versionId);
     return controlPlaneDigestService.getDigestForVersion(versionMapper.toDto(version));
   }
 
@@ -215,12 +228,69 @@ public class VersionServiceImpl implements VersionService {
     return publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, versionId);
   }
 
+  @Override
+  @Transactional(readOnly = true)
+  public VersionStateDto getVersionState(String tenantId, long versionId) {
+    return toVersionStateDto(requireTenantVersion(tenantId, versionId));
+  }
+
+  @Override
+  @Transactional
+  public VersionStateDto compareAndSetVersionState(
+      String tenantId,
+      long versionId,
+      long expectedVersionStateEpoch,
+      VersionLifecycleState newState,
+      String reason) {
+    Version version = requireTenantVersion(tenantId, versionId);
+    if (newState == null) {
+      throw new IllegalArgumentException("INVALID_ARGUMENT: new version state is required");
+    }
+    if (!version.getVersionStateEpoch().equals(expectedVersionStateEpoch)) {
+      throw new IllegalArgumentException(
+          "VERSION_STATE_EPOCH_STALE: expected epoch "
+              + expectedVersionStateEpoch
+              + " does not match current epoch "
+              + version.getVersionStateEpoch());
+    }
+    if (version.getVersionState() == newState) {
+      return toVersionStateDto(version);
+    }
+    version.setVersionState(newState);
+    version.setVersionStateEpoch(version.getVersionStateEpoch() + 1L);
+    version.setUpdatedAt(LocalDateTime.now());
+    Version saved = versionRepository.save(version);
+    logger.info(
+        "Updated version state tenant={} version={} state={} epoch={} reason={}",
+        tenantId,
+        versionId,
+        newState,
+        saved.getVersionStateEpoch(),
+        reason == null ? "" : reason);
+    return toVersionStateDto(saved);
+  }
+
   private int calculateNextNumber(String tenantId) {
     return versionRepository
             .findTopByTenantIdOrderByVersionNumberDesc(tenantId)
             .map(Version::getVersionNumber)
             .orElse(0)
         + 1;
+  }
+
+  private Version requireTenantVersion(String tenantId, long versionId) {
+    return versionRepository
+        .findByTenantIdAndId(tenantId, versionId)
+        .orElseThrow(() -> new IllegalArgumentException("version not found"));
+  }
+
+  private VersionStateDto toVersionStateDto(Version version) {
+    return new VersionStateDto(
+        version.getTenantId(),
+        version.getId(),
+        version.getVersionState(),
+        version.getVersionStateEpoch(),
+        version.getUpdatedAt());
   }
 
   private void cleanupExportedAssets(

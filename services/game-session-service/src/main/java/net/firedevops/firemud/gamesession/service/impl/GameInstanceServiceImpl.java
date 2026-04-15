@@ -7,6 +7,7 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
@@ -522,6 +523,24 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         || !bundle.getGenerationConfigRevision().equals(descriptor.getGenerationConfigRevision())) {
       throw new IllegalArgumentException(
           "RELEASE_ATTESTATION_MISMATCH: resolved launch descriptor does not match the published release bundle");
+    }
+    var versionStateResponse =
+        gameDesignClient.getVersionState(request.tenantId(), descriptor.getVersionId());
+    if (versionStateResponse.hasError()) {
+      throw new IllegalArgumentException(
+          versionStateResponse.getError().getCode()
+              + ": "
+              + versionStateResponse.getError().getMessage());
+    }
+    var versionState = versionStateResponse.getVersionState();
+    if (versionState.getVersionState() != VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED
+        && versionState.getVersionState() != VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE) {
+      throw new IllegalArgumentException(
+          "VERSION_STATE_EPOCH_STALE: resolved version is not activation-eligible");
+    }
+    if (versionState.getVersionStateEpoch() != descriptor.getVersionStateEpoch()) {
+      throw new IllegalArgumentException(
+          "VERSION_STATE_EPOCH_STALE: resolved launch descriptor epoch does not match current version state");
     }
     return new ResolvedLaunchDescriptor(
         descriptor.getLaunchDescriptorId(),

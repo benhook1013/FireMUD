@@ -12,6 +12,8 @@ import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
+import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
@@ -24,6 +26,8 @@ import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
+import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsRequest;
@@ -136,6 +140,45 @@ class GameDesignGrpcServiceTest {
 
     assertEquals("ld-1", ref.get().getLaunchDescriptor().getLaunchDescriptorId());
     assertEquals("genrev-1", ref.get().getLaunchDescriptor().getGenerationConfigRevision());
+  }
+
+  @Test
+  void getVersionStateReturnsCanonicalStateSnapshot() {
+    Mockito.when(versionService.getVersionState("tenant-1", 7L))
+        .thenReturn(
+            new VersionStateDto(
+                "tenant-1",
+                7L,
+                VersionLifecycleState.PUBLISHED,
+                17L,
+                LocalDateTime.parse("2026-04-15T12:00:00")));
+
+    AtomicReference<GetVersionStateResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getVersionState(
+          GetVersionStateRequest.newBuilder().setTenantId("tenant-1").setVersionId(7L).build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(GetVersionStateResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+              throw new AssertionError(t);
+            }
+
+            @Override
+            public void onCompleted() {}
+          });
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals(17L, ref.get().getVersionState().getVersionStateEpoch());
+    assertEquals(
+        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+        ref.get().getVersionState().getVersionState());
   }
 
   @Test
