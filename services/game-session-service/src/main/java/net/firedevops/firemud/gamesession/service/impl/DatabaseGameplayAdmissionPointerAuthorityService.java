@@ -8,6 +8,7 @@ import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
@@ -67,6 +68,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
         pointerRepository
             .findByWorldSlugAndRealmSlug(mutation.worldSlug(), mutation.realmSlug())
             .orElseGet(GameplayAdmissionPointer::new);
+    enforceExpectedPointerVersion(pointer, mutation.expectedPointerVersion());
     long nextPointerVersion =
         pointer.getId() == null ? 1L : Math.max(pointer.getPointerVersion() + 1L, 1L);
     pointer.setWorldSlug(mutation.worldSlug());
@@ -173,6 +175,18 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
   private void requireText(String value, String message) {
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(message);
+    }
+  }
+
+  private void enforceExpectedPointerVersion(
+      GameplayAdmissionPointer pointer, Long expectedPointerVersion) {
+    if (expectedPointerVersion == null) {
+      return;
+    }
+    long currentPointerVersion = pointer.getId() == null ? 0L : pointer.getPointerVersion();
+    if (currentPointerVersion != expectedPointerVersion) {
+      throw new AdmissionPointerVersionMismatchException(
+          "expected_pointer_version does not match current pointer version");
     }
   }
 }

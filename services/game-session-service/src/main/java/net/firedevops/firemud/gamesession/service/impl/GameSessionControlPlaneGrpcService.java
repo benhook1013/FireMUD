@@ -11,6 +11,7 @@ import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
@@ -159,7 +160,8 @@ public final class GameSessionControlPlaneGrpcService
               request.getCharacterCreationPolicy(),
               request.getActorPrincipal(),
               request.getReason(),
-              request.getControlPlaneRequestId()));
+              request.getControlPlaneRequestId(),
+              request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null));
       AdmissionPointerControlPlaneEntry entry =
           gameplayAdmissionPointerAuthorityService
               .listPointerAudit(request.getWorldSlug(), request.getRealmSlug())
@@ -182,6 +184,14 @@ public final class GameSessionControlPlaneGrpcService
       SetAdmissionPointerResponse response =
           SetAdmissionPointerResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdmissionPointerVersionMismatchException ex) {
+      SetAdmissionPointerResponse response =
+          SetAdmissionPointerResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(meterRegistry, "POINTER_VERSION_MISMATCH", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

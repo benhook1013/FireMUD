@@ -9,11 +9,13 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.TickService;
@@ -182,6 +184,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setActorPrincipal("tester")
             .setReason("cutover")
             .setControlPlaneRequestId("req-1")
+            .setExpectedPointerVersion(2L)
             .build(),
         new NoopObserver<>() {
           @Override
@@ -192,6 +195,53 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("demo", responseRef.get().getPointer().getWorldSlug());
     assertEquals(3L, responseRef.get().getPointer().getPointerVersion());
+    Mockito.verify(authorityService)
+        .upsertPointer(
+            Mockito.argThat(mutation -> Objects.equals(mutation.expectedPointerVersion(), 2L)));
+  }
+
+  @Test
+  void setAdmissionPointerRejectsStaleExpectedVersion() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authorityService.upsertPointer(Mockito.any()))
+        .thenThrow(
+            new AdmissionPointerVersionMismatchException(
+                "expected_pointer_version does not match current pointer version"));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            authorityService,
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<SetAdmissionPointerResponse> responseRef = new AtomicReference<>();
+    service.setAdmissionPointer(
+        SetAdmissionPointerRequest.newBuilder()
+            .setWorldSlug("demo")
+            .setWorldDisplayName("Demo World")
+            .setRealmSlug("production")
+            .setRealmDisplayName("Live Realm")
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setVisible(true)
+            .setRequiresCharacterSelection(false)
+            .setStateScope("SHARED")
+            .setCharacterCreationPolicy("ALLOW_NEW")
+            .setActorPrincipal("tester")
+            .setReason("cutover")
+            .setControlPlaneRequestId("req-2")
+            .setExpectedPointerVersion(2L)
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(SetAdmissionPointerResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
   }
 
   @Test

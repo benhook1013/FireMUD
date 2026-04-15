@@ -13,4 +13,5 @@ public record GameplayAdmissionPointerMutation(
     String characterCreationPolicy,
     String actorPrincipal,
     String reason,
-    String controlPlaneRequestId) {}
+    String controlPlaneRequestId,
+    Long expectedPointerVersion) {}

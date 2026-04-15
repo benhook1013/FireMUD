@@ -55,7 +55,8 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
                 realm.getCharacterCreationPolicy().name(),
                 "system/bootstrap",
                 "Initial gameplay catalog bootstrap",
-                "bootstrap:" + world.getSlug() + ":" + realm.getSlug()));
+                "bootstrap:" + world.getSlug() + ":" + realm.getSlug(),
+                null));
       }
     }
   }

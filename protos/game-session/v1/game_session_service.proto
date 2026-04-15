@@ -299,6 +299,7 @@ message SetAdmissionPointerRequest {
   string actor_principal = 11;
   string reason = 12;
   string control_plane_request_id = 13;
+  optional int64 expected_pointer_version = 14;
 }
 
 message SetAdmissionPointerResponse {
