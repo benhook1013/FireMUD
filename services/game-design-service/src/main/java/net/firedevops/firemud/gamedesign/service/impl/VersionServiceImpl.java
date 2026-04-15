@@ -24,8 +24,10 @@ import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
+import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
+import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import org.slf4j.Logger;
@@ -50,6 +52,7 @@ public class VersionServiceImpl implements VersionService {
   private final ControlPlaneDigestService controlPlaneDigestService;
   private final VersionAssetArtifactService versionAssetArtifactService;
   private final PublishedReleaseBundleService publishedReleaseBundleService;
+  private final RecordedParticipantDigestService recordedParticipantDigestService;
 
   @Autowired
   public VersionServiceImpl(
@@ -62,7 +65,8 @@ public class VersionServiceImpl implements VersionService {
       PublishGateService publishGateService,
       ControlPlaneDigestService controlPlaneDigestService,
       VersionAssetArtifactService versionAssetArtifactService,
-      PublishedReleaseBundleService publishedReleaseBundleService) {
+      PublishedReleaseBundleService publishedReleaseBundleService,
+      RecordedParticipantDigestService recordedParticipantDigestService) {
     this.versionRepository = versionRepository;
     this.gameRepository = gameRepository;
     this.versionMapper = versionMapper;
@@ -73,6 +77,7 @@ public class VersionServiceImpl implements VersionService {
     this.controlPlaneDigestService = controlPlaneDigestService;
     this.versionAssetArtifactService = versionAssetArtifactService;
     this.publishedReleaseBundleService = publishedReleaseBundleService;
+    this.recordedParticipantDigestService = recordedParticipantDigestService;
   }
 
   @Override
@@ -102,6 +107,8 @@ public class VersionServiceImpl implements VersionService {
           publishGateService.collectFullVersionParticipantDigests(dto);
       publishAttemptService.recordParticipantDigests(publishWorkflowId, participantDigests);
       publishGateService.assertGatePassed(dto, participantDigests);
+      recordedParticipantDigestService.assertMatchesRecordedDigests(
+          dto.tenantId(), PublishType.FULL_VERSION, participantDigests);
       exportedManifest = assetExportService.exportAssets(tenantId, saved.getVersionNumber());
       exportedStateEpoch =
           versionAssetArtifactService
@@ -120,18 +127,21 @@ public class VersionServiceImpl implements VersionService {
           exportedStateEpoch,
           publishWorkflowId,
           exportedManifest.manifestHash());
+      recordedParticipantDigestService.recordVerifiedDigests(
+          dto.tenantId(), PublishType.FULL_VERSION, publishWorkflowId, participantDigests);
       publishAttemptService.markSucceeded(publishWorkflowId);
       return versionMapper.toDto(saved);
     } catch (RuntimeException ex) {
-      publishAttemptService.markFailed(publishWorkflowId, "PUBLISH_GATE_FAILED", ex.getMessage());
+      publishAttemptService.markFailed(
+          publishWorkflowId, publishFailureCode(ex), publishFailureMessage(ex));
       if (exportedManifest != null) {
         versionAssetArtifactService.markFailed(
             dto.tenantId(),
             dto.id(),
             publishWorkflowId,
             exportedManifest,
-            "PUBLISH_FAILED",
-            ex.getMessage());
+            publishFailureCode(ex),
+            publishFailureMessage(ex));
       }
       cleanupExportedAssets(tenantId, saved.getVersionNumber(), exportedManifest);
       versionRepository.delete(saved);
@@ -173,6 +183,8 @@ public class VersionServiceImpl implements VersionService {
           publishGateService.collectScriptPatchParticipantDigests(dto);
       publishAttemptService.recordParticipantDigests(publishWorkflowId, participantDigests);
       publishGateService.assertGatePassed(dto, participantDigests);
+      recordedParticipantDigestService.assertMatchesRecordedDigests(
+          dto.tenantId(), PublishType.SCRIPT_PATCH, participantDigests);
       runSafely(
           "notify script patch version update",
           () ->
@@ -182,10 +194,13 @@ public class VersionServiceImpl implements VersionService {
       saved.setVersionStateEpoch(saved.getVersionStateEpoch() + 1L);
       saved.setUpdatedAt(LocalDateTime.now());
       saved = versionRepository.save(saved);
+      recordedParticipantDigestService.recordVerifiedDigests(
+          dto.tenantId(), PublishType.SCRIPT_PATCH, publishWorkflowId, participantDigests);
       publishAttemptService.markSucceeded(publishWorkflowId);
       return versionMapper.toDto(saved);
     } catch (RuntimeException ex) {
-      publishAttemptService.markFailed(publishWorkflowId, "PUBLISH_GATE_FAILED", ex.getMessage());
+      publishAttemptService.markFailed(
+          publishWorkflowId, publishFailureCode(ex), publishFailureMessage(ex));
       versionRepository.delete(saved);
       throw ex;
     }
@@ -276,6 +291,17 @@ public class VersionServiceImpl implements VersionService {
             .map(Version::getVersionNumber)
             .orElse(0)
         + 1;
+  }
+
+  private String publishFailureCode(RuntimeException ex) {
+    if (ex instanceof PublishGateFailureException publishGateFailureException) {
+      return publishGateFailureException.failureCode().name();
+    }
+    return "PUBLISH_FAILED";
+  }
+
+  private String publishFailureMessage(RuntimeException ex) {
+    return ex.getMessage() == null ? publishFailureCode(ex) : ex.getMessage();
   }
 
   private Version requireTenantVersion(String tenantId, long versionId) {

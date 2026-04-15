@@ -12,6 +12,8 @@ import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetPurgeWorkflow;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionAssetPurgeWorkflowStatus;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPurgeWorkflowRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -28,6 +30,7 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
   private final VersionAssetArtifactRepository repository;
   private final VersionAssetPurgeWorkflowRepository purgeWorkflowRepository;
   private final VersionRepository versionRepository;
+  private final PublishedReleaseBundleRepository publishedReleaseBundleRepository;
   private final AssetExportService assetExportService;
   private final PublishedReleaseBundleService publishedReleaseBundleService;
   private final ObjectMapper objectMapper;
@@ -36,12 +39,14 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
       VersionAssetArtifactRepository repository,
       VersionAssetPurgeWorkflowRepository purgeWorkflowRepository,
       VersionRepository versionRepository,
+      PublishedReleaseBundleRepository publishedReleaseBundleRepository,
       AssetExportService assetExportService,
       PublishedReleaseBundleService publishedReleaseBundleService,
       ObjectMapper objectMapper) {
     this.repository = repository;
     this.purgeWorkflowRepository = purgeWorkflowRepository;
     this.versionRepository = versionRepository;
+    this.publishedReleaseBundleRepository = publishedReleaseBundleRepository;
     this.assetExportService = assetExportService;
     this.publishedReleaseBundleService = publishedReleaseBundleService;
     this.objectMapper = objectMapper;
@@ -146,17 +151,51 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
   public VersionAssetDeletionEligibilityDto canDeleteVersionAssets(
       String tenantId, long versionId) {
     VersionAssetArtifact artifact = requireArtifact(tenantId, versionId);
-    boolean deletable =
-        artifact.getArtifactState() == VersionAssetArtifactState.TOMBSTONED
-            || artifact.getArtifactState() == VersionAssetArtifactState.PURGE_FAILED;
+    if (artifact.getArtifactState() != VersionAssetArtifactState.TOMBSTONED
+        && artifact.getArtifactState() != VersionAssetArtifactState.PURGE_FAILED) {
+      return new VersionAssetDeletionEligibilityDto(
+          artifact.getTenantId(),
+          artifact.getVersionId(),
+          false,
+          artifact.getArtifactState().name(),
+          artifact.getStateEpoch(),
+          "VERSION_ASSET_NOT_DELETABLE",
+          "version assets must be tombstoned before purge can begin");
+    }
+    var version =
+        versionRepository.findById(versionId).filter(found -> found.getTenantId().equals(tenantId));
+    boolean hasPublishedReleaseBundle =
+        publishedReleaseBundleRepository
+            .findByTenantIdAndVersionId(tenantId, versionId)
+            .isPresent();
+    if (version.isPresent() && version.get().getVersionState() != VersionLifecycleState.RETIRED) {
+      return new VersionAssetDeletionEligibilityDto(
+          artifact.getTenantId(),
+          artifact.getVersionId(),
+          false,
+          artifact.getArtifactState().name(),
+          artifact.getStateEpoch(),
+          "VERSION_STATE_NOT_RETIRED",
+          "version assets cannot be purged until the version is retired");
+    }
+    if (version.isEmpty() && hasPublishedReleaseBundle) {
+      return new VersionAssetDeletionEligibilityDto(
+          artifact.getTenantId(),
+          artifact.getVersionId(),
+          false,
+          artifact.getArtifactState().name(),
+          artifact.getStateEpoch(),
+          "PUBLISHED_RELEASE_BUNDLE_STILL_PRESENT",
+          "version assets cannot be purged while an attested release bundle still exists without version state");
+    }
     return new VersionAssetDeletionEligibilityDto(
         artifact.getTenantId(),
         artifact.getVersionId(),
-        deletable,
+        true,
         artifact.getArtifactState().name(),
         artifact.getStateEpoch(),
-        deletable ? null : "VERSION_ASSET_NOT_DELETABLE",
-        deletable ? null : "version assets must be tombstoned before purge can begin");
+        null,
+        null);
   }
 
   @Override

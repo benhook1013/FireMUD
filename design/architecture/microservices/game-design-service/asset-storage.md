@@ -410,6 +410,8 @@ Deletion-eligibility authority:
 
 - Game Design Service is the sole authority for deletion eligibility checks through `CanDeleteVersionAssets(tenantId, versionId)`.
 - The check must validate all of the following before returning deletable:
+  - if the target version row still exists, it is already in `RETIRED` state,
+  - there is no dangling `published_release_bundle` attestation with no corresponding version-state row,
   - no non-Retired `version_asset` references remain,
   - no reachable `revision_asset` / branch references require retained bytes,
   - no normalized template or launch metadata still references the version prefix.

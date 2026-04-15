@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
+import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -24,8 +25,10 @@ import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
+import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
+import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,6 +46,7 @@ class VersionServiceImplTest {
   @Mock private ControlPlaneDigestService controlPlaneDigestService;
   @Mock private VersionAssetArtifactService versionAssetArtifactService;
   @Mock private PublishedReleaseBundleService publishedReleaseBundleService;
+  @Mock private RecordedParticipantDigestService recordedParticipantDigestService;
 
   private VersionServiceImpl service;
 
@@ -61,7 +65,8 @@ class VersionServiceImplTest {
             publishGateService,
             controlPlaneDigestService,
             versionAssetArtifactService,
-            publishedReleaseBundleService);
+            publishedReleaseBundleService,
+            recordedParticipantDigestService);
   }
 
   @Test
@@ -177,6 +182,10 @@ class VersionServiceImplTest {
             any(ExportedAssetManifest.class),
             any(String.class),
             any(List.class));
+    verify(recordedParticipantDigestService)
+        .assertMatchesRecordedDigests(any(String.class), any(), any(List.class));
+    verify(recordedParticipantDigestService)
+        .recordVerifiedDigests(any(String.class), any(), any(String.class), any(List.class));
   }
 
   @Test
@@ -238,6 +247,49 @@ class VersionServiceImplTest {
     assertEquals(VersionLifecycleState.PUBLISHED, dto.versionState());
     verify(versionRepository, times(2)).save(any(Version.class));
     verify(scriptingClient).notifyScriptVersionUpdate("tenant-1", "patch-2", java.util.List.of());
+    verify(recordedParticipantDigestService)
+        .recordVerifiedDigests(any(String.class), any(), any(String.class), any(List.class));
+  }
+
+  @Test
+  void publishVersionPropagatesTypedPublishGateFailures() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+    when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
+        .thenReturn(Optional.empty());
+
+    Version savedDraft = new Version();
+    savedDraft.setId(10L);
+    savedDraft.setTenantId("tenant-1");
+    savedDraft.setVersionNumber(1);
+    savedDraft.setVersionState(VersionLifecycleState.DRAFT);
+    savedDraft.setVersionStateEpoch(1L);
+    savedDraft.setUpdatedAt(java.time.LocalDateTime.now());
+    when(versionRepository.save(any(Version.class))).thenReturn(savedDraft);
+    when(publishGateService.collectFullVersionParticipantDigests(any(VersionDto.class)))
+        .thenReturn(
+            List.of(
+                new PublishParticipantDigestDto(
+                    "GAME_DESIGN_CONTROL_PLANE", "10", "version:10", "digest-1", 1, null, null)));
+    org.mockito.Mockito.doThrow(
+            new PublishGateFailureException(
+                PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH,
+                "recorded digest mismatch"))
+        .when(recordedParticipantDigestService)
+        .assertMatchesRecordedDigests(any(String.class), any(), any(List.class));
+
+    PublishGateFailureException thrown =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            PublishGateFailureException.class, () -> service.publishVersion("tenant-1", "notes"));
+
+    assertEquals(PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH, thrown.failureCode());
+    verify(publishAttemptService)
+        .markFailed(
+            any(String.class),
+            org.mockito.ArgumentMatchers.eq("RECORDED_CONTENT_DIGEST_MISMATCH"),
+            org.mockito.ArgumentMatchers.eq("recorded digest mismatch"));
   }
 
   @Test

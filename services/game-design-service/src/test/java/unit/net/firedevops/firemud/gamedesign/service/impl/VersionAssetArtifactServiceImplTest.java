@@ -14,6 +14,8 @@ import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetPurgeWorkflow;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionAssetPurgeWorkflowStatus;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPurgeWorkflowRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -29,6 +31,7 @@ class VersionAssetArtifactServiceImplTest {
   @Mock private VersionAssetArtifactRepository repository;
   @Mock private VersionAssetPurgeWorkflowRepository purgeWorkflowRepository;
   @Mock private VersionRepository versionRepository;
+  @Mock private PublishedReleaseBundleRepository publishedReleaseBundleRepository;
   @Mock private AssetExportService assetExportService;
   @Mock private PublishedReleaseBundleService publishedReleaseBundleService;
 
@@ -42,6 +45,7 @@ class VersionAssetArtifactServiceImplTest {
             repository,
             purgeWorkflowRepository,
             versionRepository,
+            publishedReleaseBundleRepository,
             assetExportService,
             publishedReleaseBundleService,
             new tools.jackson.databind.ObjectMapper());
@@ -79,6 +83,7 @@ class VersionAssetArtifactServiceImplTest {
     version.setId(7L);
     version.setTenantId("tenant-1");
     version.setVersionNumber(8);
+    version.setVersionState(VersionLifecycleState.RETIRED);
     when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
     when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
         .thenReturn(
@@ -123,6 +128,7 @@ class VersionAssetArtifactServiceImplTest {
     version.setId(7L);
     version.setTenantId("tenant-1");
     version.setVersionNumber(8);
+    version.setVersionState(VersionLifecycleState.RETIRED);
     when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
 
     var started = service.beginPurgeVersionAssets("tenant-1", 7L, 5L);
@@ -145,5 +151,26 @@ class VersionAssetArtifactServiceImplTest {
     assertEquals(VersionAssetPurgeWorkflowStatus.SUCCEEDED.name(), finished.workflowStatus());
     org.mockito.Mockito.verify(assetExportService)
         .deleteExportedAssets("tenant-1", 8, List.of("logo.png", "manifest.json"));
+  }
+
+  @Test
+  void canDeleteFailsClosedWhenVersionIsNotRetired() {
+    VersionAssetArtifact artifact = new VersionAssetArtifact();
+    artifact.setTenantId("tenant-1");
+    artifact.setVersionId(7L);
+    artifact.setArtifactState(VersionAssetArtifactState.TOMBSTONED);
+    artifact.setStateEpoch(5L);
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(artifact));
+
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
+
+    var eligibility = service.canDeleteVersionAssets("tenant-1", 7L);
+
+    assertEquals(false, eligibility.deletable());
+    assertEquals("VERSION_STATE_NOT_RETIRED", eligibility.failureCode());
   }
 }

@@ -9,8 +9,10 @@ import net.firedevops.firemud.gamedesign.client.WorldManagementClient;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
+import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
+import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import org.springframework.stereotype.Service;
 
@@ -76,7 +78,8 @@ public class PublishGateServiceImpl implements PublishGateService {
               .filter(digest -> !digest.succeeded())
               .findFirst()
               .orElseThrow();
-      throw new IllegalStateException(
+      throw new PublishGateFailureException(
+          PublishGateFailureCode.PARTICIPANT_UNAVAILABLE,
           "publish gate failed for "
               + failed.participantKey()
               + ": "
@@ -87,20 +90,24 @@ public class PublishGateServiceImpl implements PublishGateService {
     participantDigests.forEach(
         digest -> {
           if (!expectedScope.equals(digest.scopeValue())) {
-            throw new IllegalStateException(
+            throw new PublishGateFailureException(
+                PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH,
                 "publish gate failed: wrong scope from " + digest.participantKey());
           }
           if (digest.digestSchemaVersion() == null
               || digest.digestSchemaVersion() != SUPPORTED_DIGEST_SCHEMA_VERSION) {
-            throw new IllegalStateException(
+            throw new PublishGateFailureException(
+                PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA,
                 "publish gate failed: unsupported digest schema from " + digest.participantKey());
           }
           if (digest.contentDigest() == null || digest.contentDigest().isBlank()) {
-            throw new IllegalStateException(
+            throw new PublishGateFailureException(
+                PublishGateFailureCode.MISSING_CONTENT_DIGEST,
                 "publish gate failed: missing content digest from " + digest.participantKey());
           }
           if (digest.appliedCommitId() == null || digest.appliedCommitId().isBlank()) {
-            throw new IllegalStateException(
+            throw new PublishGateFailureException(
+                PublishGateFailureCode.MISSING_APPLIED_COMMIT,
                 "publish gate failed: missing applied commit from " + digest.participantKey());
           }
         });
@@ -110,7 +117,9 @@ public class PublishGateServiceImpl implements PublishGateService {
             .distinct()
             .count();
     if (distinctAppliedCommitIds != 1) {
-      throw new IllegalStateException("publish gate failed: applied commit mismatch");
+      throw new PublishGateFailureException(
+          PublishGateFailureCode.APPLIED_COMMIT_MISMATCH,
+          "publish gate failed: applied commit mismatch");
     }
   }
 

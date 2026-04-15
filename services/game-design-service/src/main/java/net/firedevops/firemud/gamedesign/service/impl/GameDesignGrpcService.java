@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
+import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
@@ -133,6 +134,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       builder.setError(
           GrpcAppErrors.error(
               meterRegistry, logger, "PublishVersion", "INVALID_ARGUMENT", ex.getMessage()));
+    } catch (PublishGateFailureException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "PublishVersion", ex.failureCode().name(), ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "PublishVersion", ex));
     }
@@ -171,6 +176,14 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               logger,
               "PublishScriptPatchVersion",
               "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (PublishGateFailureException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "PublishScriptPatchVersion",
+              ex.failureCode().name(),
               ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(

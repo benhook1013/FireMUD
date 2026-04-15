@@ -151,6 +151,8 @@ Rules:
 - The publish orchestrator must not expose a half-complete success state between "all digests matched" and "release attestation row exists". Until `published_release_bundle` commits successfully, the version remains non-launchable and consumers must observe it exactly as non-attested.
 - Exact-bytes repair is not a publish-attestation rewrite. If a Published/Active release cannot reproduce the attested digest/manifests/artifact bytes exactly, normal repair must fail closed and require either publishing a new `versionId` or a future explicit re-attestation workflow with its own audit and immutability contract.
 - Any future re-attestation workflow must be modeled as a distinct control-plane operation, not as a hidden side effect of `PublishVersion` retry, `ExportAssets` retry, or ordinary repair tooling.
+- Successful publish attempts record a Game Design-owned participant-digest baseline keyed by `(tenantId, publishType, participantKey, appliedCommitId)`. Any later publish attempt that observes the same applied commit with a different scope, digest schema, or content digest must fail closed before attestation is written.
+- Publish APIs surface typed control-plane failure codes for gate failures (for example `PARTICIPANT_UNAVAILABLE`, `PARTICIPANT_SCOPE_MISMATCH`, `UNSUPPORTED_DIGEST_SCHEMA`, `APPLIED_COMMIT_MISMATCH`, `RECORDED_CONTENT_DIGEST_MISMATCH`) rather than collapsing them into one generic publish failure outcome.
 
 ### Digest Schema Migration
 
