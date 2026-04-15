@@ -390,6 +390,8 @@ public class AccountServiceImpl implements AccountService {
                 scopeContext.tenantId(),
                 "gameInstanceId",
                 scopeContext.gameInstanceId(),
+                "pointerVersion",
+                scopeContext.pointerVersion(),
                 "realmSlug",
                 scopeContext.realmSlug(),
                 "worldSlug",

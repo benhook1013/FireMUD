@@ -163,7 +163,16 @@ class LoginCommandHandlerTest {
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    77L, 22L, "demo", "production", 1L, "scope-1", "jti-1", "req-1", "gateway-1")));
+                    77L,
+                    22L,
+                    "demo",
+                    "production",
+                    1L,
+                    0L,
+                    "scope-1",
+                    "jti-1",
+                    "req-1",
+                    "gateway-1")));
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);

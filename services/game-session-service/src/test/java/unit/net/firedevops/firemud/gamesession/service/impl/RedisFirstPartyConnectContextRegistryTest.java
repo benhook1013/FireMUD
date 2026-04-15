@@ -56,7 +56,7 @@ class RedisFirstPartyConnectContextRegistryTest {
   void registerStoresContextWithShortTtl() {
     FirstPartyConnectContext context =
         new FirstPartyConnectContext(
-            77L, 22L, "demo", "production", 41L, "scope-1", "jti-1", "req-1", "gateway-1");
+            77L, 22L, "demo", "production", 41L, 17L, "scope-1", "jti-1", "req-1", "gateway-1");
 
     registry.register(91L, context);
 
@@ -73,7 +73,7 @@ class RedisFirstPartyConnectContextRegistryTest {
   void unregisterRemovesStoredContext() {
     FirstPartyConnectContext context =
         new FirstPartyConnectContext(
-            77L, 22L, "demo", "production", 41L, "scope-1", "jti-1", "req-1", "gateway-1");
+            77L, 22L, "demo", "production", 41L, 17L, "scope-1", "jti-1", "req-1", "gateway-1");
     registry.register(91L, context);
 
     registry.unregister(91L);

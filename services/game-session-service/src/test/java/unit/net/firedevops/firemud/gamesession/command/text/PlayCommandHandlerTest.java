@@ -202,7 +202,16 @@ class PlayCommandHandlerTest {
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    123L, 22L, "demo", "production", 41L, "scope-1", "jti-1", "req-1", "gw-1")));
+                    123L,
+                    22L,
+                    "demo",
+                    "production",
+                    41L,
+                    0L,
+                    "scope-1",
+                    "jti-1",
+                    "req-1",
+                    "gw-1")));
 
     PlayCommandHandlingResult result =
         handler.handle(
@@ -225,7 +234,35 @@ class PlayCommandHandlerTest {
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    123L, 22L, "sandbox", "production", 1L, "scope-1", "jti-1", "req-1", "gw-1")));
+                    123L,
+                    22L,
+                    "sandbox",
+                    "production",
+                    1L,
+                    1L,
+                    "scope-1",
+                    "jti-1",
+                    "req-1",
+                    "gw-1")));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+  }
+
+  @Test
+  void firstPartyPlayRejectsStalePointerVersion() {
+    gameplayCatalogProperties.getWorlds().get(0).getRealms().get(0).setPointerVersion(9L);
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 1L);
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    123L, 22L, "demo", "production", 1L, 8L, "scope-1", "jti-1", "req-1", "gw-1")));
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -339,6 +376,12 @@ class PlayCommandHandlerTest {
 
   @Test
   void firstPartyPlayAcceptsNonProductionRealmWhenScopeMatches() {
+    gameplayCatalogProperties
+        .getWorlds()
+        .get(1)
+        .getRealms()
+        .get(1)
+        .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 41L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -346,7 +389,8 @@ class PlayCommandHandlerTest {
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    123L, 22L, "sandbox", "preview", 41L, "scope-1", "jti-1", "req-1", "gw-1")));
+                    123L, 22L, "sandbox", "preview", 41L, 1L, "scope-1", "jti-1", "req-1",
+                    "gw-1")));
     when(entityManagementClient.findCharacterByName(
             "22", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED, "Sora"))
         .thenReturn(

@@ -291,6 +291,7 @@ public class PlayCommandHandler {
             connectContext ->
                 connectContext.tenantId() != selectedRealm.getTenantId()
                     || connectContext.gameInstanceId() != selectedRealm.getGameInstanceId()
+                    || connectContext.pointerVersion() != selectedRealm.getPointerVersion()
                     || (StringUtils.hasText(connectContext.worldSlug())
                         && !selectedWorld.getSlug().equalsIgnoreCase(connectContext.worldSlug()))
                     || (StringUtils.hasText(connectContext.realmSlug())

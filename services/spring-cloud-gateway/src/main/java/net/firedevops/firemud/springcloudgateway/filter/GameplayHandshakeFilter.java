@@ -113,6 +113,7 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
       String worldSlug = requiredClaim(payload, "worldSlug");
       String realmSlug = requiredClaim(payload, "realmSlug");
       String gameInstanceId = requiredClaim(payload, "gameInstanceId");
+      String pointerVersion = requiredClaim(payload, "pointerVersion");
       String connectScopeId = requiredClaim(payload, "connectScopeId");
       String requestId = requiredClaim(payload, "requestId");
       String jti = requiredClaim(payload, "jti");
@@ -135,6 +136,7 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
                                 Map.entry("worldSlug", worldSlug),
                                 Map.entry("realmSlug", realmSlug),
                                 Map.entry("gameInstanceId", gameInstanceId),
+                                Map.entry("pointerVersion", pointerVersion),
                                 Map.entry("connectScopeId", connectScopeId),
                                 Map.entry("connectTokenJti", jti),
                                 Map.entry("connectRequestId", requestId),

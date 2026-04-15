@@ -377,14 +377,12 @@ class AccountServiceImplTest {
     assertNotNull(result.jti());
     assertNotNull(result.issuedAt());
     assertNotNull(result.expiresAt());
-    assertEquals(
-        "gameplay-connect",
+    var connectTokenClaims =
         new JwtUtil("mysecretkey123456789012345678901", 30000L)
             .parseToken(result.connectToken())
-            .getPayload()
-            .getAudience()
-            .iterator()
-            .next());
+            .getPayload();
+    assertEquals("gameplay-connect", connectTokenClaims.getAudience().iterator().next());
+    assertEquals(17L, ((Number) connectTokenClaims.get("pointerVersion")).longValue());
     org.mockito.Mockito.verify(sessionService)
         .storeSession(
             org.mockito.ArgumentMatchers.eq(7L),

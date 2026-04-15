@@ -8,6 +8,7 @@ public record FirstPartyConnectContext(
     String worldSlug,
     String realmSlug,
     long gameInstanceId,
+    long pointerVersion,
     String connectScopeId,
     String connectTokenJti,
     String connectRequestId,

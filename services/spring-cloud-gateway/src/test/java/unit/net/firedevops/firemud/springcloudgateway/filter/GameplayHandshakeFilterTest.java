@@ -75,6 +75,7 @@ class GameplayHandshakeFilterTest {
                     "worldSlug", "demo",
                     "realmSlug", "production",
                     "gameInstanceId", "42",
+                    "pointerVersion", "17",
                     "connectScopeId", "scope-1",
                     "requestId", "req-1",
                     "jti", "jti-1"));
@@ -112,6 +113,7 @@ class GameplayHandshakeFilterTest {
                     "worldSlug", "demo",
                     "realmSlug", "production",
                     "gameInstanceId", "42",
+                    "pointerVersion", "18",
                     "connectScopeId", "scope-2",
                     "requestId", "req-2",
                     "jti", "jti-2"));
@@ -138,6 +140,7 @@ class GameplayHandshakeFilterTest {
             .getPayload();
     assertThat(connectContextClaims.get("worldSlug")).isEqualTo("demo");
     assertThat(connectContextClaims.get("realmSlug")).isEqualTo("production");
+    assertThat(connectContextClaims.get("pointerVersion")).isEqualTo("18");
     assertThat(connectContextClaims.get("connectScopeId")).isEqualTo("scope-2");
     assertThat(connectContextClaims.get("connectRequestId")).isEqualTo("req-2");
     assertThat(
@@ -197,6 +200,7 @@ class GameplayHandshakeFilterTest {
                 "worldSlug", "demo",
                 "realmSlug", "production",
                 "gameInstanceId", "42",
+                "pointerVersion", "17",
                 "connectScopeId", "scope-expired",
                 "requestId", "req-expired",
                 "jti", "jti-expired"));
@@ -240,6 +244,7 @@ class GameplayHandshakeFilterTest {
                     "worldSlug", "demo",
                     "realmSlug", "production",
                     "gameInstanceId", "42",
+                    "pointerVersion", "17",
                     "connectScopeId", "scope-replay",
                     "requestId", "req-replay",
                     "jti", "jti-replay"));
@@ -282,6 +287,7 @@ class GameplayHandshakeFilterTest {
                     "worldSlug", "demo",
                     "realmSlug", "production",
                     "gameInstanceId", "42",
+                    "pointerVersion", "17",
                     "connectScopeId", "scope-no-redis",
                     "requestId", "req-no-redis",
                     "jti", "jti-no-redis"));

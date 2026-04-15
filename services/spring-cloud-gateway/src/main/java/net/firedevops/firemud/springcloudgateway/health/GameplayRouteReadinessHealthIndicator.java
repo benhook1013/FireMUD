@@ -92,6 +92,8 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
                   "production",
                   "gameInstanceId",
                   PROBE_GAME_INSTANCE_ID,
+                  "pointerVersion",
+                  "0",
                   "connectScopeId",
                   "readiness-scope",
                   "requestId",

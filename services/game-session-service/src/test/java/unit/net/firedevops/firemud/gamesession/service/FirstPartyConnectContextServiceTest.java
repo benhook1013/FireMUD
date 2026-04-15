@@ -28,6 +28,7 @@ class FirstPartyConnectContextServiceTest {
     when(claims.get("worldSlug")).thenReturn("demo");
     when(claims.get("realmSlug")).thenReturn("production");
     when(claims.get("gameInstanceId")).thenReturn("9");
+    when(claims.get("pointerVersion")).thenReturn(17L);
     when(claims.get("connectScopeId")).thenReturn("scope-1");
     when(claims.get("connectTokenJti")).thenReturn("jti");
     when(claims.get("connectRequestId")).thenReturn("request-connect-1");
@@ -43,6 +44,7 @@ class FirstPartyConnectContextServiceTest {
     assertEquals("demo", context.worldSlug());
     assertEquals("production", context.realmSlug());
     assertEquals(9L, context.gameInstanceId());
+    assertEquals(17L, context.pointerVersion());
     assertEquals("scope-1", context.connectScopeId());
     assertEquals("jti", context.connectTokenJti());
     assertEquals("request-connect-1", context.connectRequestId());
