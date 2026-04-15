@@ -24,7 +24,35 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
   }
 
   @Override
-  public ScriptDraftDesignDigest getDraftDesignDigest(String tenantId, String scriptPatchVersion) {
+  public ScriptDraftDesignDigest getDraftDesignDigestForVersion(String tenantId, String versionId) {
+    long tenantKey = Long.parseLong(tenantId);
+    List<Map<String, Object>> scripts =
+        repository.findByTenantIdOrderByNameAscScriptVersionAsc(tenantKey).stream()
+            .map(
+                script ->
+                    Map.<String, Object>of(
+                        "name", script.getName(),
+                        "version", script.getScriptVersion(),
+                        "definition", script.getDefinition()))
+            .toList();
+    try {
+      String canonicalJson =
+          objectMapper.writeValueAsString(
+              Map.of("tenantId", tenantId, "versionId", versionId, "scripts", scripts));
+      return new ScriptDraftDesignDigest(
+          tenantId,
+          versionId,
+          "version:" + versionId,
+          sha256(canonicalJson),
+          DIGEST_SCHEMA_VERSION);
+    } catch (Exception ex) {
+      throw new IllegalStateException("failed to compute automation script digest", ex);
+    }
+  }
+
+  @Override
+  public ScriptDraftDesignDigest getDraftDesignDigestForScriptPatch(
+      String tenantId, String scriptPatchVersion) {
     long tenantKey = Long.parseLong(tenantId);
     List<Map<String, Object>> scripts =
         repository

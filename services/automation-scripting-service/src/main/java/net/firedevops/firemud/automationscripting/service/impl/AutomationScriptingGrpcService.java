@@ -272,12 +272,15 @@ public class AutomationScriptingGrpcService
       StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
     try {
       var digest =
-          scriptDesignDigestService.getDraftDesignDigest(
-              request.getTenantId(), request.getScriptPatchVersion());
+          request.getScopeCase() == GetDraftDesignDigestRequest.ScopeCase.VERSION_ID
+              ? scriptDesignDigestService.getDraftDesignDigestForVersion(
+                  request.getTenantId(), request.getVersionId())
+              : scriptDesignDigestService.getDraftDesignDigestForScriptPatch(
+                  request.getTenantId(), request.getScriptPatchVersion());
       responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()
               .setTenantId(digest.tenantId())
-              .setScriptPatchVersion(digest.scriptPatchVersion())
+              .setScopeValue(digest.scopeValue())
               .setAppliedCommitId(digest.appliedCommitId())
               .setContentDigest(digest.contentDigest())
               .setDigestSchemaVersion(digest.digestSchemaVersion())

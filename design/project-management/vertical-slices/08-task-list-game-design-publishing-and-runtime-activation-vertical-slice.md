@@ -19,7 +19,7 @@ That is no longer just planning work: the family is now active in code.
 - `08.1` now has a live immutable release-bundle attestation seam in `game-design-service`;
 - the canonical publish-attempt / participant-observation framework is also now live;
 - script-patch publish already uses that same framework with real Automation & Scripting plus Game Design control-plane digests;
-- full-version publish still fails closed until the missing required domain digest participants exist, which keeps the family honest instead of pretending the gate is complete.
+- full-version publish now also uses the real domain participant matrix instead of placeholder missing-participant failures, while remaining follow-through is recorded-digest comparison and deeper target-state data modeling rather than absent participant coverage.
 
 ## Why This Slice Exists
 

@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
+import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
@@ -20,6 +21,8 @@ import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
+import net.firedevops.firemud.entitymanagement.v1.GetDraftDesignDigestRequest;
+import net.firedevops.firemud.entitymanagement.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
@@ -55,11 +58,14 @@ class EntityManagementGrpcServiceTest {
       InventoryService inventoryService,
       RoomEntityService roomEntityService,
       io.micrometer.core.instrument.MeterRegistry meterRegistry) {
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
     SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
     ContainerService containerService = Mockito.mock(ContainerService.class);
     return new EntityManagementGrpcService(
         pingService,
         characterService,
+        digestService,
         equipmentService,
         inventoryService,
         containerService,
@@ -75,10 +81,13 @@ class EntityManagementGrpcServiceTest {
       ContainerService containerService,
       RoomEntityService roomEntityService,
       io.micrometer.core.instrument.MeterRegistry meterRegistry) {
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
     SessionContext.clear();
     return new EntityManagementGrpcService(
         pingService,
         characterService,
+        digestService,
         equipmentService,
         inventoryService,
         containerService,
@@ -94,15 +103,65 @@ class EntityManagementGrpcServiceTest {
       ContainerService containerService,
       RoomEntityService roomEntityService,
       io.micrometer.core.instrument.MeterRegistry meterRegistry) {
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
     SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
     return new EntityManagementGrpcService(
         pingService,
         characterService,
+        digestService,
         equipmentService,
         inventoryService,
         containerService,
         roomEntityService,
         meterRegistry);
+  }
+
+  @Test
+  void getDraftDesignDigestReturnsVersionScopedDigest() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    var meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
+    Mockito.when(digestService.getDraftDesignDigest("1", "7"))
+        .thenReturn(
+            new EntityDraftDesignDigestService.EntityDraftDesignDigest(
+                "1", "7", "version:7", "digest-entity", 1));
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            digestService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            meterRegistry);
+
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    service.getDraftDesignDigest(
+        GetDraftDesignDigestRequest.newBuilder().setTenantId("1").setVersionId("7").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetDraftDesignDigestResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("7", ref.get().getScopeValue());
+    assertEquals("version:7", ref.get().getAppliedCommitId());
   }
 
   @Test
@@ -548,6 +607,8 @@ class EntityManagementGrpcServiceTest {
   void queryInventoryReturnsPermissionDeniedWhenTenantAccessFails() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
     EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     ContainerService containerService = Mockito.mock(ContainerService.class);
@@ -558,6 +619,7 @@ class EntityManagementGrpcServiceTest {
         new EntityManagementGrpcService(
             pingService,
             characterService,
+            digestService,
             equipmentService,
             inventoryService,
             containerService,

@@ -14,6 +14,7 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -864,12 +865,31 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("spring.datasource.username", POSTGRES.getUsername());
     props.put("spring.datasource.password", POSTGRES.getPassword());
     props.put("spring.jpa.hibernate.ddl-auto", "none");
+    props.put("spring.flyway.enabled", "true");
+    props.put("spring.flyway.locations", "filesystem:" + gameSessionMigrationDir());
     props.put(
         "spring.autoconfigure.exclude",
         "org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,"
             + "org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,"
             + "org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration");
     return props;
+  }
+
+  private static String gameSessionMigrationDir() {
+    return resolveModuleMigrationDir("game-session-service").toString();
+  }
+
+  private static Path resolveModuleMigrationDir(String moduleName) {
+    Path current = Path.of("").toAbsolutePath().normalize();
+    while (current != null) {
+      Path candidate =
+          current.resolve("services").resolve(moduleName).resolve("src/main/resources/db/migration");
+      if (candidate.toFile().exists()) {
+        return candidate;
+      }
+      current = current.getParent();
+    }
+    throw new IllegalStateException("Could not resolve migration directory for " + moduleName);
   }
 
   private void seedLiveTargetSession() {

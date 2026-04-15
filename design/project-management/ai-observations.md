@@ -80,3 +80,13 @@ Entry format:
   - Context: landing `08.3` launch-descriptor/preflight changes while validating tcp-proxy and game-session cross-service proofs
   - Observation: several cross-service suites run `game-session-service` under the `test` profile with Flyway disabled and then hand-create `game_instances`, so the new launch-descriptor columns existed in the real service schema but not in the test-only manual table definitions, causing misleading websocket/login failures far away from the actual contract change
   - Expected pattern: cross-service suites that bypass migrations should derive runtime-table setup from one shared helper or fixture that tracks the canonical entity shape, rather than duplicating hand-written `CREATE TABLE` fragments in each test class
+
+- `2026-04-15`: Repo-wide migration scanners must tolerate partially populated `build/` trees
+  - Context: running the required final `./gradlew check` after the `08.1` digest-participant batch
+  - Observation: `dev-tools/check-flyway-versions.py` walked `services/**` broadly enough that a missing generated directory under `services/account-service/build/resources/main/db` raised `FileNotFoundError` and failed the whole build, even though the actual migration inputs live under source trees and build output population is intentionally task-dependent
+  - Expected pattern: repo-wide source scanners should either ignore `build/` trees or gracefully skip disappearing/generated directories so validation reflects source-state invariants instead of incidental task ordering
+
+- `2026-04-15`: Nested cross-service migration helpers must resolve the target module from repo root, not the host test module
+  - Context: fixing `:tcp-proxy-service:crossServiceTest` after `game-session-service` gained `V7`/`V8` migrations for launch descriptors and admission-pointer authority
+  - Observation: a fallback helper that returned `src/main/resources/db/migration` from the current working directory silently pointed the nested Game Session app at `tcp-proxy-service`'s own migration folder, so Flyway validated and applied only `V1__init.sql` and the failure showed up later as missing Game Session tables
+  - Expected pattern: nested-service harnesses should walk up to repo root and then target `services/<module>/src/main/resources/db/migration` explicitly, so Gradle's per-module working directory does not redirect Flyway to an unrelated service schema

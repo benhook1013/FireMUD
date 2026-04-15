@@ -11,6 +11,8 @@ import net.firedevops.firemud.automationscripting.service.PingService;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
 import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
+import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestRequest;
+import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.automationscripting.v1.PingRequest;
 import net.firedevops.firemud.automationscripting.v1.PingResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -18,6 +20,47 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class AutomationScriptingGrpcServiceTest {
+  @Test
+  void getDraftDesignDigestSupportsVersionScope() {
+    PingService pingService = Mockito.mock(PingService.class);
+    ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
+    ScriptDesignDigestService scriptDesignDigestService =
+        Mockito.mock(ScriptDesignDigestService.class);
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
+    Mockito.when(scriptDesignDigestService.getDraftDesignDigestForVersion("1", "7"))
+        .thenReturn(
+            new ScriptDesignDigestService.ScriptDraftDesignDigest(
+                "1", "7", "version:7", "digest-script", 1));
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            pingService,
+            scriptService,
+            scriptDesignDigestService,
+            versionService,
+            formationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    service.getDraftDesignDigest(
+        GetDraftDesignDigestRequest.newBuilder().setTenantId("1").setVersionId("7").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetDraftDesignDigestResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("7", ref.get().getScopeValue());
+    assertEquals("version:7", ref.get().getAppliedCommitId());
+  }
+
   @Test
   void pingReturnsPong() {
     PingService pingService = Mockito.mock(PingService.class);

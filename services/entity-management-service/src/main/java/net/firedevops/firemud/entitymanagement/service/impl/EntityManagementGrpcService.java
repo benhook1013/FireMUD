@@ -14,6 +14,7 @@ import net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
+import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
@@ -28,6 +29,8 @@ import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
+import net.firedevops.firemud.entitymanagement.v1.GetDraftDesignDigestRequest;
+import net.firedevops.firemud.entitymanagement.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
@@ -71,6 +74,7 @@ public class EntityManagementGrpcService
   private static final Logger logger = LoggerFactory.getLogger(EntityManagementGrpcService.class);
   private final PingService pingService;
   private final CharacterService characterService;
+  private final EntityDraftDesignDigestService entityDraftDesignDigestService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -97,6 +101,7 @@ public class EntityManagementGrpcService
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
+      EntityDraftDesignDigestService entityDraftDesignDigestService,
       EquipmentService equipmentService,
       InventoryService inventoryService,
       ContainerService containerService,
@@ -104,11 +109,65 @@ public class EntityManagementGrpcService
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.characterService = characterService;
+    this.entityDraftDesignDigestService = entityDraftDesignDigestService;
     this.equipmentService = equipmentService;
     this.inventoryService = inventoryService;
     this.containerService = containerService;
     this.roomEntityService = roomEntityService;
     this.meterRegistry = meterRegistry;
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.getDraftDesignDigest")
+  public void getDraftDesignDigest(
+      GetDraftDesignDigestRequest request,
+      StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
+    try {
+      if (request.getScopeCase() != GetDraftDesignDigestRequest.ScopeCase.VERSION_ID) {
+        responseObserver.onNext(
+            GetDraftDesignDigestResponse.newBuilder()
+                .setError(
+                    GrpcAppErrors.error(
+                        meterRegistry,
+                        logger,
+                        "GetDraftDesignDigest",
+                        "UNSUPPORTED_SCOPE",
+                        "entity management supports version_id scope only"))
+                .build());
+        responseObserver.onCompleted();
+        return;
+      }
+      var digest =
+          entityDraftDesignDigestService.getDraftDesignDigest(
+              request.getTenantId(), request.getVersionId());
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setTenantId(digest.tenantId())
+              .setScopeValue(digest.scopeValue())
+              .setAppliedCommitId(digest.appliedCommitId())
+              .setContentDigest(digest.contentDigest())
+              .setDigestSchemaVersion(digest.digestSchemaVersion())
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "GetDraftDesignDigest", ex))
+              .build());
+      responseObserver.onCompleted();
+    }
   }
 
   @Override

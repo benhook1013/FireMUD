@@ -111,6 +111,11 @@ Initial-slice rule:
 
 World Management is a required publish-gate participant and maintains a stable digest manifest for `GetDraftDesignDigest(versionId)`:
 
+Implementation Notes:
+
+- The current implementation computes the digest from the tenant’s draft topology rows using the existing tenant-scoped schema and returns synthetic `appliedCommitId = "version:<versionId>"`.
+- That keeps the publish gate honest against the current data model while the broader target-state `(tenantId, versionId)` draft graph is still being shaped into service storage.
+
 - Included objects:
   - version-scoped topology tables such as `region_template`, `zone_template`, `room_template`, `terrain_template`, `room_exit_template`, and equivalent normalized topology relations;
   - version-scoped declarative spawn and population binding tables;

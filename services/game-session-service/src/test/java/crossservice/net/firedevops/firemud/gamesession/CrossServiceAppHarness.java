@@ -95,12 +95,20 @@ public final class CrossServiceAppHarness {
   }
 
   private static String gameSessionMigrationDir() {
-    Path repoRelative = Path.of("services/game-session-service/src/main/resources/db/migration");
-    if (repoRelative.toFile().exists()) {
-      return repoRelative.toAbsolutePath().normalize().toString();
+    return resolveModuleMigrationDir("game-session-service").toString();
+  }
+
+  private static Path resolveModuleMigrationDir(String moduleName) {
+    Path current = Path.of("").toAbsolutePath().normalize();
+    while (current != null) {
+      Path candidate =
+          current.resolve("services").resolve(moduleName).resolve("src/main/resources/db/migration");
+      if (candidate.toFile().exists()) {
+        return candidate;
+      }
+      current = current.getParent();
     }
-    Path moduleRelative = Path.of("src/main/resources/db/migration");
-    return moduleRelative.toAbsolutePath().normalize().toString();
+    throw new IllegalStateException("Could not resolve migration directory for " + moduleName);
   }
 
   @TestConfiguration

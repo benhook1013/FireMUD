@@ -34,10 +34,25 @@ class ScriptDesignDigestServiceImplTest {
     when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
         .thenReturn(List.of(one));
 
-    var digest = service.getDraftDesignDigest("1", "patch-1");
+    var digest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
 
-    assertEquals("patch-1", digest.scriptPatchVersion());
+    assertEquals("patch-1", digest.scopeValue());
     assertEquals("script-patch:patch-1", digest.appliedCommitId());
+  }
+
+  @Test
+  void getDraftDesignDigestReturnsStableFullVersionDigest() {
+    ScriptDefinition one = new ScriptDefinition();
+    one.setTenantId(1L);
+    one.setName("alpha");
+    one.setScriptVersion("patch-1");
+    one.setDefinition("return 1");
+    when(repository.findByTenantIdOrderByNameAscScriptVersionAsc(1L)).thenReturn(List.of(one));
+
+    var digest = service.getDraftDesignDigestForVersion("1", "7");
+
+    assertEquals("7", digest.scopeValue());
+    assertEquals("version:7", digest.appliedCommitId());
   }
 
   @Test
@@ -46,6 +61,7 @@ class ScriptDesignDigestServiceImplTest {
         .thenReturn(List.of());
 
     assertThrows(
-        IllegalArgumentException.class, () -> service.getDraftDesignDigest("1", "patch-2"));
+        IllegalArgumentException.class,
+        () -> service.getDraftDesignDigestForScriptPatch("1", "patch-2"));
   }
 }

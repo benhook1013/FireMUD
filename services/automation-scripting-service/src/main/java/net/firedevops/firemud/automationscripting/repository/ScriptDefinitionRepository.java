@@ -11,4 +11,6 @@ public interface ScriptDefinitionRepository extends JpaRepository<ScriptDefiniti
 
   java.util.List<ScriptDefinition> findByTenantIdAndScriptVersionOrderByNameAsc(
       Long tenantId, String scriptVersion);
+
+  java.util.List<ScriptDefinition> findByTenantIdOrderByNameAscScriptVersionAsc(Long tenantId);
 }

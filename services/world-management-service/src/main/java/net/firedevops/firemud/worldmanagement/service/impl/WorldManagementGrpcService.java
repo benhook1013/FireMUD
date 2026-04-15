@@ -14,6 +14,9 @@ import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
+import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
+import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestRequest;
+import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
@@ -41,8 +44,62 @@ public class WorldManagementGrpcService
   private static final Logger logger = LoggerFactory.getLogger(WorldManagementGrpcService.class);
   private final PingService pingService;
   private final RoomService roomService;
+  private final WorldDraftDesignDigestService worldDraftDesignDigestService;
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper;
+
+  @Override
+  @Timed(value = "worldGrpc.getDraftDesignDigest")
+  public void getDraftDesignDigest(
+      GetDraftDesignDigestRequest request,
+      StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
+    try {
+      if (request.getScopeCase() != GetDraftDesignDigestRequest.ScopeCase.VERSION_ID) {
+        responseObserver.onNext(
+            GetDraftDesignDigestResponse.newBuilder()
+                .setError(
+                    GrpcAppErrors.error(
+                        meterRegistry,
+                        logger,
+                        "GetDraftDesignDigest",
+                        "UNSUPPORTED_SCOPE",
+                        "world management supports version_id scope only"))
+                .build());
+        responseObserver.onCompleted();
+        return;
+      }
+      var digest =
+          worldDraftDesignDigestService.getDraftDesignDigest(
+              request.getTenantId(), request.getVersionId());
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setTenantId(digest.tenantId())
+              .setScopeValue(digest.scopeValue())
+              .setAppliedCommitId(digest.appliedCommitId())
+              .setContentDigest(digest.contentDigest())
+              .setDigestSchemaVersion(digest.digestSchemaVersion())
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "GetDraftDesignDigest", ex))
+              .build());
+      responseObserver.onCompleted();
+    }
+  }
 
   @Override
   @Timed(value = "worldGrpc.ping")

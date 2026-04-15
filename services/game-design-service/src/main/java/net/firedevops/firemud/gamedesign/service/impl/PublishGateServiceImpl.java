@@ -3,6 +3,9 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import java.util.List;
 import java.util.Objects;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamedesign.client.EntityManagementClient;
+import net.firedevops.firemud.gamedesign.client.GameLogicClient;
+import net.firedevops.firemud.gamedesign.client.WorldManagementClient;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
@@ -13,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class PublishGateServiceImpl implements PublishGateService {
+  private static final int SUPPORTED_DIGEST_SCHEMA_VERSION = 1;
   private static final List<PublishParticipantKey> FULL_VERSION_PARTICIPANTS =
       List.of(
           PublishParticipantKey.WORLD_MANAGEMENT,
@@ -27,12 +31,21 @@ public class PublishGateServiceImpl implements PublishGateService {
           PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE);
 
   private final ControlPlaneDigestService controlPlaneDigestService;
+  private final WorldManagementClient worldManagementClient;
+  private final EntityManagementClient entityManagementClient;
+  private final GameLogicClient gameLogicClient;
   private final AutomationScriptingClient automationScriptingClient;
 
   public PublishGateServiceImpl(
       ControlPlaneDigestService controlPlaneDigestService,
+      WorldManagementClient worldManagementClient,
+      EntityManagementClient entityManagementClient,
+      GameLogicClient gameLogicClient,
       AutomationScriptingClient automationScriptingClient) {
     this.controlPlaneDigestService = controlPlaneDigestService;
+    this.worldManagementClient = worldManagementClient;
+    this.entityManagementClient = entityManagementClient;
+    this.gameLogicClient = gameLogicClient;
     this.automationScriptingClient = automationScriptingClient;
   }
 
@@ -77,6 +90,19 @@ public class PublishGateServiceImpl implements PublishGateService {
             throw new IllegalStateException(
                 "publish gate failed: wrong scope from " + digest.participantKey());
           }
+          if (digest.digestSchemaVersion() == null
+              || digest.digestSchemaVersion() != SUPPORTED_DIGEST_SCHEMA_VERSION) {
+            throw new IllegalStateException(
+                "publish gate failed: unsupported digest schema from " + digest.participantKey());
+          }
+          if (digest.contentDigest() == null || digest.contentDigest().isBlank()) {
+            throw new IllegalStateException(
+                "publish gate failed: missing content digest from " + digest.participantKey());
+          }
+          if (digest.appliedCommitId() == null || digest.appliedCommitId().isBlank()) {
+            throw new IllegalStateException(
+                "publish gate failed: missing applied commit from " + digest.participantKey());
+          }
         });
     long distinctAppliedCommitIds =
         participantDigests.stream()
@@ -90,15 +116,20 @@ public class PublishGateServiceImpl implements PublishGateService {
 
   private PublishParticipantDigestDto observeFullVersionParticipant(
       VersionDto version, PublishParticipantKey participantKey) {
-    if (participantKey == PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE) {
-      return toParticipantDigest(
-          participantKey, controlPlaneDigestService.getDigestForVersion(version));
-    }
-    return failedObservation(
-        participantKey,
-        String.valueOf(version.id()),
-        "UNIMPLEMENTED_DIGEST_PARTICIPANT",
-        "required digest participant is not implemented for full-version publish");
+    return switch (participantKey) {
+      case WORLD_MANAGEMENT ->
+          worldManagementClient.getDraftDesignDigestForVersion(version.tenantId(), version.id());
+      case ENTITY_MANAGEMENT ->
+          entityManagementClient.getDraftDesignDigestForVersion(version.tenantId(), version.id());
+      case GAME_LOGIC ->
+          gameLogicClient.getDraftDesignDigestForVersion(version.tenantId(), version.id());
+      case AUTOMATION_SCRIPTING ->
+          automationScriptingClient.getDraftDesignDigestForVersion(
+              version.tenantId(), version.id());
+      case GAME_DESIGN_CONTROL_PLANE ->
+          toParticipantDigest(
+              participantKey, controlPlaneDigestService.getDigestForVersion(version));
+    };
   }
 
   private PublishParticipantDigestDto observeScriptPatchParticipant(

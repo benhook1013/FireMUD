@@ -83,7 +83,36 @@ public class AutomationScriptingClient
     }
     return new PublishParticipantDigestDto(
         "AUTOMATION_SCRIPTING",
-        response.getScriptPatchVersion(),
+        response.getScopeValue(),
+        response.getAppliedCommitId(),
+        response.getContentDigest(),
+        response.getDigestSchemaVersion(),
+        null,
+        null);
+  }
+
+  public PublishParticipantDigestDto getDraftDesignDigestForVersion(
+      String tenantId, long versionId) {
+    var response =
+        stub()
+            .getDraftDesignDigest(
+                GetDraftDesignDigestRequest.newBuilder()
+                    .setTenantId(tenantId)
+                    .setVersionId(String.valueOf(versionId))
+                    .build());
+    if (response.hasError() && !response.getError().getCode().isBlank()) {
+      return new PublishParticipantDigestDto(
+          "AUTOMATION_SCRIPTING",
+          String.valueOf(versionId),
+          null,
+          null,
+          null,
+          response.getError().getCode(),
+          response.getError().getMessage());
+    }
+    return new PublishParticipantDigestDto(
+        "AUTOMATION_SCRIPTING",
+        response.getScopeValue(),
         response.getAppliedCommitId(),
         response.getContentDigest(),
         response.getDigestSchemaVersion(),

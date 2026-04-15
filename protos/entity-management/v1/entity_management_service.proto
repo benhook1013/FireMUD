@@ -316,12 +316,15 @@ message ListRoomEntitiesResponse {
 
 message GetDraftDesignDigestRequest {
   string tenant_id = 1;
-  string version_id = 2;
+  oneof scope {
+    string version_id = 2;
+    string script_patch_version = 3;
+  }
 }
 
 message GetDraftDesignDigestResponse {
   string tenant_id = 1;
-  string version_id = 2;
+  string scope_value = 2;
   string applied_commit_id = 3;
   string content_digest = 4;
   int32 digest_schema_version = 5;
