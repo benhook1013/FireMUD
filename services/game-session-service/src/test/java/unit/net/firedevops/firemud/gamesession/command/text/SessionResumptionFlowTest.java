@@ -162,6 +162,7 @@ class SessionResumptionFlowTest {
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
+            worldCatalog,
             devIsolatedProperties,
             devIsolatedRegistryProvider,
             meterRegistry);

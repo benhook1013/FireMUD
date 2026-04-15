@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -51,6 +52,10 @@ class LoginCommandHandlerTest {
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
+  private final GameplayCatalogProperties gameplayCatalogProperties =
+      new GameplayCatalogProperties();
+  private final GameplayWorldCatalog gameplayWorldCatalog =
+      new GameplayWorldCatalog(gameplayCatalogProperties);
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
@@ -60,6 +65,8 @@ class LoginCommandHandlerTest {
   @BeforeEach
   void setUp() {
     meterRegistry.clear();
+    gameplayCatalogProperties.setWorlds(
+        List.of(world("demo", "Demo World", List.of(realm("production", "Live Realm", 22L, 1L)))));
     when(accountClient.authenticate(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -74,6 +81,7 @@ class LoginCommandHandlerTest {
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
+            gameplayWorldCatalog,
             devIsolatedProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
@@ -168,7 +176,7 @@ class LoginCommandHandlerTest {
                     "demo",
                     "production",
                     1L,
-                    0L,
+                    1L,
                     "scope-1",
                     "jti-1",
                     "req-1",
@@ -181,6 +189,33 @@ class LoginCommandHandlerTest {
     assertEquals("Logged in as first-party account 77", joinedOutputText(result.outputs()));
     verify(accountClient, never()).authenticate(anyString(), anyString(), anyString(), anyString());
     verify(commandService).enqueue("1", "LOGIN", false);
+  }
+
+  @Test
+  void bareLoginRejectsStalePointerVersion() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    77L,
+                    22L,
+                    "demo",
+                    "production",
+                    1L,
+                    0L,
+                    "scope-1",
+                    "jti-1",
+                    "req-1",
+                    "gateway-1")));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_SCOPE_MISMATCH", result.commandResult().errorCode());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -490,5 +525,28 @@ class LoginCommandHandlerTest {
         .filter(text -> text != null && !text.isBlank())
         .reduce((left, right) -> left + "\n" + right)
         .orElse(null);
+  }
+
+  private static GameplayCatalogProperties.World world(
+      String slug, String displayName, List<GameplayCatalogProperties.Realm> realms) {
+    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
+    world.setSlug(slug);
+    world.setDisplayName(displayName);
+    world.setRealms(realms);
+    return world;
+  }
+
+  private static GameplayCatalogProperties.Realm realm(
+      String slug, String displayName, long tenantId, long gameInstanceId) {
+    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+    realm.setSlug(slug);
+    realm.setDisplayName(displayName);
+    realm.setTenantId(tenantId);
+    realm.setGameInstanceId(gameInstanceId);
+    realm.setVisible(true);
+    realm.setRequiresCharacterSelection(false);
+    realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
+    realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
+    return realm;
   }
 }

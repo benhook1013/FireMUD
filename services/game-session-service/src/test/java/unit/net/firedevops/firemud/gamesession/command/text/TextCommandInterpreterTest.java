@@ -312,6 +312,10 @@ class TextCommandInterpreterTest {
             gameInstanceRepository,
             devIsolatedProperties,
             devIsolatedRegistryProvider);
+    GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
+    gameplayCatalogProperties.setWorlds(
+        List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
+    GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(gameplayCatalogProperties);
 
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
@@ -320,13 +324,10 @@ class TextCommandInterpreterTest {
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
+            worldCatalog,
             devIsolatedProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
-    GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
-    gameplayCatalogProperties.setWorlds(
-        List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
-    GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(gameplayCatalogProperties);
     PlayCommandHandler playHandler =
         new PlayCommandHandler(
             sessionAuthenticationService,
