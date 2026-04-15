@@ -11,4 +11,13 @@ public interface WorldInstanceActivationService {
 
   WorldInstanceLifecycleSnapshotDto failPreparedWorldInstance(
       long tenantId, long gameInstanceId, long expectedLifecycleEpoch, String reason);
+
+  WorldInstanceLifecycleSnapshotDto getWorldInstanceLifecycle(long tenantId, long gameInstanceId);
+
+  WorldInstanceLifecycleSnapshotDto terminateWorldInstance(
+      long tenantId,
+      long gameInstanceId,
+      long expectedLifecycleEpoch,
+      String terminationRequestId,
+      String reason);
 }

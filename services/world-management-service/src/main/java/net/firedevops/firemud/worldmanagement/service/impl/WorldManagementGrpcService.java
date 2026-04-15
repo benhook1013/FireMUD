@@ -27,12 +27,16 @@ import net.firedevops.firemud.worldmanagement.v1.GetRoomRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
+import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleRequest;
+import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
+import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
@@ -169,6 +173,73 @@ public class WorldManagementGrpcService
     } catch (Exception ex) {
       builder.setError(
           GrpcAppErrors.internal(meterRegistry, logger, "FailPreparedWorldInstance", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "worldGrpc.getWorldInstanceLifecycle")
+  public void getWorldInstanceLifecycle(
+      GetWorldInstanceLifecycleRequest request,
+      StreamObserver<GetWorldInstanceLifecycleResponse> responseObserver) {
+    GetWorldInstanceLifecycleResponse.Builder builder =
+        GetWorldInstanceLifecycleResponse.newBuilder();
+    try {
+      builder.setWorldInstance(
+          toProto(
+              worldInstanceActivationService.getWorldInstanceLifecycle(
+                  Long.parseLong(request.getTenantId()),
+                  Long.parseLong(request.getGameInstanceId()))));
+    } catch (NumberFormatException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetWorldInstanceLifecycle",
+              "INVALID_ARGUMENT",
+              "invalid id"));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetWorldInstanceLifecycle",
+              errorCodeFor(ex),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "GetWorldInstanceLifecycle", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "worldGrpc.terminateWorldInstance")
+  public void terminateWorldInstance(
+      TerminateWorldInstanceRequest request,
+      StreamObserver<TerminateWorldInstanceResponse> responseObserver) {
+    TerminateWorldInstanceResponse.Builder builder = TerminateWorldInstanceResponse.newBuilder();
+    try {
+      builder.setWorldInstance(
+          toProto(
+              worldInstanceActivationService.terminateWorldInstance(
+                  Long.parseLong(request.getTenantId()),
+                  Long.parseLong(request.getGameInstanceId()),
+                  request.getExpectedLifecycleEpoch(),
+                  request.getTerminationRequestId(),
+                  request.getReason())));
+    } catch (NumberFormatException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "TerminateWorldInstance", "INVALID_ARGUMENT", "invalid id"));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "TerminateWorldInstance", errorCodeFor(ex), ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "TerminateWorldInstance", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();

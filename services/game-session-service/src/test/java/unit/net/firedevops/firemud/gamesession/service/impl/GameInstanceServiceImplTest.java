@@ -145,6 +145,9 @@ class GameInstanceServiceImplTest {
     GameInstanceDto dto = service.stopSession(10L);
 
     verify(stateService).deleteState(1L, 10L);
+    verify(worldManagementClient).getWorldInstanceLifecycle(1L, 10L);
+    verify(worldManagementClient)
+        .terminateWorldInstance(any(Long.class), any(Long.class), any(Long.class), any(), any());
     assertEquals("STOPPED", dto.status());
     assertEquals("STOPPED", store.get(10L).getStatus());
   }
@@ -184,8 +187,31 @@ class GameInstanceServiceImplTest {
     assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
 
     verify(stateService).deleteState(1L, 10L);
-    verify(stateService, never()).saveState(any(GameInstanceDto.class));
+    verify(worldManagementClient, never())
+        .getWorldInstanceLifecycle(any(Long.class), any(Long.class));
+    verify(stateService).saveState(any(GameInstanceDto.class));
     assertEquals("RUNNING", store.get(10L).getStatus());
+  }
+
+  @Test
+  void stopSessionLeavesStoppingRowWhenWorldTerminationFails() {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.terminateWorldInstance(
+            any(Long.class), any(Long.class), any(Long.class), any(), any()))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("ENTITY_CLEANUP_FAILED")
+                        .setMessage("cleanup failed")
+                        .build())
+                .build());
+
+    assertThrows(IllegalArgumentException.class, () -> service.stopSession(10L));
+
+    verify(stateService).deleteState(1L, 10L);
+    verify(stateService, never()).saveState(any());
+    assertEquals("STOPPING", store.get(10L).getStatus());
   }
 
   private void configureRepositoryPersistence() {
@@ -368,6 +394,38 @@ class GameInstanceServiceImplTest {
                         .setStatus(
                             net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
                                 .WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION)
+                        .build())
+                .build());
+    when(worldManagementClient.getWorldInstanceLifecycle(any(Long.class), any(Long.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse
+                    .newBuilder()
+                    .setWorldInstance(
+                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                            .newBuilder()
+                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
+                            .setLifecycleEpoch(2L)
+                            .setStatus(
+                                net.firedevops.firemud.worldmanagement.v1
+                                    .WorldInstanceLifecycleStatus
+                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
+                            .build())
+                    .build());
+    when(worldManagementClient.terminateWorldInstance(
+            any(Long.class), any(Long.class), any(Long.class), any(), any()))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse.newBuilder()
+                .setWorldInstance(
+                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                        .newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("10")
+                        .setLifecycleEpoch(4L)
+                        .setStatus(
+                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
+                                .WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED)
                         .build())
                 .build());
   }

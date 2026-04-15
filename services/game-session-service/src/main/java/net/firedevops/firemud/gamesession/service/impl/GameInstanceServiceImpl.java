@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
@@ -217,9 +218,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     GameInstanceDto runningState = inTransaction(() -> stageStopSession(sessionId), "stage stop");
     boolean stateDeleted = false;
     try {
-      validateStopDependencies();
       sessionStateService.deleteState(runningState.tenantId(), runningState.id());
       stateDeleted = true;
+      terminateWorldInstance(runningState, "session-stop-" + UUID.randomUUID());
       return inTransaction(() -> finalizeStoppedSession(sessionId), "finalize stop");
     } catch (RuntimeException ex) {
       compensateStopFailure(runningState, stateDeleted);
@@ -363,27 +364,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     }
   }
 
-  private void validateStopDependencies() {
-    if (gameLogicClient == null
-        || worldManagementClient == null
-        || entityManagementClient == null
-        || sagaRunner == null) {
-      return;
-    }
-    var saga =
-        new SagaBuilder("stopSession")
-            .step("notifyGameLogic", () -> gameLogicClient.ping())
-            .step("flushWorldService", () -> worldManagementClient.ping())
-            .step("flushEntityService", () -> entityManagementClient.ping())
-            .build();
-    try {
-      sagaRunner.run(saga);
-    } catch (SagaException e) {
-      logger.error("Saga failed during session stop", e);
-      throw new IllegalStateException("Failed to stop session", e);
-    }
-  }
-
   private void compensateStartFailure(
       StartSessionStage stage,
       GameInstanceDto runtimeState,
@@ -419,24 +399,24 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   private void compensateStopFailure(GameInstanceDto runningState, boolean stateDeleted) {
-    if (stateDeleted) {
+    if (!stateDeleted) {
       runRollbackSafely(
           "restore stopped session runtime state",
           () -> sessionStateService.saveState(runningState));
+      runRollbackSafely(
+          "restore stopping session row",
+          () ->
+              inTransaction(
+                  () -> {
+                    GameInstance instance =
+                        repository
+                            .findById(runningState.id())
+                            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+                    restoreSessionSnapshot(instance, runningState);
+                    return null;
+                  },
+                  "restore stopping session row"));
     }
-    runRollbackSafely(
-        "restore stopping session row",
-        () ->
-            inTransaction(
-                () -> {
-                  GameInstance instance =
-                      repository
-                          .findById(runningState.id())
-                          .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-                  restoreSessionSnapshot(instance, runningState);
-                  return null;
-                },
-                "restore stopping session row"));
   }
 
   private void compensateRestartFailure(GameInstanceDto previousState, boolean stateSaved) {
@@ -622,6 +602,34 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     if (response.hasError()) {
       throw new IllegalArgumentException(
           response.getError().getCode() + ": " + response.getError().getMessage());
+    }
+  }
+
+  private void terminateWorldInstance(GameInstanceDto runningState, String terminationRequestId) {
+    if (worldManagementClient == null) {
+      throw new IllegalStateException("world termination authority unavailable");
+    }
+    var lifecycleResponse =
+        worldManagementClient.getWorldInstanceLifecycle(runningState.tenantId(), runningState.id());
+    if (lifecycleResponse.hasError()) {
+      throw new IllegalArgumentException(
+          lifecycleResponse.getError().getCode()
+              + ": "
+              + lifecycleResponse.getError().getMessage());
+    }
+    var lifecycle = lifecycleResponse.getWorldInstance();
+    var terminateResponse =
+        worldManagementClient.terminateWorldInstance(
+            runningState.tenantId(),
+            runningState.id(),
+            lifecycle.getLifecycleEpoch(),
+            terminationRequestId,
+            "session stop requested");
+    if (terminateResponse.hasError()) {
+      throw new IllegalArgumentException(
+          terminateResponse.getError().getCode()
+              + ": "
+              + terminateResponse.getError().getMessage());
     }
   }
 

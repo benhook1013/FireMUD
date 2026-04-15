@@ -12,10 +12,14 @@ import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceRe
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleRequest;
+import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -120,6 +124,34 @@ public final class WorldManagementClient
       builder.setReason(reason);
     }
     return callStub().failPreparedWorldInstance(builder.build());
+  }
+
+  public GetWorldInstanceLifecycleResponse getWorldInstanceLifecycle(
+      long tenantId, long gameInstanceId) {
+    return callStub()
+        .getWorldInstanceLifecycle(
+            GetWorldInstanceLifecycleRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setGameInstanceId(Long.toString(gameInstanceId))
+                .build());
+  }
+
+  public TerminateWorldInstanceResponse terminateWorldInstance(
+      long tenantId,
+      long gameInstanceId,
+      long expectedLifecycleEpoch,
+      String terminationRequestId,
+      String reason) {
+    TerminateWorldInstanceRequest.Builder builder =
+        TerminateWorldInstanceRequest.newBuilder()
+            .setTenantId(Long.toString(tenantId))
+            .setGameInstanceId(Long.toString(gameInstanceId))
+            .setExpectedLifecycleEpoch(expectedLifecycleEpoch)
+            .setTerminationRequestId(terminationRequestId);
+    if (reason != null && !reason.isBlank()) {
+      builder.setReason(reason);
+    }
+    return callStub().terminateWorldInstance(builder.build());
   }
 
   private WorldManagementServiceGrpc.WorldManagementServiceBlockingStub callStub() {

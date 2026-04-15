@@ -70,7 +70,8 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
 - Implementation Notes:
 
 - The first runtime lifecycle substrate is now live through `world_instance` plus first-cut `region_instance` rows keyed by `(tenantId, gameInstanceId)`.
-- `lifecycle_epoch` is the current concrete fenced token used by the prepare/activate/fail lifecycle RPCs.
+- `lifecycle_epoch` is the current concrete fenced token used by the prepare/activate/fail/terminate lifecycle RPCs.
+- `world_instance.termination_request_id` and `terminated_at` now retain the canonical shutdown workflow identity and terminal completion timestamp for runtime-instance teardown.
 - `zone_instance` and `room_instance` are still target-state follow-through rather than fully landed storage families, so runtime topology materialization is only partially complete.
 
 - `region_instance`, `zone_instance`, and `room_instance` materialize topology for a running game instance based on the chosen version and any runtime procedural generation.

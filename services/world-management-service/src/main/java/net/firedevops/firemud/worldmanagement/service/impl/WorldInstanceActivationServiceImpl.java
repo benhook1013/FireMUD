@@ -5,9 +5,9 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.Instant;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
@@ -18,11 +18,11 @@ import net.firedevops.firemud.worldmanagement.repository.RegionInstanceRepositor
 import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldInstanceActivationService;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@RequiredArgsConstructor
 public class WorldInstanceActivationServiceImpl implements WorldInstanceActivationService {
   private static final Logger logger =
       LoggingUtil.getLogger(WorldInstanceActivationServiceImpl.class);
@@ -30,16 +30,50 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
   static final String STATUS_PREPARING = "PREPARING";
   static final String STATUS_ACTIVE = "ACTIVE";
   static final String STATUS_FAILED_PRE_ACTIVATION = "FAILED_PRE_ACTIVATION";
+  static final String STATUS_TERMINATING = "TERMINATING";
+  static final String STATUS_TERMINATED = "TERMINATED";
 
   private final WorldInstanceRepository worldInstanceRepository;
   private final RegionInstanceRepository regionInstanceRepository;
   private final WorldProperties worldProperties;
   private final GameDesignClient gameDesignClient;
+  private final EntityManagementClient entityManagementClient;
   private final MeterRegistry meterRegistry;
 
   private Counter prepareCounter;
   private Counter activateCounter;
   private Counter failCounter;
+
+  @Autowired
+  public WorldInstanceActivationServiceImpl(
+      WorldInstanceRepository worldInstanceRepository,
+      RegionInstanceRepository regionInstanceRepository,
+      WorldProperties worldProperties,
+      GameDesignClient gameDesignClient,
+      EntityManagementClient entityManagementClient,
+      MeterRegistry meterRegistry) {
+    this.worldInstanceRepository = worldInstanceRepository;
+    this.regionInstanceRepository = regionInstanceRepository;
+    this.worldProperties = worldProperties;
+    this.gameDesignClient = gameDesignClient;
+    this.entityManagementClient = entityManagementClient;
+    this.meterRegistry = meterRegistry;
+  }
+
+  WorldInstanceActivationServiceImpl(
+      WorldInstanceRepository worldInstanceRepository,
+      RegionInstanceRepository regionInstanceRepository,
+      WorldProperties worldProperties,
+      GameDesignClient gameDesignClient,
+      MeterRegistry meterRegistry) {
+    this(
+        worldInstanceRepository,
+        regionInstanceRepository,
+        worldProperties,
+        gameDesignClient,
+        null,
+        meterRegistry);
+  }
 
   @PostConstruct
   void initMetrics() {
@@ -177,6 +211,67 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
         tenantId,
         gameInstanceId,
         normalizeBlank(reason));
+    return snapshot(saved);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public WorldInstanceLifecycleSnapshotDto getWorldInstanceLifecycle(
+      long tenantId, long gameInstanceId) {
+    return snapshot(requireWorldInstance(tenantId, gameInstanceId));
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "world.terminateInstance")
+  public WorldInstanceLifecycleSnapshotDto terminateWorldInstance(
+      long tenantId,
+      long gameInstanceId,
+      long expectedLifecycleEpoch,
+      String terminationRequestId,
+      String reason) {
+    if (terminationRequestId == null || terminationRequestId.isBlank()) {
+      throw new IllegalArgumentException("INVALID_ARGUMENT: terminationRequestId is required");
+    }
+    WorldInstance worldInstance = requireWorldInstance(tenantId, gameInstanceId);
+    if (STATUS_TERMINATED.equals(worldInstance.getStatus())) {
+      return snapshot(worldInstance);
+    }
+    if (STATUS_ACTIVE.equals(worldInstance.getStatus())) {
+      requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
+      worldInstance.setStatus(STATUS_TERMINATING);
+      worldInstance.setTerminationRequestId(terminationRequestId);
+      worldInstance.setFailureReason(normalizeBlank(reason));
+      worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
+      worldInstance = worldInstanceRepository.save(worldInstance);
+    } else if (STATUS_TERMINATING.equals(worldInstance.getStatus())) {
+      requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
+      if (!terminationRequestId.equals(worldInstance.getTerminationRequestId())) {
+        throw new IllegalArgumentException(
+            "INVALID_WORLD_INSTANCE_STATE: world instance is terminating under a different request id");
+      }
+    } else {
+      throw new IllegalArgumentException(
+          "INVALID_WORLD_INSTANCE_STATE: world instance is not in ACTIVE or TERMINATING state");
+    }
+    var cleanupResponse =
+        entityManagementClient == null
+            ? null
+            : entityManagementClient.cleanupRuntimeInstance(
+                tenantId, gameInstanceId, terminationRequestId);
+    if (cleanupResponse != null && cleanupResponse.hasError()) {
+      throw new IllegalArgumentException(
+          cleanupResponse.getError().getCode() + ": " + cleanupResponse.getError().getMessage());
+    }
+    worldInstance.setStatus(STATUS_TERMINATED);
+    worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
+    worldInstance.setTerminatedAt(Instant.now());
+    WorldInstance saved = worldInstanceRepository.save(worldInstance);
+    logger.info(
+        "Terminated world instance tenant={} gameInstanceId={} terminationRequestId={}",
+        tenantId,
+        gameInstanceId,
+        terminationRequestId);
     return snapshot(saved);
   }
 

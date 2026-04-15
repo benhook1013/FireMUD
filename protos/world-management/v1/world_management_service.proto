@@ -16,6 +16,10 @@ service WorldManagementService {
       returns (ActivatePreparedWorldInstanceResponse);
   rpc FailPreparedWorldInstance(FailPreparedWorldInstanceRequest)
       returns (FailPreparedWorldInstanceResponse);
+  rpc GetWorldInstanceLifecycle(GetWorldInstanceLifecycleRequest)
+      returns (GetWorldInstanceLifecycleResponse);
+  rpc TerminateWorldInstance(TerminateWorldInstanceRequest)
+      returns (TerminateWorldInstanceResponse);
   rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
   rpc GetRoomSnapshot(GetRoomSnapshotRequest) returns (GetRoomSnapshotResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
@@ -86,6 +90,29 @@ message FailPreparedWorldInstanceRequest {
 }
 
 message FailPreparedWorldInstanceResponse {
+  WorldInstanceLifecycleSnapshot world_instance = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetWorldInstanceLifecycleRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+}
+
+message GetWorldInstanceLifecycleResponse {
+  WorldInstanceLifecycleSnapshot world_instance = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message TerminateWorldInstanceRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  int64 expected_lifecycle_epoch = 3;
+  string termination_request_id = 4;
+  string reason = 5;
+}
+
+message TerminateWorldInstanceResponse {
   WorldInstanceLifecycleSnapshot world_instance = 1;
   shared.v1.ErrorDetail error = 2;
 }

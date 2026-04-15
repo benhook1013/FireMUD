@@ -19,7 +19,10 @@ import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
+import net.firedevops.firemud.entitymanagement.service.RuntimeInstanceCleanupService;
 import net.firedevops.firemud.entitymanagement.v1.Character;
+import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceRequest;
+import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse;
 import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterRequest;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterResponse;
@@ -63,6 +66,7 @@ import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.web.server.ResponseStatusException;
@@ -97,7 +101,30 @@ public class EntityManagementGrpcService
   private final MeterRegistry meterRegistry;
 
   private final RoomEntityService roomEntityService;
+  private final RuntimeInstanceCleanupService runtimeInstanceCleanupService;
 
+  EntityManagementGrpcService(
+      PingService pingService,
+      CharacterService characterService,
+      EntityDraftDesignDigestService entityDraftDesignDigestService,
+      EquipmentService equipmentService,
+      InventoryService inventoryService,
+      ContainerService containerService,
+      RoomEntityService roomEntityService,
+      RuntimeInstanceCleanupService runtimeInstanceCleanupService,
+      MeterRegistry meterRegistry) {
+    this.pingService = pingService;
+    this.characterService = characterService;
+    this.entityDraftDesignDigestService = entityDraftDesignDigestService;
+    this.equipmentService = equipmentService;
+    this.inventoryService = inventoryService;
+    this.containerService = containerService;
+    this.roomEntityService = roomEntityService;
+    this.runtimeInstanceCleanupService = runtimeInstanceCleanupService;
+    this.meterRegistry = meterRegistry;
+  }
+
+  @Autowired
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
@@ -107,14 +134,18 @@ public class EntityManagementGrpcService
       ContainerService containerService,
       RoomEntityService roomEntityService,
       MeterRegistry meterRegistry) {
-    this.pingService = pingService;
-    this.characterService = characterService;
-    this.entityDraftDesignDigestService = entityDraftDesignDigestService;
-    this.equipmentService = equipmentService;
-    this.inventoryService = inventoryService;
-    this.containerService = containerService;
-    this.roomEntityService = roomEntityService;
-    this.meterRegistry = meterRegistry;
+    this(
+        pingService,
+        characterService,
+        entityDraftDesignDigestService,
+        equipmentService,
+        inventoryService,
+        containerService,
+        roomEntityService,
+        (tenantId, gameInstanceId, terminationRequestId) ->
+            new net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto(
+                0L, 0L, 0L, 0L),
+        meterRegistry);
   }
 
   @Override
@@ -1027,6 +1058,47 @@ public class EntityManagementGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.cleanupRuntimeInstance")
+  public void cleanupRuntimeInstance(
+      CleanupRuntimeInstanceRequest request,
+      StreamObserver<CleanupRuntimeInstanceResponse> responseObserver) {
+    CleanupRuntimeInstanceResponse.Builder builder = CleanupRuntimeInstanceResponse.newBuilder();
+    try {
+      requireTenantAccessWhenPresent(Long.parseLong(request.getTenantId()));
+      var result =
+          runtimeInstanceCleanupService.cleanupRuntimeInstance(
+              Long.parseLong(request.getTenantId()),
+              request.getGameInstanceId(),
+              request.getTerminationRequestId());
+      builder
+          .setDeletedRoomGroundEntries(result.deletedRoomGroundEntries())
+          .setDeletedItemStacks(result.deletedItemStacks())
+          .setDeletedItemInstances(result.deletedItemInstances())
+          .setDeletedContainerInstances(result.deletedContainerInstances());
+    } catch (NumberFormatException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "CleanupRuntimeInstance",
+              "INVALID_ARGUMENT",
+              "tenant_id must be numeric"));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "CleanupRuntimeInstance",
+              "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "CleanupRuntimeInstance", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
   }
 
   private String resolveTenantId(ListRoomEntitiesRequest request) {

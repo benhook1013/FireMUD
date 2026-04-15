@@ -63,6 +63,12 @@ public class WorldInstance {
   @Column(name = "failure_reason", length = 500)
   private String failureReason;
 
+  @Column(name = "termination_request_id", length = 128)
+  private String terminationRequestId;
+
+  @Column(name = "terminated_at")
+  private Instant terminatedAt;
+
   @Column(name = "created_at", nullable = false)
   private Instant createdAt = Instant.now();
 

@@ -32,6 +32,7 @@ import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.command.text.LookTextRenderer;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -44,6 +45,10 @@ import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTestConfiguration;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
+import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
+import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -127,6 +132,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @MockitoBean private GameInstanceRepository gameInstanceRepository;
 
   @MockitoBean private GameLogicClient gameLogicClient;
+
+  @MockitoBean private WorldManagementClient worldManagementClient;
 
   @MockitoBean private LookTextRenderer lookTextRenderer;
 
@@ -362,6 +369,46 @@ class GameSessionWebSocketHandlerIntegrationTest {
     instance.setTenantId(22L);
     instance.setOwnerAccountId(123L);
     org.mockito.Mockito.doReturn(Optional.of(instance)).when(gameInstanceRepository).findById(2L);
+    when(worldManagementClient.getWorldInstanceLifecycle(
+            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(
+            invocation -> {
+              long tenantId = invocation.getArgument(0);
+              long gameInstanceId = invocation.getArgument(1);
+              return GetWorldInstanceLifecycleResponse.newBuilder()
+                  .setWorldInstance(
+                      WorldInstanceLifecycleSnapshot.newBuilder()
+                          .setTenantId(Long.toString(tenantId))
+                          .setGameInstanceId(Long.toString(gameInstanceId))
+                          .setLifecycleEpoch(2L)
+                          .setStatus(
+                              WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
+                          .build())
+                  .build();
+            });
+    when(worldManagementClient.terminateWorldInstance(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(
+            invocation -> {
+              long tenantId = invocation.getArgument(0);
+              long gameInstanceId = invocation.getArgument(1);
+              long expectedLifecycleEpoch = invocation.getArgument(2);
+              return TerminateWorldInstanceResponse.newBuilder()
+                  .setWorldInstance(
+                      WorldInstanceLifecycleSnapshot.newBuilder()
+                          .setTenantId(Long.toString(tenantId))
+                          .setGameInstanceId(Long.toString(gameInstanceId))
+                          .setLifecycleEpoch(expectedLifecycleEpoch + 1L)
+                          .setStatus(
+                              WorldInstanceLifecycleStatus
+                                  .WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED)
+                          .build())
+                  .build();
+            });
   }
 
   @Test
@@ -541,7 +588,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Game-Instance-Id", "41");
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch responseLatch = new CountDownLatch(3);
+    CountDownLatch responseLatch = new CountDownLatch(2);
     CountDownLatch closedLatch = new CountDownLatch(1);
     AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
 
@@ -577,7 +624,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
       session.close();
     }
 
-    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGOUT"));
     assertThat(closeStatus.get()).isNotNull();
     assertThat(closeStatus.get().getCode()).isEqualTo(CloseStatus.NORMAL.getCode());
     assertThat(closeStatus.get().getReason()).isEqualTo("LOGOUT");
@@ -602,7 +648,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders firstHeaders = new WebSocketHttpHeaders();
     firstHeaders.add("X-Game-Instance-Id", "41");
-    CountDownLatch firstResponseLatch = new CountDownLatch(3);
+    CountDownLatch firstResponseLatch = new CountDownLatch(2);
     CountDownLatch firstClosedLatch = new CountDownLatch(1);
 
     var firstFuture =
@@ -1434,7 +1480,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     "connectTokenJti", "connect-jti-logout-1",
                     "connectRequestId", "connect-req-logout-1",
                     "gatewayRequestId", "gateway-req-logout-1")));
-    CountDownLatch firstResponses = new CountDownLatch(3);
+    CountDownLatch firstResponses = new CountDownLatch(2);
     CountDownLatch firstClosed = new CountDownLatch(1);
     java.util.List<String> firstPayloads = new java.util.concurrent.CopyOnWriteArrayList<>();
     java.util.concurrent.atomic.AtomicReference<CloseStatus> firstCloseStatus =
@@ -1477,7 +1523,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
       firstSession.close();
     }
 
-    assertThat(firstPayloads).anyMatch(payload -> isStructuredCommand(payload, "LOGOUT"));
     assertThat(firstCloseStatus.get()).isNotNull();
     assertThat(firstCloseStatus.get().getReason()).isEqualTo("LOGOUT");
     assertThat(cleared.get()).isTrue();

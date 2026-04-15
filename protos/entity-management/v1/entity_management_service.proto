@@ -26,6 +26,7 @@ service EntityManagementService {
   rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
   rpc FindCharacterByName(FindCharacterByNameRequest) returns (FindCharacterByNameResponse);
   rpc ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse);
+  rpc CleanupRuntimeInstance(CleanupRuntimeInstanceRequest) returns (CleanupRuntimeInstanceResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
 }
 
@@ -312,6 +313,20 @@ message ListRoomEntitiesResponse {
   string tenant_id = 4;
   string game_instance_id = 5;
   string room_instance_id = 6;
+}
+
+message CleanupRuntimeInstanceRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string termination_request_id = 3;
+}
+
+message CleanupRuntimeInstanceResponse {
+  int64 deleted_room_ground_entries = 1;
+  int64 deleted_item_stacks = 2;
+  int64 deleted_item_instances = 3;
+  int64 deleted_container_instances = 4;
+  shared.v1.ErrorDetail error = 5;
 }
 
 message GetDraftDesignDigestRequest {
