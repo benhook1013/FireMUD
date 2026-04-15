@@ -182,6 +182,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         sessionStateService.deleteState(
             stage.existingRunningState().tenantId(), stage.existingRunningState().id());
         oldStateDeleted = true;
+        terminateWorldInstance(
+            stage.existingRunningState(),
+            "session-replace-" + stage.startingState().id() + "-" + UUID.randomUUID());
       }
       GameInstanceDto finalized =
           inTransaction(() -> finalizeStartedSession(stage), "finalize session start");
@@ -274,6 +277,14 @@ public class GameInstanceServiceImpl implements GameInstanceService {
                   request.tenantId(), request.ownerAccountId(), STATUS_RUNNING)
               .map(this::snapshot)
               .orElse(null);
+      if (existingRunningState != null) {
+        GameInstance existingRunning =
+            repository
+                .findById(existingRunningState.id())
+                .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+        existingRunning.setStatus(STATUS_STOPPING);
+        repository.save(existingRunning);
+      }
     }
     GameInstance instance = new GameInstance();
     instance.setTenantId(request.tenantId());
@@ -379,6 +390,21 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       runRollbackSafely(
           "restore replaced session state",
           () -> sessionStateService.saveState(stage.existingRunningState()));
+    }
+    if (stage.existingRunningState() != null) {
+      runRollbackSafely(
+          "restore replaced session row",
+          () ->
+              inTransaction(
+                  () -> {
+                    GameInstance existingRunning =
+                        repository
+                            .findById(stage.existingRunningState().id())
+                            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+                    restoreSessionSnapshot(existingRunning, stage.existingRunningState());
+                    return null;
+                  },
+                  "restore replaced session row"));
     }
     if (preparedWorldInstance != null && worldManagementClient != null) {
       runRollbackSafely(

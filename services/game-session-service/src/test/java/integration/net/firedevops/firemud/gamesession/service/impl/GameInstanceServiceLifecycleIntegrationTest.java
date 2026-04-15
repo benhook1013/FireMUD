@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
@@ -268,6 +269,41 @@ class GameInstanceServiceLifecycleIntegrationTest {
                                 .WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION)
                         .build())
                 .build());
+    when(worldManagementClient.getWorldInstanceLifecycle(any(Long.class), any(Long.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse
+                    .newBuilder()
+                    .setWorldInstance(
+                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                            .newBuilder()
+                            .setTenantId(Long.toString(invocation.getArgument(0)))
+                            .setGameInstanceId(Long.toString(invocation.getArgument(1)))
+                            .setLifecycleEpoch(2L)
+                            .setStatus(
+                                net.firedevops.firemud.worldmanagement.v1
+                                    .WorldInstanceLifecycleStatus
+                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
+                            .build())
+                    .build());
+    when(worldManagementClient.terminateWorldInstance(
+            any(Long.class), any(Long.class), any(Long.class), any(), any()))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse
+                    .newBuilder()
+                    .setWorldInstance(
+                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                            .newBuilder()
+                            .setTenantId(Long.toString(invocation.getArgument(0)))
+                            .setGameInstanceId(Long.toString(invocation.getArgument(1)))
+                            .setLifecycleEpoch(((Long) invocation.getArgument(2)) + 1L)
+                            .setStatus(
+                                net.firedevops.firemud.worldmanagement.v1
+                                    .WorldInstanceLifecycleStatus
+                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED)
+                            .build())
+                    .build());
   }
 
   @Test
@@ -358,6 +394,28 @@ class GameInstanceServiceLifecycleIntegrationTest {
     assertThat(restored.getRuntimeVersion()).isEqualTo("1.0.0");
     assertThat(restored.getScriptPatchVersion()).isEqualTo("patch-1");
     assertThat(restored.getOwnerAccountId()).isEqualTo(100L);
+  }
+
+  @Test
+  void replacingExistingSessionTerminatesPriorWorldBeforeFinalizingReplacement() {
+    GameInstance existing = new GameInstance();
+    existing.setTenantId(42L);
+    existing.setRuntimeVersion("1.0.0");
+    existing.setScriptPatchVersion("patch-1");
+    existing.setOwnerAccountId(100L);
+    existing.setStatus("RUNNING");
+    existing = repository.saveAndFlush(existing);
+    long existingId = existing.getId();
+
+    GameInstanceDto started =
+        service.startSession(new StartSessionRequest(42L, 7L, "cp-2", 100L), true);
+
+    assertThat(started.status()).isEqualTo("RUNNING");
+    assertThat(repository.findById(existingId)).isPresent();
+    assertThat(repository.findById(existingId).orElseThrow().getStatus()).isEqualTo("STOPPED");
+    verify(worldManagementClient).getWorldInstanceLifecycle(42L, existingId);
+    verify(worldManagementClient)
+        .terminateWorldInstance(any(Long.class), eq(existingId), any(Long.class), any(), any());
   }
 
   @TestConfiguration

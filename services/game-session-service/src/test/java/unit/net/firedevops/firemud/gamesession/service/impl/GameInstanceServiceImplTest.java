@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -124,6 +125,9 @@ class GameInstanceServiceImplTest {
     verify(repository).findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING");
     verify(stateService).saveState(any(GameInstanceDto.class));
     verify(stateService).deleteState(2L, 7L);
+    verify(worldManagementClient).getWorldInstanceLifecycle(2L, 7L);
+    verify(worldManagementClient)
+        .terminateWorldInstance(any(Long.class), any(Long.class), any(Long.class), any(), any());
     assertEquals("STOPPED", store.get(7L).getStatus());
     assertEquals("RUNNING", store.get(dto.id()).getStatus());
   }
@@ -177,6 +181,33 @@ class GameInstanceServiceImplTest {
     assertEquals(1, store.size());
     assertEquals("RUNNING", store.get(7L).getStatus());
     verify(stateService, never()).deleteState(2L, 7L);
+    verify(worldManagementClient, never())
+        .getWorldInstanceLifecycle(any(Long.class), any(Long.class));
+  }
+
+  @Test
+  void startSessionWithReplacementRestoresExistingRunningStateWhenTerminationFails() {
+    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-5", 42L);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        .thenReturn(Optional.of(existing));
+    when(worldManagementClient.terminateWorldInstance(
+            any(Long.class), any(Long.class), any(Long.class), any(), any()))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("ENTITY_CLEANUP_FAILED")
+                        .setMessage("cleanup failed")
+                        .build())
+                .build());
+
+    assertThrows(IllegalArgumentException.class, () -> service.startSession(request, true));
+
+    assertEquals(1, store.size());
+    assertEquals("RUNNING", store.get(7L).getStatus());
+    verify(stateService).deleteState(2L, 7L);
+    verify(stateService, times(2)).saveState(any(GameInstanceDto.class));
   }
 
   @Test
