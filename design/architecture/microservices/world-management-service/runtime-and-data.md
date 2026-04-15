@@ -67,6 +67,12 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
 
 ### Instance tables
 
+- Implementation Notes:
+
+- The first runtime lifecycle substrate is now live through `world_instance` plus first-cut `region_instance` rows keyed by `(tenantId, gameInstanceId)`.
+- `lifecycle_epoch` is the current concrete fenced token used by the prepare/activate/fail lifecycle RPCs.
+- `zone_instance` and `room_instance` are still target-state follow-through rather than fully landed storage families, so runtime topology materialization is only partially complete.
+
 - `region_instance`, `zone_instance`, and `room_instance` materialize topology for a running game instance based on the chosen version and any runtime procedural generation.
 - `instance` tracks temporary copies of zones for instanced gameplay, with `expires_at` defining when instances enter `InstanceTermination`.
 - `world_instance_status`, or equivalent lifecycle state, tracks monotonic lifecycle transitions: `PREPARING -> (ACTIVE | FAILED_PRE_ACTIVATION)` and `ACTIVE -> TERMINATING -> TERMINATED`.

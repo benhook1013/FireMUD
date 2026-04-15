@@ -9,12 +9,18 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
+import net.firedevops.firemud.worldmanagement.service.WorldInstanceActivationService;
+import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomRequest;
@@ -23,8 +29,12 @@ import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
+import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,9 +54,125 @@ public class WorldManagementGrpcService
   private static final Logger logger = LoggerFactory.getLogger(WorldManagementGrpcService.class);
   private final PingService pingService;
   private final RoomService roomService;
+  private final WorldInstanceActivationService worldInstanceActivationService;
   private final WorldDraftDesignDigestService worldDraftDesignDigestService;
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper;
+
+  @Override
+  @Timed(value = "worldGrpc.prepareWorldInstance")
+  public void prepareWorldInstance(
+      PrepareWorldInstanceRequest request,
+      StreamObserver<PrepareWorldInstanceResponse> responseObserver) {
+    PrepareWorldInstanceResponse.Builder builder = PrepareWorldInstanceResponse.newBuilder();
+    try {
+      var snapshot =
+          worldInstanceActivationService.prepareWorldInstance(
+              new PreparedWorldInstanceRequest(
+                  Long.parseLong(request.getTenantId()),
+                  Long.parseLong(request.getGameInstanceId()),
+                  Long.parseLong(request.getGameTemplateId()),
+                  request.getControlPlaneRequestId(),
+                  request.getLaunchDescriptorId(),
+                  Long.parseLong(request.getVersionId()),
+                  request.getScriptPatchVersion(),
+                  request.getRuntimeFlagsJson(),
+                  request.getGenerationConfigRevision(),
+                  Long.parseLong(request.getReleaseBundleId()),
+                  request.getPublishedReleaseBundleRef(),
+                  request.getVersionStateEpoch()));
+      builder.setWorldInstance(toProto(snapshot));
+    } catch (NumberFormatException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "PrepareWorldInstance", "INVALID_ARGUMENT", "invalid id"));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "PrepareWorldInstance", errorCodeFor(ex), ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "PrepareWorldInstance", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "worldGrpc.activatePreparedWorldInstance")
+  public void activatePreparedWorldInstance(
+      ActivatePreparedWorldInstanceRequest request,
+      StreamObserver<ActivatePreparedWorldInstanceResponse> responseObserver) {
+    ActivatePreparedWorldInstanceResponse.Builder builder =
+        ActivatePreparedWorldInstanceResponse.newBuilder();
+    try {
+      var snapshot =
+          worldInstanceActivationService.activatePreparedWorldInstance(
+              Long.parseLong(request.getTenantId()),
+              Long.parseLong(request.getGameInstanceId()),
+              request.getExpectedLifecycleEpoch());
+      builder.setWorldInstance(toProto(snapshot));
+    } catch (NumberFormatException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ActivatePreparedWorldInstance",
+              "INVALID_ARGUMENT",
+              "invalid id"));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ActivatePreparedWorldInstance",
+              errorCodeFor(ex),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "ActivatePreparedWorldInstance", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "worldGrpc.failPreparedWorldInstance")
+  public void failPreparedWorldInstance(
+      FailPreparedWorldInstanceRequest request,
+      StreamObserver<FailPreparedWorldInstanceResponse> responseObserver) {
+    FailPreparedWorldInstanceResponse.Builder builder =
+        FailPreparedWorldInstanceResponse.newBuilder();
+    try {
+      var snapshot =
+          worldInstanceActivationService.failPreparedWorldInstance(
+              Long.parseLong(request.getTenantId()),
+              Long.parseLong(request.getGameInstanceId()),
+              request.getExpectedLifecycleEpoch(),
+              request.getReason());
+      builder.setWorldInstance(toProto(snapshot));
+    } catch (NumberFormatException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "FailPreparedWorldInstance",
+              "INVALID_ARGUMENT",
+              "invalid id"));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "FailPreparedWorldInstance",
+              errorCodeFor(ex),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "FailPreparedWorldInstance", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
 
   @Override
   @Timed(value = "worldGrpc.getDraftDesignDigest")
@@ -247,6 +373,37 @@ public class WorldManagementGrpcService
       builder.addAllRoomFlags(snapshot.roomFlags());
     }
     return builder.build();
+  }
+
+  private WorldInstanceLifecycleSnapshot toProto(
+      net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto snapshot) {
+    return WorldInstanceLifecycleSnapshot.newBuilder()
+        .setTenantId(Long.toString(snapshot.tenantId()))
+        .setGameInstanceId(Long.toString(snapshot.gameInstanceId()))
+        .setGameTemplateId(Long.toString(snapshot.gameTemplateId()))
+        .setControlPlaneRequestId(snapshot.controlPlaneRequestId())
+        .setLaunchDescriptorId(snapshot.launchDescriptorId())
+        .setVersionId(Long.toString(snapshot.versionId()))
+        .setReleaseBundleId(Long.toString(snapshot.releaseBundleId()))
+        .setGenerationConfigRevision(snapshot.generationConfigRevision())
+        .setPublishedReleaseBundleRef(snapshot.publishedReleaseBundleRef())
+        .setVersionStateEpoch(snapshot.versionStateEpoch())
+        .setLifecycleEpoch(snapshot.lifecycleEpoch())
+        .setStatus(toProtoStatus(snapshot.status()))
+        .build();
+  }
+
+  private WorldInstanceLifecycleStatus toProtoStatus(String status) {
+    return switch (status) {
+      case "PREPARING" -> WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING;
+      case "ACTIVE" -> WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE;
+      case "FAILED_PRE_ACTIVATION" ->
+          WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION;
+      case "TERMINATING" ->
+          WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING;
+      case "TERMINATED" -> WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED;
+      default -> WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_UNSPECIFIED;
+    };
   }
 
   private void applyAmbientState(RoomSnapshot.Builder builder, RoomSnapshotDto snapshot) {

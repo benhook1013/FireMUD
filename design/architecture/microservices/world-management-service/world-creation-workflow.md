@@ -1,6 +1,6 @@
 # World Creation Workflow
 
-World creation is a long-running process that prepares the initial world state for a new **game instance** using already-published world data for a given `tenantId`. The workflow uses the shared **Saga** utilities from `firemud-common` so each step can be rolled back if another step fails. `WorldCreationService` is invoked when the platform provisions a new game instance for an existing tenant, typically from the Game Session Service. The identifiers involved are:
+World creation is a long-running process that prepares the initial world state for a new **game instance** using already-published world data for a given `tenantId`. The workflow uses the shared **Saga** utilities from `firemud-common` so each step can be rolled back if another step fails. World Management's activation lifecycle surface is invoked when the platform provisions a new game instance for an existing tenant, typically from the Game Session Service. The identifiers involved are:
 
 - `tenantId` – identifies the game (tenant) as described in
   [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
@@ -69,6 +69,9 @@ Initial NPC and item presence is modeled declaratively:
 4. **Activate Instance** – acquires the per-instance lifecycle fence, re-validates `expectedVersionStateEpoch`, verifies that all generation runs for this workflow resolved to `expectedGenerationConfigRevision`, and performs the one-way transition from `PREPARING` to `ACTIVE` after all required pre-activation writes succeed.
 
 Initial-slice delivery expectation:
+
+- The first live implementation cut now uses `PrepareWorldInstance`, `ActivatePreparedWorldInstance`, and `FailPreparedWorldInstance` to persist `world_instance` plus starter `region_instance` rows with fenced `lifecycle_epoch` transitions.
+- Fuller `zone_instance` / `room_instance` materialization and broader activation/cutover consumers remain follow-on work on the same lifecycle seam rather than a separate activation model.
 
 - The first implementation slice must implement steps 1, 2, and 4.
 - Step 3 is optional for the initial slice unless the launched version actually requires expansive-world terrain generation or instance-scoped population schedule materialization.

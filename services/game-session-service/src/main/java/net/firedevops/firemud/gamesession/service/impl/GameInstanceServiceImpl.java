@@ -170,8 +170,11 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     GameInstanceDto runtimeState = withStatus(stage.startingState(), STATUS_RUNNING);
     boolean newStateSaved = false;
     boolean oldStateDeleted = false;
+    PreparedWorldInstance preparedWorldInstance = null;
     try {
       validateStartDependencies();
+      preparedWorldInstance =
+          prepareWorldInstance(stage.startingState(), resolvedLaunchDescriptor, request);
       sessionStateService.saveState(runtimeState);
       newStateSaved = true;
       if (stage.existingRunningState() != null) {
@@ -181,10 +184,12 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       }
       GameInstanceDto finalized =
           inTransaction(() -> finalizeStartedSession(stage), "finalize session start");
+      activatePreparedWorldInstance(preparedWorldInstance);
       meterRegistry.counter("game_sessions_started_total").increment();
       return finalized;
     } catch (RuntimeException ex) {
-      compensateStartFailure(stage, runtimeState, newStateSaved, oldStateDeleted);
+      compensateStartFailure(
+          stage, runtimeState, newStateSaved, oldStateDeleted, preparedWorldInstance);
       throw ex;
     }
   }
@@ -342,15 +347,11 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   private void validateStartDependencies() {
-    if (gameLogicClient == null
-        || worldManagementClient == null
-        || entityManagementClient == null
-        || sagaRunner == null) {
+    if (gameLogicClient == null || entityManagementClient == null || sagaRunner == null) {
       return;
     }
     var saga =
         new SagaBuilder("startSession")
-            .step("checkWorldService", () -> worldManagementClient.ping())
             .step("checkEntityService", () -> entityManagementClient.ping())
             .step("notifyGameLogic", () -> gameLogicClient.ping())
             .build();
@@ -387,7 +388,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       StartSessionStage stage,
       GameInstanceDto runtimeState,
       boolean newStateSaved,
-      boolean oldStateDeleted) {
+      boolean oldStateDeleted,
+      @Nullable PreparedWorldInstance preparedWorldInstance) {
     if (newStateSaved) {
       runRollbackSafely(
           "delete failed started session state",
@@ -397,6 +399,13 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       runRollbackSafely(
           "restore replaced session state",
           () -> sessionStateService.saveState(stage.existingRunningState()));
+    }
+    if (preparedWorldInstance != null && worldManagementClient != null) {
+      runRollbackSafely(
+          "fail prepared world instance",
+          () ->
+              failPreparedWorldInstance(
+                  preparedWorldInstance, "session start failed before admission opened"));
     }
     runRollbackSafely(
         "delete failed starting session row",
@@ -556,6 +565,66 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         descriptor.getPublishedReleaseBundleRef());
   }
 
+  private PreparedWorldInstance prepareWorldInstance(
+      GameInstanceDto startingState,
+      ResolvedLaunchDescriptor resolvedLaunchDescriptor,
+      StartSessionRequest request) {
+    if (worldManagementClient == null) {
+      throw new IllegalStateException("world activation authority unavailable");
+    }
+    var response =
+        worldManagementClient.prepareWorldInstance(
+            request.tenantId(),
+            startingState.id(),
+            request.gameTemplateId(),
+            request.controlPlaneRequestId(),
+            resolvedLaunchDescriptor.launchDescriptorId(),
+            resolvedLaunchDescriptor.versionId(),
+            resolvedLaunchDescriptor.scriptPatchVersion(),
+            resolvedLaunchDescriptor.runtimeFlagsJson(),
+            resolvedLaunchDescriptor.generationConfigRevision(),
+            resolvedLaunchDescriptor.releaseBundleId(),
+            resolvedLaunchDescriptor.publishedReleaseBundleRef(),
+            resolvedLaunchDescriptor.versionStateEpoch());
+    if (response.hasError()) {
+      throw new IllegalArgumentException(
+          response.getError().getCode() + ": " + response.getError().getMessage());
+    }
+    return new PreparedWorldInstance(
+        Long.parseLong(response.getWorldInstance().getTenantId()),
+        Long.parseLong(response.getWorldInstance().getGameInstanceId()),
+        response.getWorldInstance().getLifecycleEpoch());
+  }
+
+  private void activatePreparedWorldInstance(PreparedWorldInstance preparedWorldInstance) {
+    if (worldManagementClient == null) {
+      throw new IllegalStateException("world activation authority unavailable");
+    }
+    var response =
+        worldManagementClient.activatePreparedWorldInstance(
+            preparedWorldInstance.tenantId(),
+            preparedWorldInstance.gameInstanceId(),
+            preparedWorldInstance.lifecycleEpoch());
+    if (response.hasError()) {
+      throw new IllegalArgumentException(
+          response.getError().getCode() + ": " + response.getError().getMessage());
+    }
+  }
+
+  private void failPreparedWorldInstance(
+      PreparedWorldInstance preparedWorldInstance, String reason) {
+    var response =
+        worldManagementClient.failPreparedWorldInstance(
+            preparedWorldInstance.tenantId(),
+            preparedWorldInstance.gameInstanceId(),
+            preparedWorldInstance.lifecycleEpoch(),
+            reason);
+    if (response.hasError()) {
+      throw new IllegalArgumentException(
+          response.getError().getCode() + ": " + response.getError().getMessage());
+    }
+  }
+
   private void runRollbackSafely(String actionName, Runnable rollbackAction) {
     try {
       rollbackAction.run();
@@ -589,4 +658,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
 
   private record StartSessionStage(
       GameInstanceDto startingState, @Nullable GameInstanceDto existingRunningState) {}
+
+  private record PreparedWorldInstance(long tenantId, long gameInstanceId, long lifecycleEpoch) {}
 }

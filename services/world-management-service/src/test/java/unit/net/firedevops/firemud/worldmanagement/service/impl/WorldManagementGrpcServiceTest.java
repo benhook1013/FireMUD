@@ -12,15 +12,19 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
+import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
+import net.firedevops.firemud.worldmanagement.service.WorldInstanceActivationService;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
+import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import tools.jackson.databind.ObjectMapper;
@@ -29,17 +33,31 @@ class WorldManagementGrpcServiceTest {
   private WorldManagementGrpcService newService(
       PingService pingService, RoomService roomService, MeterRegistry meterRegistry) {
     WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    WorldInstanceActivationService activationService =
+        Mockito.mock(WorldInstanceActivationService.class);
     SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
     return new WorldManagementGrpcService(
-        pingService, roomService, digestService, meterRegistry, new ObjectMapper());
+        pingService,
+        roomService,
+        activationService,
+        digestService,
+        meterRegistry,
+        new ObjectMapper());
   }
 
   private WorldManagementGrpcService newServiceWithoutContext(
       PingService pingService, RoomService roomService, MeterRegistry meterRegistry) {
     WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    WorldInstanceActivationService activationService =
+        Mockito.mock(WorldInstanceActivationService.class);
     SessionContext.clear();
     return new WorldManagementGrpcService(
-        pingService, roomService, digestService, meterRegistry, new ObjectMapper());
+        pingService,
+        roomService,
+        activationService,
+        digestService,
+        meterRegistry,
+        new ObjectMapper());
   }
 
   @Test
@@ -55,7 +73,12 @@ class WorldManagementGrpcServiceTest {
     SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
-            pingService, roomService, digestService, meterRegistry, new ObjectMapper());
+            pingService,
+            roomService,
+            Mockito.mock(WorldInstanceActivationService.class),
+            digestService,
+            meterRegistry,
+            new ObjectMapper());
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     service.getDraftDesignDigest(
@@ -75,6 +98,74 @@ class WorldManagementGrpcServiceTest {
 
     assertEquals("7", ref.get().getScopeValue());
     assertEquals("version:7", ref.get().getAppliedCommitId());
+  }
+
+  @Test
+  void prepareWorldInstanceReturnsLifecycleSnapshot() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    WorldInstanceActivationService activationService =
+        Mockito.mock(WorldInstanceActivationService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
+    Mockito.when(
+            activationService.prepareWorldInstance(
+                Mockito.argThat(
+                    request -> request.tenantId() == 1L && request.gameInstanceId() == 55L)))
+        .thenReturn(
+            new WorldInstanceLifecycleSnapshotDto(
+                1L,
+                55L,
+                7L,
+                "cp-1",
+                "ld-1",
+                11L,
+                77L,
+                "genrev-11",
+                "prb:1:11:77",
+                4L,
+                1L,
+                "PREPARING"));
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            pingService,
+            roomService,
+            activationService,
+            digestService,
+            meterRegistry,
+            new ObjectMapper());
+
+    AtomicReference<PrepareWorldInstanceResponse> ref = new AtomicReference<>();
+    service.prepareWorldInstance(
+        PrepareWorldInstanceRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("55")
+            .setGameTemplateId("7")
+            .setControlPlaneRequestId("cp-1")
+            .setLaunchDescriptorId("ld-1")
+            .setVersionId("11")
+            .setRuntimeFlagsJson("{}")
+            .setGenerationConfigRevision("genrev-11")
+            .setReleaseBundleId("77")
+            .setPublishedReleaseBundleRef("prb:1:11:77")
+            .setVersionStateEpoch(4L)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(PrepareWorldInstanceResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("55", ref.get().getWorldInstance().getGameInstanceId());
+    assertEquals(1L, ref.get().getWorldInstance().getLifecycleEpoch());
   }
 
   @Test
@@ -302,7 +393,12 @@ class WorldManagementGrpcServiceTest {
     SessionContext.setContext("test-account", List.of(), Map.of("9", List.of("admin")));
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
-            pingService, roomService, digestService, meterRegistry, new ObjectMapper());
+            pingService,
+            roomService,
+            Mockito.mock(WorldInstanceActivationService.class),
+            digestService,
+            meterRegistry,
+            new ObjectMapper());
 
     AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
         new AtomicReference<>();
