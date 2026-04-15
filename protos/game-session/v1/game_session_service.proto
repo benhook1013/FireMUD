@@ -32,6 +32,10 @@ service GameSessionService {
 service GameSessionControlPlaneService {
   rpc GetPinnedScriptPatchVersion(GetPinnedScriptPatchVersionRequest)
       returns (GetPinnedScriptPatchVersionResponse);
+  rpc ListAdmissionPointers(ListAdmissionPointersRequest)
+      returns (ListAdmissionPointersResponse);
+  rpc SetAdmissionPointer(SetAdmissionPointerRequest)
+      returns (SetAdmissionPointerResponse);
   rpc SetPinnedScriptPatchVersion(SetPinnedScriptPatchVersionRequest)
       returns (SetPinnedScriptPatchVersionResponse);
   rpc RollbackScriptPatchVersion(RollbackScriptPatchVersionRequest)
@@ -254,6 +258,52 @@ message GetPinnedScriptPatchVersionResponse {
   int64 pinned_at_ms = 2;
   string pinned_by = 3;
   shared.v1.ErrorDetail error = 4;
+}
+
+message AdmissionPointerControlPlaneEntry {
+  string world_slug = 1;
+  string world_display_name = 2;
+  string realm_slug = 3;
+  string realm_display_name = 4;
+  string tenant_id = 5;
+  string game_instance_id = 6;
+  int64 pointer_version = 7;
+  bool visible = 8;
+  bool requires_character_selection = 9;
+  string state_scope = 10;
+  string character_creation_policy = 11;
+  string actor_principal = 12;
+  string reason = 13;
+  string control_plane_request_id = 14;
+  int64 occurred_at_ms = 15;
+}
+
+message ListAdmissionPointersRequest {}
+
+message ListAdmissionPointersResponse {
+  repeated AdmissionPointerControlPlaneEntry pointers = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message SetAdmissionPointerRequest {
+  string world_slug = 1;
+  string world_display_name = 2;
+  string realm_slug = 3;
+  string realm_display_name = 4;
+  string tenant_id = 5;
+  string game_instance_id = 6;
+  bool visible = 7;
+  bool requires_character_selection = 8;
+  string state_scope = 9;
+  string character_creation_policy = 10;
+  string actor_principal = 11;
+  string reason = 12;
+  string control_plane_request_id = 13;
+}
+
+message SetAdmissionPointerResponse {
+  AdmissionPointerControlPlaneEntry pointer = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message SetPinnedScriptPatchVersionRequest {

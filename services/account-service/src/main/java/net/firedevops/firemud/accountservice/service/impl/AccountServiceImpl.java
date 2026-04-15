@@ -16,7 +16,6 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
@@ -63,7 +62,6 @@ import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
@@ -94,7 +92,6 @@ public class AccountServiceImpl implements AccountService {
   private final EmailService emailService;
   private final MailProperties mailProperties;
   private final AuthProperties authProperties;
-  private final GameplayCatalogProperties gameplayCatalogProperties;
   private final LoggingAdminClient loggingAdminClient;
   private final GameSessionClient gameSessionClient;
   private final EntityManagementClient entityManagementClient;
@@ -120,7 +117,6 @@ public class AccountServiceImpl implements AccountService {
       EmailService emailService,
       MailProperties mailProperties,
       AuthProperties authProperties,
-      GameplayCatalogProperties gameplayCatalogProperties,
       LoggingAdminClient loggingAdminClient,
       GameSessionClient gameSessionClient,
       EntityManagementClient entityManagementClient,
@@ -141,7 +137,6 @@ public class AccountServiceImpl implements AccountService {
     this.emailService = emailService;
     this.mailProperties = mailProperties;
     this.authProperties = authProperties;
-    this.gameplayCatalogProperties = gameplayCatalogProperties;
     this.loggingAdminClient = loggingAdminClient;
     this.gameSessionClient = gameSessionClient;
     this.entityManagementClient = entityManagementClient;
@@ -437,7 +432,7 @@ public class AccountServiceImpl implements AccountService {
   public PublicProductionMembershipResult ensurePublicProductionPlayerMembership(
       Long accountId, Long tenantId, String realmSlug, String requestId) {
     requireAccount(accountId);
-    GameplayCatalogProperties.Realm realm = requirePublicProductionRealm(tenantId, realmSlug);
+    var realm = requirePublicProductionRealm(tenantId, realmSlug);
     RuntimeEntitlementsDto entitlements = getTenantEntitlementsForRuntime(tenantId, requestId);
     if (!entitlements.gameplayAvailable()) {
       throw new AuthenticationException(
@@ -455,7 +450,7 @@ public class AccountServiceImpl implements AccountService {
       return new PublicProductionMembershipResult(
           accountId,
           tenantId,
-          realm.getSlug(),
+          realm.getRealmSlug(),
           membership.getId(),
           false,
           Instant.now().toString());
@@ -479,7 +474,7 @@ public class AccountServiceImpl implements AccountService {
       return new PublicProductionMembershipResult(
           accountId,
           tenantId,
-          realm.getSlug(),
+          realm.getRealmSlug(),
           concurrent.getId(),
           false,
           Instant.now().toString());
@@ -489,16 +484,21 @@ public class AccountServiceImpl implements AccountService {
     runAfterCommit(
         () ->
             safeLogPublicProductionMembershipCreated(
-                tenantId, accountId, realm.getSlug(), membershipVersion, requestId));
+                tenantId, accountId, realm.getRealmSlug(), membershipVersion, requestId));
     logger.info(
         "Created public-production gameplay membership for account {} tenant {} realm {} membershipVersion {} requestId {}",
         accountId,
         tenantId,
-        realm.getSlug(),
+        realm.getRealmSlug(),
         membershipVersion,
         requestId);
     return new PublicProductionMembershipResult(
-        accountId, tenantId, realm.getSlug(), membershipVersion, true, Instant.now().toString());
+        accountId,
+        tenantId,
+        realm.getRealmSlug(),
+        membershipVersion,
+        true,
+        Instant.now().toString());
   }
 
   @Override
@@ -583,22 +583,6 @@ public class AccountServiceImpl implements AccountService {
     } catch (IllegalStateException ex) {
       return false;
     }
-  }
-
-  private boolean isRealmAdmissible(
-      BootstrapContext bootstrapContext, GameplayCatalogProperties.Realm realm) {
-    if (!realm.isVisible()) {
-      return false;
-    }
-    RuntimeMembershipDto membership =
-        getTenantMembershipForRuntime(
-            bootstrapContext.accountId(), realm.getTenantId(), "bootstrap-discovery");
-    if (!membership.gameplayAdmissionAllowed() && !isPublicProductionRealm(realm)) {
-      return false;
-    }
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(realm.getTenantId(), "bootstrap-discovery");
-    return entitlements.gameplayAvailable();
   }
 
   private boolean isRealmAdmissible(
@@ -1089,15 +1073,24 @@ public class AccountServiceImpl implements AccountService {
         result.evaluatedAt());
   }
 
-  private GameplayCatalogProperties.Realm requirePublicProductionRealm(
-      Long tenantId, String realmSlug) {
-    GameplayCatalogProperties.Realm realm =
-        gameplayCatalogProperties.getWorlds().stream()
-            .filter(Objects::nonNull)
-            .flatMap(world -> world.getRealms().stream())
-            .filter(Objects::nonNull)
-            .filter(candidate -> candidate.getTenantId() == tenantId)
-            .filter(candidate -> Objects.equals(candidate.getSlug(), realmSlug))
+  private net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer
+      requirePublicProductionRealm(Long tenantId, String realmSlug) {
+    net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm =
+        gameSessionClient.listGameplayWorlds().stream()
+            .flatMap(
+                world -> {
+                  try {
+                    return gameSessionClient.listGameplayRealms(world.getWorldSlug()).stream()
+                        .filter(candidate -> realmSlug.equals(candidate.getRealmSlug()))
+                        .filter(candidate -> Long.parseLong(candidate.getTenantId()) == tenantId)
+                        .map(
+                            candidate ->
+                                gameSessionClient.getAdmissionPointer(
+                                    candidate.getWorldSlug(), candidate.getRealmSlug()));
+                  } catch (IllegalStateException ex) {
+                    return java.util.stream.Stream.empty();
+                  }
+                })
             .findFirst()
             .orElseThrow(
                 () ->
@@ -1112,10 +1105,6 @@ public class AccountServiceImpl implements AccountService {
     return realm;
   }
 
-  private boolean isPublicProductionRealm(GameplayCatalogProperties.Realm realm) {
-    return realm.isVisible() && "production".equalsIgnoreCase(realm.getSlug());
-  }
-
   private boolean isPublicProductionRealm(
       net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {
     return "production".equalsIgnoreCase(realm.getRealmSlug());
@@ -1124,13 +1113,6 @@ public class AccountServiceImpl implements AccountService {
   private boolean isPublicProductionRealm(
       net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm) {
     return "production".equalsIgnoreCase(realm.getRealmSlug());
-  }
-
-  private PlayableStateScope toPlayableStateScope(GameplayCatalogProperties.Realm realm) {
-    return switch (realm.getStateScope()) {
-      case SHARED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-      case ISOLATED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-    };
   }
 
   private PlayableStateScope toPlayableStateScope(

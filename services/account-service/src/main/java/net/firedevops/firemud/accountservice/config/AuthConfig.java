@@ -7,7 +7,6 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.security.JwtSecretWatcher;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.ReloadableJwtUtil;
@@ -18,7 +17,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
 @Configuration
-@EnableConfigurationProperties({AuthProperties.class, GameplayCatalogProperties.class})
+@EnableConfigurationProperties(AuthProperties.class)
 public class AuthConfig {
   private static final Logger logger = LoggingUtil.getLogger(AuthConfig.class);
   private final Environment environment;

@@ -44,7 +44,6 @@ import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.session.SessionService;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -63,8 +62,6 @@ class AccountServiceImplTest {
   @Mock private EmailService emailService;
   @Mock private MailProperties mailProperties;
   private final AuthProperties authProperties = new AuthProperties();
-  private final GameplayCatalogProperties gameplayCatalogProperties =
-      new GameplayCatalogProperties();
   @Mock private LoggingAdminClient loggingAdminClient;
   @Mock private GameSessionClient gameSessionClient;
   @Mock private EntityManagementClient entityManagementClient;
@@ -92,17 +89,6 @@ class AccountServiceImplTest {
     authProperties.setConnectScopeExpirationMs(120000L);
     authProperties.setConnectTokenExpirationMs(30000L);
     authProperties.setSessionExpirationMs(3600000L);
-    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
-    world.setSlug("demo");
-    world.setDisplayName("Demo World");
-    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
-    realm.setSlug("production");
-    realm.setDisplayName("Live Realm");
-    realm.setTenantId(7L);
-    realm.setGameInstanceId(44L);
-    realm.setPointerVersion(17L);
-    world.setRealms(java.util.List.of(realm));
-    gameplayCatalogProperties.setWorlds(new java.util.ArrayList<>(java.util.List.of(world)));
     when(gameSessionClient.listGameplayWorlds())
         .thenReturn(
             java.util.List.of(
@@ -156,7 +142,6 @@ class AccountServiceImplTest {
             emailService,
             mailProperties,
             authProperties,
-            gameplayCatalogProperties,
             loggingAdminClient,
             gameSessionClient,
             entityManagementClient,

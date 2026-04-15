@@ -122,6 +122,7 @@ Pointer freshness and cutover rules:
 
 - `pointerVersion` is monotonic per `{tenantId, realmSlug}`.
 - Any change that can affect which instance is admissible for gameplay admission must advance `pointerVersion`.
+- The current admissible pointer is persisted in Game Session-owned control-plane state together with append-only pointer audit events; gameplay clients and bootstrap flows consume the read surface derived from that state rather than local config snapshots.
 - Connect-token issuance and other admission-critical flows must fail closed if the selected realm target no longer resolves to the same admissible pointer version they were issued against.
 - Realm cutover must therefore look like a control-plane pointer move, not a client-side reinterpretation of slugs or instance names.
 

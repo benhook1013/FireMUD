@@ -14,9 +14,10 @@ This domain is already materially designed:
 The first implementation cut is now real:
 
 - account-to-tenant membership is now an explicit runtime substrate instead of piggybacking on `accounts.tenant_id`;
-- bootstrap discovery and in-band lobby discovery now share one canonical gameplay world/realm catalog model;
+- bootstrap discovery and in-band lobby discovery now share one canonical gameplay world/realm catalog model backed by persisted Game Session admission-pointer state;
 - first-party connect-token issuance and text-client `PLAY` now resolve tenant authority from the selected realm rather than from the initial login tenant;
 - public-production first join now exists as a concrete `EnsurePublicProductionPlayerMembership(...)` boundary in `account-service`;
+- public-production membership checks now consume the same Game Session routing authority as bootstrap/connect-token issuance instead of local config copies;
 - `CHARS`, `PLAY`, bootstrap character discovery, and `TELL` now resolve character lookup through a scope-aware gameplay roster contract, with shared-state realms reusing one tenant-live namespace and isolated-state realms using an instance-local roster namespace.
 
 The remaining work is to finish the deeper runtime/control-plane follow-through instead of leaving the new family as design-only.

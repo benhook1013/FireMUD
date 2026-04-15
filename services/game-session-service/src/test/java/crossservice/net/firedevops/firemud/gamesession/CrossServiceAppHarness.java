@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession;
 
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -66,6 +67,8 @@ public final class CrossServiceAppHarness {
     props.put("spring.grpc.server.port", "0");
     props.put("game-session.dev-isolated", "false");
     props.put("spring.main.allow-bean-definition-overriding", "true");
+    props.put("spring.flyway.enabled", "true");
+    props.put("spring.flyway.locations", "filesystem:" + gameSessionMigrationDir());
     props.put(
         "spring.autoconfigure.exclude",
         "org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,"
@@ -89,6 +92,15 @@ public final class CrossServiceAppHarness {
     return props.entrySet().stream()
         .flatMap(entry -> Stream.of("--" + entry.getKey() + "=" + String.valueOf(entry.getValue())))
         .toArray(String[]::new);
+  }
+
+  private static String gameSessionMigrationDir() {
+    Path repoRelative = Path.of("services/game-session-service/src/main/resources/db/migration");
+    if (repoRelative.toFile().exists()) {
+      return repoRelative.toAbsolutePath().normalize().toString();
+    }
+    Path moduleRelative = Path.of("src/main/resources/db/migration");
+    return moduleRelative.toAbsolutePath().normalize().toString();
   }
 
   @TestConfiguration

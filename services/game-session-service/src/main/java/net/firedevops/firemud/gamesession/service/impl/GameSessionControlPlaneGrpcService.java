@@ -11,16 +11,24 @@ import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
+import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
+import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -35,6 +43,7 @@ public final class GameSessionControlPlaneGrpcService
       LoggerFactory.getLogger(GameSessionControlPlaneGrpcService.class);
 
   private final GameInstanceRepository gameInstanceRepository;
+  private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final TickService tickService;
   private final MeterRegistry meterRegistry;
 
@@ -43,9 +52,11 @@ public final class GameSessionControlPlaneGrpcService
       justification = "Injected repository/services are internal Spring collaborators")
   public GameSessionControlPlaneGrpcService(
       GameInstanceRepository gameInstanceRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       TickService tickService,
       MeterRegistry meterRegistry) {
     this.gameInstanceRepository = gameInstanceRepository;
+    this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
   }
@@ -85,6 +96,104 @@ public final class GameSessionControlPlaneGrpcService
   private ErrorDetail authorizationError(String operation, AdminAuthorizationException ex) {
     return GrpcAppErrors.error(
         meterRegistry, logger, operation, "PERMISSION_DENIED", ex.getMessage());
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.listAdmissionPointers")
+  public void listAdmissionPointers(
+      ListAdmissionPointersRequest request,
+      StreamObserver<ListAdmissionPointersResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      ListAdmissionPointersResponse response =
+          ListAdmissionPointersResponse.newBuilder()
+              .addAllPointers(
+                  gameplayAdmissionPointerAuthorityService.listPointers().stream()
+                      .flatMap(
+                          pointer ->
+                              gameplayAdmissionPointerAuthorityService
+                                  .listPointerAudit(pointer.worldSlug(), pointer.realmSlug())
+                                  .stream()
+                                  .limit(1)
+                                  .map(this::toEntry))
+                      .toList())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      ListAdmissionPointersResponse response =
+          ListAdmissionPointersResponse.newBuilder()
+              .setError(authorizationError("ListAdmissionPointers", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("ListAdmissionPointers failed", ex);
+      ListAdmissionPointersResponse response =
+          ListAdmissionPointersResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.setAdmissionPointer")
+  public void setAdmissionPointer(
+      SetAdmissionPointerRequest request,
+      StreamObserver<SetAdmissionPointerResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      gameplayAdmissionPointerAuthorityService.upsertPointer(
+          new GameplayAdmissionPointerMutation(
+              request.getWorldSlug(),
+              request.getWorldDisplayName(),
+              request.getRealmSlug(),
+              request.getRealmDisplayName(),
+              parseTenantId(request.getTenantId()),
+              parseGameInstanceId(request.getGameInstanceId()),
+              request.getVisible(),
+              request.getRequiresCharacterSelection(),
+              request.getStateScope(),
+              request.getCharacterCreationPolicy(),
+              request.getActorPrincipal(),
+              request.getReason(),
+              request.getControlPlaneRequestId()));
+      AdmissionPointerControlPlaneEntry entry =
+          gameplayAdmissionPointerAuthorityService
+              .listPointerAudit(request.getWorldSlug(), request.getRealmSlug())
+              .stream()
+              .findFirst()
+              .map(this::toEntry)
+              .orElseThrow(() -> new IllegalStateException("Admission pointer audit missing"));
+      SetAdmissionPointerResponse response =
+          SetAdmissionPointerResponse.newBuilder().setPointer(entry).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      SetAdmissionPointerResponse response =
+          SetAdmissionPointerResponse.newBuilder()
+              .setError(authorizationError("SetAdmissionPointer", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      SetAdmissionPointerResponse response =
+          SetAdmissionPointerResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("SetAdmissionPointer failed", ex);
+      SetAdmissionPointerResponse response =
+          SetAdmissionPointerResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
   }
 
   @Override
@@ -248,6 +357,26 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  private AdmissionPointerControlPlaneEntry toEntry(GameplayAdmissionPointerAuditEntry entry) {
+    return AdmissionPointerControlPlaneEntry.newBuilder()
+        .setWorldSlug(entry.worldSlug())
+        .setWorldDisplayName(entry.worldDisplayName())
+        .setRealmSlug(entry.realmSlug())
+        .setRealmDisplayName(entry.realmDisplayName())
+        .setTenantId(Long.toString(entry.tenantId()))
+        .setGameInstanceId(Long.toString(entry.gameInstanceId()))
+        .setPointerVersion(entry.pointerVersion())
+        .setVisible(entry.visible())
+        .setRequiresCharacterSelection(entry.requiresCharacterSelection())
+        .setStateScope(entry.stateScope())
+        .setCharacterCreationPolicy(entry.characterCreationPolicy())
+        .setActorPrincipal(entry.actorPrincipal())
+        .setReason(entry.reason())
+        .setControlPlaneRequestId(entry.controlPlaneRequestId())
+        .setOccurredAtMs(entry.occurredAt().toEpochMilli())
+        .build();
   }
 
   @Override
