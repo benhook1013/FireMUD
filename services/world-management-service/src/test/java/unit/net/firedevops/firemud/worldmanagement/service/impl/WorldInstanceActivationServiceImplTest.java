@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
@@ -17,8 +18,13 @@ import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.entity.WorldInstance;
 import net.firedevops.firemud.worldmanagement.repository.RegionInstanceRepository;
+import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
+import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
+import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
+import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,6 +32,10 @@ import org.junit.jupiter.api.Test;
 class WorldInstanceActivationServiceImplTest {
   private WorldInstanceRepository worldInstanceRepository;
   private RegionInstanceRepository regionInstanceRepository;
+  private RoomRepository roomRepository;
+  private RoomExitRepository roomExitRepository;
+  private RoomInstanceRepository roomInstanceRepository;
+  private RoomInstanceExitRepository roomInstanceExitRepository;
   private GameDesignClient gameDesignClient;
   private WorldInstanceActivationServiceImpl service;
 
@@ -33,6 +43,10 @@ class WorldInstanceActivationServiceImplTest {
   void setUp() {
     worldInstanceRepository = mock(WorldInstanceRepository.class);
     regionInstanceRepository = mock(RegionInstanceRepository.class);
+    roomRepository = mock(RoomRepository.class);
+    roomExitRepository = mock(RoomExitRepository.class);
+    roomInstanceRepository = mock(RoomInstanceRepository.class);
+    roomInstanceExitRepository = mock(RoomInstanceExitRepository.class);
     gameDesignClient = mock(GameDesignClient.class);
     WorldProperties worldProperties = new WorldProperties();
     worldProperties.setLocalShardId(7);
@@ -40,6 +54,10 @@ class WorldInstanceActivationServiceImplTest {
         new WorldInstanceActivationServiceImpl(
             worldInstanceRepository,
             regionInstanceRepository,
+            roomRepository,
+            roomExitRepository,
+            roomInstanceRepository,
+            roomInstanceExitRepository,
             worldProperties,
             gameDesignClient,
             new SimpleMeterRegistry());
@@ -65,6 +83,12 @@ class WorldInstanceActivationServiceImplTest {
                         .setVersionStateEpoch(77L)
                         .build())
                 .build());
+    when(roomRepository.findByTenantIdOrderByIdAsc(42L))
+        .thenReturn(List.of(templateRoom(42L, 1021L)));
+    when(roomExitRepository.findByTenantIdOrderByIdAsc(42L)).thenReturn(List.of());
+    when(roomInstanceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(roomInstanceExitRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
   @Test
@@ -93,6 +117,7 @@ class WorldInstanceActivationServiceImplTest {
     assertEquals("PREPARING", snapshot.status());
     assertEquals(1L, snapshot.lifecycleEpoch());
     verify(regionInstanceRepository).save(any());
+    verify(roomInstanceRepository).save(any());
   }
 
   @Test
@@ -174,5 +199,14 @@ class WorldInstanceActivationServiceImplTest {
     assertEquals(
         "RELEASE_ATTESTATION_MISMATCH: world activation request does not match the published release bundle",
         error.getMessage());
+  }
+
+  private Room templateRoom(long tenantId, long roomId) {
+    Room room = new Room();
+    room.setId(roomId);
+    room.setTenantId(tenantId);
+    room.setName("Login Hall");
+    room.setDescription("A narrow testing hall.");
+    return room;
   }
 }

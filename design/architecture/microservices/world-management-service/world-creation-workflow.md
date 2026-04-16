@@ -70,8 +70,8 @@ Initial NPC and item presence is modeled declaratively:
 
 Initial-slice delivery expectation:
 
-- The first live implementation cut now uses `PrepareWorldInstance`, `ActivatePreparedWorldInstance`, and `FailPreparedWorldInstance` to persist `world_instance` plus starter `region_instance` rows with fenced `lifecycle_epoch` transitions.
-- Fuller `zone_instance` / `room_instance` materialization and broader activation/cutover consumers remain follow-on work on the same lifecycle seam rather than a separate activation model.
+- The first live implementation cut now uses `PrepareWorldInstance`, `ActivatePreparedWorldInstance`, and `FailPreparedWorldInstance` to persist `world_instance`, starter `region_instance`, and runtime `room_instance` / `room_instance_exit` rows with fenced `lifecycle_epoch` transitions.
+- Fuller `zone_instance` materialization and broader activation/cutover consumers remain follow-on work on the same lifecycle seam rather than a separate activation model.
 
 - The first implementation slice must implement steps 1, 2, and 4.
 - Step 3 is optional for the initial slice unless the launched version actually requires expansive-world terrain generation or instance-scoped population schedule materialization.

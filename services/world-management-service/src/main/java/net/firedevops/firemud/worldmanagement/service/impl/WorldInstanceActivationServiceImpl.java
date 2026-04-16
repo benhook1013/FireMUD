@@ -5,6 +5,9 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
@@ -13,8 +16,16 @@ import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
 import net.firedevops.firemud.worldmanagement.entity.RegionInstance;
+import net.firedevops.firemud.worldmanagement.entity.Room;
+import net.firedevops.firemud.worldmanagement.entity.RoomExit;
+import net.firedevops.firemud.worldmanagement.entity.RoomInstance;
+import net.firedevops.firemud.worldmanagement.entity.RoomInstanceExit;
 import net.firedevops.firemud.worldmanagement.entity.WorldInstance;
 import net.firedevops.firemud.worldmanagement.repository.RegionInstanceRepository;
+import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
+import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
+import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
+import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldInstanceActivationService;
 import org.slf4j.Logger;
@@ -35,6 +46,10 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
 
   private final WorldInstanceRepository worldInstanceRepository;
   private final RegionInstanceRepository regionInstanceRepository;
+  private final RoomRepository roomRepository;
+  private final RoomExitRepository roomExitRepository;
+  private final RoomInstanceRepository roomInstanceRepository;
+  private final RoomInstanceExitRepository roomInstanceExitRepository;
   private final WorldProperties worldProperties;
   private final GameDesignClient gameDesignClient;
   private final EntityManagementClient entityManagementClient;
@@ -48,12 +63,20 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
   public WorldInstanceActivationServiceImpl(
       WorldInstanceRepository worldInstanceRepository,
       RegionInstanceRepository regionInstanceRepository,
+      RoomRepository roomRepository,
+      RoomExitRepository roomExitRepository,
+      RoomInstanceRepository roomInstanceRepository,
+      RoomInstanceExitRepository roomInstanceExitRepository,
       WorldProperties worldProperties,
       GameDesignClient gameDesignClient,
       EntityManagementClient entityManagementClient,
       MeterRegistry meterRegistry) {
     this.worldInstanceRepository = worldInstanceRepository;
     this.regionInstanceRepository = regionInstanceRepository;
+    this.roomRepository = roomRepository;
+    this.roomExitRepository = roomExitRepository;
+    this.roomInstanceRepository = roomInstanceRepository;
+    this.roomInstanceExitRepository = roomInstanceExitRepository;
     this.worldProperties = worldProperties;
     this.gameDesignClient = gameDesignClient;
     this.entityManagementClient = entityManagementClient;
@@ -63,12 +86,20 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
   WorldInstanceActivationServiceImpl(
       WorldInstanceRepository worldInstanceRepository,
       RegionInstanceRepository regionInstanceRepository,
+      RoomRepository roomRepository,
+      RoomExitRepository roomExitRepository,
+      RoomInstanceRepository roomInstanceRepository,
+      RoomInstanceExitRepository roomInstanceExitRepository,
       WorldProperties worldProperties,
       GameDesignClient gameDesignClient,
       MeterRegistry meterRegistry) {
     this(
         worldInstanceRepository,
         regionInstanceRepository,
+        roomRepository,
+        roomExitRepository,
+        roomInstanceRepository,
+        roomInstanceExitRepository,
         worldProperties,
         gameDesignClient,
         null,
@@ -130,7 +161,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
     region.setGeneratorType("SimpleDungeonGenerator");
     region.setGeneratorParams("{}");
     region.setSpacingMultiplier(1.0);
-    regionInstanceRepository.save(region);
+    RegionInstance savedRegion = regionInstanceRepository.save(region);
+    materializeRoomTopology(savedRegion, request.tenantId(), request.gameInstanceId());
 
     logger.info(
         "Prepared world instance tenant={} gameInstanceId={} launchDescriptorId={} versionId={}",
@@ -339,6 +371,43 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
         .orElseThrow(
             () ->
                 new IllegalArgumentException("WORLD_INSTANCE_NOT_FOUND: world instance not found"));
+  }
+
+  private void materializeRoomTopology(
+      RegionInstance regionInstance, long tenantId, long gameInstanceId) {
+    List<Room> templateRooms = roomRepository.findByTenantIdOrderByIdAsc(tenantId);
+    Map<Long, RoomInstance> roomInstancesByTemplateId = new LinkedHashMap<>();
+    for (Room templateRoom : templateRooms) {
+      RoomInstance roomInstance = new RoomInstance();
+      roomInstance.setTenantId(tenantId);
+      roomInstance.setGameInstanceId(gameInstanceId);
+      roomInstance.setRoomInstanceId(templateRoom.getId());
+      roomInstance.setTemplateRoomId(templateRoom.getId());
+      roomInstance.setRegionInstance(regionInstance);
+      roomInstance.setName(templateRoom.getName());
+      roomInstance.setDescription(templateRoom.getDescription());
+      roomInstance.setNameLocalizedVariantsJson(templateRoom.getNameLocalizedVariantsJson());
+      roomInstance.setDescriptionLocalizedVariantsJson(
+          templateRoom.getDescriptionLocalizedVariantsJson());
+      RoomInstance savedRoomInstance = roomInstanceRepository.save(roomInstance);
+      roomInstancesByTemplateId.put(templateRoom.getId(), savedRoomInstance);
+    }
+    for (RoomExit templateExit : roomExitRepository.findByTenantIdOrderByIdAsc(tenantId)) {
+      RoomInstance fromRoomInstance =
+          roomInstancesByTemplateId.get(templateExit.getFromRoom().getId());
+      RoomInstance toRoomInstance = roomInstancesByTemplateId.get(templateExit.getToRoom().getId());
+      if (fromRoomInstance == null || toRoomInstance == null) {
+        continue;
+      }
+      RoomInstanceExit roomInstanceExit = new RoomInstanceExit();
+      roomInstanceExit.setTenantId(tenantId);
+      roomInstanceExit.setGameInstanceId(gameInstanceId);
+      roomInstanceExit.setFromRoomInstance(fromRoomInstance);
+      roomInstanceExit.setToRoomInstance(toRoomInstance);
+      roomInstanceExit.setDirection(templateExit.getDirection());
+      roomInstanceExit.setCost(templateExit.getCost());
+      roomInstanceExitRepository.save(roomInstanceExit);
+    }
   }
 
   private void requireLifecycleEpoch(WorldInstance worldInstance, long expectedLifecycleEpoch) {

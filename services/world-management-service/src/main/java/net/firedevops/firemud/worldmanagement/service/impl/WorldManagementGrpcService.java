@@ -331,9 +331,11 @@ public class WorldManagementGrpcService
     try {
       Long roomId = Long.valueOf(resolveRoomId(request));
       Long tenantId = Long.valueOf(resolveTenantId(request));
+      Long gameInstanceId = Long.valueOf(request.getRoomInstance().getGameInstanceId());
       SessionContext.requireTenantAccess(tenantId);
       Optional<String> json =
-          Optional.ofNullable(roomService.getRoom(tenantId, roomId)).map(this::toJson);
+          Optional.ofNullable(roomService.getRoom(tenantId, gameInstanceId, roomId))
+              .map(this::toJson);
       if (json.isPresent()) {
         GetRoomResponse response = GetRoomResponse.newBuilder().setRoomJson(json.get()).build();
         responseObserver.onNext(response);
@@ -388,9 +390,11 @@ public class WorldManagementGrpcService
     try {
       Long roomId = Long.valueOf(resolveRoomId(request));
       Long tenantId = Long.valueOf(resolveTenantId(request));
+      Long gameInstanceId = Long.valueOf(request.getRoomInstance().getGameInstanceId());
       requireTenantAccessWhenPresent(tenantId);
       RoomSnapshotDto snapshot =
-          roomService.getRoomSnapshot(tenantId, roomId, request.getPreferredLocale());
+          roomService.getRoomSnapshot(
+              tenantId, gameInstanceId, roomId, request.getPreferredLocale());
       GetRoomSnapshotResponse response =
           GetRoomSnapshotResponse.newBuilder().setSnapshot(toProto(snapshot)).build();
       responseObserver.onNext(response);

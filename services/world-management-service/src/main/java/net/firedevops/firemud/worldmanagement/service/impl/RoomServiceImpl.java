@@ -15,11 +15,10 @@ import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
-import net.firedevops.firemud.worldmanagement.entity.Room;
-import net.firedevops.firemud.worldmanagement.entity.RoomExit;
-import net.firedevops.firemud.worldmanagement.mapper.RoomMapper;
-import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
-import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
+import net.firedevops.firemud.worldmanagement.entity.RoomInstance;
+import net.firedevops.firemud.worldmanagement.entity.RoomInstanceExit;
+import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
+import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,12 +35,11 @@ public class RoomServiceImpl implements RoomService {
   private static final Logger LOG = LoggerFactory.getLogger(RoomServiceImpl.class);
   private static final String DEFAULT_SOURCE_LOCALE = "en-NZ";
 
-  private final RoomRepository roomRepository;
-  private final RoomMapper roomMapper;
+  private final RoomInstanceRepository roomInstanceRepository;
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
   private final WorldProperties worldProperties;
-  private final RoomExitRepository roomExitRepository;
+  private final RoomInstanceExitRepository roomInstanceExitRepository;
   private final tools.jackson.databind.ObjectMapper objectMapper;
 
   private static final int SHORT_DESCRIPTION_LENGTH = 120;
@@ -65,8 +63,8 @@ public class RoomServiceImpl implements RoomService {
 
   @Override
   @Timed(value = "room.get")
-  public RoomDto getRoom(Long tenantId, Long roomId) {
-    String key = cacheKey(tenantId, roomId);
+  public RoomDto getRoom(Long tenantId, Long gameInstanceId, Long roomId) {
+    String key = cacheKey(tenantId, gameInstanceId, roomId);
     try {
       Object cached = redisTemplate.opsForValue().get(key);
       if (cached instanceof RoomDto dto) {
@@ -78,10 +76,9 @@ public class RoomServiceImpl implements RoomService {
     }
     cacheMissCounter.increment();
     RoomDto dto =
-        roomRepository
-            .findById(roomId)
-            .filter(r -> r.getTenantId().equals(tenantId))
-            .map(roomMapper::toDto)
+        roomInstanceRepository
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceId(tenantId, gameInstanceId, roomId)
+            .map(this::toDto)
             .orElseThrow(() -> new IllegalArgumentException("Room not found"));
     try {
       redisTemplate.opsForValue().set(key, dto, Duration.ofSeconds(cacheTtlSeconds));
@@ -94,14 +91,16 @@ public class RoomServiceImpl implements RoomService {
   @Override
   @Timed(value = "room.snapshot")
   @Transactional(readOnly = true)
-  public RoomSnapshotDto getRoomSnapshot(Long tenantId, Long roomId, String preferredLocaleTag) {
-    Room room =
-        roomRepository
-            .findById(roomId)
-            .filter(r -> r.getTenantId().equals(tenantId))
+  public RoomSnapshotDto getRoomSnapshot(
+      Long tenantId, Long gameInstanceId, Long roomId, String preferredLocaleTag) {
+    RoomInstance room =
+        roomInstanceRepository
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceId(tenantId, gameInstanceId, roomId)
             .orElseThrow(() -> new IllegalArgumentException("Room not found"));
     List<RoomExitSnapshotDto> exits =
-        roomExitRepository.findByTenantIdAndFromRoomId(tenantId, roomId).stream()
+        roomInstanceExitRepository
+            .findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(tenantId, gameInstanceId, roomId)
+            .stream()
             .map(exit -> toExitSnapshot(exit, preferredLocaleTag))
             .collect(Collectors.toList());
     String roomName =
@@ -111,7 +110,7 @@ public class RoomServiceImpl implements RoomService {
         resolveLocalizedText(
             room.getDescription(), room.getDescriptionLocalizedVariantsJson(), preferredLocaleTag);
     return new RoomSnapshotDto(
-        room.getId(),
+        room.getRoomInstanceId(),
         room.getTenantId(),
         roomName,
         buildShortDescription(longDescription),
@@ -121,16 +120,16 @@ public class RoomServiceImpl implements RoomService {
         List.of());
   }
 
-  private RoomExitSnapshotDto toExitSnapshot(RoomExit exit, String preferredLocaleTag) {
+  private RoomExitSnapshotDto toExitSnapshot(RoomInstanceExit exit, String preferredLocaleTag) {
     String targetName =
         resolveLocalizedText(
-            exit.getToRoom().getName(),
-            exit.getToRoom().getNameLocalizedVariantsJson(),
+            exit.getToRoomInstance().getName(),
+            exit.getToRoomInstance().getNameLocalizedVariantsJson(),
             preferredLocaleTag);
     String description = "Leads toward " + targetName;
     return new RoomExitSnapshotDto(
         exit.getId(),
-        exit.getToRoom().getId(),
+        exit.getToRoomInstance().getRoomInstanceId(),
         targetName,
         exit.getDirection(),
         exit.getDirection(),
@@ -148,8 +147,17 @@ public class RoomServiceImpl implements RoomService {
     return description.substring(0, SHORT_DESCRIPTION_LENGTH) + "...";
   }
 
-  private String cacheKey(Long tenantId, Long roomId) {
-    return "room:" + tenantId + ":" + roomId;
+  private String cacheKey(Long tenantId, Long gameInstanceId, Long roomId) {
+    return "room:" + tenantId + ":" + gameInstanceId + ":" + roomId;
+  }
+
+  private RoomDto toDto(RoomInstance room) {
+    return new RoomDto(
+        room.getRoomInstanceId(),
+        room.getTenantId(),
+        room.getRegionInstance().getId(),
+        room.getName(),
+        room.getDescription());
   }
 
   private String resolveLocalizedText(

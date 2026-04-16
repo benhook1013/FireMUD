@@ -211,7 +211,8 @@ class WorldManagementGrpcServiceTest {
     service.getRoom(
         net.firedevops.firemud.worldmanagement.v1.GetRoomRequest.newBuilder()
             .setTenantId("bad")
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1").build())
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
             .build(),
         new StreamObserver<>() {
           @Override
@@ -261,7 +262,7 @@ class WorldManagementGrpcServiceTest {
   void getRoomSnapshotMissingRoomReturnsNotFound() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
-    Mockito.when(roomService.getRoomSnapshot(1L, 1L, "fr"))
+    Mockito.when(roomService.getRoomSnapshot(1L, 41L, 1L, "fr"))
         .thenThrow(new IllegalArgumentException("Room not found"));
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
@@ -273,7 +274,8 @@ class WorldManagementGrpcServiceTest {
         GetRoomSnapshotRequest.newBuilder()
             .setTenantId("1")
             .setPreferredLocale("fr")
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1").build())
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
             .build(),
         new StreamObserver<>() {
           @Override
@@ -295,7 +297,7 @@ class WorldManagementGrpcServiceTest {
   void getRoomSnapshotReturnsSnapshot() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
-    Mockito.when(roomService.getRoomSnapshot(1L, 1L, "fr"))
+    Mockito.when(roomService.getRoomSnapshot(1L, 41L, 1L, "fr"))
         .thenReturn(
             new RoomSnapshotDto(
                 1L,
@@ -319,7 +321,8 @@ class WorldManagementGrpcServiceTest {
         GetRoomSnapshotRequest.newBuilder()
             .setTenantId("1")
             .setPreferredLocale("fr")
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1").build())
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
             .build(),
         new StreamObserver<>() {
           @Override
@@ -349,7 +352,7 @@ class WorldManagementGrpcServiceTest {
   void getRoomSnapshotAllowsUnauthenticatedInternalReadPath() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
-    Mockito.when(roomService.getRoomSnapshot(1L, 1L, "fr"))
+    Mockito.when(roomService.getRoomSnapshot(1L, 41L, 1L, "fr"))
         .thenReturn(
             new RoomSnapshotDto(
                 1L, 1L, "Room A", "Seed room A", "Seed room A", List.of(), Map.of(), List.of()));
@@ -364,7 +367,8 @@ class WorldManagementGrpcServiceTest {
         GetRoomSnapshotRequest.newBuilder()
             .setTenantId("1")
             .setPreferredLocale("fr")
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1").build())
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
             .build(),
         new StreamObserver<>() {
           @Override
@@ -405,7 +409,8 @@ class WorldManagementGrpcServiceTest {
     service.getRoom(
         net.firedevops.firemud.worldmanagement.v1.GetRoomRequest.newBuilder()
             .setTenantId("1")
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1").build())
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
             .build(),
         new StreamObserver<>() {
           @Override

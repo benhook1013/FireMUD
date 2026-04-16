@@ -72,9 +72,9 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
 - The first runtime lifecycle substrate is now live through `world_instance` plus first-cut `region_instance` rows keyed by `(tenantId, gameInstanceId)`.
 - `lifecycle_epoch` is the current concrete fenced token used by the prepare/activate/fail/terminate lifecycle RPCs.
 - `world_instance.termination_request_id` and `terminated_at` now retain the canonical shutdown workflow identity and terminal completion timestamp for runtime-instance teardown.
-- `zone_instance` and `room_instance` are still target-state follow-through rather than fully landed storage families, so runtime topology materialization is only partially complete.
+- `room_instance` and `room_instance_exit` are now live as runtime topology storage keyed by `(tenantId, gameInstanceId, roomInstanceId)`, while `zone_instance` remains the main named topology follow-through family.
 
-- `region_instance`, `zone_instance`, and `room_instance` materialize topology for a running game instance based on the chosen version and any runtime procedural generation.
+- `region_instance`, `zone_instance`, `room_instance`, and `room_instance_exit` materialize topology for a running game instance based on the chosen version and any runtime procedural generation.
 - `instance` tracks temporary copies of zones for instanced gameplay, with `expires_at` defining when instances enter `InstanceTermination`.
 - `world_instance_status`, or equivalent lifecycle state, tracks monotonic lifecycle transitions: `PREPARING -> (ACTIVE | FAILED_PRE_ACTIVATION)` and `ACTIVE -> TERMINATING -> TERMINATED`.
 - `FAILED_PRE_ACTIVATION` is terminal for that `gameInstanceId`; recovery is modeled as provisioning a new `gameInstanceId` and rerunning world creation.
@@ -101,7 +101,7 @@ World Management must classify its runtime persistence surface for cutover and m
   - none are mandatory in the initial implementation slice;
   - any future world-bound metadata that survives beyond a single room-instance layout and references versioned templates.
 - `S3` world-owned ephemeral state:
-  - `region_instance`, `zone_instance`, `room_instance`;
+  - `region_instance`, `zone_instance`, `room_instance`, `room_instance_exit`;
   - `character_location`, `npc_location`, and occupancy rows;
   - ambient runtime state such as weather, door state, hazard state, instanced events, and instance-scoped schedules;
   - `world_event` rows tied to a specific `gameInstanceId`.
