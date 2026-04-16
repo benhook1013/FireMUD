@@ -6,5 +6,5 @@ public interface GameplayPresenceLifecycleService {
 
   void recordActivity(long sessionId, boolean meaningfulGameplayActivity);
 
-  void recordDisconnected(long sessionId);
+  void recordDisconnected(long sessionId, AccountRecentPresenceDisposition disposition);
 }

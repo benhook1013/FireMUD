@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.mockito.Mockito.verify;
 
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -38,11 +39,13 @@ class DefaultGameplayPresenceLifecycleServiceTest {
 
   @Test
   void recordDisconnectedWritesRecentPresenceBeforeRemovingLivePresence() {
-    service.recordDisconnected(41L);
+    service.recordDisconnected(41L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
 
     org.mockito.InOrder inOrder =
         Mockito.inOrder(accountRecentPresenceService, gameplayPresenceService);
-    inOrder.verify(accountRecentPresenceService).recordDisconnect(41L);
+    inOrder
+        .verify(accountRecentPresenceService)
+        .recordDisconnect(41L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
     inOrder.verify(gameplayPresenceService).removeBySessionId(41L);
   }
 }

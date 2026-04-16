@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -40,6 +41,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
@@ -301,6 +303,8 @@ class SessionResumptionFlowTest {
     assertFalse(firstLookAfterTakeover.commandResult().accepted());
     assertEquals("LOGIN_REQUIRED", firstLookAfterTakeover.commandResult().errorCode());
 
+    verify(accountRecentPresenceService)
+        .recordDisconnect(1L, AccountRecentPresenceDisposition.TAKEOVER);
     assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
   }
@@ -315,6 +319,8 @@ class SessionResumptionFlowTest {
     TextCommandInterpretationResult logout = interpreter.interpret("1", "LOGOUT", false);
     assertTrue(logout.commandResult().accepted());
     assertTrue(sessionContextService.findByTenantAndSessionId(22L, 1L).isEmpty());
+    verify(accountRecentPresenceService)
+        .recordDisconnect(1L, AccountRecentPresenceDisposition.LOGOUT);
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("2", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());

@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
@@ -64,6 +65,7 @@ class AccountPresenceQueryServiceImplTest {
                     1L,
                     4L,
                     Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
                     AccountPresenceVisibilityPolicy.PRIVATE)));
     when(presenceService.findConnectedBySessionId(11L))
         .thenReturn(

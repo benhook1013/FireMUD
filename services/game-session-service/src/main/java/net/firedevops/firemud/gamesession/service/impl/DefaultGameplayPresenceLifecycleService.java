@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import java.util.Objects;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
@@ -36,8 +37,8 @@ public final class DefaultGameplayPresenceLifecycleService
   }
 
   @Override
-  public void recordDisconnected(long sessionId) {
-    accountRecentPresenceService.recordDisconnect(sessionId);
+  public void recordDisconnected(long sessionId, AccountRecentPresenceDisposition disposition) {
+    accountRecentPresenceService.recordDisconnect(sessionId, disposition);
     gameplayPresenceService.removeBySessionId(sessionId);
   }
 }

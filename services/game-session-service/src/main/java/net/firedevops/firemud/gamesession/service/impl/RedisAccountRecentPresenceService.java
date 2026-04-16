@@ -8,6 +8,7 @@ import java.util.function.LongSupplier;
 import net.firedevops.firemud.gamesession.config.PresenceProperties;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
@@ -79,7 +80,12 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
                 .findConnectedBySessionId(context.sessionId())
                 .map(GameplayPresence::role)
                 .orElse(null));
-    write(context.tenantId(), context.accountId(), policy, currentTimeMillisSupplier.getAsLong());
+    write(
+        context.tenantId(),
+        context.accountId(),
+        AccountRecentPresenceDisposition.TRANSPORT_LOSS,
+        policy,
+        currentTimeMillisSupplier.getAsLong());
   }
 
   @Override
@@ -91,6 +97,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
                 write(
                     context.tenantId(),
                     context.accountId(),
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
                     visibilityPolicyResolver.resolve(
                         context.tenantId(),
                         context.accountId(),
@@ -102,7 +109,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
   }
 
   @Override
-  public void recordDisconnect(long sessionId) {
+  public void recordDisconnect(long sessionId, AccountRecentPresenceDisposition disposition) {
     sessionContextService
         .findBySessionId(sessionId)
         .ifPresent(
@@ -110,6 +117,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
                 write(
                     context.tenantId(),
                     context.accountId(),
+                    disposition,
                     visibilityPolicyResolver.resolve(
                         context.tenantId(),
                         context.accountId(),
@@ -141,6 +149,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
   private void write(
       long tenantId,
       long accountId,
+      AccountRecentPresenceDisposition disposition,
       AccountPresenceVisibilityPolicy visibilityPolicy,
       long timestampMs) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
@@ -149,7 +158,8 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     }
     valueOps.set(
         key(tenantId, accountId),
-        new AccountRecentPresenceState(tenantId, accountId, timestampMs, visibilityPolicy),
+        new AccountRecentPresenceState(
+            tenantId, accountId, timestampMs, disposition, visibilityPolicy),
         ttl);
   }
 

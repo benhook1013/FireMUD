@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
@@ -116,7 +117,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               activeTransportSessionRegistry.unregister(sessionId, session);
               firstPartyConnectContextRegistry.unregister(sessionId);
               promptBurstCoordinator.evict(Long.toString(sessionId));
-              gameplayPresenceLifecycleService.recordDisconnected(sessionId);
+              gameplayPresenceLifecycleService.recordDisconnected(
+                  sessionId, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
             });
   }
 

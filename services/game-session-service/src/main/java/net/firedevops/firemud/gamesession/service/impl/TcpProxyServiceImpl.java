@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.DisconnectDeduplicationService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.PingService;
@@ -112,7 +113,9 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     }
     if (StringUtils.hasText(request.getSessionId())) {
       try {
-        gameplayPresenceLifecycleService.recordDisconnected(Long.parseLong(request.getSessionId()));
+        gameplayPresenceLifecycleService.recordDisconnected(
+            Long.parseLong(request.getSessionId()),
+            AccountRecentPresenceDisposition.TRANSPORT_LOSS);
       } catch (NumberFormatException ignored) {
         // best-effort advisory cleanup only
       }

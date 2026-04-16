@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
@@ -409,7 +410,8 @@ public class PlayCommandHandler {
         characterId,
         existing.sessionId(),
         incoming.sessionId());
-    gameplayPresenceLifecycleService.recordDisconnected(existing.sessionId());
+    gameplayPresenceLifecycleService.recordDisconnected(
+        existing.sessionId(), AccountRecentPresenceDisposition.TAKEOVER);
     sessionContextService.deleteBySessionId(existing.tenantId(), existing.sessionId());
     return true;
   }

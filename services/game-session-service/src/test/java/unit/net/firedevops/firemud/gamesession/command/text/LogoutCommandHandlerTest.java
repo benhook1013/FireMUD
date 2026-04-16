@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
@@ -50,7 +51,8 @@ class LogoutCommandHandlerTest {
     assertThat(result.outputs()).hasSize(1);
     verify(gameInstanceService).stopSession(1L);
     verify(screenBufferService).clear(22L, 1L, 123L);
-    verify(gameplayPresenceLifecycleService).recordDisconnected(41L);
+    verify(gameplayPresenceLifecycleService)
+        .recordDisconnected(41L, AccountRecentPresenceDisposition.LOGOUT);
     verify(firstPartyConnectContextRegistry).unregister(41L);
     verify(sessionContextService).deleteBySessionId(22L, 41L);
     verifyNoMoreInteractions(gameplayPresenceLifecycleService);

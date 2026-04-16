@@ -7,6 +7,7 @@ import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
@@ -66,7 +67,8 @@ public final class LogoutCommandHandler {
         screenBufferService.clear(
             context.tenantId(), context.gameInstanceId(), context.characterId());
       }
-      gameplayPresenceLifecycleService.recordDisconnected(context.sessionId());
+      gameplayPresenceLifecycleService.recordDisconnected(
+          context.sessionId(), AccountRecentPresenceDisposition.LOGOUT);
       firstPartyConnectContextRegistry.unregister(context.sessionId());
       sessionContextService.deleteBySessionId(context.tenantId(), context.sessionId());
       return new LogoutCommandHandlingResult(

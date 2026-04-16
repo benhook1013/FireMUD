@@ -9,6 +9,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.function.LongSupplier;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
@@ -65,7 +66,11 @@ public final class InMemoryAccountRecentPresenceService implements AccountRecent
                 .findConnectedBySessionId(context.sessionId())
                 .map(GameplayPresence::role)
                 .orElse(null));
-    record(context.tenantId(), context.accountId(), policy);
+    record(
+        context.tenantId(),
+        context.accountId(),
+        AccountRecentPresenceDisposition.TRANSPORT_LOSS,
+        policy);
   }
 
   @Override
@@ -77,6 +82,7 @@ public final class InMemoryAccountRecentPresenceService implements AccountRecent
                 record(
                     context.tenantId(),
                     context.accountId(),
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
                     visibilityPolicyResolver.resolve(
                         context.tenantId(),
                         context.accountId(),
@@ -87,7 +93,7 @@ public final class InMemoryAccountRecentPresenceService implements AccountRecent
   }
 
   @Override
-  public void recordDisconnect(long sessionId) {
+  public void recordDisconnect(long sessionId, AccountRecentPresenceDisposition disposition) {
     sessionContextService
         .findBySessionId(sessionId)
         .ifPresent(
@@ -95,6 +101,7 @@ public final class InMemoryAccountRecentPresenceService implements AccountRecent
                 record(
                     context.tenantId(),
                     context.accountId(),
+                    disposition,
                     visibilityPolicyResolver.resolve(
                         context.tenantId(),
                         context.accountId(),
@@ -119,11 +126,18 @@ public final class InMemoryAccountRecentPresenceService implements AccountRecent
   }
 
   private void record(
-      long tenantId, long accountId, AccountPresenceVisibilityPolicy visibilityPolicy) {
+      long tenantId,
+      long accountId,
+      AccountRecentPresenceDisposition disposition,
+      AccountPresenceVisibilityPolicy visibilityPolicy) {
     states.put(
         key(tenantId, accountId),
         new AccountRecentPresenceState(
-            tenantId, accountId, currentTimeMillisSupplier.getAsLong(), visibilityPolicy));
+            tenantId,
+            accountId,
+            currentTimeMillisSupplier.getAsLong(),
+            disposition,
+            visibilityPolicy));
   }
 
   private String key(long tenantId, long accountId) {
