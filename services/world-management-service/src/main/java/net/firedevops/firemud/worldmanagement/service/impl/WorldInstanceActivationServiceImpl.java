@@ -21,12 +21,16 @@ import net.firedevops.firemud.worldmanagement.entity.RoomExit;
 import net.firedevops.firemud.worldmanagement.entity.RoomInstance;
 import net.firedevops.firemud.worldmanagement.entity.RoomInstanceExit;
 import net.firedevops.firemud.worldmanagement.entity.WorldInstance;
+import net.firedevops.firemud.worldmanagement.entity.Zone;
+import net.firedevops.firemud.worldmanagement.entity.ZoneInstance;
 import net.firedevops.firemud.worldmanagement.repository.RegionInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository;
+import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
+import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldInstanceActivationService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,6 +50,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
 
   private final WorldInstanceRepository worldInstanceRepository;
   private final RegionInstanceRepository regionInstanceRepository;
+  private final ZoneRepository zoneRepository;
+  private final ZoneInstanceRepository zoneInstanceRepository;
   private final RoomRepository roomRepository;
   private final RoomExitRepository roomExitRepository;
   private final RoomInstanceRepository roomInstanceRepository;
@@ -63,6 +69,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
   public WorldInstanceActivationServiceImpl(
       WorldInstanceRepository worldInstanceRepository,
       RegionInstanceRepository regionInstanceRepository,
+      ZoneRepository zoneRepository,
+      ZoneInstanceRepository zoneInstanceRepository,
       RoomRepository roomRepository,
       RoomExitRepository roomExitRepository,
       RoomInstanceRepository roomInstanceRepository,
@@ -73,6 +81,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
       MeterRegistry meterRegistry) {
     this.worldInstanceRepository = worldInstanceRepository;
     this.regionInstanceRepository = regionInstanceRepository;
+    this.zoneRepository = zoneRepository;
+    this.zoneInstanceRepository = zoneInstanceRepository;
     this.roomRepository = roomRepository;
     this.roomExitRepository = roomExitRepository;
     this.roomInstanceRepository = roomInstanceRepository;
@@ -86,6 +96,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
   WorldInstanceActivationServiceImpl(
       WorldInstanceRepository worldInstanceRepository,
       RegionInstanceRepository regionInstanceRepository,
+      ZoneRepository zoneRepository,
+      ZoneInstanceRepository zoneInstanceRepository,
       RoomRepository roomRepository,
       RoomExitRepository roomExitRepository,
       RoomInstanceRepository roomInstanceRepository,
@@ -96,6 +108,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
     this(
         worldInstanceRepository,
         regionInstanceRepository,
+        zoneRepository,
+        zoneInstanceRepository,
         roomRepository,
         roomExitRepository,
         roomInstanceRepository,
@@ -375,15 +389,31 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
 
   private void materializeRoomTopology(
       RegionInstance regionInstance, long tenantId, long gameInstanceId) {
+    Map<Long, ZoneInstance> zoneInstancesByTemplateId = new LinkedHashMap<>();
+    for (Zone templateZone : zoneRepository.findByTenantIdOrderByIdAsc(tenantId)) {
+      ZoneInstance zoneInstance = new ZoneInstance();
+      zoneInstance.setTenantId(tenantId);
+      zoneInstance.setGameInstanceId(gameInstanceId);
+      zoneInstance.setZoneInstanceId(templateZone.getId());
+      zoneInstance.setTemplateZoneId(templateZone.getId());
+      zoneInstance.setRegionInstance(regionInstance);
+      zoneInstance.setName(templateZone.getName());
+      ZoneInstance savedZoneInstance = zoneInstanceRepository.save(zoneInstance);
+      zoneInstancesByTemplateId.put(templateZone.getId(), savedZoneInstance);
+    }
     List<Room> templateRooms = roomRepository.findByTenantIdOrderByIdAsc(tenantId);
     Map<Long, RoomInstance> roomInstancesByTemplateId = new LinkedHashMap<>();
     for (Room templateRoom : templateRooms) {
+      ZoneInstance zoneInstance = zoneInstancesByTemplateId.get(templateRoom.getZone().getId());
+      if (zoneInstance == null) {
+        continue;
+      }
       RoomInstance roomInstance = new RoomInstance();
       roomInstance.setTenantId(tenantId);
       roomInstance.setGameInstanceId(gameInstanceId);
       roomInstance.setRoomInstanceId(templateRoom.getId());
       roomInstance.setTemplateRoomId(templateRoom.getId());
-      roomInstance.setRegionInstance(regionInstance);
+      roomInstance.setZoneInstance(zoneInstance);
       roomInstance.setName(templateRoom.getName());
       roomInstance.setDescription(templateRoom.getDescription());
       roomInstance.setNameLocalizedVariantsJson(templateRoom.getNameLocalizedVariantsJson());

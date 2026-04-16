@@ -25,8 +25,8 @@ World creation consumes a previously resolved immutable launch descriptor for th
 
 The implementation uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and materialize instance-scoped population schedules for expansive worlds. Activation-time topology must be derived only from the attested published template graph plus runtime generation runs whose canonical inputs are covered by the same published `generationConfigRevision`. Throughout the workflow, the Saga:
 
-- Reads only **template/topology** rows keyed by `(tenantId, versionId)` (for example `region_template`, `room_template`, or authored generation metadata); and
-- Writes only **instance** rows keyed by `(tenantId, gameInstanceId)` (for example `region_instance`, `room_instance`, `world_event`) plus optional **instance-scoped population schedules/materializations** derived from already-published spawn bindings, rather than directly creating live entities.
+- Reads only **template/topology** rows keyed by `(tenantId, versionId)` (for example `region_template`, `zone_template`, `room_template`, or authored generation metadata); and
+- Writes only **instance** rows keyed by `(tenantId, gameInstanceId)` (for example `region_instance`, `zone_instance`, `room_instance`, `world_event`) plus optional **instance-scoped population schedules/materializations** derived from already-published spawn bindings, rather than directly creating live entities.
 
 Activation requests must carry both:
 
@@ -70,8 +70,8 @@ Initial NPC and item presence is modeled declaratively:
 
 Initial-slice delivery expectation:
 
-- The first live implementation cut now uses `PrepareWorldInstance`, `ActivatePreparedWorldInstance`, and `FailPreparedWorldInstance` to persist `world_instance`, starter `region_instance`, and runtime `room_instance` / `room_instance_exit` rows with fenced `lifecycle_epoch` transitions.
-- Fuller `zone_instance` materialization and broader activation/cutover consumers remain follow-on work on the same lifecycle seam rather than a separate activation model.
+- The first live implementation cut now uses `PrepareWorldInstance`, `ActivatePreparedWorldInstance`, and `FailPreparedWorldInstance` to persist `world_instance`, starter `region_instance`, and runtime `zone_instance` / `room_instance` / `room_instance_exit` rows with fenced `lifecycle_epoch` transitions.
+- Broader activation/cutover consumers and later runtime world-state families remain follow-on work on the same lifecycle seam rather than a separate activation model.
 
 - The first implementation slice must implement steps 1, 2, and 4.
 - Step 3 is optional for the initial slice unless the launched version actually requires expansive-world terrain generation or instance-scoped population schedule materialization.

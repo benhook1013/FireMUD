@@ -20,18 +20,23 @@ import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.entity.WorldInstance;
+import net.firedevops.firemud.worldmanagement.entity.Zone;
 import net.firedevops.firemud.worldmanagement.repository.RegionInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository;
+import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
+import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class WorldInstanceActivationServiceImplTest {
   private WorldInstanceRepository worldInstanceRepository;
   private RegionInstanceRepository regionInstanceRepository;
+  private ZoneRepository zoneRepository;
+  private ZoneInstanceRepository zoneInstanceRepository;
   private RoomRepository roomRepository;
   private RoomExitRepository roomExitRepository;
   private RoomInstanceRepository roomInstanceRepository;
@@ -43,6 +48,8 @@ class WorldInstanceActivationServiceImplTest {
   void setUp() {
     worldInstanceRepository = mock(WorldInstanceRepository.class);
     regionInstanceRepository = mock(RegionInstanceRepository.class);
+    zoneRepository = mock(ZoneRepository.class);
+    zoneInstanceRepository = mock(ZoneInstanceRepository.class);
     roomRepository = mock(RoomRepository.class);
     roomExitRepository = mock(RoomExitRepository.class);
     roomInstanceRepository = mock(RoomInstanceRepository.class);
@@ -54,6 +61,8 @@ class WorldInstanceActivationServiceImplTest {
         new WorldInstanceActivationServiceImpl(
             worldInstanceRepository,
             regionInstanceRepository,
+            zoneRepository,
+            zoneInstanceRepository,
             roomRepository,
             roomExitRepository,
             roomInstanceRepository,
@@ -83,8 +92,11 @@ class WorldInstanceActivationServiceImplTest {
                         .setVersionStateEpoch(77L)
                         .build())
                 .build());
+    when(zoneRepository.findByTenantIdOrderByIdAsc(42L))
+        .thenReturn(List.of(templateZone(42L, 11L)));
     when(roomRepository.findByTenantIdOrderByIdAsc(42L))
         .thenReturn(List.of(templateRoom(42L, 1021L)));
+    when(zoneInstanceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(roomExitRepository.findByTenantIdOrderByIdAsc(42L)).thenReturn(List.of());
     when(roomInstanceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(roomInstanceExitRepository.save(any()))
@@ -117,6 +129,7 @@ class WorldInstanceActivationServiceImplTest {
     assertEquals("PREPARING", snapshot.status());
     assertEquals(1L, snapshot.lifecycleEpoch());
     verify(regionInstanceRepository).save(any());
+    verify(zoneInstanceRepository).save(any());
     verify(roomInstanceRepository).save(any());
   }
 
@@ -202,11 +215,21 @@ class WorldInstanceActivationServiceImplTest {
   }
 
   private Room templateRoom(long tenantId, long roomId) {
+    Zone zone = templateZone(tenantId, 11L);
     Room room = new Room();
     room.setId(roomId);
     room.setTenantId(tenantId);
+    room.setZone(zone);
     room.setName("Login Hall");
     room.setDescription("A narrow testing hall.");
     return room;
+  }
+
+  private Zone templateZone(long tenantId, long zoneId) {
+    Zone zone = new Zone();
+    zone.setId(zoneId);
+    zone.setTenantId(tenantId);
+    zone.setName("Starter Zone");
+    return zone;
   }
 }

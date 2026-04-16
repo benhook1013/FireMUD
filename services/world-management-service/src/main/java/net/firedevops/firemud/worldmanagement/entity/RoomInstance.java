@@ -30,8 +30,8 @@ public class RoomInstance {
   private Long templateRoomId;
 
   @ManyToOne(fetch = FetchType.LAZY)
-  @JoinColumn(name = "region_instance_id", nullable = false)
-  private RegionInstance regionInstance;
+  @JoinColumn(name = "zone_instance_id", nullable = false)
+  private ZoneInstance zoneInstance;
 
   @Column(nullable = false, length = 100)
   private String name;

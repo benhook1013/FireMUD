@@ -155,7 +155,7 @@ public class RoomServiceImpl implements RoomService {
     return new RoomDto(
         room.getRoomInstanceId(),
         room.getTenantId(),
-        room.getRegionInstance().getId(),
+        room.getZoneInstance().getRegionInstance().getId(),
         room.getName(),
         room.getDescription());
   }

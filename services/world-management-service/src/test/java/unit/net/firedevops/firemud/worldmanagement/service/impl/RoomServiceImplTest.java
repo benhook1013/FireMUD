@@ -17,6 +17,7 @@ import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.entity.RegionInstance;
 import net.firedevops.firemud.worldmanagement.entity.RoomInstance;
 import net.firedevops.firemud.worldmanagement.entity.RoomInstanceExit;
+import net.firedevops.firemud.worldmanagement.entity.ZoneInstance;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -183,11 +184,13 @@ class RoomServiceImplTest {
       long tenantId, long gameInstanceId, long roomInstanceId, long regionInstanceId, String name) {
     RegionInstance regionInstance = new RegionInstance();
     regionInstance.setId(regionInstanceId);
+    ZoneInstance zoneInstance = new ZoneInstance();
+    zoneInstance.setRegionInstance(regionInstance);
     RoomInstance room = new RoomInstance();
     room.setTenantId(tenantId);
     room.setGameInstanceId(gameInstanceId);
     room.setRoomInstanceId(roomInstanceId);
-    room.setRegionInstance(regionInstance);
+    room.setZoneInstance(zoneInstance);
     room.setName(name);
     return room;
   }
