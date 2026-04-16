@@ -883,7 +883,10 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     Path current = Path.of("").toAbsolutePath().normalize();
     while (current != null) {
       Path candidate =
-          current.resolve("services").resolve(moduleName).resolve("src/main/resources/db/migration");
+          current
+              .resolve("services")
+              .resolve(moduleName)
+              .resolve("src/main/resources/db/migration");
       if (candidate.toFile().exists()) {
         return candidate;
       }

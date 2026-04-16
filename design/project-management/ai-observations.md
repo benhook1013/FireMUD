@@ -90,3 +90,8 @@ Entry format:
   - Context: fixing `:tcp-proxy-service:crossServiceTest` after `game-session-service` gained `V7`/`V8` migrations for launch descriptors and admission-pointer authority
   - Observation: a fallback helper that returned `src/main/resources/db/migration` from the current working directory silently pointed the nested Game Session app at `tcp-proxy-service`'s own migration folder, so Flyway validated and applied only `V1__init.sql` and the failure showed up later as missing Game Session tables
   - Expected pattern: nested-service harnesses should walk up to repo root and then target `services/<module>/src/main/resources/db/migration` explicitly, so Gradle's per-module working directory does not redirect Flyway to an unrelated service schema
+
+- `2026-04-16`: Fresh-bootstrap-safe schema changes must live in one canonical migration layer
+  - Context: fixing CI smoke after `account-service` fresh startup failed on `profiles.presence_visibility_policy` already existing
+  - Observation: the same feature had been expressed both by editing `V1__init.sql` and by keeping a later `V16__profile_presence_visibility.sql`, which let existing upgraded databases appear fine while fresh bootstrap replayed both definitions and broke at startup
+  - Expected pattern: when initial-development cleanup folds a schema change into the bootstrap schema, later numbered migrations for that same change must be removed or made explicitly idempotent in the same batch so fresh and upgraded database paths stay aligned
