@@ -11,10 +11,10 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.WorldEventDto;
-import net.firedevops.firemud.worldmanagement.entity.Region;
+import net.firedevops.firemud.worldmanagement.entity.RegionInstance;
 import net.firedevops.firemud.worldmanagement.entity.WorldEvent;
 import net.firedevops.firemud.worldmanagement.mapper.WorldEventMapper;
-import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
+import net.firedevops.firemud.worldmanagement.repository.RegionInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldEventRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldEventService;
 import org.slf4j.Logger;
@@ -29,7 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
     justification = "Injected repositories and metrics remain internal")
 public class WorldEventServiceImpl implements WorldEventService {
   private final WorldEventRepository eventRepository;
-  private final RegionRepository regionRepository;
+  private final RegionInstanceRepository regionInstanceRepository;
   private final WorldEventMapper mapper;
   private final MeterRegistry meterRegistry;
   private final WorldProperties worldProperties;
@@ -47,6 +47,16 @@ public class WorldEventServiceImpl implements WorldEventService {
     WorldEvent entity = mapper.toEntity(dto);
     if (entity.getExecuteAt() == null) {
       entity.setExecuteAt(LocalDateTime.now());
+    }
+    if (dto.regionId() != null) {
+      RegionInstance regionInstance =
+          regionInstanceRepository
+              .findById(dto.regionId())
+              .orElseThrow(
+                  () ->
+                      new IllegalArgumentException(
+                          "REGION_INSTANCE_NOT_FOUND: runtime region instance not found"));
+      entity.setRegionInstance(regionInstance);
     }
     eventRepository.save(entity);
     return mapper.toDto(entity);
@@ -73,10 +83,10 @@ public class WorldEventServiceImpl implements WorldEventService {
   }
 
   private void handleEvent(WorldEvent event) {
-    if ("WEATHER_CHANGE".equals(event.getEventType()) && event.getRegion() != null) {
-      Region region = event.getRegion();
-      region.setWeather(event.getEventData());
-      regionRepository.save(region);
+    if ("WEATHER_CHANGE".equals(event.getEventType()) && event.getRegionInstance() != null) {
+      RegionInstance regionInstance = event.getRegionInstance();
+      regionInstance.setWeather(event.getEventData());
+      regionInstanceRepository.save(regionInstance);
     }
   }
 }

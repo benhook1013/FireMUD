@@ -26,6 +26,7 @@ import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
+import net.firedevops.firemud.worldmanagement.repository.WorldEventRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
@@ -41,6 +42,7 @@ class WorldInstanceActivationServiceImplTest {
   private RoomExitRepository roomExitRepository;
   private RoomInstanceRepository roomInstanceRepository;
   private RoomInstanceExitRepository roomInstanceExitRepository;
+  private WorldEventRepository worldEventRepository;
   private GameDesignClient gameDesignClient;
   private WorldInstanceActivationServiceImpl service;
 
@@ -54,6 +56,7 @@ class WorldInstanceActivationServiceImplTest {
     roomExitRepository = mock(RoomExitRepository.class);
     roomInstanceRepository = mock(RoomInstanceRepository.class);
     roomInstanceExitRepository = mock(RoomInstanceExitRepository.class);
+    worldEventRepository = mock(WorldEventRepository.class);
     gameDesignClient = mock(GameDesignClient.class);
     WorldProperties worldProperties = new WorldProperties();
     worldProperties.setLocalShardId(7);
@@ -67,6 +70,7 @@ class WorldInstanceActivationServiceImplTest {
             roomExitRepository,
             roomInstanceRepository,
             roomInstanceExitRepository,
+            worldEventRepository,
             worldProperties,
             gameDesignClient,
             new SimpleMeterRegistry());
@@ -183,6 +187,36 @@ class WorldInstanceActivationServiceImplTest {
 
     assertEquals("FAILED_PRE_ACTIVATION", snapshot.status());
     assertEquals(2L, snapshot.lifecycleEpoch());
+  }
+
+  @Test
+  void terminateWorldInstanceDeletesRuntimeWorldStateBeforeFinalizing() {
+    WorldInstance instance = new WorldInstance();
+    instance.setTenantId(42L);
+    instance.setGameInstanceId(101L);
+    instance.setGameTemplateId(7L);
+    instance.setControlPlaneRequestId("cp-1");
+    instance.setLaunchDescriptorId("ld-1");
+    instance.setVersionId(11L);
+    instance.setReleaseBundleId(77L);
+    instance.setGenerationConfigRevision("genrev-11");
+    instance.setPublishedReleaseBundleRef("prb:42:11:77");
+    instance.setVersionStateEpoch(77L);
+    instance.setLifecycleEpoch(2L);
+    instance.setStatus("ACTIVE");
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(instance));
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var snapshot = service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop");
+
+    assertEquals("TERMINATED", snapshot.status());
+    verify(worldEventRepository).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(roomInstanceExitRepository).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(roomInstanceRepository).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(zoneInstanceRepository).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(regionInstanceRepository).deleteByTenantIdAndGameInstanceId(42L, 101L);
   }
 
   @Test

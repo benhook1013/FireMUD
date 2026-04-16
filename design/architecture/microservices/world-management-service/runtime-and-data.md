@@ -88,7 +88,7 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
 - Published versions carry a frozen `generationConfigRevision` or equivalent hash derived from the version-scoped design inputs committed at publish time.
 - `generation_run`, or equivalent, persists deterministic generation artifacts for replay-safe publish and reconciliation.
 - Runtime-instance `generation_run` rows tied to instance creation are diagnostic/runtime provenance only and are not cutover payload rows.
-- `world_event` stores timed changes such as weather updates.
+- `world_event` stores timed runtime changes such as weather updates and is keyed by `(tenantId, gameInstanceId)` with optional `region_instance` scope.
 - `region_instance.weather`, or equivalent, records current weather state for live regions.
 
 Redis caches hot rooms for active sessions to speed up lookups. Cached rooms use keys `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` and must never be keyed by template identifiers because runtime rows may diverge from template state.
@@ -168,6 +168,7 @@ World events are persisted in `world_event` and processed periodically by `World
 World event invariants:
 
 - Events are runtime-only and keyed by `(tenantId, gameInstanceId)`, never `(tenantId, versionId)`.
+- `world_event.region_instance_id` must reference runtime `region_instance` rows, not template `region` rows.
 - Event application must be idempotent through a stable event identity or derived identity tuple.
 - Weather change events update runtime weather state before notifying other services.
 - Event application must use the same effect-shaped ambient mutation contract used by tick execution, guarded by `EffectId` and scoped by runtime instance identifiers.

@@ -7,4 +7,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface ZoneInstanceRepository extends JpaRepository<ZoneInstance, Long> {
   Optional<ZoneInstance> findByTenantIdAndGameInstanceIdAndZoneInstanceId(
       Long tenantId, Long gameInstanceId, Long zoneInstanceId);
+
+  void deleteByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
 }

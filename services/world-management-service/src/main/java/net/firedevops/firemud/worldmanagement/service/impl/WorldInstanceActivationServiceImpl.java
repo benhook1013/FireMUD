@@ -28,6 +28,7 @@ import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
+import net.firedevops.firemud.worldmanagement.repository.WorldEventRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
@@ -56,6 +57,7 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
   private final RoomExitRepository roomExitRepository;
   private final RoomInstanceRepository roomInstanceRepository;
   private final RoomInstanceExitRepository roomInstanceExitRepository;
+  private final WorldEventRepository worldEventRepository;
   private final WorldProperties worldProperties;
   private final GameDesignClient gameDesignClient;
   private final EntityManagementClient entityManagementClient;
@@ -75,6 +77,7 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
       RoomExitRepository roomExitRepository,
       RoomInstanceRepository roomInstanceRepository,
       RoomInstanceExitRepository roomInstanceExitRepository,
+      WorldEventRepository worldEventRepository,
       WorldProperties worldProperties,
       GameDesignClient gameDesignClient,
       EntityManagementClient entityManagementClient,
@@ -87,6 +90,7 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
     this.roomExitRepository = roomExitRepository;
     this.roomInstanceRepository = roomInstanceRepository;
     this.roomInstanceExitRepository = roomInstanceExitRepository;
+    this.worldEventRepository = worldEventRepository;
     this.worldProperties = worldProperties;
     this.gameDesignClient = gameDesignClient;
     this.entityManagementClient = entityManagementClient;
@@ -102,6 +106,7 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
       RoomExitRepository roomExitRepository,
       RoomInstanceRepository roomInstanceRepository,
       RoomInstanceExitRepository roomInstanceExitRepository,
+      WorldEventRepository worldEventRepository,
       WorldProperties worldProperties,
       GameDesignClient gameDesignClient,
       MeterRegistry meterRegistry) {
@@ -114,6 +119,7 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
         roomExitRepository,
         roomInstanceRepository,
         roomInstanceExitRepository,
+        worldEventRepository,
         worldProperties,
         gameDesignClient,
         null,
@@ -309,6 +315,7 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
       throw new IllegalArgumentException(
           cleanupResponse.getError().getCode() + ": " + cleanupResponse.getError().getMessage());
     }
+    cleanupWorldRuntimeState(tenantId, gameInstanceId);
     worldInstance.setStatus(STATUS_TERMINATED);
     worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
     worldInstance.setTerminatedAt(Instant.now());
@@ -319,6 +326,14 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
         gameInstanceId,
         terminationRequestId);
     return snapshot(saved);
+  }
+
+  private void cleanupWorldRuntimeState(long tenantId, long gameInstanceId) {
+    worldEventRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+    roomInstanceExitRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+    roomInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+    zoneInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+    regionInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
   }
 
   private void validatePrepareRequest(PreparedWorldInstanceRequest request) {

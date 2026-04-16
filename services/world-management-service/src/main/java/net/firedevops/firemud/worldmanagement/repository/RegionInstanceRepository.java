@@ -8,4 +8,6 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface RegionInstanceRepository extends JpaRepository<RegionInstance, Long> {
   List<RegionInstance> findByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
+
+  void deleteByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
 }
