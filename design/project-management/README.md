@@ -10,6 +10,7 @@ Key files include:
 - [**vertical-slices/**](./vertical-slices/) – Active working task lists for implementation slices.
 - [**service-status-*.md**](./service-status-account-service.md) – High-level per-service implementation summaries.
 - [**slice-support/**](./slice-support/README.md) – Slice-specific developer workflows, regression notes, instrumentation references, and playtesting support docs.
+  Includes the high-level [player-playtest-checklist.md](./slice-support/player-playtest-checklist.md) for manual player-facing feature verification.
 - [**ai-task-prompt-library/**](./ai-task-prompt-library/) – Reusable prompt material for architecture and implementation review workflows.
 - [**design-assumptions.md**](./design-assumptions.md) – Product and implementation assumptions that inform planning.
 - [**testing-focus-areas.md**](./testing-focus-areas.md) – Testing priorities and quality-risk areas.

@@ -74,6 +74,7 @@ Open or amend the architecture docs before implementation when a change would al
 ## Additional Resources
 
 - [**../project-management/slice-support/playtesting-feedback.md**](../project-management/slice-support/playtesting-feedback.md) – Staging playtests and feedback collection.
+- [**../project-management/slice-support/player-playtest-checklist.md**](../project-management/slice-support/player-playtest-checklist.md) – High-level manual player checklist covering the currently implemented gameplay feature surface.
 - [**user-journeys.md**](./user-journeys.md) – Example creator and player workflows.
 
 Refer to the README files within each subdirectory for more details.
