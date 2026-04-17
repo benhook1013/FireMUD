@@ -10,64 +10,64 @@ It intentionally omits completed slices and uses the individual slice docs as th
 
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
-1. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
-   Remaining: build on the now-live activity, AFK, and canonical presence-lifecycle substrate with recent-presence policy, takeover proof, and later `WHO` presentation consumers.
-2. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
-   Remaining: extend the now-live account-scoped friend presence substrate with broader social consumers and later privacy refinement; canonical world/realm presentation plus the first gameplay-facing `FRIENDS` consumer are now live.
-3. [02.1.2 Logout and Session Termination](./02.1.2-task-list-logout-and-session-termination-vertical-slice.md)
-   Remaining: mostly closed; the remaining tail is broader reconnect/recent-presence lifecycle proof rather than more logout-path semantics.
-4. [02.13.8 Built-In Command Registry and Dispatch Rollout](./02.13.8-task-list-built-in-command-registry-and-dispatch-rollout-vertical-slice.md)
-   Remaining: keep the now-live provider-backed registry, `commandId` ownership seam, and first non-built-in provider on one canonical parser/interpreter path without regressing into built-in-only branching.
+1. [08.1 Publish Digest Gating and Release Attestation](./08.1-task-list-publish-digest-gating-and-release-attestation-vertical-slice.md)
+   Remaining: build on the now-live canonical publish-attempt framework, participant observations, recorded-digest baselines, and typed gate failures by proving broader drift/missing-attestation behavior and replacing today's tenant-draft hashing with later fully version-scoped digest inputs.
+2. [08.2 Published Asset Manifest and Purge Lifecycle](./08.2-task-list-published-asset-manifest-and-purge-lifecycle-vertical-slice.md)
+   Remaining: keep the now-live artifact-state proof, exact exported-key proof, exact-bytes repair, and tombstone/purge workflow substrate moving toward broader normalized deletion/reference-table truth and richer derived-artifact coverage.
+3. [08.3 Launch Descriptor and Activation Preflight](./08.3-task-list-launch-descriptor-and-activation-preflight-vertical-slice.md)
+   Remaining: extend the now-live launch-descriptor, version-state, and World Management activation lifecycle into broader cutover/retirement consumers and later instance-scoped runtime world-state families.
+4. [09.1 Realm Catalog and Admission-Pointer Routing](./09.1-task-list-realm-catalog-and-admission-pointer-routing-vertical-slice.md)
+   Remaining: keep broader reconnect/cutover consumers on the now-live persisted Game Session admission-pointer authority and expand operator-facing cutover/mutation tooling around the compare-and-set pointer seam.
+5. [09.3 Realm-Scoped Character and Playable State Policy](./09.3-task-list-realm-scoped-character-and-playable-state-policy-vertical-slice.md)
+   Remaining: continue the now-live scope-aware roster plus inventory/equipment alignment into progression, resources, loadout, and later gameplay-state families without reintroducing tenant-wide shortcuts.
 
 ### 2. Active architecture follow-through
 
 These are already partly real in code and should continue after the immediate runtime fixes.
 
-1. [02.13.8 Built-In Command Registry and Dispatch Rollout](./02.13.8-task-list-built-in-command-registry-and-dispatch-rollout-vertical-slice.md)
+1. [08 Game Design Publishing and Runtime Activation](./08-task-list-game-design-publishing-and-runtime-activation-vertical-slice.md)
+   Remaining: the family now has real publish-attestation, asset lifecycle, launch-descriptor, version-state, and activation substrate; the next honest work is more digest coverage, broader purge/deletion truth, later cutover consumers, and later runtime world-state families.
+2. [09 Multi-Tenancy, Realm Routing, and Runtime Boundaries](./09-task-list-multi-tenancy-realm-routing-and-runtime-boundaries-vertical-slice.md)
+   Remaining: the family now has canonical routing, public-production membership creation, bootstrap/connect-token alignment, and scope-aware roster policy; the next honest work is broader admission-pointer consumers plus progression/resources/loadout follow-through.
+3. [02.13.8 Built-In Command Registry and Dispatch Rollout](./02.13.8-task-list-built-in-command-registry-and-dispatch-rollout-vertical-slice.md)
    Remaining: keep future built-in and authored command growth on the provider-backed registry plus family-handler seam without regressing into central interpreter branching.
-2. [02.13.7 Action Classification and Activity Semantics](./02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
+4. [02.13.7 Action Classification and Activity Semantics](./02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
    Remaining: built-in and first-pass authored actions now carry bounded optional tags/facets too; the next follow-through is real scripting/policy consumers of those tags rather than metadata-only attachment.
-3. [02.13.9 Authored Action Definition and Execution Model](./02.13.9-task-list-authored-action-definition-and-execution-model-vertical-slice.md)
+5. [02.13.9 Authored Action Definition and Execution Model](./02.13.9-task-list-authored-action-definition-and-execution-model-vertical-slice.md)
    Remaining: build on the now-live typed config-backed authored-action record, shared `commandId` registry seam, first non-built-in provider, authored `HELP` discovery, and fail-fast unsupported-metadata validation by adding richer targeting/cost/cooldown/effect semantics.
-4. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
+6. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: grow from the current bounded `WHO` plus explicit/auto-AFK and canonical lifecycle substrate into the fuller activity model when that work becomes active.
-5. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
+7. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
    Remaining: grow the first account-scoped friend presence seam, now consumed by REST, gRPC, and gameplay `FRIENDS`, into later social consumers and later privacy refinement without reopening `WHO`.
-6. [06 Task List Inventory, Containers, Equipment](./06-task-list-inventory-containers-equipment-vertical-slice.md)
+8. [06 Task List Inventory, Containers, Equipment](./06-task-list-inventory-containers-equipment-vertical-slice.md)
    Remaining: complete the remaining `06.3` follow-through and later authored stackability.
-7. [06.3.1 Stable Item Instance Visible Ref Allocation](./06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
+9. [06.3.1 Stable Item Instance Visible Ref Allocation](./06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
-8. [06.3.2 Authored Stackability and Fungibility](./06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
+10. [06.3.2 Authored Stackability and Fungibility](./06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
    Remaining: build on the now-live `stackFamilyKey` substrate with richer authored family sources; explicit stack-family selector UX for ambiguous holder-local families is now live.
-9. [02.18 Service Boundary and Audit Hardening](./02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
+11. [02.18 Service Boundary and Audit Hardening](./02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
    Remaining: keep `02.18.6` at operator-proof level and continue any later hardening only if real-load evidence justifies it.
-10. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
+12. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
 
 ### 3. Design settled enough, but not started or only placeholder-level
 
 These are not broad audit topics anymore; they are real future slices with known direction.
 
-1. [09 Multi-Tenancy, Realm Routing, and Runtime Boundaries](./09-task-list-multi-tenancy-realm-routing-and-runtime-boundaries-vertical-slice.md)
-   Remaining: the family is now actively underway with persisted Game Session admission-pointer authority plus audit trail, Game Session-owned routing RPCs consumed by bootstrap, public-production membership creation, and the first real realm-aware roster substrate; first-party connect flows and reconnect-style login/PLAY reuse carry and validate `pointerVersion` end to end, control-plane writes support compare-and-set pointer guards, inventory/equipment follow the scoped character namespace, and the main follow-through is broader cutover consumers plus progression/resources/loadout namespaces beyond it.
-2. [08 Game Design Publishing and Runtime Activation](./08-task-list-game-design-publishing-and-runtime-activation-vertical-slice.md)
-   Remaining: `08.1` now has the release-bundle seam, durable publish-attempt plus participant-observation storage, full-version and script-patch participant coverage on the canonical framework, recorded participant-digest baselines, and typed publish-gate failures; `08.2` now has persisted artifact-state proof rows, exact-bytes repair, exact exported-key proof, operator-visible tombstone/purge workflow APIs, and current non-local purge eligibility checks against `version` / `published_release_bundle`; `08.3` now has deterministic launch-descriptor persistence, real Game Design `GetVersionState` / `CompareAndSetVersionState` control-plane APIs, Game Session preflight before `game_instances` row creation, World Management `world_instance` / `region_instance` / `zone_instance` / `room_instance` activation consumers, and a real World/Entity-backed termination seam used by explicit stop and replacement-session cutover; the main remaining work is fully version-scoped digest inputs, broader normalized reference-table deletion truth, later cutover consumers beyond session replacement, and the later runtime world-state families beyond the now-live topology substrate.
-3. [10 Scripting, Automation, and Runtime Orchestration](./10-task-list-scripting-automation-and-runtime-orchestration-vertical-slice.md)
+1. [10 Scripting, Automation, and Runtime Orchestration](./10-task-list-scripting-automation-and-runtime-orchestration-vertical-slice.md)
    Remaining: the scripting domain now has a canonical family instead of fragmented indirect coverage; `10.1` through `10.5` are the bounded runtime/control-plane cuts, while design-time publication boundaries remain intentionally anchored in `08.4`.
-4. [02.1.1 Email OTP and Text Auth Options](./02.1.1-task-list-email-otp-and-text-auth-options-vertical-slice.md)
-5. [02.1.2 Logout and Session Termination](./02.1.2-task-list-logout-and-session-termination-vertical-slice.md)
-6. [02.1.5 Admin and God Capability and Visibility](./02.1.5-task-list-admin-god-capability-and-visibility-vertical-slice.md)
-7. [02.1.4.1 Account Versus Character Social Scope](./02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
-8. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
-9. [02.13.7 Action Classification and Activity Semantics](./02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
-10. [02.13.10 Structured Transcript and Replay End State](./02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
-11. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
-12. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
-13. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
-14. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
-15. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
-16. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
-17. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
+2. [02.1.1 Email OTP and Text Auth Options](./02.1.1-task-list-email-otp-and-text-auth-options-vertical-slice.md)
+3. [02.1.5 Admin and God Capability and Visibility](./02.1.5-task-list-admin-god-capability-and-visibility-vertical-slice.md)
+4. [02.1.4.1 Account Versus Character Social Scope](./02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
+5. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
+6. [02.13.10 Structured Transcript and Replay End State](./02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
+7. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
+8. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
+9. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
+10. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
+11. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
+12. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
+13. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
 
 ### 4. Discussion-gated follow-ups
 
@@ -103,30 +103,6 @@ These are not major design problems, but they are not fully closed.
    Remaining: operator-proof the chosen alert thresholds in preview/prod-like runs.
 6. [02.14.4 Metrics Cardinality and Label Policy Hardening](./02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
    Remaining: only opportunistic audit tail work and later policy wording cleanup.
-
-## Practical Next Code Slices
-
-If you want the clearest immediate path, do these next:
-
-1. `02.1.3` presence/WHO follow-through
-   Best next gameplay-runtime batch because the activity, AFK, and canonical lifecycle substrate are now live and the remaining work is recent-presence policy, takeover proof, and later `WHO` presentation rather than vague design.
-2. `02.1.4` cross-game social presence follow-through
-   Best next social batch because the first account-scoped friend presence seam, honest `lastSeenAt`, disconnect disposition, account-owned visibility-policy seam, canonical world/realm labels, and gameplay `FRIENDS` consumer are now live, leaving broader consumers and later privacy refinement rather than substrate work.
-3. `02.13.9` authored action definition and execution model
-   Best next platform-shape batch because the provider-backed registry, canonical `commandId` seam, first typed authored-action provider, and authored `HELP` discovery are now live and the next honest step is richer authored semantics rather than more built-in-only growth.
-4. `02.1.2` logout and deliberate session termination
-   Best next runtime tail because the core logout command is now live and the remaining work is proof/alignment across reconnect and transport variants rather than fresh design.
-5. `06.3.2` bounded authored compatibility-mode follow-up
-   Best next item-model batch if we want to extend the now-live stack-family substrate into richer authored family sourcing and later authored compatibility modes beyond the now-live explicit selector UX.
-
-If the goal is continued design-to-slice cleanup rather than code, do this next:
-
-1. `09` multi-tenancy / realm-routing family
-   Implementation is now underway; the next honest follow-through is broader admission-pointer consumers plus realm-/instance-aware progression/resources/loadout namespaces rather than more family creation.
-2. `08` game-design publish/version/activation family
-   Best next control-plane implementation family after `09`; `08.1` now has the canonical publish-attempt framework plus real full-version and script-patch participant coverage, `08.2` now has artifact-state proof / repair, and `08.3` now has launch-descriptor persistence plus live version-state control-plane APIs, Game Session preflight, and instance-backed World Management activation lifecycle, so the next honest work is recorded-digest comparison, purge workflow coverage, later cutover consumers, and later runtime world-state follow-through.
-3. `10` scripting/automation/runtime-orchestration family
-   Best next runtime/control-plane planning family after `08` and `09`; start with `10.1`, then `10.2`, then `10.3`, keeping `08.4` as the publication-boundary companion rather than duplicating it.
 
 ## Operator-Proof / Audit Tails
 
