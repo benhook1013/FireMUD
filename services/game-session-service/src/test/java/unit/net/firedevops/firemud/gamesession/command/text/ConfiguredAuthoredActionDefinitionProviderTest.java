@@ -19,6 +19,8 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
     action.setStageRequirement(TextCommandStageRequirement.GAMEPLAY);
     action.setPromptPolicy(TextCommandPromptPolicy.WHEN_GAMEPLAY);
     action.setActionCategory(TextCommandActionCategory.SOCIAL);
+    action.setActionTags(
+        List.of(TextCommandActionTag.AUTHORING, TextCommandActionTag.COMMUNICATION));
     properties.setActions(List.of(action));
 
     ConfiguredAuthoredActionDefinitionProvider provider =
@@ -32,6 +34,9 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
     assertEquals(List.of("salute", "hail"), definition.aliases());
     assertEquals(TextCommandDispatchGroup.AUTHORED, definition.dispatchGroup());
     assertEquals(TextCommandActionCategory.SOCIAL, definition.actionCategory());
+    assertEquals(
+        List.of(TextCommandActionTag.AUTHORING, TextCommandActionTag.COMMUNICATION),
+        definition.actionTags());
     assertEquals(TextCommandSource.GAME_AUTHORED, definition.source());
   }
 
@@ -58,6 +63,42 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
     second.setCommandId("wave-bow");
     second.setAliases(List.of("salute"));
     properties.setActions(List.of(first, second));
+
+    assertThrows(
+        IllegalStateException.class, () -> new ConfiguredAuthoredActionCatalog(properties));
+  }
+
+  @Test
+  void catalogRejectsUnsupportedCooldownMetadata() {
+    AuthoredActionProperties properties = new AuthoredActionProperties();
+    AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
+    action.setCommandId("wave-salute");
+    action.setCooldownMs(5000);
+    properties.setActions(List.of(action));
+
+    assertThrows(
+        IllegalStateException.class, () -> new ConfiguredAuthoredActionCatalog(properties));
+  }
+
+  @Test
+  void catalogRejectsUnsupportedCostMetadata() {
+    AuthoredActionProperties properties = new AuthoredActionProperties();
+    AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
+    action.setCommandId("wave-salute");
+    action.setCostAmount(2);
+    properties.setActions(List.of(action));
+
+    assertThrows(
+        IllegalStateException.class, () -> new ConfiguredAuthoredActionCatalog(properties));
+  }
+
+  @Test
+  void catalogRejectsUnsupportedTargetingMode() {
+    AuthoredActionProperties properties = new AuthoredActionProperties();
+    AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
+    action.setCommandId("wave-salute");
+    action.setTargetingMode("TARGET_CHARACTER");
+    properties.setActions(List.of(action));
 
     assertThrows(
         IllegalStateException.class, () -> new ConfiguredAuthoredActionCatalog(properties));

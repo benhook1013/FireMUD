@@ -24,6 +24,8 @@ public class AuthoredActionProperties {
     private TextCommandStageRequirement stageRequirement = TextCommandStageRequirement.GAMEPLAY;
     private TextCommandPromptPolicy promptPolicy = TextCommandPromptPolicy.WHEN_GAMEPLAY;
     private TextCommandActionCategory actionCategory = TextCommandActionCategory.GAMEPLAY;
+    private List<net.firedevops.firemud.gamesession.command.text.TextCommandActionTag> actionTags =
+        new ArrayList<>();
     private String targetingMode = "NONE";
     private String cooldownKey;
     private long cooldownMs;

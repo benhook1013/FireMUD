@@ -19,7 +19,8 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandDispatchGroup.WORLDS,
         TextCommandStageRequirement.NONE,
         TextCommandPromptPolicy.NEVER,
-        TextCommandActionCategory.META);
+        TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.WORLD_BROWSE, TextCommandActionTag.UI));
     register(
         definitions,
         TextCommandType.REALMS,
@@ -27,7 +28,8 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandDispatchGroup.WORLDS,
         TextCommandStageRequirement.LOGIN,
         TextCommandPromptPolicy.NEVER,
-        TextCommandActionCategory.META);
+        TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.WORLD_BROWSE, TextCommandActionTag.UI));
     register(
         definitions,
         TextCommandType.CHARS,
@@ -35,7 +37,8 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandDispatchGroup.WORLDS,
         TextCommandStageRequirement.LOGIN,
         TextCommandPromptPolicy.NEVER,
-        TextCommandActionCategory.META);
+        TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.WORLD_BROWSE, TextCommandActionTag.UI));
     register(
         definitions,
         TextCommandType.LOGIN,
@@ -43,7 +46,8 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandDispatchGroup.SESSION,
         TextCommandStageRequirement.NONE,
         TextCommandPromptPolicy.NEVER,
-        TextCommandActionCategory.META);
+        TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.SESSION));
     register(
         definitions,
         TextCommandType.LOGOUT,
@@ -51,7 +55,8 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandDispatchGroup.SESSION,
         TextCommandStageRequirement.NONE,
         TextCommandPromptPolicy.NEVER,
-        TextCommandActionCategory.META);
+        TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.SESSION));
     register(
         definitions,
         TextCommandType.HELP,
@@ -59,7 +64,8 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandDispatchGroup.HELP,
         TextCommandStageRequirement.NONE,
         TextCommandPromptPolicy.WHEN_LOGGED_IN,
-        TextCommandActionCategory.META);
+        TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.UI));
     register(
         definitions,
         TextCommandType.AFK,
@@ -67,7 +73,8 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandDispatchGroup.ACTIVITY,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
-        TextCommandActionCategory.META);
+        TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.UI));
     register(
         definitions,
         TextCommandType.PLAY,
@@ -75,7 +82,8 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandDispatchGroup.SESSION,
         TextCommandStageRequirement.LOGIN,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
-        TextCommandActionCategory.META);
+        TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.SESSION));
     register(
         definitions,
         TextCommandType.WHO,
@@ -83,7 +91,8 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandDispatchGroup.WHO,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
-        TextCommandActionCategory.META);
+        TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.SOCIAL_PRESENCE, TextCommandActionTag.UI));
     register(
         definitions,
         TextCommandType.FRIENDS,
@@ -91,7 +100,8 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandDispatchGroup.FRIENDS,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
-        TextCommandActionCategory.SOCIAL);
+        TextCommandActionCategory.SOCIAL,
+        List.of(TextCommandActionTag.SOCIAL_PRESENCE, TextCommandActionTag.UI));
     registerGroup(
         definitions,
         List.of("inventory", "inv", "i"),
@@ -99,6 +109,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.GAMEPLAY,
+        List.of(TextCommandActionTag.INVENTORY),
         TextCommandType.INVENTORY);
     registerGroup(
         definitions,
@@ -107,6 +118,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.GAMEPLAY,
+        List.of(TextCommandActionTag.INVENTORY),
         TextCommandType.GET);
     registerGroup(
         definitions,
@@ -115,6 +127,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.GAMEPLAY,
+        List.of(TextCommandActionTag.INVENTORY),
         TextCommandType.DROP);
     registerGroup(
         definitions,
@@ -123,6 +136,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.GAMEPLAY,
+        List.of(TextCommandActionTag.INVENTORY),
         TextCommandType.EQUIPMENT);
     registerGroup(
         definitions,
@@ -131,6 +145,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.GAMEPLAY,
+        List.of(TextCommandActionTag.INVENTORY),
         TextCommandType.CONTAINER);
     registerGroup(
         definitions,
@@ -139,6 +154,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.GAMEPLAY,
+        List.of(TextCommandActionTag.INVENTORY),
         TextCommandType.PUT);
     registerGroup(
         definitions,
@@ -147,6 +163,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.GAMEPLAY,
+        List.of(TextCommandActionTag.INVENTORY),
         TextCommandType.TAKE);
     registerGroup(
         definitions,
@@ -155,6 +172,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.GAMEPLAY,
+        List.of(TextCommandActionTag.INVENTORY),
         TextCommandType.WEAR);
     registerGroup(
         definitions,
@@ -163,6 +181,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.GAMEPLAY,
+        List.of(TextCommandActionTag.INVENTORY),
         TextCommandType.REMOVE);
     registerGroup(
         definitions,
@@ -171,6 +190,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.SOCIAL,
+        List.of(TextCommandActionTag.COMMUNICATION),
         TextCommandType.SAY);
     registerGroup(
         definitions,
@@ -179,6 +199,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.SOCIAL,
+        List.of(TextCommandActionTag.COMMUNICATION),
         TextCommandType.WHISPER);
     registerGroup(
         definitions,
@@ -187,6 +208,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.SOCIAL,
+        List.of(TextCommandActionTag.COMMUNICATION),
         TextCommandType.TELL);
     register(
         definitions,
@@ -197,7 +219,8 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandDispatchGroup.MOVE,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
-        TextCommandActionCategory.GAMEPLAY);
+        TextCommandActionCategory.GAMEPLAY,
+        List.of(TextCommandActionTag.MOVEMENT));
     registerGroup(
         definitions,
         List.of("look", "l"),
@@ -205,6 +228,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.UI),
         TextCommandType.LOOK);
     registerGroup(
         definitions,
@@ -213,6 +237,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.UI),
         TextCommandType.QUICKLOOK);
     this.definitions = Map.copyOf(definitions);
   }
@@ -229,6 +254,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
       TextCommandStageRequirement stageRequirement,
       TextCommandPromptPolicy promptPolicy,
       TextCommandActionCategory actionCategory,
+      List<TextCommandActionTag> actionTags,
       TextCommandType... types) {
     for (TextCommandType type : types) {
       register(
@@ -238,7 +264,8 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
           dispatchGroup,
           stageRequirement,
           promptPolicy,
-          actionCategory);
+          actionCategory,
+          actionTags);
     }
   }
 
@@ -249,7 +276,8 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
       TextCommandDispatchGroup dispatchGroup,
       TextCommandStageRequirement stageRequirement,
       TextCommandPromptPolicy promptPolicy,
-      TextCommandActionCategory actionCategory) {
+      TextCommandActionCategory actionCategory,
+      List<TextCommandActionTag> actionTags) {
     definitions.put(
         type,
         new TextCommandDefinition(
@@ -260,6 +288,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
             stageRequirement,
             promptPolicy,
             actionCategory,
+            actionTags,
             TextCommandSource.PLATFORM_BUILT_IN));
   }
 }

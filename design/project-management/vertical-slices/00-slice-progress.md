@@ -26,9 +26,9 @@ These are already partly real in code and should continue after the immediate ru
 1. [02.13.8 Built-In Command Registry and Dispatch Rollout](./02.13.8-task-list-built-in-command-registry-and-dispatch-rollout-vertical-slice.md)
    Remaining: keep future built-in and authored command growth on the provider-backed registry plus family-handler seam without regressing into central interpreter branching.
 2. [02.13.7 Action Classification and Activity Semantics](./02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
-   Remaining: extend the current primary-category plus timestamp consumer into optional tags/facets and later scripting/policy consumers.
+   Remaining: built-in and first-pass authored actions now carry bounded optional tags/facets too; the next follow-through is real scripting/policy consumers of those tags rather than metadata-only attachment.
 3. [02.13.9 Authored Action Definition and Execution Model](./02.13.9-task-list-authored-action-definition-and-execution-model-vertical-slice.md)
-   Remaining: build on the now-live typed config-backed authored-action record, shared `commandId` registry seam, first non-built-in provider, and authored `HELP` discovery by adding richer targeting/cost/cooldown/effect semantics.
+   Remaining: build on the now-live typed config-backed authored-action record, shared `commandId` registry seam, first non-built-in provider, authored `HELP` discovery, and fail-fast unsupported-metadata validation by adding richer targeting/cost/cooldown/effect semantics.
 4. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: grow from the current bounded `WHO` plus explicit/auto-AFK and canonical lifecycle substrate into the fuller activity model when that work becomes active.
 5. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)

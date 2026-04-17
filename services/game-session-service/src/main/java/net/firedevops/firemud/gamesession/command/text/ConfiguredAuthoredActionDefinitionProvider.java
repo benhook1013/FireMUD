@@ -24,6 +24,7 @@ final class ConfiguredAuthoredActionDefinitionProvider implements TextCommandDef
                     action.stageRequirement(),
                     action.promptPolicy(),
                     action.actionCategory(),
+                    action.actionTags(),
                     TextCommandSource.GAME_AUTHORED))
         .toList();
   }

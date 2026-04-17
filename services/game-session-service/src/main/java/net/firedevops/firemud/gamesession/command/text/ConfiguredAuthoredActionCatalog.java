@@ -21,6 +21,7 @@ final class ConfiguredAuthoredActionCatalog {
       if (action == null || !StringUtils.hasText(action.getCommandId())) {
         continue;
       }
+      validateSupportedFirstPass(action);
       ConfiguredAuthoredAction normalized =
           new ConfiguredAuthoredAction(
               action.getActionId(),
@@ -29,6 +30,7 @@ final class ConfiguredAuthoredActionCatalog {
               action.getStageRequirement(),
               action.getPromptPolicy(),
               action.getActionCategory(),
+              action.getActionTags(),
               action.getTargetingMode(),
               action.getCooldownKey(),
               action.getCooldownMs(),
@@ -88,6 +90,7 @@ final class ConfiguredAuthoredActionCatalog {
       TextCommandStageRequirement stageRequirement,
       TextCommandPromptPolicy promptPolicy,
       TextCommandActionCategory actionCategory,
+      java.util.List<TextCommandActionTag> actionTags,
       String targetingMode,
       String cooldownKey,
       long cooldownMs,
@@ -98,6 +101,7 @@ final class ConfiguredAuthoredActionCatalog {
       String helpDetails) {
     ConfiguredAuthoredAction {
       aliases = java.util.List.copyOf(aliases == null ? java.util.List.of() : aliases);
+      actionTags = java.util.List.copyOf(actionTags == null ? java.util.List.of() : actionTags);
     }
 
     String primaryHelpTopic() {
@@ -105,6 +109,25 @@ final class ConfiguredAuthoredActionCatalog {
         return aliases.getFirst();
       }
       return commandId;
+    }
+  }
+
+  private static void validateSupportedFirstPass(AuthoredActionProperties.Action action) {
+    String commandId = action.getCommandId().trim();
+    if (StringUtils.hasText(action.getTargetingMode())
+        && !"NONE".equalsIgnoreCase(action.getTargetingMode().trim())) {
+      throw new IllegalStateException(
+          "Unsupported authored action targetingMode for "
+              + commandId
+              + ": "
+              + action.getTargetingMode());
+    }
+    if (StringUtils.hasText(action.getCooldownKey()) || action.getCooldownMs() > 0) {
+      throw new IllegalStateException(
+          "Unsupported authored action cooldown metadata for " + commandId);
+    }
+    if (StringUtils.hasText(action.getCostKey()) || action.getCostAmount() > 0) {
+      throw new IllegalStateException("Unsupported authored action cost metadata for " + commandId);
     }
   }
 }
