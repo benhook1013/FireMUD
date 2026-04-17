@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import lombok.Data;
 import net.firedevops.firemud.gamedesign.model.TemplateReferencePhase;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Data
 @Entity
@@ -22,8 +24,8 @@ public class GameTemplate {
   @Column(length = 255)
   private String description;
 
-  @Lob
-  @Column(nullable = false)
+  @JdbcTypeCode(SqlTypes.JSON)
+  @Column(nullable = false, columnDefinition = "jsonb")
   private String config;
 
   @Column(name = "default_version_id")
