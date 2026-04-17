@@ -34,6 +34,8 @@ service GameSessionControlPlaneService {
       returns (GetPinnedScriptPatchVersionResponse);
   rpc ListAdmissionPointers(ListAdmissionPointersRequest)
       returns (ListAdmissionPointersResponse);
+  rpc ListAdmissionPointerAudit(ListAdmissionPointerAuditRequest)
+      returns (ListAdmissionPointerAuditResponse);
   rpc SetAdmissionPointer(SetAdmissionPointerRequest)
       returns (SetAdmissionPointerResponse);
   rpc SetPinnedScriptPatchVersion(SetPinnedScriptPatchVersionRequest)
@@ -290,6 +292,16 @@ message ListAdmissionPointersRequest {}
 
 message ListAdmissionPointersResponse {
   repeated AdmissionPointerControlPlaneEntry pointers = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListAdmissionPointerAuditRequest {
+  string world_slug = 1;
+  string realm_slug = 2;
+}
+
+message ListAdmissionPointerAuditResponse {
+  repeated AdmissionPointerControlPlaneEntry audit = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

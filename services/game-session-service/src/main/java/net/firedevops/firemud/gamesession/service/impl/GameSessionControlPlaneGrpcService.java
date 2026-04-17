@@ -20,6 +20,8 @@ import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
+import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
@@ -132,6 +134,42 @@ public final class GameSessionControlPlaneGrpcService
       logger.error("ListAdmissionPointers failed", ex);
       ListAdmissionPointersResponse response =
           ListAdmissionPointersResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.listAdmissionPointerAudit")
+  public void listAdmissionPointerAudit(
+      ListAdmissionPointerAuditRequest request,
+      StreamObserver<ListAdmissionPointerAuditResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      ListAdmissionPointerAuditResponse response =
+          ListAdmissionPointerAuditResponse.newBuilder()
+              .addAllAudit(
+                  gameplayAdmissionPointerAuthorityService
+                      .listPointerAudit(request.getWorldSlug(), request.getRealmSlug())
+                      .stream()
+                      .map(this::toEntry)
+                      .toList())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      ListAdmissionPointerAuditResponse response =
+          ListAdmissionPointerAuditResponse.newBuilder()
+              .setError(authorizationError("ListAdmissionPointerAudit", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("ListAdmissionPointerAudit failed", ex);
+      ListAdmissionPointerAuditResponse response =
+          ListAdmissionPointerAuditResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build();
       responseObserver.onNext(response);

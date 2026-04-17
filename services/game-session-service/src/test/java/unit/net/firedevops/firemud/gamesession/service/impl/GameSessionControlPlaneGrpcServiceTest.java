@@ -21,6 +21,8 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
+import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
@@ -265,6 +267,72 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals("PERMISSION_DENIED", responseRef.get().getError().getCode());
+  }
+
+  @Test
+  void listAdmissionPointerAuditReturnsEntriesForAdminCaller() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authorityService.listPointerAudit("demo", "production"))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerAuditEntry(
+                    "demo",
+                    "production",
+                    "Demo World",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    3L,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    "tester",
+                    "cutover",
+                    "req-1",
+                    Instant.parse("2026-04-15T00:00:00Z")),
+                new GameplayAdmissionPointerAuditEntry(
+                    "demo",
+                    "production",
+                    "Demo World",
+                    "Live Realm",
+                    1L,
+                    6L,
+                    2L,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    "tester",
+                    "previous",
+                    "req-0",
+                    Instant.parse("2026-04-14T00:00:00Z"))));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            authorityService,
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListAdmissionPointerAuditResponse> responseRef = new AtomicReference<>();
+    service.listAdmissionPointerAudit(
+        ListAdmissionPointerAuditRequest.newBuilder()
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListAdmissionPointerAuditResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals(2, responseRef.get().getAuditCount());
+    assertEquals("demo", responseRef.get().getAudit(0).getWorldSlug());
+    assertEquals(3L, responseRef.get().getAudit(0).getPointerVersion());
   }
 
   private static GameSessionControlPlaneGrpcService newService(GameInstanceRepository repository) {
