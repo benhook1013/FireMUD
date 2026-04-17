@@ -253,6 +253,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
     definitions.put(
         type,
         new TextCommandDefinition(
+            type.name().toLowerCase(java.util.Locale.ROOT),
             type,
             aliases,
             dispatchGroup,

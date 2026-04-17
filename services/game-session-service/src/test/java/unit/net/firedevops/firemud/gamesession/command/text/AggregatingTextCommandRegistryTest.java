@@ -64,13 +64,16 @@ class AggregatingTextCommandRegistryTest {
   void builtInRegistryOnlyOwnsExplicitPlatformCommands() {
     assertFalse(registry.findDefinition(TextCommandType.NOOP).isPresent());
     assertFalse(registry.findDefinition(TextCommandType.UNKNOWN).isPresent());
+    assertFalse(registry.findDefinition(TextCommandType.AUTHORED).isPresent());
     assertTrue(registry.findDefinition(TextCommandType.LOGIN).isPresent());
   }
 
   @Test
   void activeBuiltInCommandSurfaceIsExplicitlyRegistered() {
     for (TextCommandType type : TextCommandType.values()) {
-      if (type == TextCommandType.NOOP || type == TextCommandType.UNKNOWN) {
+      if (type == TextCommandType.NOOP
+          || type == TextCommandType.UNKNOWN
+          || type == TextCommandType.AUTHORED) {
         continue;
       }
       TextCommandDefinition definition = registry.findDefinition(type).orElseThrow();

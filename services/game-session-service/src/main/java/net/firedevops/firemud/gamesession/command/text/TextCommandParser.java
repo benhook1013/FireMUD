@@ -26,16 +26,24 @@ public class TextCommandParser {
     String trimmed = source.trim();
     if (trimmed.isEmpty()) {
       return new TextCommand(
-          TextCommandType.NOOP, List.of(), source, "", new TextCommandPayload.None());
+          TextCommandType.NOOP.name().toLowerCase(java.util.Locale.ROOT),
+          TextCommandType.NOOP,
+          List.of(),
+          source,
+          "",
+          new TextCommandPayload.None());
     }
 
     String[] tokens = trimmed.split("\\s+");
     String aliasUsed = tokens[0];
+    TextCommandDefinition resolvedDefinition =
+        registry.findDefinitionByAlias(aliasUsed).orElse(null);
     TextCommandType type =
-        registry
-            .findDefinitionByAlias(aliasUsed)
-            .map(TextCommandDefinition::type)
-            .orElse(TextCommandType.UNKNOWN);
+        resolvedDefinition == null ? TextCommandType.UNKNOWN : resolvedDefinition.type();
+    String commandId =
+        resolvedDefinition == null
+            ? TextCommandType.fromToken(aliasUsed).name().toLowerCase(java.util.Locale.ROOT)
+            : resolvedDefinition.commandId();
     ParsedCommandData parsed =
         switch (type) {
           case WORLDS ->
@@ -48,6 +56,11 @@ public class TextCommandParser {
           case WHO -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WHO"));
           case FRIENDS ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("FRIENDS"));
+          case AUTHORED ->
+              new ParsedCommandData(
+                  parseRemainingTokens(tokens),
+                  new TextCommandPayload.AuthoredActionInvocation(
+                      commandId, parseRemainingTokens(tokens)));
           case INVENTORY ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("INVENTORY"));
           case EQUIPMENT ->
@@ -66,7 +79,7 @@ public class TextCommandParser {
           case MOVE -> parseMove(aliasUsed, tokens);
           case UNKNOWN -> parseUnknown(tokens);
         };
-    return new TextCommand(type, parsed.args(), source, aliasUsed, parsed.payload());
+    return new TextCommand(commandId, type, parsed.args(), source, aliasUsed, parsed.payload());
   }
 
   private ParsedCommandData parseLogin(String[] tokens) {

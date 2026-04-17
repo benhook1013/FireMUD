@@ -18,6 +18,7 @@ public sealed interface TextCommandPayload
         TextCommandPayload.Message,
         TextCommandPayload.TargetedMessage,
         TextCommandPayload.Directional,
+        TextCommandPayload.AuthoredActionInvocation,
         TextCommandPayload.ViewRequest {
 
   record None() implements TextCommandPayload {}
@@ -52,6 +53,13 @@ public sealed interface TextCommandPayload
   record TargetedMessage(String target, String message) implements TextCommandPayload {}
 
   record Directional(String direction) implements TextCommandPayload {}
+
+  record AuthoredActionInvocation(String commandId, List<String> args)
+      implements TextCommandPayload {
+    public AuthoredActionInvocation {
+      args = List.copyOf(args == null ? List.of() : args);
+    }
+  }
 
   record ViewRequest(String viewName) implements TextCommandPayload {}
 
@@ -104,6 +112,7 @@ public sealed interface TextCommandPayload
           safeArgs.size() >= 2
               ? new TargetedMessage(safeArgs.get(0), safeArgs.get(1))
               : new Tokens(safeArgs);
+      case AUTHORED -> new AuthoredActionInvocation("authored", safeArgs);
       case MOVE ->
           !safeArgs.isEmpty() && StringUtils.hasText(safeArgs.get(0))
               ? new Directional(safeArgs.get(0))
