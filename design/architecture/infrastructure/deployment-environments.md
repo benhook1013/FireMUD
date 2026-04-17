@@ -69,6 +69,7 @@ Cross-document rules:
   - fixed hostname `dev.preview.firedevops.net`
   - fixed TCP port `32016`
   - no inclusion in PR preview capacity counting, janitor cleanup, or PR-comment reporting
+- A light scheduled reconciler may redeploy the fixed `develop` environment when the `dev` namespace is missing or its recorded deployed SHA no longer matches the current `develop` head.
 - The fixed `develop` environment currently favors clean redeploy reproducibility over persistent shared state: the namespace/address stay stable, but the workflow may rebuild the namespace from scratch on each new `develop` deployment.
 - The fixed `develop` environment is intended for stable shared-branch proof and manual smoke, not for promotion evidence or as a substitute for staging.
 
