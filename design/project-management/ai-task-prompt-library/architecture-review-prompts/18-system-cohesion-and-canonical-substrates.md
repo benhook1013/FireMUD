@@ -11,9 +11,6 @@ Read the following sources first. Follow references only when a listed doc clear
 - `design/architecture/repository-structure.md`
 - `design/project-management/vertical-slices/00-slice-progress.md`
 - `design/project-management/vertical-slices/00-design-area-slice-coverage.md`
-- `design/project-management/service-status-game-session-service.md`
-- `design/project-management/service-status-spring-cloud-gateway.md`
-- `design/project-management/service-status-account-service.md`
 
 Review the current FireMUD branch for system cohesion, canonical-substrate quality, and "proper implementation first" alignment across recently implemented slices.
 
