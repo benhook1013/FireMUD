@@ -17,7 +17,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 3. [08.3 Launch Descriptor and Activation Preflight](./08.3-task-list-launch-descriptor-and-activation-preflight-vertical-slice.md)
    Remaining: extend the now-live launch-descriptor, version-state, and World Management activation lifecycle into broader cutover/retirement consumers and later instance-scoped runtime world-state families.
 4. [09.1 Realm Catalog and Admission-Pointer Routing](./09.1-task-list-realm-catalog-and-admission-pointer-routing-vertical-slice.md)
-   Remaining: keep broader reconnect/cutover consumers on the now-live persisted Game Session admission-pointer authority and close the remaining stale-pointer/runtime-change proof around reconnect-style flows now that operator-facing cutover/audit tooling exists.
+   Remaining: keep broader reconnect/cutover consumers on the now-live persisted Game Session admission-pointer authority now that operator-facing cutover/audit tooling and first-party stale-pointer proof are in place.
 5. [09.3 Realm-Scoped Character and Playable State Policy](./09.3-task-list-realm-scoped-character-and-playable-state-policy-vertical-slice.md)
    Remaining: continue the now-live scope-aware roster plus inventory/equipment alignment into progression, resources, loadout, and later gameplay-state families without reintroducing tenant-wide shortcuts.
 
