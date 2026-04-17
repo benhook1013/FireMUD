@@ -30,5 +30,7 @@ public class AuthoredActionProperties {
     private String costKey;
     private long costAmount;
     private String noticeText;
+    private String helpSummary;
+    private String helpDetails;
   }
 }

@@ -28,7 +28,7 @@ These are already partly real in code and should continue after the immediate ru
 2. [02.13.7 Action Classification and Activity Semantics](./02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
    Remaining: extend the current primary-category plus timestamp consumer into optional tags/facets and later scripting/policy consumers.
 3. [02.13.9 Authored Action Definition and Execution Model](./02.13.9-task-list-authored-action-definition-and-execution-model-vertical-slice.md)
-   Remaining: build on the now-live typed config-backed authored-action record, shared `commandId` registry seam, and first non-built-in provider by adding richer targeting/cost/cooldown/effect semantics and later help/discovery.
+   Remaining: build on the now-live typed config-backed authored-action record, shared `commandId` registry seam, first non-built-in provider, and authored `HELP` discovery by adding richer targeting/cost/cooldown/effect semantics.
 4. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: grow from the current bounded `WHO` plus explicit/auto-AFK and canonical lifecycle substrate into the fuller activity model when that work becomes active.
 5. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
@@ -113,7 +113,7 @@ If you want the clearest immediate path, do these next:
 2. `02.1.4` cross-game social presence follow-through
    Best next social batch because the first account-scoped friend presence seam, honest `lastSeenAt`, disconnect disposition, account-owned visibility-policy seam, canonical world/realm labels, and gameplay `FRIENDS` consumer are now live, leaving broader consumers and later privacy refinement rather than substrate work.
 3. `02.13.9` authored action definition and execution model
-   Best next platform-shape batch because the provider-backed registry, canonical `commandId` seam, and first typed authored-action provider are now live and the next honest step is richer authored semantics rather than more built-in-only growth.
+   Best next platform-shape batch because the provider-backed registry, canonical `commandId` seam, first typed authored-action provider, and authored `HELP` discovery are now live and the next honest step is richer authored semantics rather than more built-in-only growth.
 4. `02.1.2` logout and deliberate session termination
    Best next runtime tail because the core logout command is now live and the remaining work is proof/alignment across reconnect and transport variants rather than fresh design.
 5. `06.3.2` bounded authored compatibility-mode follow-up

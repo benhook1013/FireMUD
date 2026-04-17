@@ -47,4 +47,19 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
     assertThrows(
         IllegalStateException.class, () -> new ConfiguredAuthoredActionCatalog(properties));
   }
+
+  @Test
+  void catalogRejectsDuplicateAuthoredAliases() {
+    AuthoredActionProperties properties = new AuthoredActionProperties();
+    AuthoredActionProperties.Action first = new AuthoredActionProperties.Action();
+    first.setCommandId("wave-salute");
+    first.setAliases(List.of("salute"));
+    AuthoredActionProperties.Action second = new AuthoredActionProperties.Action();
+    second.setCommandId("wave-bow");
+    second.setAliases(List.of("salute"));
+    properties.setActions(List.of(first, second));
+
+    assertThrows(
+        IllegalStateException.class, () -> new ConfiguredAuthoredActionCatalog(properties));
+  }
 }
