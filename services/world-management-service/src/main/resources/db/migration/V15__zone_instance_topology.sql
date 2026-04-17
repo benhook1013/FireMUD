@@ -39,10 +39,10 @@ UPDATE room_instance rmi
 SET zone_instance_id = zi.id
 FROM room r
 JOIN zone_instance zi
-  ON zi.tenant_id = rmi.tenant_id
- AND zi.game_instance_id = rmi.game_instance_id
- AND zi.template_zone_id = r.zone_id
-WHERE r.id = rmi.template_room_id;
+  ON zi.template_zone_id = r.zone_id
+WHERE r.id = rmi.template_room_id
+  AND zi.tenant_id = rmi.tenant_id
+  AND zi.game_instance_id = rmi.game_instance_id;
 
 ALTER TABLE room_instance
     ADD CONSTRAINT fk_room_instance_zone_instance

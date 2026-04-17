@@ -1,6 +1,6 @@
 {
   "environment": "production",
-  "generatedAt": "2026-04-10T00:33:33Z",
+  "generatedAt": "2026-04-16T00:00:00Z",
   "records": {
     "jwt-signing-keys-jwks": {
       "immutableArtifactId": "k8s-job:jwt-rotation:2026-04-10T00:00:00Z:sha256:4b81c3ad",
@@ -8,17 +8,17 @@
       "recordedBy": "platform-security"
     },
     "postgres-application-credentials": {
-      "immutableArtifactId": "k8s-job:db-credential-rotation:2026-03-01T00:00:00Z:sha256:7a4f91bd",
+      "immutableArtifactId": "k8s-job:db-credential-rotation:2026-04-16T00:00:00Z:sha256:7a4f91bd",
       "source": "cluster-job-log",
       "recordedBy": "platform-database"
     },
     "backup-object-store-credentials": {
-      "immutableArtifactId": "change-ticket:OPS-2474:sha256:53e71cab",
+      "immutableArtifactId": "change-ticket:OPS-2474-rotation-2026-04-16:sha256:53e71cab",
       "source": "change-management",
       "recordedBy": "platform-infra"
     },
     "operator-credentials": {
-      "immutableArtifactId": "change-ticket:OPS-2459:sha256:11b84f2d",
+      "immutableArtifactId": "change-ticket:OPS-2459-rotation-2026-04-16:sha256:11b84f2d",
       "source": "operator-credentials-runbook",
       "recordedBy": "platform-security"
     }
