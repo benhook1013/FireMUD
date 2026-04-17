@@ -15,6 +15,7 @@ import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendLinkDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
+import net.firedevops.firemud.socialgroups.dto.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.entity.AccountFriendLink;
 import net.firedevops.firemud.socialgroups.entity.FriendLink;
 import net.firedevops.firemud.socialgroups.mapper.FriendLinkMapper;
@@ -105,7 +106,8 @@ public class FriendServiceImpl implements FriendService {
               visibleCharacterId(entry),
               visibleCharacterName(entry),
               visibleActivityState(entry),
-              entry.getLastSeenAtMs() > 0 ? Instant.ofEpochMilli(entry.getLastSeenAtMs()) : null));
+              entry.getLastSeenAtMs() > 0 ? Instant.ofEpochMilli(entry.getLastSeenAtMs()) : null,
+              visibleRecentDisposition(entry)));
     }
 
     return friendAccountIds.stream()
@@ -116,6 +118,7 @@ public class FriendServiceImpl implements FriendService {
                     new FriendPresenceDto(
                         friendAccountId,
                         false,
+                        null,
                         null,
                         null,
                         null,
@@ -214,6 +217,24 @@ public class FriendServiceImpl implements FriendService {
           ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
           null;
       default -> mapActivityState(entry.getActivityState());
+    };
+  }
+
+  private FriendRecentPresenceDisposition visibleRecentDisposition(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF -> null;
+      default -> mapRecentDisposition(entry.getRecentDisposition());
+    };
+  }
+
+  private FriendRecentPresenceDisposition mapRecentDisposition(
+      net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition disposition) {
+    return switch (disposition) {
+      case ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS ->
+          FriendRecentPresenceDisposition.TRANSPORT_LOSS;
+      case ACCOUNT_RECENT_PRESENCE_DISPOSITION_LOGOUT -> FriendRecentPresenceDisposition.LOGOUT;
+      case ACCOUNT_RECENT_PRESENCE_DISPOSITION_TAKEOVER -> FriendRecentPresenceDisposition.TAKEOVER;
+      default -> null;
     };
   }
 }

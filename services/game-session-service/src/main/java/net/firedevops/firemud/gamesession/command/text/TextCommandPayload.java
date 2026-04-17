@@ -60,7 +60,8 @@ public sealed interface TextCommandPayload
     return switch (type) {
       case NOOP, LOGOUT -> new None();
       case AFK -> new AfkRequest(true);
-      case WORLDS, LOOK, QUICKLOOK, WHO, INVENTORY, EQUIPMENT -> new ViewRequest(type.name());
+      case WORLDS, LOOK, QUICKLOOK, WHO, FRIENDS, INVENTORY, EQUIPMENT ->
+          new ViewRequest(type.name());
       case REALMS ->
           parseRealmBrowseRequest(safeArgs)
               .<TextCommandPayload>map(request -> request)

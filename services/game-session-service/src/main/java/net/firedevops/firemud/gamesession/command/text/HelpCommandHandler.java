@@ -50,6 +50,12 @@ public class HelpCommandHandler {
                   + "List currently connected players in this game instance.\n"
                   + "Gods appear first, then players.\n"
                   + "You must already be in-world with PLAY.");
+      case "FRIENDS" ->
+          success(
+              "FRIENDS\n"
+                  + "List your linked friends with bounded cross-game presence.\n"
+                  + "Visible entries show current world/realm labels, character name, and activity state when policy allows.\n"
+                  + "Private or hidden-staff friends stay conservative.");
       case "INVENTORY" ->
           success(
               "INVENTORY shows what you are carrying.\n"
@@ -150,6 +156,7 @@ public class HelpCommandHandler {
       case "LOGIN", "LOGON" -> "LOGIN";
       case "PLAY" -> "PLAY";
       case "WHO" -> "WHO";
+      case "FRIENDS" -> "FRIENDS";
       case "INVENTORY", "INV", "I" -> "INVENTORY";
       case "EQUIPMENT", "EQUIP", "EQ" -> "EQUIPMENT";
       case "WEAR" -> "WEAR";
@@ -173,6 +180,7 @@ public class HelpCommandHandler {
         + "- HELP LOGIN\n"
         + "- HELP PLAY\n"
         + "- HELP WHO\n"
+        + "- HELP FRIENDS\n"
         + "- HELP INVENTORY\n"
         + "- HELP EQUIPMENT\n"
         + "- HELP CONTAINER\n"

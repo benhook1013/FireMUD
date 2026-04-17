@@ -15,6 +15,7 @@ import net.firedevops.firemud.socialgroups.client.GameSessionClient;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendLinkDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceActivityState;
+import net.firedevops.firemud.socialgroups.dto.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.entity.AccountFriendLink;
 import net.firedevops.firemud.socialgroups.entity.FriendLink;
 import net.firedevops.firemud.socialgroups.mapper.FriendLinkMapper;
@@ -103,6 +104,9 @@ class FriendServiceImplTest {
                         .setVisibilityPolicy(
                             AccountPresenceVisibilityPolicy
                                 .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
+                        .setRecentDisposition(
+                            net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
+                                .ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS)
                         .setActivityState(
                             AccountPresenceActivityState.ACCOUNT_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
                         .build())
@@ -119,6 +123,7 @@ class FriendServiceImplTest {
     assertEquals("Live Realm", result.get(0).realmDisplayName());
     assertEquals(FriendPresenceActivityState.AUTO_AFK, result.get(0).activityState());
     assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.get(0).lastSeenAt());
+    assertEquals(FriendRecentPresenceDisposition.TRANSPORT_LOSS, result.get(0).recentDisposition());
   }
 
   @Test
@@ -153,6 +158,9 @@ class FriendServiceImplTest {
                             AccountPresenceVisibilityPolicy
                                 .ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE)
                         .setLastSeenAtMs(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
+                        .setRecentDisposition(
+                            net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
+                                .ACCOUNT_RECENT_PRESENCE_DISPOSITION_LOGOUT)
                         .build())
                 .addPresences(
                     AccountPresenceEntry.newBuilder()
@@ -177,6 +185,7 @@ class FriendServiceImplTest {
     assertEquals(null, result.get(0).realmSlug());
     assertEquals(null, result.get(0).realmDisplayName());
     assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.get(0).lastSeenAt());
+    assertEquals(FriendRecentPresenceDisposition.LOGOUT, result.get(0).recentDisposition());
     assertEquals(false, result.get(1).online());
     assertEquals(null, result.get(1).characterName());
     assertEquals(null, result.get(1).lastSeenAt());

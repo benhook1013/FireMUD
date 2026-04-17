@@ -39,6 +39,11 @@ class AggregatingTextCommandRegistryTest {
         TextCommandActionCategory.META,
         TextCommandSource.PLATFORM_BUILT_IN);
     assertDefinition(
+        TextCommandType.FRIENDS,
+        TextCommandDispatchGroup.FRIENDS,
+        TextCommandActionCategory.SOCIAL,
+        TextCommandSource.PLATFORM_BUILT_IN);
+    assertDefinition(
         TextCommandType.MOVE,
         TextCommandDispatchGroup.MOVE,
         TextCommandActionCategory.GAMEPLAY,

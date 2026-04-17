@@ -46,6 +46,8 @@ public class TextCommandParser {
           case AFK -> parseAfk(tokens);
           case HELP -> parseHelp(tokens);
           case WHO -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WHO"));
+          case FRIENDS ->
+              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("FRIENDS"));
           case INVENTORY ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("INVENTORY"));
           case EQUIPMENT ->

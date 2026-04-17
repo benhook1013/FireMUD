@@ -78,6 +78,7 @@ class FriendControllerTest {
                     99L,
                     "Ben",
                     null,
+                    null,
                     null)));
 
     String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));

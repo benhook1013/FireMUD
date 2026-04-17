@@ -42,6 +42,7 @@ import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
@@ -440,6 +441,7 @@ class TextCommandInterpreterTest {
             afkHandler,
             helpHandler,
             whoHandler,
+            new FriendsCommandHandler(Mockito.mock(SocialGroupsClient.class)),
             inventoryHandler,
             equipmentHandler,
             containerHandler,

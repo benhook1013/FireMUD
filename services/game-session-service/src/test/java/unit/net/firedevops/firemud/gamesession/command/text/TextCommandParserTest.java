@@ -185,6 +185,19 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesFriendsAsViewRequest() {
+    TextCommand command = parser.parse("FRIENDS");
+
+    assertEquals(TextCommandType.FRIENDS, command.type());
+    assertEquals("FRIENDS", command.aliasUsed());
+    assertTrue(command.args().isEmpty());
+    assertEquals("FRIENDS", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertTrue(command.viewRequestPayload().isPresent());
+    assertEquals("FRIENDS", command.viewRequestPayload().orElseThrow().viewName());
+  }
+
+  @Test
   void parsesInventoryAsViewRequest() {
     TextCommand command = parser.parse("inv");
 

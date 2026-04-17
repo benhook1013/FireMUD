@@ -99,10 +99,13 @@ class AccountPresenceQueryServiceImplTest {
     assertEquals(
         net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState.EXPLICIT_AFK,
         result.get(0).activityState());
+    assertEquals(null, result.get(0).recentDisposition());
     assertEquals(AccountPresenceVisibilityPolicy.FRIENDS_ONLY, result.get(0).visibilityPolicy());
     assertEquals(4L, result.get(1).accountId());
     assertEquals(false, result.get(1).online());
     assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.get(1).lastSeenAt());
+    assertEquals(
+        AccountRecentPresenceDisposition.TRANSPORT_LOSS, result.get(1).recentDisposition());
     assertEquals(AccountPresenceVisibilityPolicy.PRIVATE, result.get(1).visibilityPolicy());
   }
 }

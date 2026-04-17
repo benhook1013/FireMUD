@@ -66,6 +66,9 @@ public class TextPlayerOutputRenderer {
         if (output.payload() instanceof WhoViewOutput whoView) {
           yield renderWhoView(whoView);
         }
+        if (output.payload() instanceof FriendPresenceViewOutput friendsView) {
+          yield renderFriendsView(friendsView);
+        }
         throw new IllegalArgumentException(
             "Unsupported view payload: " + output.payload().getClass().getName());
       }
@@ -356,6 +359,52 @@ public class TextPlayerOutputRenderer {
                   default -> entry.characterName();
                 })
         .collect(Collectors.joining(", "));
+  }
+
+  private String renderFriendsView(FriendPresenceViewOutput output) {
+    if (output.friends().isEmpty()) {
+      return "Friends [0]: no linked friends.";
+    }
+    return output.friends().stream()
+        .map(
+            entry ->
+                entry.ordinal() + ") " + entry.displayName() + " - " + renderFriendStatus(entry))
+        .collect(Collectors.joining("\n"));
+  }
+
+  private String renderFriendStatus(FriendPresenceViewOutput.Entry entry) {
+    if (entry.online()) {
+      StringBuilder line = new StringBuilder("online");
+      if (StringUtils.hasText(entry.worldDisplayName())) {
+        line.append(" in ").append(entry.worldDisplayName());
+        if (StringUtils.hasText(entry.realmDisplayName())) {
+          line.append(" / ").append(entry.realmDisplayName());
+        }
+      }
+      if (StringUtils.hasText(entry.characterName())
+          && !entry.characterName().equals(entry.displayName())) {
+        line.append(" as ").append(entry.characterName());
+      }
+      if (StringUtils.hasText(entry.activityState())) {
+        switch (entry.activityState()) {
+          case "AUTO_AFK" -> line.append(" (idle)");
+          case "EXPLICIT_AFK" -> line.append(" (AFK)");
+          default -> {}
+        }
+      }
+      return line.toString();
+    }
+    if (entry.lastSeenAtEpochMs() != null) {
+      String qualifier =
+          switch (entry.recentDisposition()) {
+            case "LOGOUT" -> "logged out";
+            case "TAKEOVER" -> "replaced session";
+            case "TRANSPORT_LOSS" -> "connection lost";
+            default -> "last seen";
+          };
+      return qualifier + " " + java.time.Instant.ofEpochMilli(entry.lastSeenAtEpochMs());
+    }
+    return "offline";
   }
 
   private String renderInventoryView(

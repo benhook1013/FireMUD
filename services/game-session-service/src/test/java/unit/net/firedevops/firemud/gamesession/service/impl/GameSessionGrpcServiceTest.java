@@ -22,6 +22,7 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
@@ -136,6 +137,7 @@ class GameSessionGrpcServiceTest {
                     net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState
                         .EXPLICIT_AFK,
                     Instant.parse("2026-04-11T06:15:30Z"),
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
                     AccountPresenceVisibilityPolicy.FRIENDS_ONLY)));
     GameSessionGrpcService service =
         new GameSessionGrpcService(
@@ -182,6 +184,10 @@ class GameSessionGrpcServiceTest {
     assertEquals(
         Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
         ref.get().getPresences(0).getLastSeenAtMs());
+    assertEquals(
+        net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
+            .ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS,
+        ref.get().getPresences(0).getRecentDisposition());
   }
 
   @Test

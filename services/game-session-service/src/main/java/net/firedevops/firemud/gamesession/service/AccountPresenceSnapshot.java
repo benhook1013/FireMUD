@@ -17,4 +17,5 @@ public record AccountPresenceSnapshot(
     String characterName,
     GameplayPresenceActivityState activityState,
     Instant lastSeenAt,
+    AccountRecentPresenceDisposition recentDisposition,
     AccountPresenceVisibilityPolicy visibilityPolicy) {}

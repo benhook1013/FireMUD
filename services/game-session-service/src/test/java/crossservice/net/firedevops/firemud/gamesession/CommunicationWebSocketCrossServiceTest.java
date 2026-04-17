@@ -36,6 +36,8 @@ import net.firedevops.firemud.gamesession.test.stubs.ChatEntityManagementStubSer
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
+import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
+import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -174,6 +176,37 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketFriendsShowsCanonicalCrossGamePresence() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    SOCIAL_STUB.setFriendPresenceEntries(
+        List.of(
+            FriendPresenceEntry.newBuilder()
+                .setFriendAccountId(Long.toString(SORA_ACCOUNT_ID))
+                .setOnline(true)
+                .setCharacterId(ChatTestFixtures.PLAYER_SORA)
+                .setCharacterName("Sora")
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("production")
+                .setRealmDisplayName("Live Realm")
+                .setActivityState(
+                    FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
+                .build()));
+
+    List<String> responses = runCommunicationSequence(sessionId, "FRIENDS");
+
+    assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(responses.get(2)).contains("Sora - online in Demo World / Live Realm (idle)");
+    assertThat(SOCIAL_STUB.lastPresenceRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getTenantId()).isEqualTo(Long.toString(TENANT_ID));
+              assertThat(request.getAccountId()).isEqualTo(Long.toString(ACCOUNT_ID));
+            });
+  }
+
+  @Test
   void websocketWhisperPushesTargetAndObserverViewsToLiveRecipients() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
@@ -270,6 +303,7 @@ class CommunicationWebSocketCrossServiceTest {
           props.put("firemud.database.enabled", "true");
           props.put("spring.jpa.hibernate.ddl-auto", "none");
           props.put("firemud.services.entityManagementService", ENTITY_STUB.endpoint());
+          props.put("firemud.services.socialGroupsService", SOCIAL_STUB.endpoint());
         });
   }
 

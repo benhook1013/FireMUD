@@ -13,4 +13,5 @@ public record FriendPresenceDto(
     Long characterId,
     String characterName,
     FriendPresenceActivityState activityState,
-    Instant lastSeenAt) {}
+    Instant lastSeenAt,
+    FriendRecentPresenceDisposition recentDisposition) {}

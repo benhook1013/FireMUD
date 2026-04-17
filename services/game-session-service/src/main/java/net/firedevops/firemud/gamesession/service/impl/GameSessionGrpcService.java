@@ -25,6 +25,7 @@ import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceActivityState;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceEntry;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceVisibilityPolicy;
+import net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.v1.EnqueueCommandRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueCommandResponse;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
@@ -511,6 +512,9 @@ public final class GameSessionGrpcService
         if (snapshot.lastSeenAt() != null) {
           entry.setLastSeenAtMs(snapshot.lastSeenAt().toEpochMilli());
         }
+        if (snapshot.recentDisposition() != null) {
+          entry.setRecentDisposition(mapRecentDisposition(snapshot.recentDisposition().name()));
+        }
         entry.setVisibilityPolicy(mapVisibilityPolicy(snapshot.visibilityPolicy()));
         builder.addPresences(entry.build());
       }
@@ -830,6 +834,17 @@ public final class GameSessionGrpcService
       case PRIVATE -> AccountPresenceVisibilityPolicy.ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE;
       case HIDDEN_STAFF ->
           AccountPresenceVisibilityPolicy.ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF;
+    };
+  }
+
+  private AccountRecentPresenceDisposition mapRecentDisposition(String disposition) {
+    return switch (disposition) {
+      case "TRANSPORT_LOSS" ->
+          AccountRecentPresenceDisposition.ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS;
+      case "LOGOUT" -> AccountRecentPresenceDisposition.ACCOUNT_RECENT_PRESENCE_DISPOSITION_LOGOUT;
+      case "TAKEOVER" ->
+          AccountRecentPresenceDisposition.ACCOUNT_RECENT_PRESENCE_DISPOSITION_TAKEOVER;
+      default -> AccountRecentPresenceDisposition.ACCOUNT_RECENT_PRESENCE_DISPOSITION_UNSPECIFIED;
     };
   }
 }

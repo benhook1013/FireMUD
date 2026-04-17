@@ -32,6 +32,7 @@ public class TextCommandInterpreter {
       AfkCommandHandler afkHandler,
       HelpCommandHandler helpHandler,
       WhoCommandHandler whoHandler,
+      FriendsCommandHandler friendsHandler,
       InventoryCommandHandler inventoryHandler,
       EquipmentCommandHandler equipmentHandler,
       ContainerCommandHandler containerHandler,
@@ -56,6 +57,7 @@ public class TextCommandInterpreter {
             afkHandler,
             helpHandler,
             whoHandler,
+            friendsHandler,
             new ItemCommandHandler(inventoryHandler, equipmentHandler, containerHandler),
             communicationHandler,
             worldsHandler));
@@ -71,6 +73,7 @@ public class TextCommandInterpreter {
       AfkCommandHandler afkHandler,
       HelpCommandHandler helpHandler,
       WhoCommandHandler whoHandler,
+      FriendsCommandHandler friendsHandler,
       InventoryCommandHandler inventoryHandler,
       EquipmentCommandHandler equipmentHandler,
       ContainerCommandHandler containerHandler,
@@ -94,6 +97,7 @@ public class TextCommandInterpreter {
             afkHandler,
             helpHandler,
             whoHandler,
+            friendsHandler,
             new ItemCommandHandler(inventoryHandler, equipmentHandler, containerHandler),
             communicationHandler,
             worldsHandler));
@@ -262,6 +266,7 @@ public class TextCommandInterpreter {
       AfkCommandHandler afkHandler,
       HelpCommandHandler helpHandler,
       WhoCommandHandler whoHandler,
+      FriendsCommandHandler friendsHandler,
       ItemCommandHandler itemHandler,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler) {
@@ -273,6 +278,7 @@ public class TextCommandInterpreter {
             new ActivityTextCommandDispatchHandler(afkHandler),
             new HelpTextCommandDispatchHandler(helpHandler),
             new WhoTextCommandDispatchHandler(whoHandler),
+            new FriendsTextCommandDispatchHandler(friendsHandler),
             new ItemTextCommandDispatchHandler(itemHandler),
             new CommunicationTextCommandDispatchHandler(communicationHandler),
             new MoveTextCommandDispatchHandler(moveHandler),

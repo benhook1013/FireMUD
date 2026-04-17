@@ -99,6 +99,9 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
                       recentStates.get(instance.getOwnerAccountId()).lastSeenAtEpochMs())
                   : null,
               recentStates.containsKey(instance.getOwnerAccountId())
+                  ? recentStates.get(instance.getOwnerAccountId()).disposition()
+                  : null,
+              recentStates.containsKey(instance.getOwnerAccountId())
                   ? recentStates.get(instance.getOwnerAccountId()).visibilityPolicy()
                   : visibilityPolicyResolver.resolve(
                       tenantId, instance.getOwnerAccountId(), presence.role())));
@@ -120,6 +123,7 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
         null,
         null,
         recentState == null ? null : Instant.ofEpochMilli(recentState.lastSeenAtEpochMs()),
+        recentState == null ? null : recentState.disposition(),
         recentState == null
             ? visibilityPolicyResolver.resolve(tenantId, accountId)
             : recentState.visibilityPolicy());

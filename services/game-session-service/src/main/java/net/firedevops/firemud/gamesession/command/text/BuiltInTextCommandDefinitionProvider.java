@@ -84,6 +84,14 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.META);
+    register(
+        definitions,
+        TextCommandType.FRIENDS,
+        List.of("friends"),
+        TextCommandDispatchGroup.FRIENDS,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.SOCIAL);
     registerGroup(
         definitions,
         List.of("inventory", "inv", "i"),

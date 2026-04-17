@@ -121,6 +121,13 @@ enum AccountPresenceVisibilityPolicy {
   ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF = 4;
 }
 
+enum AccountRecentPresenceDisposition {
+  ACCOUNT_RECENT_PRESENCE_DISPOSITION_UNSPECIFIED = 0;
+  ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS = 1;
+  ACCOUNT_RECENT_PRESENCE_DISPOSITION_LOGOUT = 2;
+  ACCOUNT_RECENT_PRESENCE_DISPOSITION_TAKEOVER = 3;
+}
+
 message AccountPresenceEntry {
   string account_id = 1;
   bool online = 2;
@@ -134,6 +141,7 @@ message AccountPresenceEntry {
   string world_display_name = 10;
   string realm_slug = 11;
   string realm_display_name = 12;
+  AccountRecentPresenceDisposition recent_disposition = 13;
 }
 
 message QueryAccountPresenceResponse {

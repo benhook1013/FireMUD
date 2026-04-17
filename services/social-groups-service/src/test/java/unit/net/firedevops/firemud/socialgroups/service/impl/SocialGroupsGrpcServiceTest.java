@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
+import net.firedevops.firemud.socialgroups.dto.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.dto.SendMessageRequestDto;
 import net.firedevops.firemud.socialgroups.enums.ChatType;
 import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
@@ -200,7 +201,8 @@ class SocialGroupsGrpcServiceTest {
                     99L,
                     "Ben",
                     null,
-                    Instant.parse("2026-04-11T06:15:30Z"))));
+                    Instant.parse("2026-04-11T06:15:30Z"),
+                    FriendRecentPresenceDisposition.LOGOUT)));
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -235,5 +237,9 @@ class SocialGroupsGrpcServiceTest {
     assertEquals(
         Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
         ref.get().getPresences(0).getLastSeenAtMs());
+    assertEquals(
+        net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition
+            .FRIEND_RECENT_PRESENCE_DISPOSITION_LOGOUT,
+        ref.get().getPresences(0).getRecentDisposition());
   }
 }
