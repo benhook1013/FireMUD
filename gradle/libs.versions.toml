@@ -1,6 +1,6 @@
 [versions]
 spring-boot = "4.0.5"
-flyway = "12.3.0"
+flyway = "12.4.0"
 mapstruct = "1.6.3"
 lombok = "1.18.42"
 lombok-mapstruct-binding = "0.2.0"
@@ -60,8 +60,8 @@ opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version = "
 opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version = "1.61.0" }
 opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp", version = "1.61.0" }
 
-micrometer-core = { module = "io.micrometer:micrometer-core", version = "1.16.4" }
-micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version = "1.16.4" }
+micrometer-core = { module = "io.micrometer:micrometer-core", version = "1.16.5" }
+micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version = "1.16.5" }
 
 jjwt-api = { module = "io.jsonwebtoken:jjwt-api", version = "0.13.0" }
 jjwt-impl = { module = "io.jsonwebtoken:jjwt-impl", version = "0.13.0" }
@@ -70,7 +70,7 @@ argon2 = { module = "de.mkammerer:argon2-jvm", version = "2.12" }
 
 grpc-spring-boot-starter = { module = "org.springframework.grpc:spring-grpc-spring-boot-starter", version = "1.0.2" }
 postgresql = { module = "org.postgresql:postgresql", version = "42.7.10" }
-aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.33" }
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.36" }
 h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
 springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "3.0.3" }
@@ -84,5 +84,5 @@ testcontainers-postgresql = { module = "org.testcontainers:postgresql", version 
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
-flyway = { id = "org.flywaydb.flyway", version = "12.3.0" }
+flyway = { id = "org.flywaydb.flyway", version = "12.4.0" }
 protobuf = { id = "com.google.protobuf", version = "0.9.6" }
