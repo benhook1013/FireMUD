@@ -210,8 +210,8 @@ def verify_pre_readiness_telnet_admission():
 
 
 try:
-    wait_for_account_schema()
     verify_pre_readiness_telnet_admission()
+    wait_for_account_schema()
     wait_for_http_readiness("account-service", account_api_base)
     wait_for_http_readiness("game-logic-service", game_logic_api_base)
     wait_for_http_readiness("game-session-service", game_session_api_base)
