@@ -136,3 +136,8 @@ Entry format:
   - Context: fixing runtime-image smoke after centralizing servlet HTTP auth into `common-security`
   - Observation: `CommonSecurityAutoConfiguration` still exposed `WebMvcConfigurer`-based bean methods on the shared auto-config class, so reactive services like `spring-cloud-gateway` crashed during auto-config introspection even though the servlet beans were conditionally guarded
   - Expected pattern: if a common module serves both servlet and reactive services, keep servlet-only beans in a dedicated servlet auto-configuration (or similarly isolated classpath boundary) so reactive consumers never need servlet classes present just to load shared security/bootstrap wiring
+
+- `2026-04-18`: Service YAML needs a static lint gate, not just smoke proof
+  - Context: cleaning up shared auth/config refactors after runtime-images smoke exposed duplicate top-level `firemud:` mappings in service `application.yml`
+  - Observation: duplicate YAML keys in `account-service`, then `entity-management-service` and `social-groups-service`, were only caught once Docker booted the apps; build/test stayed green until runtime config parsing happened
+  - Expected pattern: repo CI should run a tracked-YAML lint pass with duplicate-key detection over service/application, workflow, docker, k8s values, and operations YAML so configuration breakage fails before smoke and preview workflows

@@ -61,6 +61,18 @@ server:
     min-response-size: 1024
 
 firemud:
+  auth:
+    http:
+      enabled: true
+      public-path-patterns:
+        - /actuator/**
+        - /ping
+        - /ping/
+        - /.well-known/**
+    grpc:
+      public-methods:
+        - entitymanagement.v1.EntityManagementService/Ping
+        - entitymanagement.v1.EntityManagementService/ListRoomEntities
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
@@ -112,17 +124,3 @@ firemud:
 entity:
   cache:
     character-graph-ttl-seconds: 60
-
-firemud:
-  auth:
-    http:
-      enabled: true
-      public-path-patterns:
-        - /actuator/**
-        - /ping
-        - /ping/
-        - /.well-known/**
-    grpc:
-      public-methods:
-        - entitymanagement.v1.EntityManagementService/Ping
-        - entitymanagement.v1.EntityManagementService/ListRoomEntities

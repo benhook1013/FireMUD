@@ -211,6 +211,24 @@ jobs:
           fi
           python3 -m py_compile "${python_files[@]}"
 
+  yaml-lint:
+    name: YAML Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+
+      - name: 🐍 Set Up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install yamllint
+        run: python3 -m pip install --disable-pip-version-check yamllint
+
+      - name: 🧪 Lint tracked YAML
+        run: bash ./dev-tools/lint-yaml.sh
+
   metrics-cardinality-check:
     name: Metrics Cardinality Policy Check
     runs-on: ubuntu-latest
