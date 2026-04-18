@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.config;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcServerConfiguration;
@@ -38,7 +39,11 @@ import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
 
 @AutoConfiguration
-@EnableConfigurationProperties({ServiceEndpointsProperties.class, CommonGrpcClientProperties.class})
+@EnableConfigurationProperties({
+  ServiceEndpointsProperties.class,
+  CommonGrpcClientProperties.class,
+  GameplayCatalogProperties.class
+})
 @Import({TracingConfig.class, CommonGrpcServerConfiguration.class, GrpcServerTlsReloader.class})
 public class CommonCoreAutoConfiguration {
 

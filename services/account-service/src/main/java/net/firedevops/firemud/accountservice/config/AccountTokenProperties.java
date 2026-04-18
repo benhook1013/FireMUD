@@ -1,12 +1,9 @@
 package net.firedevops.firemud.accountservice.config;
 
-import net.firedevops.firemud.common.security.JwtAuthProperties;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.context.annotation.Primary;
 
-@Primary
-@ConfigurationProperties(prefix = "firemud.auth")
-public class AccountAuthProperties extends JwtAuthProperties {
+@ConfigurationProperties(prefix = "firemud.account.tokens")
+public class AccountTokenProperties {
   private long sessionExpirationMs = 3600000L;
   private long playerBootstrapExpirationMs = 300000L;
   private long connectScopeExpirationMs = 120000L;

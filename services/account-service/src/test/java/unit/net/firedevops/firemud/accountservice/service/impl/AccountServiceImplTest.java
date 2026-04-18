@@ -15,7 +15,7 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
-import net.firedevops.firemud.accountservice.config.AccountAuthProperties;
+import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
@@ -45,6 +45,7 @@ import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.session.SessionService;
 import net.firedevops.firemud.common.saga.SagaRunner;
+import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.BeforeEach;
@@ -61,7 +62,8 @@ class AccountServiceImplTest {
   @Mock private NotificationService notificationService;
   @Mock private EmailService emailService;
   @Mock private MailProperties mailProperties;
-  private final AccountAuthProperties authProperties = new AccountAuthProperties();
+  private final AccountTokenProperties tokenProperties = new AccountTokenProperties();
+  private final JwtAuthProperties jwtAuthProperties = new JwtAuthProperties();
   @Mock private LoggingAdminClient loggingAdminClient;
   @Mock private GameSessionClient gameSessionClient;
   @Mock private EntityManagementClient entityManagementClient;
@@ -84,11 +86,11 @@ class AccountServiceImplTest {
     MockitoAnnotations.openMocks(this);
     AccountMapper mapper = Mappers.getMapper(AccountMapper.class);
     JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 3600000L);
-    authProperties.setJwtSecret("mysecretkey123456789012345678901");
-    authProperties.setPlayerBootstrapExpirationMs(300000L);
-    authProperties.setConnectScopeExpirationMs(120000L);
-    authProperties.setConnectTokenExpirationMs(30000L);
-    authProperties.setSessionExpirationMs(3600000L);
+    jwtAuthProperties.setJwtSecret("mysecretkey123456789012345678901");
+    tokenProperties.setPlayerBootstrapExpirationMs(300000L);
+    tokenProperties.setConnectScopeExpirationMs(120000L);
+    tokenProperties.setConnectTokenExpirationMs(30000L);
+    tokenProperties.setSessionExpirationMs(3600000L);
     when(gameSessionClient.listGameplayWorlds())
         .thenReturn(
             java.util.List.of(
@@ -141,7 +143,8 @@ class AccountServiceImplTest {
             notificationService,
             emailService,
             mailProperties,
-            authProperties,
+            tokenProperties,
+            jwtAuthProperties,
             loggingAdminClient,
             gameSessionClient,
             entityManagementClient,

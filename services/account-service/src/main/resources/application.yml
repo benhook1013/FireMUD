@@ -43,12 +43,12 @@ firemud:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
-  auth:
-    jwt-expiration-ms: 3600000
-    session-expiration-ms: 3600000
-    player-bootstrap-expiration-ms: 300000
-    connect-scope-expiration-ms: 120000
-    connect-token-expiration-ms: 30000
+  account:
+    tokens:
+      session-expiration-ms: 3600000
+      player-bootstrap-expiration-ms: 300000
+      connect-scope-expiration-ms: 120000
+      connect-token-expiration-ms: 30000
   gameplay:
     catalog:
       worlds:
@@ -111,9 +111,6 @@ server:
 
 firemud:
   auth:
-    jwt-secret-path: ${FIREMUD_AUTH_JWT_SECRET_PATH:}
-    jwt-secret: ${FIREMUD_AUTH_JWT_SECRET:}
-    jwt-expiration-ms: ${FIREMUD_AUTH_JWT_EXPIRATION_MS:3600000}
     http:
       enabled: true
       role-requirement: PRIVILEGED

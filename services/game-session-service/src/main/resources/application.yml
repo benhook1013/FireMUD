@@ -112,9 +112,6 @@ firemud:
     scope-model: MAP_ONLY
     regions-enabled: false
   auth:
-    jwt-secret-path: ${FIREMUD_AUTH_JWT_SECRET_PATH:}
-    jwt-secret: ${FIREMUD_AUTH_JWT_SECRET:}
-    jwt-expiration-ms: ${FIREMUD_AUTH_JWT_EXPIRATION_MS:3600000}
     grpc:
       public-methods:
         - gamesession.v1.GameSessionService/Ping

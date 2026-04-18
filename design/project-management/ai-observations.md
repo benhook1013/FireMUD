@@ -126,3 +126,8 @@ Entry format:
   - Context: reviewing the next round of per-service Spring/config boilerplate after centralizing gRPC auth bootstrap
   - Observation: six services had kept near-identical `JwtAuthInterceptor` and `WebConfig` classes even though the only real variation was path allowlists and whether the route needed any authenticated caller or a privileged admin/moderator role
   - Expected pattern: common security modules should own one servlet JWT interceptor plus property-driven public-path and role-requirement policy, so service auth differences stay declarative in `application.yml` rather than drifting through copied interceptor code
+
+- `2026-04-18`: Shared env-backed properties should not be re-declared in every service YAML
+  - Context: cleaning up the remaining per-service Spring/config boilerplate after `common-security` owned the canonical `firemud.auth` contract
+  - Observation: many services still repeated `firemud.auth.jwt-secret`, `jwt-secret-path`, and `jwt-expiration-ms` in `application.yml` purely as `${ENV_VAR}` passthrough, even though Spring already binds environment variables directly into the shared `JwtAuthProperties` bean and the repeated YAML only adds drift-prone noise
+  - Expected pattern: when a shared module owns a `@ConfigurationProperties` namespace, service YAML should contain only real local policy and non-default values; environment-backed shared settings should be bound once through the shared bean, not mirrored across every service config file

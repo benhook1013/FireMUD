@@ -22,7 +22,7 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
-import net.firedevops.firemud.accountservice.config.AccountAuthProperties;
+import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
@@ -65,6 +65,7 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
+import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.slf4j.Logger;
@@ -91,7 +92,8 @@ public class AccountServiceImpl implements AccountService {
   private final NotificationService notificationService;
   private final EmailService emailService;
   private final MailProperties mailProperties;
-  private final AccountAuthProperties authProperties;
+  private final AccountTokenProperties tokenProperties;
+  private final JwtAuthProperties jwtAuthProperties;
   private final LoggingAdminClient loggingAdminClient;
   private final GameSessionClient gameSessionClient;
   private final EntityManagementClient entityManagementClient;
@@ -116,7 +118,8 @@ public class AccountServiceImpl implements AccountService {
       NotificationService notificationService,
       EmailService emailService,
       MailProperties mailProperties,
-      AccountAuthProperties authProperties,
+      AccountTokenProperties tokenProperties,
+      JwtAuthProperties jwtAuthProperties,
       LoggingAdminClient loggingAdminClient,
       GameSessionClient gameSessionClient,
       EntityManagementClient entityManagementClient,
@@ -136,7 +139,8 @@ public class AccountServiceImpl implements AccountService {
     this.notificationService = notificationService;
     this.emailService = emailService;
     this.mailProperties = mailProperties;
-    this.authProperties = authProperties;
+    this.tokenProperties = tokenProperties;
+    this.jwtAuthProperties = jwtAuthProperties;
     this.loggingAdminClient = loggingAdminClient;
     this.gameSessionClient = gameSessionClient;
     this.entityManagementClient = entityManagementClient;
@@ -232,11 +236,11 @@ public class AccountServiceImpl implements AccountService {
     var auth = authenticate(tenantId, username, password, otp);
     String jti = UUID.randomUUID().toString();
     long issuedAt = System.currentTimeMillis();
-    long expiresAt = issuedAt + authProperties.getPlayerBootstrapExpirationMs();
+    long expiresAt = issuedAt + tokenProperties.getPlayerBootstrapExpirationMs();
     String bootstrapToken =
         mintToken(
             String.valueOf(auth.accountId()),
-            authProperties.getPlayerBootstrapExpirationMs(),
+            tokenProperties.getPlayerBootstrapExpirationMs(),
             Map.of(
                 "aud",
                 "player-bootstrap",
@@ -250,7 +254,7 @@ public class AccountServiceImpl implements AccountService {
         tenantId,
         auth.accountId(),
         bootstrapToken,
-        authProperties.getPlayerBootstrapExpirationMs());
+        tokenProperties.getPlayerBootstrapExpirationMs());
     logger.info(
         "Issued player bootstrap token for account {} tenant {}", auth.accountId(), tenantId);
     return new PlayerBootstrapResult(
@@ -277,7 +281,7 @@ public class AccountServiceImpl implements AccountService {
   public List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
     Instant evaluatedAt = Instant.now();
-    Instant expiresAt = evaluatedAt.plusMillis(authProperties.getConnectScopeExpirationMs());
+    Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
     return gameSessionClient.listGameplayRealms(worldSlug).stream()
         .filter(realm -> isRealmAdmissible(bootstrapContext, realm))
         .map(
@@ -376,11 +380,11 @@ public class AccountServiceImpl implements AccountService {
             scopeContext.realmSlug(),
             request.requestId());
     long issuedAt = System.currentTimeMillis();
-    long expiresAt = issuedAt + authProperties.getConnectTokenExpirationMs();
+    long expiresAt = issuedAt + tokenProperties.getConnectTokenExpirationMs();
     String connectToken =
         mintToken(
             String.valueOf(bootstrapContext.accountId()),
-            authProperties.getConnectTokenExpirationMs(),
+            tokenProperties.getConnectTokenExpirationMs(),
             Map.of(
                 "aud",
                 "gameplay-connect",
@@ -406,7 +410,7 @@ public class AccountServiceImpl implements AccountService {
         scopeContext.tenantId(),
         bootstrapContext.accountId(),
         connectToken,
-        authProperties.getConnectTokenExpirationMs());
+        tokenProperties.getConnectTokenExpirationMs());
     logger.info(
         "Issued connect token for account {} tenant {} world {} realm {} gameInstance {} requestId {} jti {}",
         bootstrapContext.accountId(),
@@ -735,7 +739,7 @@ public class AccountServiceImpl implements AccountService {
 
   private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {
     long now = System.currentTimeMillis();
-    String secret = authProperties.getJwtSecret();
+    String secret = jwtAuthProperties.getJwtSecret();
     if (secret == null || secret.isBlank()) {
       throw new IllegalStateException("JWT secret must be configured");
     }
