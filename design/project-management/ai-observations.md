@@ -161,3 +161,8 @@ Entry format:
   - Context: reviewing the remaining test/workaround seams after hardening the compose and image smoke flows
   - Observation: both gameplay smoke scripts were still updating `game_session_service.game_instances.owner_account_id` directly to align the admitted runtime row with the logged-in demo account, which let smoke pass even if service bootstrap ownership was internally inconsistent
   - Expected pattern: smoke should only drive public service interfaces and deterministic dev/test seed data; if a stack needs direct database mutation to become playable, the bootstrap substrate is wrong and should be fixed in the services instead of in the smoke script
+
+- `2026-04-19`: Gradle daemon JVM should be repo-pinned to avoid IDE vs shell cache churn
+  - Context: investigating repeated local `configuration cache cannot be reused because an input to unknown location has changed` messages during CLI validation
+  - Observation: the actual churn was not a project task mutating random inputs; it came from mixed Gradle launches using different Java homes, with shell runs on `/usr/lib/jvm/java-21-openjdk-amd64` and earlier IDE-triggered daemons on the VS Code Red Hat Java extension JRE. That split invalidated daemon reuse and sometimes degraded configuration-cache reporting to `unknown location`
+  - Expected pattern: pin the Gradle daemon JVM with `gradle/gradle-daemon-jvm.properties` (via `updateDaemonJvm`) so shell and IDE launches converge on one daemon/toolchain instead of fighting over whichever JDK happened to launch first
