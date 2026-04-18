@@ -335,8 +335,8 @@ jobs:
             "http://game-session-service:8080/sessions",
             {
               "tenantId": tenant_id,
-              "runtimeVersion": "dev-demo-smoke",
-              "scriptPatchVersion": None,
+              "gameTemplateId": 1,
+              "controlPlaneRequestId": "dev-demo-smoke-bootstrap",
               "ownerAccountId": int(account_id),
             },
           )
