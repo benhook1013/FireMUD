@@ -3,7 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOCKER_DIR="$ROOT_DIR/docker"
+ROOT_ENV_FILE="$ROOT_DIR/.env"
 DOCKER_ENV_FILE="$DOCKER_DIR/.env"
+ROOT_ENV_BACKUP=""
 COMPOSE_FILES=(
   -f "$DOCKER_DIR/docker-compose.yml"
   -f "$DOCKER_DIR/docker-compose.override.yml"
@@ -25,6 +27,11 @@ fi
 
 cleanup() {
   rm -f "$DOCKER_ENV_FILE"
+  if [[ -n "$ROOT_ENV_BACKUP" && -f "$ROOT_ENV_BACKUP" ]]; then
+    mv "$ROOT_ENV_BACKUP" "$ROOT_ENV_FILE"
+  else
+    rm -f "$ROOT_ENV_FILE"
+  fi
 }
 trap cleanup EXIT
 
@@ -33,6 +40,13 @@ if [[ "${SMOKE_IMAGE_LOCAL_ONLY:-false}" == "true" ]]; then
   echo "Local-only mode enabled: compose will reuse matching local images and skip remote pulls."
 fi
 printf 'SMOKE_IMAGE_TAG=%s\n' "$SMOKE_IMAGE_TAG" >"$DOCKER_ENV_FILE"
+if [[ -f "$ROOT_ENV_FILE" ]]; then
+  ROOT_ENV_BACKUP="$(mktemp)"
+  cp "$ROOT_ENV_FILE" "$ROOT_ENV_BACKUP"
+fi
+cat >"$ROOT_ENV_FILE" <<EOF
+SMOKE_IMAGE_TAG=$SMOKE_IMAGE_TAG
+EOF
 
 docker compose "${COMPOSE_FILES[@]}" config >/dev/null
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
