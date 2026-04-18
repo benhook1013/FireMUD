@@ -60,7 +60,7 @@ firemud:
       enabled: true
     grpc:
       public-methods:
-        - socialgroups.v1.SocialGroupsService/Ping
+        - social_groups.v1.SocialGroupsService/Ping
   services:
     logging-admin-service: "logging-admin-service:6565"
   grpc:

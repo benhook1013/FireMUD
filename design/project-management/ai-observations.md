@@ -141,3 +141,8 @@ Entry format:
   - Context: cleaning up shared auth/config refactors after runtime-images smoke exposed duplicate top-level `firemud:` mappings in service `application.yml`
   - Observation: duplicate YAML keys in `account-service`, then `entity-management-service` and `social-groups-service`, were only caught once Docker booted the apps; build/test stayed green until runtime config parsing happened
   - Expected pattern: repo CI should run a tracked-YAML lint pass with duplicate-key detection over service/application, workflow, docker, k8s values, and operations YAML so configuration breakage fails before smoke and preview workflows
+
+- `2026-04-19`: gRPC public-method allowlists should not depend on hand-typed proto package strings
+  - Context: fixing runtime-images smoke after shared gRPC auth centralization caused `game-logic-service` readiness to fail with `WorldManagement: Missing token`
+  - Observation: multiple services had `firemud.auth.grpc.public-methods` entries written with collapsed package names like `worldmanagement.v1` and `entitymanagement.v1`, while the real gRPC method descriptors use proto packages with underscores like `world_management.v1`; the mismatch silently disabled the intended public-method exemption until Docker smoke exercised the path
+  - Expected pattern: any configuration that references gRPC method names should be validated against real service descriptors or generated from canonical proto metadata, so auth allowlists cannot drift through string typos that only surface at runtime

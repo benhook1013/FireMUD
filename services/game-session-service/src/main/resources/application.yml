@@ -114,7 +114,7 @@ firemud:
   auth:
     grpc:
       public-methods:
-        - gamesession.v1.GameSessionService/Ping
+        - game_session.v1.GameSessionService/Ping
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

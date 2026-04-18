@@ -71,8 +71,8 @@ firemud:
         - /.well-known/**
     grpc:
       public-methods:
-        - entitymanagement.v1.EntityManagementService/Ping
-        - entitymanagement.v1.EntityManagementService/ListRoomEntities
+        - entity_management.v1.EntityManagementService/Ping
+        - entity_management.v1.EntityManagementService/ListRoomEntities
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
