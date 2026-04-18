@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -30,6 +31,9 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
   private final AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver;
   private final GameplayWorldCatalog gameplayWorldCatalog;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected collaborators are retained only for internal query composition")
   public AccountPresenceQueryServiceImpl(
       GameInstanceRepository gameInstanceRepository,
       GameplayPresenceService gameplayPresenceService,

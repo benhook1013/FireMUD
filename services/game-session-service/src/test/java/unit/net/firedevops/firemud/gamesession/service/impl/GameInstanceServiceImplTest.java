@@ -136,7 +136,7 @@ class GameInstanceServiceImplTest {
   void startSessionWithoutReplacementLeavesExistingSessionRunning() {
     StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-3", 42L);
 
-    GameInstanceDto dto = service.startSession(request, false);
+    service.startSession(request, false);
 
     verify(repository, never()).findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING");
     verify(stateService).saveState(any(GameInstanceDto.class));

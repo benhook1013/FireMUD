@@ -540,11 +540,11 @@ class GameSessionWebSocketHandlerIntegrationTest {
             headers,
             URI.create("ws://localhost:" + port + "/ws/game"));
 
-    future.get(5, TimeUnit.SECONDS);
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
     assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
-    WebSocketSession session = sessionRef.get();
-    if (session != null && session.isOpen()) {
-      session.close();
+    WebSocketSession currentSession = sessionRef.get();
+    if (currentSession != null && currentSession.isOpen()) {
+      currentSession.close();
     }
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(4);
@@ -1306,7 +1306,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     "gatewayRequestId", "gateway-req-who-1")));
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
     CountDownLatch playAck = new CountDownLatch(1);
-    CountDownLatch latch = new CountDownLatch(4);
+    CountDownLatch whoAck = new CountDownLatch(1);
     AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
 
     var future =
@@ -1330,8 +1330,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
                   session.sendMessage(new TextMessage("AFK"));
                 } else if (isStructuredCommand(payload, "AFK")) {
                   session.sendMessage(new TextMessage("WHO"));
+                } else if (isStructuredCommand(payload, "WHO")) {
+                  whoAck.countDown();
                 }
-                latch.countDown();
               }
             },
             headers,
@@ -1339,7 +1340,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     WebSocketSession session = future.get(5, TimeUnit.SECONDS);
     assertThat(playAck.await(5, TimeUnit.SECONDS)).isTrue();
-    assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
+    assertThat(whoAck.await(10, TimeUnit.SECONDS)).isTrue();
     sessionRef.get().close();
 
     JsonNode whoResult =

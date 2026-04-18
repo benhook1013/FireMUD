@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.UUID;
@@ -34,9 +33,6 @@ import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /** Default implementation of {@link GameInstanceService}. */
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected dependencies are not exposed externally")
 @Service
 @ConditionalOnProperty(
     name = "game-session.dev-isolated",
@@ -178,12 +174,12 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           prepareWorldInstance(stage.startingState(), resolvedLaunchDescriptor, request);
       sessionStateService.saveState(runtimeState);
       newStateSaved = true;
-      if (stage.existingRunningState() != null) {
-        sessionStateService.deleteState(
-            stage.existingRunningState().tenantId(), stage.existingRunningState().id());
+      GameInstanceDto existingRunningState = stage.existingRunningState();
+      if (existingRunningState != null) {
+        sessionStateService.deleteState(existingRunningState.tenantId(), existingRunningState.id());
         oldStateDeleted = true;
         terminateWorldInstance(
-            stage.existingRunningState(),
+            existingRunningState,
             "session-replace-" + stage.startingState().id() + "-" + UUID.randomUUID());
       }
       GameInstanceDto finalized =
@@ -302,10 +298,11 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   private GameInstanceDto finalizeStartedSession(StartSessionStage stage) {
-    if (stage.existingRunningState() != null) {
+    GameInstanceDto existingRunningState = stage.existingRunningState();
+    if (existingRunningState != null) {
       GameInstance existingRunning =
           repository
-              .findById(stage.existingRunningState().id())
+              .findById(existingRunningState.id())
               .orElseThrow(() -> new IllegalArgumentException("Session not found"));
       existingRunning.setStatus(STATUS_STOPPED);
       repository.save(existingRunning);

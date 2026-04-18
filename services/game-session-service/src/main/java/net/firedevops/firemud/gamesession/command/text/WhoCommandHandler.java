@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.util.ArrayList;
 import java.util.List;
@@ -18,6 +19,9 @@ public class WhoCommandHandler {
   private final GameplayPresenceService gameplayPresenceService;
   private final GameplayPresenceActivityResolver gameplayPresenceActivityResolver;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected services are stored only for internal command handling")
   public WhoCommandHandler(
       GameplayPresenceService gameplayPresenceService,
       GameplayPresenceActivityResolver gameplayPresenceActivityResolver) {

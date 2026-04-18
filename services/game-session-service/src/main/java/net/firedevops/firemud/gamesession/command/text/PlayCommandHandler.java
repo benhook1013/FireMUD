@@ -633,8 +633,7 @@ public class PlayCommandHandler {
 
   private boolean isAuthorityUnavailable(ErrorDetail error) {
     String code = Optional.ofNullable(error.getCode()).orElse("");
-    return GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE.equalsIgnoreCase(code)
-        || "MEMBERSHIP_AUTH_UNAVAILABLE".equalsIgnoreCase(code);
+    return GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE.equalsIgnoreCase(code);
   }
 
   private boolean maybeRecordFreshEntryFallback(

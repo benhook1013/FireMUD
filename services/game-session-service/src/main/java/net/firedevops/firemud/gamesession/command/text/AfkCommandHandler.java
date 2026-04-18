@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -14,6 +15,9 @@ public final class AfkCommandHandler {
   private final SessionAuthenticationService sessionAuthenticationService;
   private final GameplayPresenceService gameplayPresenceService;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected services are stored only for internal command handling")
   public AfkCommandHandler(
       SessionAuthenticationService sessionAuthenticationService,
       GameplayPresenceService gameplayPresenceService) {
