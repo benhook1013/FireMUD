@@ -156,3 +156,8 @@ Entry format:
   - Context: fixing `PLAY -> LOOK` smoke after fresh compose/image stacks admitted `demo/production` into `gameInstanceId=1` but World Management still had no `world_instance` or room-instance topology for that runtime target
   - Observation: `game-session-service` dev bootstrap was still seeding a legacy bare `RUNNING` row while `world-management-service` only seeded template regions/zones/rooms; once runtime lookup became instance-scoped, the old partial bootstrap left admission pointers targeting a runtime instance that had never actually been activated
   - Expected pattern: whenever a service introduces a stricter runtime substrate, any dev/test bootstrap that manufactures admissible runtime IDs must seed the matching downstream runtime state too, or smoke will keep passing one service’s bootstrap assumptions into another service’s missing data
+
+- `2026-04-19`: Canonical smoke proofs must not patch service state directly in Postgres
+  - Context: reviewing the remaining test/workaround seams after hardening the compose and image smoke flows
+  - Observation: both gameplay smoke scripts were still updating `game_session_service.game_instances.owner_account_id` directly to align the admitted runtime row with the logged-in demo account, which let smoke pass even if service bootstrap ownership was internally inconsistent
+  - Expected pattern: smoke should only drive public service interfaces and deterministic dev/test seed data; if a stack needs direct database mutation to become playable, the bootstrap substrate is wrong and should be fixed in the services instead of in the smoke script

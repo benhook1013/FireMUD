@@ -32,7 +32,7 @@ fi
 echo "Running Telnet WORLDS + LOGIN + PLAY + LOOK smoke test against ${SMOKE_HOST}:${TCP_PORT}"
 echo "Using username='${SMOKE_USERNAME}' (password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
-echo "Using account API base '${SMOKE_ACCOUNT_API_BASE}' for smoke bootstrap"
+echo "Using account API base '${SMOKE_ACCOUNT_API_BASE}' for smoke validation"
 
 "$PYTHON" - <<'PYTHON'
 import json
@@ -83,40 +83,44 @@ def recv_until(sock, expected_substring, timeout):
     return "".join(chunks)
 
 
-def ensure_smoke_account():
+def verify_smoke_account():
     payload = json.dumps(
         {
             "tenantId": int(tenant_id),
-            "username": username.split("@", 1)[0],
-            "email": username,
+            "username": username,
             "password": password,
+            "otp": "",
         }
     ).encode("utf-8")
     request = urllib.request.Request(
-        f"{account_api_base}/accounts",
+        f"{account_api_base}/auth/login",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    last_error = None
     for attempt in range(1, 4):
         try:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 body = response.read().decode("utf-8", errors="ignore").strip()
-                print("=== Account bootstrap response ===")
+                print("=== Account validation response ===")
                 print(body or "<empty>")
-                return
+                if response.status >= 500:
+                    raise RuntimeError(
+                        f"Smoke account validation returned unexpected status {response.status}"
+                    )
+                return body
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="ignore").strip()
-            print("=== Account bootstrap response ===")
+            print("=== Account validation response ===")
             print(body or "<empty>")
-            return
+            raise RuntimeError(
+                f"Smoke account validation failed with status {exc.code}: {body or '<empty>'}"
+            ) from exc
         except OSError as exc:
-            last_error = exc
             if attempt < 3:
                 time.sleep(1)
-    if last_error is not None:
-        print(f"Account bootstrap skipped: {last_error}")
+                continue
+            raise RuntimeError(f"Smoke account validation failed: {exc}") from exc
 
 
 def wait_for_account_schema():
@@ -205,56 +209,6 @@ def verify_pre_readiness_telnet_admission():
     raise RuntimeError("tcp-proxy readiness did not converge after verifying pre-readiness admission behavior")
 
 
-def sync_session_owner_account():
-    query = (
-        "select id from account_service.accounts "
-        f"where email = '{username}' "
-        "order by id desc limit 1;"
-    )
-    try:
-        account_id = subprocess.check_output(
-            [
-                "docker",
-                "exec",
-                postgres_container,
-                "psql",
-                "-U",
-                "firemud",
-                "-d",
-                "firemud",
-                "-tAc",
-                query,
-            ],
-            text=True,
-            timeout=timeout_seconds,
-        ).strip()
-        if not account_id:
-            print("Session-owner sync skipped: no smoke account found in postgres")
-            return
-        update = (
-            "update game_session_service.game_instances "
-            f"set owner_account_id = {account_id}, tenant_id = {tenant_id} "
-            f"where id = {session_id};"
-        )
-        subprocess.check_call(
-            [
-                "docker",
-                "exec",
-                postgres_container,
-                "psql",
-                "-U",
-                "firemud",
-                "-d",
-                "firemud",
-                "-c",
-                update,
-            ],
-            timeout=timeout_seconds,
-        )
-        print(f"Aligned game session {session_id} owner_account_id to {account_id}")
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        print(f"Session-owner sync skipped: {exc}")
-
 try:
     wait_for_account_schema()
     verify_pre_readiness_telnet_admission()
@@ -263,8 +217,7 @@ try:
     wait_for_http_readiness("game-session-service", game_session_api_base)
     wait_for_http_readiness("spring-cloud-gateway", gateway_api_base)
     wait_for_http_readiness("tcp-proxy-service", tcp_proxy_api_base)
-    ensure_smoke_account()
-    sync_session_owner_account()
+    verify_smoke_account()
     with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
         # WORLDS
         sock.sendall("WORLDS\r\n".encode("iso-8859-1"))
