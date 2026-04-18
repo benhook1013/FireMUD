@@ -172,6 +172,7 @@ public class TestDataSeeder implements ApplicationRunner {
       roomInstance.setGameInstanceId(gameInstanceId);
       roomInstance.setRoomInstanceId(templateRoom.getId());
       roomInstance.setTemplateRoomId(templateRoom.getId());
+      roomInstance.setRegionInstance(savedRegionInstance);
       roomInstance.setZoneInstance(zoneInstance);
       roomInstance.setName(templateRoom.getName());
       roomInstance.setDescription(templateRoom.getDescription());

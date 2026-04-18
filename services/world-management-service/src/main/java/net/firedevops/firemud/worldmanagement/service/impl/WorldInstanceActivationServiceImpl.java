@@ -428,6 +428,7 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
       roomInstance.setGameInstanceId(gameInstanceId);
       roomInstance.setRoomInstanceId(templateRoom.getId());
       roomInstance.setTemplateRoomId(templateRoom.getId());
+      roomInstance.setRegionInstance(regionInstance);
       roomInstance.setZoneInstance(zoneInstance);
       roomInstance.setName(templateRoom.getName());
       roomInstance.setDescription(templateRoom.getDescription());
