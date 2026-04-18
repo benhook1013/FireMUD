@@ -111,3 +111,13 @@ Entry format:
   - Context: centralizing per-service `AuthConfig` / `AuthProperties` boilerplate into `common-security`
   - Observation: `game-session-service` already had a second `JwtUtil` for first-party connect-context tokens, so `@ConditionalOnMissingBean(JwtUtil.class)` and `@ConditionalOnBean(JwtUtil.class)` in shared auth auto-config incorrectly treated that auxiliary token utility as the canonical cross-service auth signer and suppressed the named `jwtUtil` bean needed by gRPC client auth
   - Expected pattern: shared security auto-config should guard and depend on the explicit canonical bean name (`jwtUtil`) when multiple token utilities can coexist in one service, so auxiliary JWT seams do not accidentally disable the main cross-service auth path
+
+- `2026-04-18`: Shared gRPC auth must be registered through one canonical path, not both global and per-service bindings
+  - Context: moving repeated per-service `GrpcConfig` auth wrappers into `common-security`
+  - Observation: once `AuthTokenInterceptor` was auto-configured as a global server interceptor, services that still attached the same interceptor directly on `@GrpcService` double-applied auth and produced misleading cross-service/runtime failures that looked like game logic or communication regressions
+  - Expected pattern: register shared server auth once, either globally or by service-local binding, and remove the other path in the same change so the interceptor contract stays singular and predictable
+
+- `2026-04-18`: Nested multi-service test harnesses must set one explicit shared JWT secret
+  - Context: validating the shared-auth cleanup in `game-session-service` and `tcp-proxy-service` cross-service suites
+  - Observation: after auth bootstrap was centralized, nested test apps launched under the `test` profile started honestly failing cross-service gRPC because each service generated its own fallback JWT secret unless the harness injected a common `firemud.auth.jwt-secret`
+  - Expected pattern: any test harness that boots multiple Spring services which authenticate to each other should provide one shared explicit JWT secret up front, rather than depending on dev/test fallback generation or service-local defaults

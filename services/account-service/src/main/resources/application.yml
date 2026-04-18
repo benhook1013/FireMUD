@@ -114,3 +114,10 @@ firemud:
     jwt-secret-path: ${FIREMUD_AUTH_JWT_SECRET_PATH:}
     jwt-secret: ${FIREMUD_AUTH_JWT_SECRET:}
     jwt-expiration-ms: ${FIREMUD_AUTH_JWT_EXPIRATION_MS:3600000}
+    grpc:
+      public-methods:
+        - account.v1.AccountService/Authenticate
+        - account.v1.AccountService/Ping
+        - account.v1.AccountService/GetTenantMembershipForRuntime
+        - account.v1.AccountService/EnsurePublicProductionPlayerMembership
+        - account.v1.AccountService/GetTenantEntitlementsForRuntime

@@ -25,6 +25,9 @@ import org.springframework.test.util.TestSocketUtils;
 
 /** Shared bootstrap helpers for nested cross-service Spring application contexts in tests. */
 public final class CrossServiceAppHarness {
+  private static final String CROSS_SERVICE_TEST_JWT_SECRET =
+      "stub-secret-key-for-tests-1234567890";
+
   private CrossServiceAppHarness() {}
 
   public static GameLogicHolder startGameLogic(
@@ -41,6 +44,7 @@ public final class CrossServiceAppHarness {
     props.put("server.port", "0");
     props.put("spring.grpc.server.port", String.valueOf(grpcPort));
     props.put("firemud.grpc.plaintext", "true");
+    props.put("firemud.auth.jwt-secret", CROSS_SERVICE_TEST_JWT_SECRET);
     props.put("firemud.database.enabled", "false");
     props.put("otel.endpoint", "disabled");
     props.put("firemud.services.worldManagementService", worldEndpoint);
@@ -77,6 +81,7 @@ public final class CrossServiceAppHarness {
     props.put("firemud.services.gameLogicService", "localhost:" + gameLogicPort);
     props.put("firemud.services.accountService", "localhost:" + accountPort);
     props.put("firemud.grpc.plaintext", "true");
+    props.put("firemud.auth.jwt-secret", CROSS_SERVICE_TEST_JWT_SECRET);
     props.put("otel.endpoint", "disabled");
     customizer.accept(props);
 

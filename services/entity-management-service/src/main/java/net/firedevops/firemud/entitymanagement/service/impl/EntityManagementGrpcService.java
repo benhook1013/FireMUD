@@ -6,7 +6,6 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
-import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
@@ -72,7 +71,7 @@ import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.web.server.ResponseStatusException;
 
 /** Simple gRPC service exposing the Ping RPC. */
-@GrpcService(interceptors = AuthTokenInterceptor.class)
+@GrpcService
 public class EntityManagementGrpcService
     extends EntityManagementServiceGrpc.EntityManagementServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(EntityManagementGrpcService.class);

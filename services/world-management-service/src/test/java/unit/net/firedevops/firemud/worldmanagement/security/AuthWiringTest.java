@@ -12,10 +12,7 @@ class AuthWiringTest {
     assertTrue(
         Files.exists(
             Path.of("src/main/java/net/firedevops/firemud/worldmanagement/config/WebConfig.java")));
-    assertTrue(
-        Files.exists(
-            Path.of(
-                "src/main/java/net/firedevops/firemud/worldmanagement/config/GrpcConfig.java")));
+    assertTrue(Files.exists(Path.of("src/main/resources/application.yml")));
     assertTrue(
         Files.exists(
             Path.of(

@@ -8,6 +8,8 @@ import java.util.Arrays;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.GrpcAuthProperties;
 import net.firedevops.firemud.common.security.GrpcClientAuth;
 import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtSecretWatcher;
@@ -22,6 +24,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
+import org.springframework.grpc.server.GlobalServerInterceptor;
 
 @AutoConfiguration
 public class CommonSecurityAutoConfiguration {
@@ -32,6 +35,13 @@ public class CommonSecurityAutoConfiguration {
   @ConfigurationProperties(prefix = "firemud.auth")
   JwtAuthProperties jwtAuthProperties() {
     return new JwtAuthProperties();
+  }
+
+  @Bean
+  @ConditionalOnMissingBean(GrpcAuthProperties.class)
+  @ConfigurationProperties(prefix = "firemud.auth.grpc")
+  GrpcAuthProperties grpcAuthProperties() {
+    return new GrpcAuthProperties();
   }
 
   @Bean(name = "jwtUtil")
@@ -79,6 +89,20 @@ public class CommonSecurityAutoConfiguration {
         return GrpcClientAuth.attach(stub, jwtUtil);
       }
     };
+  }
+
+  @Bean
+  @GlobalServerInterceptor
+  @ConditionalOnBean(name = "jwtUtil")
+  @ConditionalOnProperty(
+      prefix = "firemud.auth.grpc",
+      name = "interceptor-enabled",
+      havingValue = "true",
+      matchIfMissing = true)
+  @ConditionalOnMissingBean(AuthTokenInterceptor.class)
+  AuthTokenInterceptor authTokenInterceptor(
+      @Qualifier("jwtUtil") JwtUtil jwtUtil, GrpcAuthProperties props) {
+    return new AuthTokenInterceptor(jwtUtil, java.util.Set.copyOf(props.getPublicMethods()));
   }
 
   private String initialSecret(JwtAuthProperties props, Environment environment) {

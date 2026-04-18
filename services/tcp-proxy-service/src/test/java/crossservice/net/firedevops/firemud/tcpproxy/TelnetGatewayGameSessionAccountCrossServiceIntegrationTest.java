@@ -96,6 +96,8 @@ import reactor.core.publisher.Mono;
 class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(5);
+  private static final String CROSS_SERVICE_TEST_JWT_SECRET =
+      "stub-secret-key-for-tests-1234567890";
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = 7L;
   private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
@@ -796,6 +798,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("server.port", "0");
     props.put("spring.grpc.server.port", "0");
     props.put("firemud.grpc.plaintext", "true");
+    props.put("firemud.auth.jwt-secret", CROSS_SERVICE_TEST_JWT_SECRET);
     props.put("otel.endpoint", "disabled");
     props.put("firemud.database.enabled", "false");
     props.put(
@@ -849,7 +852,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("firemud.redis.port", String.valueOf(REDIS.getMappedPort(6379)));
     props.put("firemud.database.enabled", "true");
     props.put("spring.main.allow-bean-definition-overriding", "true");
-    props.put("firemud.auth.jwt-secret", "stub-secret-key-for-tests-1234567890");
+    props.put("firemud.auth.jwt-secret", CROSS_SERVICE_TEST_JWT_SECRET);
     props.put("firemud.services.entityManagementService", "localhost:" + ENTITY_STUB.port());
     props.put(
         "management.endpoint.health.group.readiness.include",

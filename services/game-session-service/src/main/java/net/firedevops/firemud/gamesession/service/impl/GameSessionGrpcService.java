@@ -7,7 +7,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
-import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
@@ -61,7 +60,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC endpoints for the Game Session Service. */
-@GrpcService(interceptors = AuthTokenInterceptor.class)
+@GrpcService
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected service collaborators are framework-managed and retained internally")

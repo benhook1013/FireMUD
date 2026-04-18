@@ -73,6 +73,8 @@ firemud:
     jwt-secret-path: ${FIREMUD_AUTH_JWT_SECRET_PATH:}
     jwt-secret: ${FIREMUD_AUTH_JWT_SECRET:}
     jwt-expiration-ms: ${FIREMUD_AUTH_JWT_EXPIRATION_MS:3600000}
+    grpc:
+      interceptor-enabled: false
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

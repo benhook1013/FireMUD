@@ -1,8 +1,8 @@
 package net.firedevops.firemud.accountservice.config;
 
 import net.firedevops.firemud.common.security.JwtAuthProperties;
-import org.springframework.context.annotation.Primary;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Primary;
 
 @Primary
 @ConfigurationProperties(prefix = "firemud.auth")
