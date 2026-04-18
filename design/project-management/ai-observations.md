@@ -121,3 +121,8 @@ Entry format:
   - Context: validating the shared-auth cleanup in `game-session-service` and `tcp-proxy-service` cross-service suites
   - Observation: after auth bootstrap was centralized, nested test apps launched under the `test` profile started honestly failing cross-service gRPC because each service generated its own fallback JWT secret unless the harness injected a common `firemud.auth.jwt-secret`
   - Expected pattern: any test harness that boots multiple Spring services which authenticate to each other should provide one shared explicit JWT secret up front, rather than depending on dev/test fallback generation or service-local defaults
+
+- `2026-04-18`: Shared JWT/session auth should cover servlet HTTP the same way it covers gRPC
+  - Context: reviewing the next round of per-service Spring/config boilerplate after centralizing gRPC auth bootstrap
+  - Observation: six services had kept near-identical `JwtAuthInterceptor` and `WebConfig` classes even though the only real variation was path allowlists and whether the route needed any authenticated caller or a privileged admin/moderator role
+  - Expected pattern: common security modules should own one servlet JWT interceptor plus property-driven public-path and role-requirement policy, so service auth differences stay declarative in `application.yml` rather than drifting through copied interceptor code

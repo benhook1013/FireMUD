@@ -96,6 +96,8 @@ firemud:
     jwt-secret-path: ${FIREMUD_AUTH_JWT_SECRET_PATH:}
     jwt-secret: ${FIREMUD_AUTH_JWT_SECRET:}
     jwt-expiration-ms: ${FIREMUD_AUTH_JWT_EXPIRATION_MS:3600000}
+    http:
+      enabled: true
     grpc:
       public-methods:
         - socialgroups.v1.SocialGroupsService/Ping

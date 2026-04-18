@@ -5,10 +5,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import net.firedevops.firemud.accountservice.config.WebConfig;
 import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipRequest;
 import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult;
-import net.firedevops.firemud.accountservice.security.JwtAuthInterceptor;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -26,11 +24,13 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(InternalRuntimeController.class)
-@Import({CommonSecurityAutoConfiguration.class, WebConfig.class, JwtAuthInterceptor.class})
+@Import(CommonSecurityAutoConfiguration.class)
 @TestPropertySource(
     properties = {
       "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000"
+      "firemud.auth.jwt-expiration-ms=3600000",
+      "firemud.auth.http.enabled=true",
+      "firemud.auth.http.role-requirement=PRIVILEGED"
     })
 class InternalRuntimeControllerTest {
 

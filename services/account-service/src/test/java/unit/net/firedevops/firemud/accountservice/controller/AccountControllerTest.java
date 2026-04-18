@@ -9,10 +9,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
-import net.firedevops.firemud.accountservice.config.WebConfig;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
-import net.firedevops.firemud.accountservice.security.JwtAuthInterceptor;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -30,11 +28,15 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(AccountController.class)
-@Import({CommonSecurityAutoConfiguration.class, WebConfig.class, JwtAuthInterceptor.class})
+@Import(CommonSecurityAutoConfiguration.class)
 @TestPropertySource(
     properties = {
       "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000"
+      "firemud.auth.jwt-expiration-ms=3600000",
+      "firemud.auth.http.enabled=true",
+      "firemud.auth.http.role-requirement=PRIVILEGED",
+      "firemud.auth.http.public-path-patterns[0]=/accounts",
+      "firemud.auth.http.public-path-patterns[1]=/accounts/"
     })
 class AccountControllerTest {
 

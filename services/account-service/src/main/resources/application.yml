@@ -114,6 +114,23 @@ firemud:
     jwt-secret-path: ${FIREMUD_AUTH_JWT_SECRET_PATH:}
     jwt-secret: ${FIREMUD_AUTH_JWT_SECRET:}
     jwt-expiration-ms: ${FIREMUD_AUTH_JWT_EXPIRATION_MS:3600000}
+    http:
+      enabled: true
+      role-requirement: PRIVILEGED
+      public-path-patterns:
+        - /auth/login
+        - /auth/player-bootstrap
+        - /auth/bootstrap/**
+        - /auth/connect-token
+        - /auth/request-password-reset
+        - /auth/complete-password-reset
+        - /auth/request-email-verification
+        - /auth/verify-email
+        - /auth/recover-username
+        - /accounts
+        - /accounts/
+        - /ping
+        - /.well-known/**
     grpc:
       public-methods:
         - account.v1.AccountService/Authenticate

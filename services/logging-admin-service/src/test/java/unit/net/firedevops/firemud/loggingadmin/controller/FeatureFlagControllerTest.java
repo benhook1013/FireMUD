@@ -32,7 +32,9 @@ import tools.jackson.databind.ObjectMapper;
 @TestPropertySource(
     properties = {
       "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000"
+      "firemud.auth.jwt-expiration-ms=3600000",
+      "firemud.auth.http.enabled=true",
+      "firemud.auth.http.role-requirement=PRIVILEGED"
     })
 class FeatureFlagControllerTest {
 

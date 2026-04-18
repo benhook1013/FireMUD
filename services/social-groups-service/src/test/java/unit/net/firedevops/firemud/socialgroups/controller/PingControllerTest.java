@@ -9,8 +9,6 @@ import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
-import net.firedevops.firemud.socialgroups.config.WebConfig;
-import net.firedevops.firemud.socialgroups.security.JwtAuthInterceptor;
 import net.firedevops.firemud.socialgroups.service.PingService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,11 +20,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(PingController.class)
-@Import({CommonSecurityAutoConfiguration.class, WebConfig.class, JwtAuthInterceptor.class})
+@Import(CommonSecurityAutoConfiguration.class)
 @TestPropertySource(
     properties = {
       "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000"
+      "firemud.auth.jwt-expiration-ms=3600000",
+      "firemud.auth.http.enabled=true"
     })
 class PingControllerTest {
 

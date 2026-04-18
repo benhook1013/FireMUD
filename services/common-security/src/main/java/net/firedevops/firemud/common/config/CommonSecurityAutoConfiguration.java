@@ -11,6 +11,8 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.GrpcAuthProperties;
 import net.firedevops.firemud.common.security.GrpcClientAuth;
+import net.firedevops.firemud.common.security.HttpAuthProperties;
+import net.firedevops.firemud.common.security.HttpJwtAuthInterceptor;
 import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtSecretWatcher;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -21,10 +23,13 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
 import org.springframework.grpc.server.GlobalServerInterceptor;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 @AutoConfiguration
 public class CommonSecurityAutoConfiguration {
@@ -42,6 +47,13 @@ public class CommonSecurityAutoConfiguration {
   @ConfigurationProperties(prefix = "firemud.auth.grpc")
   GrpcAuthProperties grpcAuthProperties() {
     return new GrpcAuthProperties();
+  }
+
+  @Bean
+  @ConditionalOnMissingBean(HttpAuthProperties.class)
+  @ConfigurationProperties(prefix = "firemud.auth.http")
+  HttpAuthProperties httpAuthProperties() {
+    return new HttpAuthProperties();
   }
 
   @Bean(name = "jwtUtil")
@@ -103,6 +115,33 @@ public class CommonSecurityAutoConfiguration {
   AuthTokenInterceptor authTokenInterceptor(
       @Qualifier("jwtUtil") JwtUtil jwtUtil, GrpcAuthProperties props) {
     return new AuthTokenInterceptor(jwtUtil, java.util.Set.copyOf(props.getPublicMethods()));
+  }
+
+  @Bean
+  @ConditionalOnBean(name = "jwtUtil")
+  @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
+  @ConditionalOnProperty(prefix = "firemud.auth.http", name = "enabled", havingValue = "true")
+  @ConditionalOnMissingBean(HttpJwtAuthInterceptor.class)
+  HttpJwtAuthInterceptor httpJwtAuthInterceptor(
+      @Qualifier("jwtUtil") JwtUtil jwtUtil, HttpAuthProperties props) {
+    return new HttpJwtAuthInterceptor(jwtUtil, props);
+  }
+
+  @Bean
+  @ConditionalOnBean(HttpJwtAuthInterceptor.class)
+  @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
+  @ConditionalOnMissingBean(name = "firemudHttpAuthWebMvcConfigurer")
+  WebMvcConfigurer firemudHttpAuthWebMvcConfigurer(
+      HttpJwtAuthInterceptor interceptor, HttpAuthProperties props) {
+    return new WebMvcConfigurer() {
+      @Override
+      public void addInterceptors(InterceptorRegistry registry) {
+        registry
+            .addInterceptor(interceptor)
+            .addPathPatterns(props.getIncludePathPatterns())
+            .excludePathPatterns(props.getPublicPathPatterns());
+      }
+    };
   }
 
   private String initialSecret(JwtAuthProperties props, Environment environment) {

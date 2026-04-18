@@ -14,6 +14,8 @@ import java.util.List;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.GrpcAuthProperties;
+import net.firedevops.firemud.common.security.HttpAuthProperties;
+import net.firedevops.firemud.common.security.HttpJwtAuthInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -21,6 +23,7 @@ import org.mockito.Mockito;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 
 class CommonSecurityAutoConfigurationTest {
   private final ApplicationContextRunner contextRunner =
@@ -42,6 +45,25 @@ class CommonSecurityAutoConfigurationTest {
               GrpcAuthProperties props = ctx.getBean(GrpcAuthProperties.class);
               assertThat(props.getPublicMethods())
                   .containsExactly("firemud.gateway.v1.GatewayManagementService/Ping");
+            });
+  }
+
+  @Test
+  void registersSharedHttpAuthWhenEnabled() {
+    new WebApplicationContextRunner()
+        .withConfiguration(
+            AutoConfigurations.of(
+                ConfigurationPropertiesAutoConfiguration.class,
+                CommonSecurityAutoConfiguration.class))
+        .withPropertyValues(
+            "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
+            "firemud.auth.http.enabled=true",
+            "firemud.auth.http.public-path-patterns[0]=/ping")
+        .run(
+            ctx -> {
+              assertThat(ctx).hasSingleBean(HttpJwtAuthInterceptor.class);
+              HttpAuthProperties props = ctx.getBean(HttpAuthProperties.class);
+              assertThat(props.getPublicPathPatterns()).containsExactly("/ping");
             });
   }
 
