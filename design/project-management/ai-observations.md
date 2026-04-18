@@ -131,3 +131,8 @@ Entry format:
   - Context: cleaning up the remaining per-service Spring/config boilerplate after `common-security` owned the canonical `firemud.auth` contract
   - Observation: many services still repeated `firemud.auth.jwt-secret`, `jwt-secret-path`, and `jwt-expiration-ms` in `application.yml` purely as `${ENV_VAR}` passthrough, even though Spring already binds environment variables directly into the shared `JwtAuthProperties` bean and the repeated YAML only adds drift-prone noise
   - Expected pattern: when a shared module owns a `@ConfigurationProperties` namespace, service YAML should contain only real local policy and non-default values; environment-backed shared settings should be bound once through the shared bean, not mirrored across every service config file
+
+- `2026-04-18`: Shared auto-config must isolate servlet-only wiring from reactive consumers
+  - Context: fixing runtime-image smoke after centralizing servlet HTTP auth into `common-security`
+  - Observation: `CommonSecurityAutoConfiguration` still exposed `WebMvcConfigurer`-based bean methods on the shared auto-config class, so reactive services like `spring-cloud-gateway` crashed during auto-config introspection even though the servlet beans were conditionally guarded
+  - Expected pattern: if a common module serves both servlet and reactive services, keep servlet-only beans in a dedicated servlet auto-configuration (or similarly isolated classpath boundary) so reactive consumers never need servlet classes present just to load shared security/bootstrap wiring

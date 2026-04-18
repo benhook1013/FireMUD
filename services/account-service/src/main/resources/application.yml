@@ -79,6 +79,31 @@ firemud:
   payment:
     stripe-api-key: test-key
     platform-fee-percent: 5
+  auth:
+    http:
+      enabled: true
+      role-requirement: PRIVILEGED
+      public-path-patterns:
+        - /auth/login
+        - /auth/player-bootstrap
+        - /auth/bootstrap/**
+        - /auth/connect-token
+        - /auth/request-password-reset
+        - /auth/complete-password-reset
+        - /auth/request-email-verification
+        - /auth/verify-email
+        - /auth/recover-username
+        - /accounts
+        - /accounts/
+        - /ping
+        - /.well-known/**
+    grpc:
+      public-methods:
+        - account.v1.AccountService/Authenticate
+        - account.v1.AccountService/Ping
+        - account.v1.AccountService/GetTenantMembershipForRuntime
+        - account.v1.AccountService/EnsurePublicProductionPlayerMembership
+        - account.v1.AccountService/GetTenantEntitlementsForRuntime
 
 management:
   endpoints:
@@ -108,30 +133,3 @@ server:
     enabled: true
     mime-types: application/json,application/xml,text/html,text/xml,text/plain
     min-response-size: 1024
-
-firemud:
-  auth:
-    http:
-      enabled: true
-      role-requirement: PRIVILEGED
-      public-path-patterns:
-        - /auth/login
-        - /auth/player-bootstrap
-        - /auth/bootstrap/**
-        - /auth/connect-token
-        - /auth/request-password-reset
-        - /auth/complete-password-reset
-        - /auth/request-email-verification
-        - /auth/verify-email
-        - /auth/recover-username
-        - /accounts
-        - /accounts/
-        - /ping
-        - /.well-known/**
-    grpc:
-      public-methods:
-        - account.v1.AccountService/Authenticate
-        - account.v1.AccountService/Ping
-        - account.v1.AccountService/GetTenantMembershipForRuntime
-        - account.v1.AccountService/EnsurePublicProductionPlayerMembership
-        - account.v1.AccountService/GetTenantEntitlementsForRuntime

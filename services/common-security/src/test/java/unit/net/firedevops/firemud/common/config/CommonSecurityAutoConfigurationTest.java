@@ -12,6 +12,7 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
 import java.util.List;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
+import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.GrpcAuthProperties;
 import net.firedevops.firemud.common.security.HttpAuthProperties;
@@ -23,6 +24,7 @@ import org.mockito.Mockito;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.context.runner.ReactiveWebApplicationContextRunner;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 
 class CommonSecurityAutoConfigurationTest {
@@ -31,7 +33,8 @@ class CommonSecurityAutoConfigurationTest {
           .withConfiguration(
               AutoConfigurations.of(
                   ConfigurationPropertiesAutoConfiguration.class,
-                  CommonSecurityAutoConfiguration.class));
+                  CommonSecurityAutoConfiguration.class,
+                  CommonSecurityServletAutoConfiguration.class));
 
   @Test
   void registersSharedGrpcAuthInterceptorWhenEnabled() {
@@ -54,7 +57,8 @@ class CommonSecurityAutoConfigurationTest {
         .withConfiguration(
             AutoConfigurations.of(
                 ConfigurationPropertiesAutoConfiguration.class,
-                CommonSecurityAutoConfiguration.class))
+                CommonSecurityAutoConfiguration.class,
+                CommonSecurityServletAutoConfiguration.class))
         .withPropertyValues(
             "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
             "firemud.auth.http.enabled=true",
@@ -64,6 +68,24 @@ class CommonSecurityAutoConfigurationTest {
               assertThat(ctx).hasSingleBean(HttpJwtAuthInterceptor.class);
               HttpAuthProperties props = ctx.getBean(HttpAuthProperties.class);
               assertThat(props.getPublicPathPatterns()).containsExactly("/ping");
+            });
+  }
+
+  @Test
+  void reactiveAppsDoNotLoadServletHttpAuthAutoConfiguration() {
+    new ReactiveWebApplicationContextRunner()
+        .withConfiguration(
+            AutoConfigurations.of(
+                ConfigurationPropertiesAutoConfiguration.class,
+                CommonSecurityAutoConfiguration.class,
+                CommonSecurityServletAutoConfiguration.class))
+        .withPropertyValues(
+            "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
+            "firemud.auth.http.enabled=true")
+        .run(
+            ctx -> {
+              assertThat(ctx).doesNotHaveBean(HttpJwtAuthInterceptor.class);
+              assertThat(ctx).hasSingleBean(JwtUtil.class);
             });
   }
 
