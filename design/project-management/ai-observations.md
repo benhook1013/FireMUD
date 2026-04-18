@@ -146,3 +146,13 @@ Entry format:
   - Context: fixing runtime-images smoke after shared gRPC auth centralization caused `game-logic-service` readiness to fail with `WorldManagement: Missing token`
   - Observation: multiple services had `firemud.auth.grpc.public-methods` entries written with collapsed package names like `worldmanagement.v1` and `entitymanagement.v1`, while the real gRPC method descriptors use proto packages with underscores like `world_management.v1`; the mismatch silently disabled the intended public-method exemption until Docker smoke exercised the path
   - Expected pattern: any configuration that references gRPC method names should be validated against real service descriptors or generated from canonical proto metadata, so auth allowlists cannot drift through string typos that only surface at runtime
+
+- `2026-04-19`: CI smoke workflows must call the repo-owned smoke script, not hand-maintain a service subset
+  - Context: investigating why local source-built smoke was green while GitHub `Smoke Tests (Full Stack)` still failed with `Unable to resolve host game-design-service`
+  - Observation: the workflow had drifted into its own manual `docker compose up ... <service list>` path that omitted services now required by the canonical dependency graph, while `dev-tools/verify-compose-health.sh` and the local smoke scripts already encoded the full required stack
+  - Expected pattern: GitHub smoke should invoke the repo-owned image-smoke script and share the same health-gated compose model, so dependency drift is fixed in one place instead of forking between local and CI-only service lists
+
+- `2026-04-19`: Dev bootstrap seeders must evolve with the runtime substrate, not just the template data
+  - Context: fixing `PLAY -> LOOK` smoke after fresh compose/image stacks admitted `demo/production` into `gameInstanceId=1` but World Management still had no `world_instance` or room-instance topology for that runtime target
+  - Observation: `game-session-service` dev bootstrap was still seeding a legacy bare `RUNNING` row while `world-management-service` only seeded template regions/zones/rooms; once runtime lookup became instance-scoped, the old partial bootstrap left admission pointers targeting a runtime instance that had never actually been activated
+  - Expected pattern: whenever a service introduces a stricter runtime substrate, any dev/test bootstrap that manufactures admissible runtime IDs must seed the matching downstream runtime state too, or smoke will keep passing one service’s bootstrap assumptions into another service’s missing data

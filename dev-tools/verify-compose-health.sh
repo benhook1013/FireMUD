@@ -2,7 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE_FILES=(-f "$ROOT_DIR/docker/docker-compose.yml" -f "$ROOT_DIR/docker/docker-compose.override.yml")
+if (( $# > 0 )); then
+  COMPOSE_FILES=("$@")
+else
+  COMPOSE_FILES=(-f "$ROOT_DIR/docker/docker-compose.yml" -f "$ROOT_DIR/docker/docker-compose.override.yml")
+fi
 WAIT_TIMEOUT_SECONDS="${SMOKE_HEALTH_TIMEOUT_SECONDS:-240}"
 POLL_INTERVAL_SECONDS="${SMOKE_HEALTH_POLL_INTERVAL_SECONDS:-5}"
 REQUIRED_SERVICES=(
