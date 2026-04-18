@@ -106,3 +106,8 @@ Entry format:
   - Context: investigating runtime-images smoke after direct WebSocket `WORLDS -> LOGIN -> PLAY -> LOOK` timed out even though the Docker stack was otherwise healthy
   - Observation: several services still omitted `firemud.auth.jwt-secret` in `application.yml`, so the `dev` profile silently generated a different random JWT secret per service; basic gameplay flows kept working until a cross-service auth seam like Game Session -> Account profile lookup was exercised, where it failed as `UNAUTHENTICATED: Invalid token`
   - Expected pattern: every service that signs or validates shared JWTs must bind the same env-backed secret in the base config used by local Docker and smoke paths, so dev/smoke behaves like one coherent topology instead of a collection of isolated random secrets
+
+- `2026-04-18`: Shared JWT auto-configuration must key off the canonical bean name, not any bean of the same type
+  - Context: centralizing per-service `AuthConfig` / `AuthProperties` boilerplate into `common-security`
+  - Observation: `game-session-service` already had a second `JwtUtil` for first-party connect-context tokens, so `@ConditionalOnMissingBean(JwtUtil.class)` and `@ConditionalOnBean(JwtUtil.class)` in shared auth auto-config incorrectly treated that auxiliary token utility as the canonical cross-service auth signer and suppressed the named `jwtUtil` bean needed by gRPC client auth
+  - Expected pattern: shared security auto-config should guard and depend on the explicit canonical bean name (`jwtUtil`) when multiple token utilities can coexist in one service, so auxiliary JWT seams do not accidentally disable the main cross-service auth path

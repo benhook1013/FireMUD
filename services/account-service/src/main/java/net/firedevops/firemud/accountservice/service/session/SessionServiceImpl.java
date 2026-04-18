@@ -3,20 +3,20 @@ package net.firedevops.firemud.accountservice.service.session;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Duration;
-import net.firedevops.firemud.accountservice.config.AuthProperties;
+import net.firedevops.firemud.accountservice.config.AccountAuthProperties;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 @Service
 public class SessionServiceImpl implements SessionService {
   private final RedisTemplate<String, Object> redisTemplate;
-  private final AuthProperties authProperties;
+  private final AccountAuthProperties authProperties;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "Dependencies are injected and managed by Spring")
   public SessionServiceImpl(
-      RedisTemplate<String, Object> redisTemplate, AuthProperties authProperties) {
+      RedisTemplate<String, Object> redisTemplate, AccountAuthProperties authProperties) {
     this.redisTemplate = redisTemplate;
     this.authProperties = authProperties;
   }

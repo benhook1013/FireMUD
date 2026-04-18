@@ -7,9 +7,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
-import net.firedevops.firemud.loggingadmin.config.AuthConfig;
 import net.firedevops.firemud.loggingadmin.dto.QueryLogsRequest;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import org.junit.jupiter.api.AfterEach;
@@ -27,7 +27,7 @@ import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(LogQueryController.class)
 @AutoConfigureMockMvc(addFilters = false)
-@Import(AuthConfig.class)
+@Import(CommonSecurityAutoConfiguration.class)
 @TestPropertySource(
     properties = {
       "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",

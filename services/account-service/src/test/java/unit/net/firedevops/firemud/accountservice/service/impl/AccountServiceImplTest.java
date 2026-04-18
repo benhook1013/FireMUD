@@ -15,7 +15,7 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
-import net.firedevops.firemud.accountservice.config.AuthProperties;
+import net.firedevops.firemud.accountservice.config.AccountAuthProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
@@ -61,7 +61,7 @@ class AccountServiceImplTest {
   @Mock private NotificationService notificationService;
   @Mock private EmailService emailService;
   @Mock private MailProperties mailProperties;
-  private final AuthProperties authProperties = new AuthProperties();
+  private final AccountAuthProperties authProperties = new AccountAuthProperties();
   @Mock private LoggingAdminClient loggingAdminClient;
   @Mock private GameSessionClient gameSessionClient;
   @Mock private EntityManagementClient entityManagementClient;

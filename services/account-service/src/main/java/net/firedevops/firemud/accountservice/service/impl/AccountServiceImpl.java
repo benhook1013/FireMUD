@@ -22,7 +22,7 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
-import net.firedevops.firemud.accountservice.config.AuthProperties;
+import net.firedevops.firemud.accountservice.config.AccountAuthProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
@@ -91,7 +91,7 @@ public class AccountServiceImpl implements AccountService {
   private final NotificationService notificationService;
   private final EmailService emailService;
   private final MailProperties mailProperties;
-  private final AuthProperties authProperties;
+  private final AccountAuthProperties authProperties;
   private final LoggingAdminClient loggingAdminClient;
   private final GameSessionClient gameSessionClient;
   private final EntityManagementClient entityManagementClient;
@@ -116,7 +116,7 @@ public class AccountServiceImpl implements AccountService {
       NotificationService notificationService,
       EmailService emailService,
       MailProperties mailProperties,
-      AuthProperties authProperties,
+      AccountAuthProperties authProperties,
       LoggingAdminClient loggingAdminClient,
       GameSessionClient gameSessionClient,
       EntityManagementClient entityManagementClient,

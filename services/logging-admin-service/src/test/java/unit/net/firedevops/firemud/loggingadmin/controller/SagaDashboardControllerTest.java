@@ -6,8 +6,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
+import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
-import net.firedevops.firemud.loggingadmin.config.AuthConfig;
 import net.firedevops.firemud.loggingadmin.dto.SagaInstanceDto;
 import net.firedevops.firemud.loggingadmin.dto.SagaStepDto;
 import net.firedevops.firemud.loggingadmin.service.SagaDashboardService;
@@ -23,7 +23,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(SagaDashboardController.class)
 @AutoConfigureMockMvc(addFilters = false)
-@Import(AuthConfig.class)
+@Import(CommonSecurityAutoConfiguration.class)
 @TestPropertySource(
     properties = {
       "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
