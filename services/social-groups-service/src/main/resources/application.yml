@@ -90,3 +90,9 @@ server:
     enabled: true
     mime-types: application/json,application/xml,text/html,text/xml,text/plain
     min-response-size: 1024
+
+firemud:
+  auth:
+    jwt-secret-path: ${FIREMUD_AUTH_JWT_SECRET_PATH:}
+    jwt-secret: ${FIREMUD_AUTH_JWT_SECRET:}
+    jwt-expiration-ms: ${FIREMUD_AUTH_JWT_EXPIRATION_MS:3600000}
