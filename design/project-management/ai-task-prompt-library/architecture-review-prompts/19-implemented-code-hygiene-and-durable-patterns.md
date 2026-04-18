@@ -31,6 +31,9 @@ What to look for:
 - bad transaction boundaries
 - blocking behavior in reactive code
 - bad dependency injection or configuration patterns
+- repeated `@ConfigurationProperties` registration wrappers or empty config classes that only exist to bind one properties type
+- services mirroring a shared configuration namespace in `application.yml` just to pass `${ENV_VAR}` through into a common module bean
+- places where a common module already owns auth, gRPC, HTTP, Redis, or other bootstrap wiring but services still keep local forwarding wrappers around it
 - poor lifecycle or autoconfiguration choices
 - risky persistence or Flyway usage
 - Redis keying or atomicity issues
@@ -66,3 +69,4 @@ Helpful framing:
 - Be skeptical of "works for now" solutions that will become expensive later
 - Call out consistency problems across services, not just isolated bugs
 - Prefer framework, lifecycle, persistence, transaction, RPC, and configuration pattern issues over broader canonical-substrate debates unless the implementation pattern itself is the problem
+- Prefer "finish centralizing the shared module" over accepting per-service copies of the same bootstrapping/config pattern
