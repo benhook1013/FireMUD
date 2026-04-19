@@ -541,7 +541,7 @@ jobs:
 
       - name: Publish preview summary comment
         if: ${{ always() }}
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
           PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
@@ -668,7 +668,7 @@ jobs:
             "${{ needs.preview-plan.outputs.release_name }}"
 
       - name: Publish preview destroyed comment
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
           PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
