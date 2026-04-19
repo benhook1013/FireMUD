@@ -21,7 +21,6 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -51,7 +50,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
       "spring.profiles.active=test",
       "spring.application.name=game-session-service",
       "spring.grpc.server.port=0",
-      "game-session.dev-isolated=false",
       "firemud.database.enabled=false",
       "firemud.redis.enabled=false",
       "spring.data.redis.repositories.enabled=false"
@@ -423,11 +421,6 @@ class GameInstanceServiceLifecycleIntegrationTest {
     @Bean
     SimpleMeterRegistry meterRegistry() {
       return new SimpleMeterRegistry();
-    }
-
-    @Bean
-    DevIsolatedProperties devIsolatedProperties() {
-      return new DevIsolatedProperties(false);
     }
   }
 }

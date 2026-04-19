@@ -4,6 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.health.DependencyReadinessSupport;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc.EntityManagementServiceBlockingStub;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
@@ -22,12 +23,15 @@ public final class ResolveLookPathProbe {
 
   private final WorldManagementServiceBlockingStub worldStub;
   private final EntityManagementServiceBlockingStub entityStub;
+  private final GameplaySessionAttestationService gameplaySessionAttestationService;
 
   public ResolveLookPathProbe(
       WorldManagementServiceBlockingStub worldStub,
-      EntityManagementServiceBlockingStub entityStub) {
+      EntityManagementServiceBlockingStub entityStub,
+      GameplaySessionAttestationService gameplaySessionAttestationService) {
     this.worldStub = worldStub;
     this.entityStub = entityStub;
+    this.gameplaySessionAttestationService = gameplaySessionAttestationService;
   }
 
   public ProbeResult probe(String tenantId, String gameInstanceId, String roomId) {
@@ -38,6 +42,9 @@ public final class ResolveLookPathProbe {
             .setGameInstanceId(gameInstanceId)
             .setRoomInstanceId(roomId)
             .build();
+    String sessionAttestation =
+        gameplaySessionAttestationService.issueInternalProbeAttestation(
+            tenantId, gameInstanceId, roomId);
 
     try {
       GetRoomSnapshotResponse response =
@@ -47,6 +54,7 @@ public final class ResolveLookPathProbe {
                   GetRoomSnapshotRequest.newBuilder()
                       .setTenantId(tenantId)
                       .setRoomInstance(roomInstance)
+                      .setSessionAttestation(sessionAttestation)
                       .build());
       if (response.hasError() && !isReachableAppError(response.getError().getCode())) {
         dependencies.put(
@@ -81,6 +89,7 @@ public final class ResolveLookPathProbe {
                   ListRoomEntitiesRequest.newBuilder()
                       .setTenantId(tenantId)
                       .setRoomInstance(roomInstance)
+                      .setSessionAttestation(sessionAttestation)
                       .build());
       if (response.hasError() && !isReachableAppError(response.getError().getCode())) {
         dependencies.put(

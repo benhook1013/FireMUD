@@ -55,6 +55,7 @@ message UpdateEntityResponse {
 message QueryInventoryRequest {
   string tenant_id = 1;
   string character_id = 2;
+  string session_attestation = 3;
 }
 
 message QueryInventoryResponse {
@@ -87,6 +88,7 @@ message EquipmentItem {
 message ListEquipmentRequest {
   string tenant_id = 1;
   string character_id = 2;
+  string session_attestation = 3;
 }
 
 message ListEquipmentResponse {
@@ -99,6 +101,7 @@ message WearEquipmentItemRequest {
   string character_id = 2;
   string item_id = 3;
   string item_instance_id = 4;
+  string session_attestation = 5;
 }
 
 message WearEquipmentItemResponse {
@@ -110,6 +113,7 @@ message RemoveEquipmentRequest {
   string tenant_id = 1;
   string character_id = 2;
   string slot = 3;
+  string session_attestation = 4;
 }
 
 message RemoveEquipmentResponse {
@@ -133,6 +137,7 @@ message ListContainerContentsRequest {
   string tenant_id = 1;
   string character_id = 2;
   string container_instance_id = 3;
+  string session_attestation = 4;
 }
 
 message ListContainerContentsResponse {
@@ -148,6 +153,7 @@ message PutItemIntoContainerRequest {
   int32 quantity = 5;
   string item_instance_id = 6;
   string stack_family_key = 7;
+  string session_attestation = 8;
 }
 
 message PutItemIntoContainerResponse {
@@ -163,6 +169,7 @@ message TakeItemFromContainerRequest {
   int32 quantity = 5;
   string item_instance_id = 6;
   string stack_family_key = 7;
+  string session_attestation = 8;
 }
 
 message TakeItemFromContainerResponse {
@@ -187,6 +194,7 @@ message ListRoomGroundInventoryRequest {
   string tenant_id = 1;
   string game_instance_id = 2;
   string room_instance_id = 3;
+  string session_attestation = 4;
 }
 
 message ListRoomGroundInventoryResponse {
@@ -204,6 +212,7 @@ message PickupItemFromRoomRequest {
   string container_instance_id = 7;
   string item_instance_id = 8;
   string stack_family_key = 9;
+  string session_attestation = 10;
 }
 
 message PickupItemFromRoomResponse {
@@ -222,6 +231,7 @@ message DropItemToRoomRequest {
   string container_instance_id = 7;
   string item_instance_id = 8;
   string stack_family_key = 9;
+  string session_attestation = 10;
 }
 
 message DropItemToRoomResponse {
@@ -268,6 +278,7 @@ message FindCharacterByNameRequest {
   string name = 2;
   string game_instance_id = 3;
   PlayableStateScope playable_state_scope = 4;
+  string session_attestation = 5;
 }
 
 message FindCharacterByNameResponse {
@@ -278,6 +289,7 @@ message FindCharacterByNameResponse {
 message ListRoomEntitiesRequest {
   string tenant_id = 1;
   shared.v1.RoomInstanceRef room_instance = 2;
+  string session_attestation = 3;
 }
 
 enum EntityType {

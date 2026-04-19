@@ -69,7 +69,6 @@ public final class CrossServiceAppHarness {
     props.put("spring.application.name", "game-session-service");
     props.put("server.port", "0");
     props.put("spring.grpc.server.port", "0");
-    props.put("game-session.dev-isolated", "false");
     props.put("spring.main.allow-bean-definition-overriding", "true");
     props.put("spring.flyway.enabled", "true");
     props.put("spring.flyway.locations", "filesystem:" + gameSessionMigrationDir());

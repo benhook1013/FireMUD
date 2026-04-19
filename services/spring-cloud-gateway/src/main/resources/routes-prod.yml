@@ -20,26 +20,10 @@ spring:
               uri: http://account-service.default.svc.cluster.local:8080
               predicates:
                 - Path=/api/account/**
-            - id: entity
-              uri: http://entity-management-service.default.svc.cluster.local:8080
-              predicates:
-                - Path=/api/entity/**
-            - id: automation
-              uri: http://automation-scripting-service.default.svc.cluster.local:8080
-              predicates:
-                - Path=/api/automation/**
-            - id: logic
-              uri: http://game-logic-service.default.svc.cluster.local:8080
-              predicates:
-                - Path=/api/logic/**
             - id: social
               uri: http://social-groups-service.default.svc.cluster.local:8080
               predicates:
                 - Path=/api/social/**
-            - id: world
-              uri: http://world-management-service.default.svc.cluster.local:8080
-              predicates:
-                - Path=/api/world/**
             - id: asset-store
               uri: http://minio.default.svc.cluster.local:9000
               predicates:

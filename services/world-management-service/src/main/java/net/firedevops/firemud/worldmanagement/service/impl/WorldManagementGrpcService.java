@@ -7,6 +7,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.dto.RoomDto;
@@ -59,6 +61,7 @@ public class WorldManagementGrpcService
   private final RoomService roomService;
   private final WorldInstanceActivationService worldInstanceActivationService;
   private final WorldDraftDesignDigestService worldDraftDesignDigestService;
+  private final GameplaySessionAttestationService gameplaySessionAttestationService;
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper;
 
@@ -331,7 +334,14 @@ public class WorldManagementGrpcService
       Long roomId = Long.valueOf(resolveRoomId(request));
       Long tenantId = Long.valueOf(resolveTenantId(request));
       Long gameInstanceId = Long.valueOf(request.getRoomInstance().getGameInstanceId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireGameplayAttestation(
+          request.getSessionAttestation(),
+          request.getRoomInstance().getTenantId().isBlank()
+              ? request.getTenantId()
+              : request.getRoomInstance().getTenantId(),
+          request.getRoomInstance().getGameInstanceId(),
+          request.getRoomInstance().getRoomInstanceId());
+      requireTenantAccessWhenPresent(tenantId);
       Optional<String> json =
           Optional.ofNullable(roomService.getRoom(tenantId, gameInstanceId, roomId))
               .map(this::toJson);
@@ -355,6 +365,15 @@ public class WorldManagementGrpcService
               .setError(
                   GrpcAppErrors.error(
                       meterRegistry, logger, "GetRoom", "INVALID_ARGUMENT", "invalid id"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      GetRoomResponse response =
+          GetRoomResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "GetRoom", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -390,6 +409,13 @@ public class WorldManagementGrpcService
       Long roomId = Long.valueOf(resolveRoomId(request));
       Long tenantId = Long.valueOf(resolveTenantId(request));
       Long gameInstanceId = Long.valueOf(request.getRoomInstance().getGameInstanceId());
+      requireGameplayAttestation(
+          request.getSessionAttestation(),
+          request.getRoomInstance().getTenantId().isBlank()
+              ? request.getTenantId()
+              : request.getRoomInstance().getTenantId(),
+          request.getRoomInstance().getGameInstanceId(),
+          request.getRoomInstance().getRoomInstanceId());
       requireTenantAccessWhenPresent(tenantId);
       RoomSnapshotDto snapshot =
           roomService.getRoomSnapshot(
@@ -404,6 +430,15 @@ public class WorldManagementGrpcService
               .setError(
                   GrpcAppErrors.error(
                       meterRegistry, logger, "GetRoomSnapshot", "INVALID_ARGUMENT", "invalid id"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      GetRoomSnapshotResponse response =
+          GetRoomSnapshotResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "GetRoomSnapshot", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -557,11 +592,24 @@ public class WorldManagementGrpcService
   }
 
   private void requireTenantAccessWhenPresent(Long tenantId) {
+    if (SessionContext.isInternalService()) {
+      return;
+    }
     if (SessionContext.getAccountId() == null
         && SessionContext.getGlobalRoles().isEmpty()
         && SessionContext.getScopedRolesMap().isEmpty()) {
       return;
     }
     SessionContext.requireTenantAccess(tenantId);
+  }
+
+  private void requireGameplayAttestation(
+      String token, String tenantId, String gameInstanceId, String roomInstanceId) {
+    gameplaySessionAttestationService.requireGameplayOrProbeMatch(
+        token, tenantId, gameInstanceId, roomInstanceId);
+    if (!SessionContext.isInternalService()) {
+      throw new GameplaySessionAttestationException(
+          "SESSION_ATTESTATION_INVALID", "Gameplay world RPCs require internal service identity");
+    }
   }
 }

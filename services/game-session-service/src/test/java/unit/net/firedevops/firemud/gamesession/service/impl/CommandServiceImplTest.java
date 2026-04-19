@@ -8,7 +8,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import java.util.Optional;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -26,29 +25,6 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 @ExtendWith(OutputCaptureExtension.class)
 class CommandServiceImplTest {
   @Test
-  void devIsolatedAcknowledgesCommands() {
-    TickService tickService = Mockito.mock(TickService.class);
-    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
-    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
-    SessionContextService sessionContextService = Mockito.mock(SessionContextService.class);
-    CommandServiceImpl service =
-        new CommandServiceImpl(
-            tickService,
-            rateLimiter,
-            new DevIsolatedProperties(true),
-            repository,
-            sessionContextService);
-
-    CommandEnqueueResult result = service.enqueue("non-numeric", "look", false);
-
-    assertTrue(result.accepted());
-    verify(rateLimiter, never()).allow(Mockito.anyLong());
-    verify(tickService, never())
-        .enqueueCommand(
-            Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString(), Mockito.anyBoolean());
-  }
-
-  @Test
   void rateLimitFailurePropagatesError() {
     TickService tickService = Mockito.mock(TickService.class);
     SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
@@ -56,12 +32,7 @@ class CommandServiceImplTest {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     SessionContextService sessionContextService = Mockito.mock(SessionContextService.class);
     CommandServiceImpl service =
-        new CommandServiceImpl(
-            tickService,
-            rateLimiter,
-            new DevIsolatedProperties(false),
-            repository,
-            sessionContextService);
+        new CommandServiceImpl(tickService, rateLimiter, repository, sessionContextService);
 
     CommandEnqueueResult result = service.enqueue("5", "look", false);
 
@@ -83,12 +54,7 @@ class CommandServiceImplTest {
     SessionContextService sessionContextService = Mockito.mock(SessionContextService.class);
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
     CommandServiceImpl service =
-        new CommandServiceImpl(
-            tickService,
-            rateLimiter,
-            new DevIsolatedProperties(false),
-            repository,
-            sessionContextService);
+        new CommandServiceImpl(tickService, rateLimiter, repository, sessionContextService);
 
     CommandEnqueueResult result = service.enqueue("7", "look", true);
 
@@ -108,12 +74,7 @@ class CommandServiceImplTest {
         .thenReturn(
             Optional.of(new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room", "jwt")));
     CommandServiceImpl service =
-        new CommandServiceImpl(
-            tickService,
-            rateLimiter,
-            new DevIsolatedProperties(false),
-            repository,
-            sessionContextService);
+        new CommandServiceImpl(tickService, rateLimiter, repository, sessionContextService);
 
     CommandEnqueueResult result = service.enqueue("17", "look", false);
 
@@ -143,12 +104,7 @@ class CommandServiceImplTest {
         .enqueueCommand(9L, 99L, "look", false);
 
     CommandServiceImpl service =
-        new CommandServiceImpl(
-            tickService,
-            rateLimiter,
-            new DevIsolatedProperties(false),
-            repository,
-            sessionContextService);
+        new CommandServiceImpl(tickService, rateLimiter, repository, sessionContextService);
 
     CommandEnqueueResult result = service.enqueue("17", "look", false);
 
@@ -169,12 +125,7 @@ class CommandServiceImplTest {
         .thenReturn(
             Optional.of(new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room", "jwt")));
     CommandServiceImpl service =
-        new CommandServiceImpl(
-            tickService,
-            rateLimiter,
-            new DevIsolatedProperties(false),
-            repository,
-            sessionContextService);
+        new CommandServiceImpl(tickService, rateLimiter, repository, sessionContextService);
 
     service.enqueue("17", "LOGIN demo@example.com swordfish", false);
 

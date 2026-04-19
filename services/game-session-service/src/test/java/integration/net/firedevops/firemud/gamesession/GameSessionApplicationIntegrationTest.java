@@ -37,11 +37,7 @@ import tools.jackson.databind.ObjectMapper;
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = GameSessionServiceApplication.class,
-    properties = {
-      "game-session.dev-isolated=false",
-      "spring.application.name=game-session-service",
-      "spring.grpc.server.port=0"
-    })
+    properties = {"spring.application.name=game-session-service", "spring.grpc.server.port=0"})
 class GameSessionApplicationIntegrationTest {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 

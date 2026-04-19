@@ -20,7 +20,7 @@ spring:
         bundle: firemud-grpc
         client-auth: ${GRPC_SERVER_CLIENT_AUTH:NONE}
 
-GATEWAY_WS_URL: ${TCP_PROXY_GATEWAY_WS_URL_DEV:ws://localhost:8080/dev/echo}
+GATEWAY_WS_URL: ${TCP_PROXY_GATEWAY_WS_URL_DEV:ws://localhost:8080/ws/game}
 
 firemud:
   grpc:

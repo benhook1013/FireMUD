@@ -66,7 +66,7 @@ curl -X DELETE http://localhost:8080/routes/demo
 
 ```bash
 # Local development only (no mTLS)
-grpcurl -plaintext localhost:6565 spring_cloud_gateway.v1.GatewayManagementService/Ping
+grpcurl -plaintext localhost:6565 gateway.v1.GatewayManagementService/Ping
 
 # Production / operator contexts (mTLS)
 grpcurl \
@@ -74,7 +74,7 @@ grpcurl \
   -cert "$FIREMUD_GRPC_CERT_CHAIN_PATH" \
   -key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
   spring-cloud-gateway:6565 \
-  spring_cloud_gateway.v1.GatewayManagementService/Ping
+  gateway.v1.GatewayManagementService/Ping
 ```
 
 ## Proto Files

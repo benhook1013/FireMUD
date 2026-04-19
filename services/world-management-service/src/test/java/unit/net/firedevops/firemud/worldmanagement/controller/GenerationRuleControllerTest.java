@@ -33,7 +33,7 @@ class GenerationRuleControllerTest {
 
   @BeforeEach
   void setUpSecurityContext() {
-    installTenantContext(Map.of("1", List.of("admin")));
+    installTenantContext(Map.of("1", List.of("tenantAdmin")));
   }
 
   @AfterEach
@@ -55,7 +55,7 @@ class GenerationRuleControllerTest {
 
   @Test
   void saveRejectsCallerWithoutTenantAccess() throws Exception {
-    installTenantContext(Map.of("9", List.of("admin")));
+    installTenantContext(Map.of("9", List.of("tenantAdmin")));
 
     mockMvc
         .perform(

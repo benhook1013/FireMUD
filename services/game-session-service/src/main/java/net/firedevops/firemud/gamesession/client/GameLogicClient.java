@@ -7,6 +7,7 @@ import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.gamelogic.v1.CommunicationTargetKind;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
@@ -18,6 +19,7 @@ import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
+import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.springframework.stereotype.Component;
 
@@ -27,12 +29,16 @@ public class GameLogicClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final long READINESS_DEADLINE_SECONDS = 2L;
 
+  private final GameplaySessionAttestationService gameplaySessionAttestationService;
+
   public GameLogicClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties grpcClientProperties,
       GrpcChannelFactory channelFactory,
-      BlockingGrpcStubCustomizer stubCustomizer) {
+      BlockingGrpcStubCustomizer stubCustomizer,
+      GameplaySessionAttestationService gameplaySessionAttestationService) {
     super(endpoints, grpcClientProperties, channelFactory, stubCustomizer);
+    this.gameplaySessionAttestationService = gameplaySessionAttestationService;
   }
 
   @PostConstruct
@@ -57,13 +63,11 @@ public class GameLogicClient
         GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
-  public LookResult resolveLook(
-      String tenantId,
-      String sessionId,
-      String characterId,
-      String gameInstanceId,
-      String roomId,
-      String localeTag) {
+  public LookResult resolveLook(SessionContext context, String roomId, String localeTag) {
+    String tenantId = Long.toString(context.tenantId());
+    String sessionId = Long.toString(context.sessionId());
+    String characterId = Long.toString(context.characterId());
+    String gameInstanceId = Long.toString(context.gameInstanceId());
     LookRequest request =
         LookRequest.newBuilder()
             .setTenantId(tenantId)
@@ -76,6 +80,17 @@ public class GameLogicClient
                     .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
                     .setRoomInstanceId(roomId)
                     .build())
+            .build();
+    request =
+        request.toBuilder()
+            .setSessionAttestation(
+                gameplaySessionAttestationService.issueGameplaySessionAttestation(
+                    tenantId,
+                    sessionId,
+                    Long.toString(context.accountId()),
+                    characterId,
+                    gameInstanceId,
+                    roomId))
             .build();
     return callStub().resolveLook(request);
   }
@@ -100,17 +115,18 @@ public class GameLogicClient
   }
 
   public SendCommunicationResponse sendCommunication(
-      String tenantId,
-      String sessionId,
-      String characterId,
-      String accountId,
-      String gameInstanceId,
+      SessionContext context,
       String speakerName,
       String roomId,
       CommunicationType type,
       String text,
       String targetCharacterId,
       String targetCharacterName) {
+    String tenantId = Long.toString(context.tenantId());
+    String sessionId = Long.toString(context.sessionId());
+    String characterId = Long.toString(context.characterId());
+    String accountId = Long.toString(context.accountId());
+    String gameInstanceId = Long.toString(context.gameInstanceId());
     SendCommunicationRequest request =
         SendCommunicationRequest.newBuilder()
             .setTenantId(tenantId)
@@ -130,18 +146,19 @@ public class GameLogicClient
             .setTargetCharacterName(targetCharacterName == null ? "" : targetCharacterName)
             .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
             .setSpeakerName(speakerName == null ? "" : speakerName)
+            .setSessionAttestation(
+                gameplaySessionAttestationService.issueGameplaySessionAttestation(
+                    tenantId, sessionId, accountId, characterId, gameInstanceId, roomId))
             .build();
     return callStub().sendCommunication(request);
   }
 
   public MoveResult resolveMove(
-      String tenantId,
-      String sessionId,
-      String characterId,
-      String gameInstanceId,
-      String roomId,
-      String direction,
-      String localeTag) {
+      SessionContext context, String roomId, String direction, String localeTag) {
+    String tenantId = Long.toString(context.tenantId());
+    String sessionId = Long.toString(context.sessionId());
+    String characterId = Long.toString(context.characterId());
+    String gameInstanceId = Long.toString(context.gameInstanceId());
     MoveRequest request =
         MoveRequest.newBuilder()
             .setTenantId(tenantId)
@@ -155,6 +172,14 @@ public class GameLogicClient
                     .setRoomInstanceId(roomId)
                     .build())
             .setDirection(direction)
+            .setSessionAttestation(
+                gameplaySessionAttestationService.issueGameplaySessionAttestation(
+                    tenantId,
+                    sessionId,
+                    Long.toString(context.accountId()),
+                    characterId,
+                    gameInstanceId,
+                    roomId))
             .build();
     return callStub().resolveMove(request);
   }

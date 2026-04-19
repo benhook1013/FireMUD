@@ -41,6 +41,7 @@ message LookRequest {
   string character_id = 3;
   shared.v1.RoomInstanceRef room_instance = 4;
   string preferred_locale = 5;
+  string session_attestation = 6;
 }
 
 message LookResult {
@@ -71,6 +72,7 @@ message SendCommunicationRequest {
   string target_character_name = 10;
   string game_instance_id = 11;
   string speaker_name = 12;
+  string session_attestation = 13;
 }
 
 message SendCommunicationResponse {
@@ -91,6 +93,7 @@ message MoveRequest {
   shared.v1.RoomInstanceRef room_instance = 4;
   string direction = 5;
   string preferred_locale = 6;
+  string session_attestation = 7;
 }
 
 message MoveResult {

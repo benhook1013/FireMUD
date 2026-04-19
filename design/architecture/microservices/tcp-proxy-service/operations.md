@@ -128,45 +128,13 @@ grpcurl -plaintext localhost:6565 tcp_proxy.v1.TcpProxyService/Ping
 
 Even though the proxy has no public API, the supporting event messages are defined in [`../../../../protos/tcp-proxy/v1`](../../../../protos/tcp-proxy/v1). Regenerate stubs with `./gradlew generateProto` when the proto files change.
 
-## Local Development and Echo Loop
+## Local Development
 
-There are two common local flows, depending on whether you want to test the full Telnet -> WebSocket bridge or run the proxy completely standalone.
+Avoid logging raw Telnet input during local debugging, especially `LOGIN` lines. If deep payload logging is enabled for debugging, it must be explicitly opt-in and redact credentials.
 
-### Proxy + Gateway `/dev/echo`
+### Local Telnet Proof
 
-Use the bundled `/dev/echo` WebSocket endpoint under the `dev` profile to validate the Telnet -> WebSocket bridge:
-
-1. Start the proxy: `./gradlew :tcp-proxy-service:bootRun`.
-   This defaults to the `dev` profile for local runs; override with `SPRING_PROFILES_ACTIVE=<profile>` or `-Dspring.profiles.active=<profile>` when needed.
-2. Start Spring Cloud Gateway with the dev profile so `/dev/echo` is exposed.
-3. Point the bridge at the local echo: `GATEWAY_WS_URL=ws://localhost:8080/dev/echo`.
-4. Connect from a Telnet or MUD client: `telnet localhost 2323`.
-5. Type text and verify that the same text is echoed back through the Gateway `/dev/echo` handler.
-
-Avoid logging raw Telnet input during this workflow, especially `LOGIN` lines. If deep payload logging is enabled for debugging, it must be explicitly opt-in and redact credentials.
-
-### Proxy Dev-Isolated Mode
-
-When `TCP_PROXY_DEV_ISOLATED=true`, the proxy runs with an in-process Telnet echo handler:
-
-1. Start the proxy in dev-isolated mode: `./gradlew :tcp-proxy-service:bootRunDevIsolated`.
-   This sets `spring.profiles.active=dev` and `TCP_PROXY_DEV_ISOLATED=true`.
-2. The proxy no longer opens a WebSocket connection to the gateway. It echoes subsequent commands directly back over the Telnet session while still allowing advanced clients to send an optional `SESSION <gameInstanceId> <tenantId>` envelope. In this mode, `SESSION` parsing exercises only envelope capture and logging behavior; it does not perform real attach-to-session or Redis-backed resume flows.
-3. Connect from a Telnet or MUD client: `telnet localhost 2323`.
-4. Send a few commands such as `LOOK` or `SAY hello` and verify that input is sanitized and echoed without requiring Spring Cloud Gateway or Game Session.
-   Do not use real credentials in this echo mode, and do not log raw input unless that logging is explicitly enabled and credential-redacted.
-
-Prefer containers? A minimal Docker Compose profile launches just the proxy in dev-isolated mode:
-
-```bash
-docker compose -f docker/docker-compose.tcp-proxy-devisolated.yml --profile tcp-proxy-devisolated up
-```
-
-Stop the stack when finished:
-
-```bash
-docker compose -f docker/docker-compose.tcp-proxy-devisolated.yml --profile tcp-proxy-devisolated down
-```
+For local operations work, use the canonical source-built or image-based smoke stack rather than a proxy-only echo shortcut. The maintained Telnet proof path is the same Gateway -> Game Session gameplay chain exercised by the repo smoke scripts.
 
 ## Cross-Service Integration Test
 

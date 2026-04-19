@@ -41,7 +41,7 @@ class EquipmentCommandHandlerTest {
 
   @Test
   void equipmentViewReturnsStructuredEquipmentLines() {
-    when(entityManagementClient.listEquipment("22", "911"))
+    when(entityManagementClient.listEquipment(context))
         .thenReturn(
             ListEquipmentResponse.newBuilder()
                 .addItems(
@@ -68,7 +68,7 @@ class EquipmentCommandHandlerTest {
 
   @Test
   void wearWithItemReferenceReturnsUnavailableResponse() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(entityManagementClient.queryInventory(context))
         .thenReturn(QueryInventoryResponse.newBuilder().build());
     TextCommandInterpretationResult result =
         handler.handle(
@@ -83,7 +83,7 @@ class EquipmentCommandHandlerTest {
 
   @Test
   void wearWithItemReferenceCallsEquipmentBackend() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(entityManagementClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -94,7 +94,7 @@ class EquipmentCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.wearEquipment("22", "911", "3", "3"))
+    when(entityManagementClient.wearEquipment(context, "3", "3"))
         .thenReturn(
             WearEquipmentItemResponse.newBuilder()
                 .setEquipmentItem(
@@ -117,7 +117,7 @@ class EquipmentCommandHandlerTest {
 
   @Test
   void wearRejectsNonEmptyContainerUntilContainerInstancesExist() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(entityManagementClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -128,7 +128,7 @@ class EquipmentCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.wearEquipment("22", "911", "5", "5"))
+    when(entityManagementClient.wearEquipment(context, "5", "5"))
         .thenReturn(
             WearEquipmentItemResponse.newBuilder()
                 .setEquipmentItem(
@@ -151,7 +151,7 @@ class EquipmentCommandHandlerTest {
 
   @Test
   void removeWithItemReferenceCallsEquipmentBackend() {
-    when(entityManagementClient.listEquipment("22", "911"))
+    when(entityManagementClient.listEquipment(context))
         .thenReturn(
             ListEquipmentResponse.newBuilder()
                 .addItems(
@@ -161,7 +161,7 @@ class EquipmentCommandHandlerTest {
                         .setItemName("Torch")
                         .build())
                 .build());
-    when(entityManagementClient.removeEquipment("22", "911", "HEAD"))
+    when(entityManagementClient.removeEquipment(context, "HEAD"))
         .thenReturn(
             RemoveEquipmentResponse.newBuilder()
                 .setEquipmentItem(
@@ -184,7 +184,7 @@ class EquipmentCommandHandlerTest {
 
   @Test
   void wearPreservesDomainErrorCodeFromBackend() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(entityManagementClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -195,7 +195,7 @@ class EquipmentCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.wearEquipment("22", "911", "3", "3"))
+    when(entityManagementClient.wearEquipment(context, "3", "3"))
         .thenReturn(
             WearEquipmentItemResponse.newBuilder()
                 .setError(

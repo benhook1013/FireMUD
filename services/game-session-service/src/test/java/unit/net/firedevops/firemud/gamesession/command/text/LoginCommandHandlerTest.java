@@ -21,7 +21,6 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.client.AccountClient;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -32,13 +31,11 @@ import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
-import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedGameInstanceRegistry;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
-import org.springframework.beans.factory.ObjectProvider;
 
 @SuppressWarnings("unchecked")
 class LoginCommandHandlerTest {
@@ -56,10 +53,7 @@ class LoginCommandHandlerTest {
       new GameplayCatalogProperties();
   private final GameplayWorldCatalog gameplayWorldCatalog =
       new GameplayWorldCatalog(gameplayCatalogProperties);
-  private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-  private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
-      Mockito.mock(ObjectProvider.class);
   private LoginCommandHandler handler;
 
   @BeforeEach
@@ -71,7 +65,6 @@ class LoginCommandHandlerTest {
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("77").build());
-    when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
     handler =
@@ -82,8 +75,6 @@ class LoginCommandHandlerTest {
             commandService,
             firstPartyConnectContextRegistry,
             gameplayWorldCatalog,
-            devIsolatedProperties,
-            devIsolatedRegistryProvider,
             meterRegistry);
   }
 

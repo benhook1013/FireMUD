@@ -58,7 +58,7 @@ jobs:
               if (value === "success") return "✅";
               if (value === "failure") return "❌";
               if (value === "cancelled") return "⚪";
-              if (value === "pending" || value === "in_progress" || value === "queued") return "🟡";
+              if (value === "pending" || value === "in_progress" || value === "queued") return "⏳";
               return "⏭️";
             };
 
@@ -143,7 +143,7 @@ jobs:
             if (failedChecks.length > 0) {
               headline = "❌ Static analysis checks failed";
             } else if (pendingChecks.length > 0) {
-              headline = "🟡 Static analysis checks are still running";
+              headline = "⏳ Static analysis checks are still running";
             }
 
             const body = [

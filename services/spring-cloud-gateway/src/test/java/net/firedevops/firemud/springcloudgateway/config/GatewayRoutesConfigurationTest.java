@@ -54,4 +54,11 @@ class GatewayRoutesConfigurationTest {
 
     assertThat(pathArgs.values()).containsExactly("/api/session/**");
   }
+
+  @Test
+  void publicRouteAllowlistExposesOnlyCuratedEdgeFamilies() {
+    assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
+        .containsExactlyInAnyOrder(
+            "session", "admin", "design", "account", "social", "asset-store");
+  }
 }

@@ -61,7 +61,6 @@ class TelnetServerHandlerTest {
       TelnetServerHandler.WebSocketConnector connector) {
     return new TelnetServerHandler(
         "ws://localhost/ws",
-        false,
         () -> {},
         () -> {},
         registry.counter("test"),
@@ -82,49 +81,6 @@ class TelnetServerHandlerTest {
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
     return ws;
-  }
-
-  @Test
-  void devIsolatedModeSkipsGatewayConnection() throws Exception {
-    SimpleMeterRegistry registry = new SimpleMeterRegistry();
-    TelnetServerHandler.WebSocketConnector connector =
-        Mockito.mock(TelnetServerHandler.WebSocketConnector.class);
-    Mockito.doReturn(CompletableFuture.completedFuture(mock(WebSocket.class)))
-        .when(connector)
-        .connect(
-            anyString(),
-            anyString(),
-            anyString(),
-            anyString(),
-            anyString(),
-            any(WebSocket.Listener.class));
-    TelnetServerHandler handler =
-        new TelnetServerHandler(
-            "ws://localhost/ws",
-            true,
-            () -> {},
-            () -> {},
-            registry.counter("test"),
-            registry.counter("discarded"),
-            false,
-            registry,
-            () -> true,
-            connector,
-            Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger(),
-            lookCacheService);
-
-    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
-    Channel channel = mock(Channel.class);
-    DefaultEventExecutor executor = new DefaultEventExecutor();
-    when(ctx.channel()).thenReturn(channel);
-    when(ctx.executor()).thenReturn(executor);
-    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
-
-    handler.channelActive(ctx);
-    handler.channelRead0(ctx, "look");
-
-    executor.shutdownGracefully();
   }
 
   @Test
@@ -570,7 +526,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            false,
             () -> {},
             () -> {},
             registry.counter("test"),
@@ -605,7 +560,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            false,
             () -> {},
             () -> {},
             registry.counter("test"),
@@ -642,7 +596,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            false,
             () -> {},
             () -> {},
             registry.counter("test"),
@@ -702,7 +655,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            false,
             () -> {},
             () -> {},
             registry.counter("test"),
@@ -753,7 +705,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            false,
             () -> {},
             () -> {},
             registry.counter("test"),
@@ -804,7 +755,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            false,
             () -> {},
             () -> {},
             registry.counter("test"),
@@ -855,7 +805,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            false,
             () -> {},
             () -> {},
             registry.counter("test"),
@@ -906,7 +855,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            false,
             () -> {},
             () -> {},
             registry.counter("test"),
@@ -958,7 +906,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            false,
             () -> {},
             () -> {},
             registry.counter("test"),
@@ -1009,7 +956,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            false,
             () -> {},
             () -> {},
             registry.counter("test"),

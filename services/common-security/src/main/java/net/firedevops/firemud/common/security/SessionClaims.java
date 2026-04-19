@@ -35,7 +35,7 @@ public record SessionClaims(
       return true;
     }
     for (List<String> roles : scopedRoles.values()) {
-      if (roles.contains("tenantAdmin") || roles.contains("admin") || roles.contains("moderator")) {
+      if (roles.contains("tenantAdmin") || roles.contains("moderator")) {
         return true;
       }
     }

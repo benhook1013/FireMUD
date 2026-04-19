@@ -10,6 +10,7 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.gamelogic.logic.command.DefaultCommandParser;
 import net.firedevops.firemud.gamelogic.logic.command.SimpleCommandProcessor;
 import net.firedevops.firemud.gamelogic.logic.event.EventDispatcher;
@@ -38,6 +39,10 @@ class GameLogicGrpcServiceTest {
     return Mockito.mock(GameLogicDraftDesignDigestService.class);
   }
 
+  private GameplaySessionAttestationService mockAttestationService() {
+    return Mockito.mock(GameplaySessionAttestationService.class);
+  }
+
   @Test
   void pingEndpointReturnsPong() {
     PingService pingService = new PingServiceImpl();
@@ -59,6 +64,7 @@ class GameLogicGrpcServiceTest {
             communicationAggregationService,
             moveAggregationService,
             digestService,
+            mockAttestationService(),
             new SimpleMeterRegistry());
 
     AtomicReference<PingResponse> holder = new AtomicReference<>();
@@ -103,6 +109,7 @@ class GameLogicGrpcServiceTest {
             communicationAggregationService,
             moveAggregationService,
             digestService,
+            mockAttestationService(),
             new SimpleMeterRegistry());
 
     AtomicReference<ExecuteCommandResponse> holder = new AtomicReference<>();
@@ -149,6 +156,7 @@ class GameLogicGrpcServiceTest {
             communicationAggregationService,
             moveAggregationService,
             digestService,
+            mockAttestationService(),
             new SimpleMeterRegistry());
 
     AtomicReference<MoveResult> holder = new AtomicReference<>();
@@ -196,6 +204,7 @@ class GameLogicGrpcServiceTest {
             communicationAggregationService,
             moveAggregationService,
             digestService,
+            mockAttestationService(),
             new SimpleMeterRegistry());
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
@@ -243,6 +252,7 @@ class GameLogicGrpcServiceTest {
             communicationAggregationService,
             moveAggregationService,
             digestService,
+            mockAttestationService(),
             new SimpleMeterRegistry());
 
     AtomicReference<LookResult> holder = new AtomicReference<>();

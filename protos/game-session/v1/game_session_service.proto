@@ -175,8 +175,9 @@ message GameplayRealm {
   string game_instance_id = 5;
   int64 pointer_version = 6;
   bool requires_character_selection = 7;
-  string state_scope = 8;
-  string character_creation_policy = 9;
+  bool visible = 8;
+  string state_scope = 9;
+  string character_creation_policy = 10;
 }
 
 message ListGameplayRealmsResponse {
@@ -198,8 +199,9 @@ message GameplayAdmissionPointer {
   string game_instance_id = 6;
   int64 pointer_version = 7;
   bool requires_character_selection = 8;
-  string state_scope = 9;
-  string character_creation_policy = 10;
+  bool visible = 9;
+  string state_scope = 10;
+  string character_creation_policy = 11;
 }
 
 message GetAdmissionPointerResponse {

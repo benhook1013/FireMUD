@@ -21,15 +21,12 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
-import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -44,10 +41,6 @@ import org.springframework.stereotype.Service;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are kept internal")
 @Service
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = false)
 @RequiredArgsConstructor
 public class TickServiceImpl implements TickService {
   private static final Logger logger = LoggingUtil.getLogger(TickServiceImpl.class);
@@ -56,7 +49,6 @@ public class TickServiceImpl implements TickService {
   private final MeterRegistry meterRegistry;
   private final ConflictTracker conflictTracker;
   private final GameInstanceRepository gameInstanceRepository;
-  private final DevIsolatedProperties devIsolatedProperties;
   private final SessionContextService sessionContextService;
 
   @Value("${game.tick-duration-ms:1000}")
@@ -169,15 +161,6 @@ public class TickServiceImpl implements TickService {
     Long normalizedQueueTargetId = queueTargetId != null ? queueTargetId : 0L;
     try (GameplayLoggingContext ignored =
         GameplayLoggingContext.open(Long.toString(normalizedTenantId), null, null, null)) {
-      if (devIsolatedProperties.isDevIsolated()) {
-        logger.info(
-            "Dev-isolated mode enabled; recording enqueue request for tenant {} target {} command {}",
-            normalizedTenantId,
-            normalizedQueueTargetId,
-            GameSessionCommandLogSanitizer.sanitize(command));
-        return;
-      }
-
       String value = (requiresSoloTick ? "S|" : "N|") + command;
       redisTemplate
           .opsForList()
@@ -194,14 +177,6 @@ public class TickServiceImpl implements TickService {
     Long normalizedQueueTargetId = queueTargetId != null ? queueTargetId : 0L;
     try (GameplayLoggingContext ignored =
         GameplayLoggingContext.open(Long.toString(normalizedTenantId), null, null, null)) {
-      if (devIsolatedProperties.isDevIsolated()) {
-        logger.info(
-            "Dev-isolated mode enabled; skipping tick processing for tenant {} target {}",
-            normalizedTenantId,
-            normalizedQueueTargetId);
-        return;
-      }
-
       if (pauseRequested.get() || pausedGameInstances.contains(normalizedQueueTargetId)) {
         logger.debug("Tick processing skipped while paused");
         return;
@@ -326,11 +301,6 @@ public class TickServiceImpl implements TickService {
                 () ->
                     GameplayLoggingContext.open(
                         tenantId != null ? Long.toString(tenantId) : null, null, null, null))) {
-      if (devIsolatedProperties.isDevIsolated()) {
-        logger.info("Dev-isolated mode enabled; returning empty state for session {}", sessionId);
-        return "{}";
-      }
-
       Object state = redisTemplate.opsForValue().get(stateKey(tenantId, sessionId));
       return state != null ? state.toString() : "{}";
     }

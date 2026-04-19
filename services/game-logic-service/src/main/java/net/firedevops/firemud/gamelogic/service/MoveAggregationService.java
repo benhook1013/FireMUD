@@ -53,6 +53,7 @@ public class MoveAggregationService {
                     .setTenantId(resolveTenantId(request))
                     .setRoomInstance(currentRoom)
                     .setPreferredLocale(request.getPreferredLocale())
+                    .setSessionAttestation(request.getSessionAttestation())
                     .build());
         if (response.hasError()) {
           return errorResponse(builder, response.getError(), "WorldManagementService");
@@ -87,6 +88,7 @@ public class MoveAggregationService {
                             .setRoomInstanceId(exit.getTargetRoomInstanceId())
                             .build())
                     .setPreferredLocale(request.getPreferredLocale())
+                    .setSessionAttestation(request.getSessionAttestation())
                     .build());
         return builder.setSuccess(true).setDestinationLook(destination).build();
       } catch (StatusRuntimeException ex) {

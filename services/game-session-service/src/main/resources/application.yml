@@ -33,9 +33,6 @@ spring:
         enabled: ${GRPC_SERVER_TLS_ENABLED:true}
         bundle: firemud-grpc
         client-auth: REQUIRE
-game-session:
-  dev-isolated: false
-
 management:
   endpoints:
     access:

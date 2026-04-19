@@ -95,7 +95,7 @@ class AdmissionPointerControllerTest {
             "req-1",
             3L);
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("admin"))));
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(

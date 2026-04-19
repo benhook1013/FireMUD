@@ -43,7 +43,6 @@ import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
@@ -69,14 +68,12 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
-import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedGameInstanceRegistry;
 import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import org.springframework.beans.factory.ObjectProvider;
 
 @SuppressWarnings("unchecked")
 class TextCommandInterpreterTest {
@@ -87,7 +84,6 @@ class TextCommandInterpreterTest {
   private final LookTextRenderer lookTextRenderer = Mockito.mock(LookTextRenderer.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final GameSessionProperties gameSessionProperties = new GameSessionProperties();
-  private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final GameInstanceRepository gameInstanceRepository =
       Mockito.mock(GameInstanceRepository.class);
   private final SessionContextService sessionContextService = new InMemorySessionContextService();
@@ -111,8 +107,6 @@ class TextCommandInterpreterTest {
   private final ScreenBufferService screenBufferService = Mockito.mock(ScreenBufferService.class);
   private final AccountRecentPresenceService accountRecentPresenceService =
       Mockito.mock(AccountRecentPresenceService.class);
-  private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
-      Mockito.mock(ObjectProvider.class);
   private final TextPlayerOutputRenderer outputRenderer =
       new TextPlayerOutputRenderer(
           new PresentationProperties(
@@ -157,7 +151,7 @@ class TextCommandInterpreterTest {
                 .setTenantBillingSequence(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
-    when(entityManagementClient.queryInventory(Mockito.eq("22"), anyString()))
+    when(entityManagementClient.queryInventory(Mockito.any(SessionContext.class)))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -169,7 +163,7 @@ class TextCommandInterpreterTest {
                         .build())
                 .build());
     when(entityManagementClient.listRoomGroundInventory(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            Mockito.any(SessionContext.class), Mockito.anyString()))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -180,9 +174,7 @@ class TextCommandInterpreterTest {
                         .build())
                 .build());
     when(entityManagementClient.pickupItemFromRoom(
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
+            Mockito.any(SessionContext.class),
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.nullable(String.class),
@@ -200,9 +192,7 @@ class TextCommandInterpreterTest {
                         .build())
                 .build());
     when(entityManagementClient.dropItemToRoom(
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
+            Mockito.any(SessionContext.class),
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.nullable(String.class),
@@ -219,7 +209,7 @@ class TextCommandInterpreterTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.listEquipment(Mockito.anyString(), Mockito.anyString()))
+    when(entityManagementClient.listEquipment(Mockito.any(SessionContext.class)))
         .thenReturn(
             ListEquipmentResponse.newBuilder()
                 .addItems(
@@ -231,7 +221,7 @@ class TextCommandInterpreterTest {
                         .build())
                 .build());
     when(entityManagementClient.wearEquipment(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            Mockito.any(SessionContext.class), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             WearEquipmentItemResponse.newBuilder()
                 .setEquipmentItem(
@@ -243,7 +233,7 @@ class TextCommandInterpreterTest {
                         .build())
                 .build());
     when(entityManagementClient.removeEquipment(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            Mockito.any(SessionContext.class), Mockito.anyString()))
         .thenReturn(
             RemoveEquipmentResponse.newBuilder()
                 .setEquipmentItem(
@@ -255,7 +245,7 @@ class TextCommandInterpreterTest {
                         .build())
                 .build());
     when(entityManagementClient.listContainerContents(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            Mockito.any(SessionContext.class), Mockito.anyString()))
         .thenReturn(
             ListContainerContentsResponse.newBuilder()
                 .addItems(
@@ -268,16 +258,14 @@ class TextCommandInterpreterTest {
                         .build())
                 .build());
     when(entityManagementClient.putItemIntoContainer(
-            Mockito.anyString(),
-            Mockito.anyString(),
+            Mockito.any(SessionContext.class),
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.any(),
             Mockito.anyInt()))
         .thenReturn(PutItemIntoContainerResponse.newBuilder().build());
     when(entityManagementClient.takeItemFromContainer(
-            Mockito.anyString(),
-            Mockito.anyString(),
+            Mockito.any(SessionContext.class),
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.any(),
@@ -292,7 +280,6 @@ class TextCommandInterpreterTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
     when(gameInstanceRepository.findById(Mockito.anyLong()))
@@ -308,11 +295,7 @@ class TextCommandInterpreterTest {
 
     sessionAuthenticationService =
         new SessionAuthenticationService(
-            sessionContextService,
-            gameSessionProperties,
-            gameInstanceRepository,
-            devIsolatedProperties,
-            devIsolatedRegistryProvider);
+            sessionContextService, gameSessionProperties, gameInstanceRepository);
     GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
@@ -326,8 +309,6 @@ class TextCommandInterpreterTest {
             commandService,
             firstPartyConnectContextRegistry,
             worldCatalog,
-            devIsolatedProperties,
-            devIsolatedRegistryProvider,
             meterRegistry);
     PlayCommandHandler playHandler =
         new PlayCommandHandler(
@@ -359,7 +340,6 @@ class TextCommandInterpreterTest {
                 (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()),
             meterRegistry,
             lookCacheService,
-            devIsolatedProperties,
             new TextPlayerOutputRenderer(new PresentationProperties()));
     when(entityManagementClient.listCharactersByAccount(
             "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
@@ -380,12 +360,7 @@ class TextCommandInterpreterTest {
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
             .build();
     when(gameLogicClient.resolveLook(
-            Mockito.eq("22"),
-            Mockito.eq("1"),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.eq("1021"),
-            Mockito.anyString()))
+            Mockito.any(SessionContext.class), Mockito.eq("1021"), Mockito.anyString()))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             Mockito.eq(lookResult),
@@ -626,7 +601,7 @@ class TextCommandInterpreterTest {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
     when(entityManagementClient.listContainerContents(
-            Mockito.anyString(), Mockito.anyString(), Mockito.eq("ITEM-009")))
+            Mockito.any(SessionContext.class), Mockito.eq("ITEM-009")))
         .thenReturn(ListContainerContentsResponse.newBuilder().build());
 
     TextCommandInterpretationResult interpretation =
@@ -677,7 +652,7 @@ class TextCommandInterpreterTest {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
     when(entityManagementClient.listContainerContents(
-            Mockito.anyString(), Mockito.anyString(), Mockito.eq("ITEM-009")))
+            Mockito.any(SessionContext.class), Mockito.eq("ITEM-009")))
         .thenReturn(ListContainerContentsResponse.newBuilder().build());
 
     TextCommandInterpretationResult interpretation =

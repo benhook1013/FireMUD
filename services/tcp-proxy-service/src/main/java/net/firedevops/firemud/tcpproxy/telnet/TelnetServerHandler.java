@@ -62,7 +62,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Set<String> SENSITIVE_COMMANDS = Set.of("LOGIN", "LOGON");
 
   private final String gatewayWsUrl;
-  private final boolean devIsolated;
   private final Runnable onConnect;
   private final Runnable onDisconnect;
   private final io.micrometer.core.instrument.Counter connectionCounter;
@@ -103,7 +102,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   public TelnetServerHandler(
       String gatewayWsUrl,
-      boolean devIsolated,
       Runnable onConnect,
       Runnable onDisconnect,
       io.micrometer.core.instrument.Counter connectionCounter,
@@ -115,7 +113,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       AtomicInteger bufferDepth) {
     this(
         gatewayWsUrl,
-        devIsolated,
         onConnect,
         onDisconnect,
         connectionCounter,
@@ -134,7 +131,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   TelnetServerHandler(
       String gatewayWsUrl,
-      boolean devIsolated,
       Runnable onConnect,
       Runnable onDisconnect,
       io.micrometer.core.instrument.Counter connectionCounter,
@@ -147,7 +143,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       AtomicInteger bufferDepth) {
     this(
         gatewayWsUrl,
-        devIsolated,
         onConnect,
         onDisconnect,
         connectionCounter,
@@ -166,7 +161,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   TelnetServerHandler(
       String gatewayWsUrl,
-      boolean devIsolated,
       Runnable onConnect,
       Runnable onDisconnect,
       io.micrometer.core.instrument.Counter connectionCounter,
@@ -180,7 +174,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       LookCacheService lookCacheService) {
     this(
         gatewayWsUrl,
-        devIsolated,
         onConnect,
         onDisconnect,
         connectionCounter,
@@ -199,7 +192,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   TelnetServerHandler(
       String gatewayWsUrl,
-      boolean devIsolated,
       Runnable onConnect,
       Runnable onDisconnect,
       io.micrometer.core.instrument.Counter connectionCounter,
@@ -215,7 +207,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       LookCacheService lookCacheService) {
     this(
         gatewayWsUrl,
-        devIsolated,
         onConnect,
         onDisconnect,
         connectionCounter,
@@ -234,7 +225,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   TelnetServerHandler(
       String gatewayWsUrl,
-      boolean devIsolated,
       Runnable onConnect,
       Runnable onDisconnect,
       io.micrometer.core.instrument.Counter connectionCounter,
@@ -250,7 +240,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       LookCacheService lookCacheService,
       RuntimeIdentity runtimeIdentity) {
     this.gatewayWsUrl = gatewayWsUrl;
-    this.devIsolated = devIsolated;
     this.onConnect = onConnect;
     this.onDisconnect = onDisconnect;
     this.connectionCounter = connectionCounter;
@@ -459,18 +448,14 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
           "Telnet client connected from {} targeting {}",
           clientIp != null ? clientIp : remote,
           gatewayWsUrl);
-      if (!devIsolated && !gameplayTrafficReady.getAsBoolean()) {
+      if (!gameplayTrafficReady.getAsBoolean()) {
         closing = true;
         discardedCommandCounter.increment();
         ctx.writeAndFlush(STARTUP_UNAVAILABLE_MESSAGE).addListener(ChannelFutureListener.CLOSE);
         return;
       }
       ctx.writeAndFlush(INITIAL_GUIDANCE_MESSAGE);
-      if (devIsolated) {
-        logger.info("Dev-isolated mode enabled; using internal Telnet echo handler");
-      } else {
-        bootstrapDefaultSessionIfConfigured();
-      }
+      bootstrapDefaultSessionIfConfigured();
     }
   }
 
@@ -494,18 +479,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
         logTelnetInput(sanitized);
         touchActivity();
-
-        if (devIsolated) {
-          if (!sessionContext.isReady()) {
-            bootstrapDefaultSessionIfConfigured();
-          }
-          if (sessionContext.isReady() && context != null) {
-            context.writeAndFlush(sanitized + "\n");
-          } else {
-            logger.warn("Ignoring Telnet input before session bootstrap: {}", sanitized);
-          }
-          return;
-        }
 
         if (!sessionContext.isReady()) {
           bootstrapDefaultSessionIfConfigured();
@@ -599,7 +572,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void ensureGatewayConnected() {
-    if (devIsolated || closing || webSocket != null || reconnecting) {
+    if (closing || webSocket != null || reconnecting) {
       return;
     }
     connectToGateway();
@@ -722,7 +695,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void notifyConnectIfReady() {
-    if (devIsolated || connectEventRecorded || !sessionContext.isReady()) {
+    if (connectEventRecorded || !sessionContext.isReady()) {
       return;
     }
     eventService.recordConnectEvent(
@@ -731,7 +704,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void notifyDisconnectAsync() {
-    if (devIsolated || !sessionContext.isReady()) {
+    if (!sessionContext.isReady()) {
       return;
     }
     long sequence = disconnectSequence.incrementAndGet();

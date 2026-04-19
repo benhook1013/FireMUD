@@ -8,10 +8,8 @@ import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.cache.LookCacheService;
-import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
@@ -42,7 +40,6 @@ public final class LookCommandHandler {
   private final EffectiveSettingsResolver settingsResolver;
   private final MeterRegistry meterRegistry;
   private final LookCacheService lookCacheService;
-  private final DevIsolatedProperties devIsolatedProperties;
   private final TextPlayerOutputRenderer outputRenderer;
 
   public PlayerOutput describePlayerOutput(String sessionId, boolean includeLongDescription) {
@@ -84,9 +81,6 @@ public final class LookCommandHandler {
     try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
       String tenantTag = Long.toString(context.tenantId());
       meterRegistry.counter(INVOCATIONS_METRIC).increment();
-      if (devIsolatedProperties.isDevIsolated()) {
-        return PlayerOutput.message(LookCommandConstants.ROOM_DESCRIPTION);
-      }
       try {
         LookResult lookResult = resolveLook(context);
         if (lookResult.hasError()) {
@@ -164,9 +158,7 @@ public final class LookCommandHandler {
     PlayerOutput output =
         lookTextRenderer.toPlayerOutput(
             lookResult, includeLongDescription, refreshReason, briefRenderingHint);
-    if (!devIsolatedProperties.isDevIsolated()) {
-      cacheLook(context, lookResult, output);
-    }
+    cacheLook(context, lookResult, output);
     return output;
   }
 
@@ -176,12 +168,7 @@ public final class LookCommandHandler {
             ? context.roomInstanceId()
             : gameLogicProperties.getDefaultRoomId();
     return gameLogicClient.resolveLook(
-        Long.toString(context.tenantId()),
-        Long.toString(context.sessionId()),
-        Long.toString(context.characterId()),
-        Long.toString(context.gameInstanceId()),
-        roomId,
-        StringUtils.hasText(context.localeTag()) ? context.localeTag() : "");
+        context, roomId, StringUtils.hasText(context.localeTag()) ? context.localeTag() : "");
   }
 
   private String mapStatusToError(StatusRuntimeException ex) {

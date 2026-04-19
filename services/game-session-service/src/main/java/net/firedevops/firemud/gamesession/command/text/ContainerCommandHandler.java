@@ -123,8 +123,7 @@ public class ContainerCommandHandler {
 
       var response =
           entityManagementClient.putItemIntoContainer(
-              Long.toString(context.tenantId()),
-              Long.toString(context.characterId()),
+              context,
               ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
               inventoryItem.getItemId(),
               ContainerIdentitySupport.matchesExplicitReference(
@@ -195,8 +194,7 @@ public class ContainerCommandHandler {
 
       ListContainerContentsResponse contents =
           entityManagementClient.listContainerContents(
-              Long.toString(context.tenantId()),
-              Long.toString(context.characterId()),
+              context,
               ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()));
       if (contents.hasError()) {
         return containerFailure(
@@ -219,8 +217,7 @@ public class ContainerCommandHandler {
 
       var response =
           entityManagementClient.takeItemFromContainer(
-              Long.toString(context.tenantId()),
-              Long.toString(context.characterId()),
+              context,
               ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
               containerItem.getItemId(),
               ContainerIdentitySupport.matchesExplicitReference(
@@ -269,9 +266,7 @@ public class ContainerCommandHandler {
       SessionContext context, InventoryItem containerItem) {
     ListContainerContentsResponse response =
         entityManagementClient.listContainerContents(
-            Long.toString(context.tenantId()),
-            Long.toString(context.characterId()),
-            ContainerIdentitySupport.resolveContainerInstanceId(containerItem));
+            context, ContainerIdentitySupport.resolveContainerInstanceId(containerItem));
     if (response.hasError()) {
       return containerFailure(
           errorCode(response.getError().getCode()), response.getError().getMessage());
@@ -292,9 +287,7 @@ public class ContainerCommandHandler {
   }
 
   private InventoryResolution loadInventory(SessionContext context) {
-    QueryInventoryResponse inventory =
-        entityManagementClient.queryInventory(
-            Long.toString(context.tenantId()), Long.toString(context.characterId()));
+    QueryInventoryResponse inventory = entityManagementClient.queryInventory(context);
     if (inventory.hasError()) {
       return InventoryResolution.unavailable(
           StringUtils.hasText(inventory.getError().getMessage())

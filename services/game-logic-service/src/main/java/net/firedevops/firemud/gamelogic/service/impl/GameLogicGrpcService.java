@@ -7,6 +7,8 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.gamelogic.logic.dto.CommandResult;
 import net.firedevops.firemud.gamelogic.logic.service.CommandService;
 import net.firedevops.firemud.gamelogic.service.CommunicationAggregationService;
@@ -42,6 +44,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   private final CommunicationAggregationService communicationAggregationService;
   private final MoveAggregationService moveAggregationService;
   private final GameLogicDraftDesignDigestService gameLogicDraftDesignDigestService;
+  private final GameplaySessionAttestationService gameplaySessionAttestationService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -55,6 +58,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       CommunicationAggregationService communicationAggregationService,
       MoveAggregationService moveAggregationService,
       GameLogicDraftDesignDigestService gameLogicDraftDesignDigestService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.commandService = commandService;
@@ -62,6 +66,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
     this.communicationAggregationService = communicationAggregationService;
     this.moveAggregationService = moveAggregationService;
     this.gameLogicDraftDesignDigestService = gameLogicDraftDesignDigestService;
+    this.gameplaySessionAttestationService = gameplaySessionAttestationService;
     this.meterRegistry = meterRegistry;
   }
 
@@ -145,8 +150,24 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   @Timed(value = "gamelogicGrpc.resolveLook")
   public void resolveLook(LookRequest request, StreamObserver<LookResult> responseObserver) {
     try {
+      gameplaySessionAttestationService.requireGameplaySessionMatch(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getSessionId(),
+          null,
+          request.getCharacterId(),
+          request.getRoomInstance().getGameInstanceId(),
+          request.getRoomInstance().getRoomInstanceId());
       LookResult result = lookAggregationService.resolve(request);
       responseObserver.onNext(result);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      responseObserver.onNext(
+          LookResult.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "ResolveLook", ex.getCode(), ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (StatusRuntimeException ex) {
       responseObserver.onNext(LookResult.newBuilder().setError(mapLookError(ex)).build());
@@ -184,16 +205,54 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   public void sendCommunication(
       SendCommunicationRequest request,
       StreamObserver<SendCommunicationResponse> responseObserver) {
-    SendCommunicationResponse response = communicationAggregationService.send(request);
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      gameplaySessionAttestationService.requireGameplaySessionMatch(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getSessionId(),
+          request.getAccountId(),
+          request.getCharacterId(),
+          request.getGameInstanceId(),
+          request.getRoomInstance().getRoomInstanceId());
+      SendCommunicationResponse response = communicationAggregationService.send(request);
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      responseObserver.onNext(
+          SendCommunicationResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "SendCommunication", ex.getCode(), ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    }
   }
 
   @Override
   @Timed(value = "gamelogicGrpc.resolveMove")
   public void resolveMove(MoveRequest request, StreamObserver<MoveResult> responseObserver) {
-    MoveResult response = moveAggregationService.resolve(request);
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      gameplaySessionAttestationService.requireGameplaySessionMatch(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getSessionId(),
+          null,
+          request.getCharacterId(),
+          request.getRoomInstance().getGameInstanceId(),
+          request.getRoomInstance().getRoomInstanceId());
+      MoveResult response = moveAggregationService.resolve(request);
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      responseObserver.onNext(
+          MoveResult.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "ResolveMove", ex.getCode(), ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    }
   }
 }

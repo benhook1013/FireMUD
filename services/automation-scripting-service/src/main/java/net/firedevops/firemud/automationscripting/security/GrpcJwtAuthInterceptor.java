@@ -63,7 +63,7 @@ public class GrpcJwtAuthInterceptor implements ServerInterceptor {
           globalRoles.contains("platformAdmin") || globalRoles.contains("moderator");
       boolean hasScoped =
           scopedRoles.values().stream()
-              .anyMatch(roles -> roles.contains("admin") || roles.contains("moderator"));
+              .anyMatch(roles -> roles.contains("tenantAdmin") || roles.contains("moderator"));
       if (!hasGlobal && !hasScoped) {
         call.close(Status.PERMISSION_DENIED.withDescription("Insufficient role"), new Metadata());
         return new ServerCall.Listener<>() {};

@@ -120,6 +120,7 @@ message TerminateWorldInstanceResponse {
 message GetRoomRequest {
   string tenant_id = 1;
   shared.v1.RoomInstanceRef room_instance = 2;
+  string session_attestation = 3;
 }
 
 message GetRoomResponse {
@@ -131,6 +132,7 @@ message GetRoomSnapshotRequest {
   string tenant_id = 1;
   shared.v1.RoomInstanceRef room_instance = 2;
   string preferred_locale = 3;
+  string session_attestation = 4;
 }
 
 message GetRoomSnapshotResponse {
@@ -163,6 +165,7 @@ message RoomExitSnapshot {
 
 message ListRoomOccupantsRequest {
   shared.v1.RoomInstanceRef room_instance = 1;
+  string session_attestation = 2;
 }
 
 message ListRoomOccupantsResponse {
@@ -176,6 +179,7 @@ message ApplyRoomAmbientStatePatchRequest {
   shared.v1.RoomInstanceRef room_instance = 1;
   string effect_id = 2;
   RoomAmbientStatePatch ambient_state_patch = 3;
+  string session_attestation = 4;
 }
 
 message ApplyRoomAmbientStatePatchResponse {

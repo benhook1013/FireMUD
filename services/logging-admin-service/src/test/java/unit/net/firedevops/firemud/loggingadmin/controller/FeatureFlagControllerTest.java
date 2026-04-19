@@ -66,7 +66,7 @@ class FeatureFlagControllerTest {
   void toggleRejectsCrossTenantScopedAdmin() throws Exception {
     ToggleFeatureFlagRequest request = new ToggleFeatureFlagRequest(1L, "demo", true);
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("admin"))));
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(

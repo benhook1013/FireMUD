@@ -19,7 +19,6 @@ import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -61,7 +60,6 @@ class GameInstanceServiceImplTest {
             null,
             null,
             meterRegistry,
-            new DevIsolatedProperties(false),
             immediateTransactionOperations());
     configureRepositoryPersistence();
     configureMapper();

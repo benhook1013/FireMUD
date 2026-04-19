@@ -11,6 +11,7 @@ import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
@@ -42,33 +43,32 @@ import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
+import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 /** gRPC client for the Entity Management Service. */
 @Component
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = false)
 public final class EntityManagementClient
     extends AbstractBlockingGrpcClient<
         EntityManagementServiceGrpc.EntityManagementServiceBlockingStub> {
   private static final Logger logger = LoggerFactory.getLogger(EntityManagementClient.class);
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final long FIND_CHARACTER_DEADLINE_MILLIS = 500L;
+  private final GameplaySessionAttestationService gameplaySessionAttestationService;
 
   public EntityManagementClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory,
-      BlockingGrpcStubCustomizer stubCustomizer) {
+      BlockingGrpcStubCustomizer stubCustomizer,
+      GameplaySessionAttestationService gameplaySessionAttestationService) {
     super(endpoints, tlsProps, channelFactory, stubCustomizer);
+    this.gameplaySessionAttestationService = gameplaySessionAttestationService;
   }
 
   @PostConstruct
@@ -99,13 +99,17 @@ public final class EntityManagementClient
   }
 
   public Optional<Character> findCharacterByName(
-      String tenantId, String gameInstanceId, PlayableStateScope playableStateScope, String name) {
+      SessionContext context, PlayableStateScope playableStateScope, String name) {
+    String tenantId = Long.toString(context.tenantId());
+    String gameInstanceId = Long.toString(context.gameInstanceId());
     FindCharacterByNameRequest request =
         FindCharacterByNameRequest.newBuilder()
             .setTenantId(tenantId)
             .setGameInstanceId(gameInstanceId)
             .setPlayableStateScope(playableStateScope)
             .setName(name)
+            .setSessionAttestation(
+                sessionAttestation(context, gameInstanceId, context.roomInstanceId()))
             .build();
     try {
       FindCharacterByNameResponse response =
@@ -165,11 +169,16 @@ public final class EntityManagementClient
         .build();
   }
 
-  public QueryInventoryResponse queryInventory(String tenantId, String characterId) {
+  public QueryInventoryResponse queryInventory(SessionContext context) {
+    String tenantId = Long.toString(context.tenantId());
+    String characterId = Long.toString(context.characterId());
     QueryInventoryRequest request =
         QueryInventoryRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
+            .setSessionAttestation(
+                sessionAttestation(
+                    context, Long.toString(context.gameInstanceId()), context.roomInstanceId()))
             .build();
     try {
       return callStub().queryInventory(request);
@@ -199,9 +208,17 @@ public final class EntityManagementClient
         .build();
   }
 
-  public ListEquipmentResponse listEquipment(String tenantId, String characterId) {
+  public ListEquipmentResponse listEquipment(SessionContext context) {
+    String tenantId = Long.toString(context.tenantId());
+    String characterId = Long.toString(context.characterId());
     ListEquipmentRequest request =
-        ListEquipmentRequest.newBuilder().setTenantId(tenantId).setCharacterId(characterId).build();
+        ListEquipmentRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setCharacterId(characterId)
+            .setSessionAttestation(
+                sessionAttestation(
+                    context, Long.toString(context.gameInstanceId()), context.roomInstanceId()))
+            .build();
     try {
       return callStub().listEquipment(request);
     } catch (StatusRuntimeException ex) {
@@ -231,12 +248,17 @@ public final class EntityManagementClient
   }
 
   public ListContainerContentsResponse listContainerContents(
-      String tenantId, String characterId, String containerInstanceId) {
+      SessionContext context, String containerInstanceId) {
+    String tenantId = Long.toString(context.tenantId());
+    String characterId = Long.toString(context.characterId());
     ListContainerContentsRequest request =
         ListContainerContentsRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
             .setContainerInstanceId(containerInstanceId)
+            .setSessionAttestation(
+                sessionAttestation(
+                    context, Long.toString(context.gameInstanceId()), context.roomInstanceId()))
             .build();
     try {
       return callStub().listContainerContents(request);
@@ -267,12 +289,15 @@ public final class EntityManagementClient
   }
 
   public ListRoomGroundInventoryResponse listRoomGroundInventory(
-      String tenantId, String gameInstanceId, String roomInstanceId) {
+      SessionContext context, String roomInstanceId) {
+    String tenantId = Long.toString(context.tenantId());
+    String gameInstanceId = Long.toString(context.gameInstanceId());
     ListRoomGroundInventoryRequest request =
         ListRoomGroundInventoryRequest.newBuilder()
             .setTenantId(tenantId)
             .setGameInstanceId(gameInstanceId)
             .setRoomInstanceId(roomInstanceId)
+            .setSessionAttestation(sessionAttestation(context, gameInstanceId, roomInstanceId))
             .build();
     try {
       return callStub().listRoomGroundInventory(request);
@@ -304,12 +329,17 @@ public final class EntityManagementClient
   }
 
   public WearEquipmentItemResponse wearEquipment(
-      String tenantId, String characterId, String itemId, String itemInstanceId) {
+      SessionContext context, String itemId, String itemInstanceId) {
+    String tenantId = Long.toString(context.tenantId());
+    String characterId = Long.toString(context.characterId());
     WearEquipmentItemRequest.Builder request =
         WearEquipmentItemRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
-            .setItemId(itemId);
+            .setItemId(itemId)
+            .setSessionAttestation(
+                sessionAttestation(
+                    context, Long.toString(context.gameInstanceId()), context.roomInstanceId()));
     if (StringUtils.hasText(itemInstanceId)) {
       request.setItemInstanceId(itemInstanceId);
     }
@@ -341,17 +371,21 @@ public final class EntityManagementClient
         .build();
   }
 
-  public WearEquipmentItemResponse wearEquipment(
-      String tenantId, String characterId, String itemId) {
-    return wearEquipment(tenantId, characterId, itemId, null);
+  public WearEquipmentItemResponse wearEquipment(SessionContext context, String itemId) {
+    return wearEquipment(context, itemId, null);
   }
 
-  public RemoveEquipmentResponse removeEquipment(String tenantId, String characterId, String slot) {
+  public RemoveEquipmentResponse removeEquipment(SessionContext context, String slot) {
+    String tenantId = Long.toString(context.tenantId());
+    String characterId = Long.toString(context.characterId());
     RemoveEquipmentRequest request =
         RemoveEquipmentRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
             .setSlot(slot)
+            .setSessionAttestation(
+                sessionAttestation(
+                    context, Long.toString(context.gameInstanceId()), context.roomInstanceId()))
             .build();
     try {
       return callStub().removeEquipment(request);
@@ -382,20 +416,24 @@ public final class EntityManagementClient
   }
 
   public PutItemIntoContainerResponse putItemIntoContainer(
-      String tenantId,
-      String characterId,
+      SessionContext context,
       String containerInstanceId,
       String itemId,
       String itemInstanceId,
       String stackFamilyKey,
       int quantity) {
+    String tenantId = Long.toString(context.tenantId());
+    String characterId = Long.toString(context.characterId());
     PutItemIntoContainerRequest.Builder request =
         PutItemIntoContainerRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
             .setContainerInstanceId(containerInstanceId)
             .setItemId(itemId)
-            .setQuantity(quantity);
+            .setQuantity(quantity)
+            .setSessionAttestation(
+                sessionAttestation(
+                    context, Long.toString(context.gameInstanceId()), context.roomInstanceId()));
     if (itemInstanceId != null && !itemInstanceId.isBlank()) {
       request.setItemInstanceId(itemInstanceId);
     }
@@ -431,31 +469,34 @@ public final class EntityManagementClient
   }
 
   public PutItemIntoContainerResponse putItemIntoContainer(
-      String tenantId,
-      String characterId,
+      SessionContext context,
       String containerInstanceId,
       String itemId,
       String itemInstanceId,
       int quantity) {
     return putItemIntoContainer(
-        tenantId, characterId, containerInstanceId, itemId, itemInstanceId, null, quantity);
+        context, containerInstanceId, itemId, itemInstanceId, null, quantity);
   }
 
   public TakeItemFromContainerResponse takeItemFromContainer(
-      String tenantId,
-      String characterId,
+      SessionContext context,
       String containerInstanceId,
       String itemId,
       String itemInstanceId,
       String stackFamilyKey,
       int quantity) {
+    String tenantId = Long.toString(context.tenantId());
+    String characterId = Long.toString(context.characterId());
     TakeItemFromContainerRequest.Builder request =
         TakeItemFromContainerRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
             .setContainerInstanceId(containerInstanceId)
             .setItemId(itemId)
-            .setQuantity(quantity);
+            .setQuantity(quantity)
+            .setSessionAttestation(
+                sessionAttestation(
+                    context, Long.toString(context.gameInstanceId()), context.roomInstanceId()));
     if (itemInstanceId != null && !itemInstanceId.isBlank()) {
       request.setItemInstanceId(itemInstanceId);
     }
@@ -491,18 +532,18 @@ public final class EntityManagementClient
   }
 
   public TakeItemFromContainerResponse takeItemFromContainer(
-      String tenantId,
-      String characterId,
+      SessionContext context,
       String containerInstanceId,
       String itemId,
       String itemInstanceId,
       int quantity) {
     return takeItemFromContainer(
-        tenantId, characterId, containerInstanceId, itemId, itemInstanceId, null, quantity);
+        context, containerInstanceId, itemId, itemInstanceId, null, quantity);
   }
 
-  public ListRoomEntitiesResponse listRoomEntities(
-      String tenantId, String gameInstanceId, String roomInstanceId) {
+  public ListRoomEntitiesResponse listRoomEntities(SessionContext context, String roomInstanceId) {
+    String tenantId = Long.toString(context.tenantId());
+    String gameInstanceId = Long.toString(context.gameInstanceId());
     ListRoomEntitiesRequest request =
         ListRoomEntitiesRequest.newBuilder()
             .setTenantId(tenantId)
@@ -512,6 +553,7 @@ public final class EntityManagementClient
                     .setGameInstanceId(gameInstanceId)
                     .setRoomInstanceId(roomInstanceId)
                     .build())
+            .setSessionAttestation(sessionAttestation(context, gameInstanceId, roomInstanceId))
             .build();
     try {
       return callStub().listRoomEntities(request);
@@ -542,15 +584,16 @@ public final class EntityManagementClient
   }
 
   public PickupItemFromRoomResponse pickupItemFromRoom(
-      String tenantId,
-      String characterId,
-      String gameInstanceId,
+      SessionContext context,
       String roomInstanceId,
       String itemId,
       String itemInstanceId,
       String containerInstanceId,
       String stackFamilyKey,
       int quantity) {
+    String tenantId = Long.toString(context.tenantId());
+    String characterId = Long.toString(context.characterId());
+    String gameInstanceId = Long.toString(context.gameInstanceId());
     PickupItemFromRoomRequest.Builder request =
         PickupItemFromRoomRequest.newBuilder()
             .setTenantId(tenantId)
@@ -558,7 +601,8 @@ public final class EntityManagementClient
             .setGameInstanceId(gameInstanceId)
             .setRoomInstanceId(roomInstanceId)
             .setItemId(itemId)
-            .setQuantity(quantity);
+            .setQuantity(quantity)
+            .setSessionAttestation(sessionAttestation(context, gameInstanceId, roomInstanceId));
     if (StringUtils.hasText(containerInstanceId)) {
       request.setContainerInstanceId(containerInstanceId);
     }
@@ -597,56 +641,37 @@ public final class EntityManagementClient
   }
 
   public PickupItemFromRoomResponse pickupItemFromRoom(
-      String tenantId,
-      String characterId,
-      String gameInstanceId,
+      SessionContext context,
       String roomInstanceId,
       String itemId,
       String itemInstanceId,
       String containerInstanceId,
       int quantity) {
     return pickupItemFromRoom(
-        tenantId,
-        characterId,
-        gameInstanceId,
-        roomInstanceId,
-        itemId,
-        itemInstanceId,
-        containerInstanceId,
-        null,
-        quantity);
+        context, roomInstanceId, itemId, itemInstanceId, containerInstanceId, null, quantity);
   }
 
   public PickupItemFromRoomResponse pickupItemFromRoom(
-      String tenantId,
-      String characterId,
-      String gameInstanceId,
+      SessionContext context,
       String roomInstanceId,
       String itemId,
       String containerInstanceId,
       int quantity) {
     return pickupItemFromRoom(
-        tenantId,
-        characterId,
-        gameInstanceId,
-        roomInstanceId,
-        itemId,
-        null,
-        containerInstanceId,
-        null,
-        quantity);
+        context, roomInstanceId, itemId, null, containerInstanceId, null, quantity);
   }
 
   public DropItemToRoomResponse dropItemToRoom(
-      String tenantId,
-      String characterId,
-      String gameInstanceId,
+      SessionContext context,
       String roomInstanceId,
       String itemId,
       String itemInstanceId,
       String containerInstanceId,
       String stackFamilyKey,
       int quantity) {
+    String tenantId = Long.toString(context.tenantId());
+    String characterId = Long.toString(context.characterId());
+    String gameInstanceId = Long.toString(context.gameInstanceId());
     DropItemToRoomRequest.Builder request =
         DropItemToRoomRequest.newBuilder()
             .setTenantId(tenantId)
@@ -654,7 +679,8 @@ public final class EntityManagementClient
             .setGameInstanceId(gameInstanceId)
             .setRoomInstanceId(roomInstanceId)
             .setItemId(itemId)
-            .setQuantity(quantity);
+            .setQuantity(quantity)
+            .setSessionAttestation(sessionAttestation(context, gameInstanceId, roomInstanceId));
     if (StringUtils.hasText(containerInstanceId)) {
       request.setContainerInstanceId(containerInstanceId);
     }
@@ -693,47 +719,38 @@ public final class EntityManagementClient
   }
 
   public DropItemToRoomResponse dropItemToRoom(
-      String tenantId,
-      String characterId,
-      String gameInstanceId,
+      SessionContext context,
       String roomInstanceId,
       String itemId,
       String itemInstanceId,
       String containerInstanceId,
       int quantity) {
     return dropItemToRoom(
-        tenantId,
-        characterId,
-        gameInstanceId,
-        roomInstanceId,
-        itemId,
-        itemInstanceId,
-        containerInstanceId,
-        null,
-        quantity);
+        context, roomInstanceId, itemId, itemInstanceId, containerInstanceId, null, quantity);
   }
 
   public DropItemToRoomResponse dropItemToRoom(
-      String tenantId,
-      String characterId,
-      String gameInstanceId,
+      SessionContext context,
       String roomInstanceId,
       String itemId,
       String containerInstanceId,
       int quantity) {
     return dropItemToRoom(
-        tenantId,
-        characterId,
-        gameInstanceId,
-        roomInstanceId,
-        itemId,
-        null,
-        containerInstanceId,
-        null,
-        quantity);
+        context, roomInstanceId, itemId, null, containerInstanceId, null, quantity);
   }
 
   private EntityManagementServiceGrpc.EntityManagementServiceBlockingStub callStub() {
     return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
+  }
+
+  private String sessionAttestation(
+      SessionContext context, String gameInstanceId, String roomInstanceId) {
+    return gameplaySessionAttestationService.issueGameplaySessionAttestation(
+        Long.toString(context.tenantId()),
+        Long.toString(context.sessionId()),
+        Long.toString(context.accountId()),
+        Long.toString(context.characterId()),
+        gameInstanceId,
+        roomInstanceId);
   }
 }

@@ -120,7 +120,7 @@ Readiness rules for the currently implemented player path:
 - For `game-session-service`, that safety check includes reserved readiness-only round trips through the session-context store and command-queue store so the first command path is not admitted on downstream reachability alone. Readiness-only downstream gRPC canaries also run with explicit short per-call deadlines rather than inheriting ambient channel timing.
 - `game-logic-service` is ready only when the downstream services required for `ResolveLook` are reachable.
 - `account-service`, `world-management-service`, and `entity-management-service` use truthful local readiness for the currently implemented slice.
-- `game-session-service` may still run in `dev-isolated` mode for intentionally dependency-free local development, but the normal `dev` profile no longer weakens the canonical readiness group for Docker Compose or smoke environments.
+- `game-session-service` now uses the same canonical `dev` topology for local Docker Compose and smoke environments, rather than a separate dependency-light mode.
 
 Gateway retry filters, `wait-for-it.sh`, and similar startup helpers are convenience/bootstrap mechanisms only. They must not be treated as substitutes for correct readiness semantics.
 

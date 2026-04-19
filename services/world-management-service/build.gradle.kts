@@ -7,5 +7,6 @@ plugins {
 }
 
 dependencies {
+    implementation(project(":common-security"))
     testImplementation(libs.h2)
 }

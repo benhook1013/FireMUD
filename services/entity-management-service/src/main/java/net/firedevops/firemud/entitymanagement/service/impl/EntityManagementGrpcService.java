@@ -6,6 +6,8 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
@@ -99,6 +101,8 @@ public class EntityManagementGrpcService
       justification = "MeterRegistry is thread-safe and stored as injected")
   private final MeterRegistry meterRegistry;
 
+  private final GameplaySessionAttestationService gameplaySessionAttestationService;
+
   private final RoomEntityService roomEntityService;
   private final RuntimeInstanceCleanupService runtimeInstanceCleanupService;
 
@@ -111,6 +115,7 @@ public class EntityManagementGrpcService
       ContainerService containerService,
       RoomEntityService roomEntityService,
       RuntimeInstanceCleanupService runtimeInstanceCleanupService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.characterService = characterService;
@@ -120,6 +125,7 @@ public class EntityManagementGrpcService
     this.containerService = containerService;
     this.roomEntityService = roomEntityService;
     this.runtimeInstanceCleanupService = runtimeInstanceCleanupService;
+    this.gameplaySessionAttestationService = gameplaySessionAttestationService;
     this.meterRegistry = meterRegistry;
   }
 
@@ -132,6 +138,7 @@ public class EntityManagementGrpcService
       InventoryService inventoryService,
       ContainerService containerService,
       RoomEntityService roomEntityService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
       MeterRegistry meterRegistry) {
     this(
         pingService,
@@ -144,6 +151,7 @@ public class EntityManagementGrpcService
         (tenantId, gameInstanceId, terminationRequestId) ->
             new net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto(
                 0L, 0L, 0L, 0L),
+        gameplaySessionAttestationService,
         meterRegistry);
   }
 
@@ -234,7 +242,7 @@ public class EntityManagementGrpcService
       StreamObserver<ListCharactersByAccountResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       long accountId = Long.parseLong(request.getAccountId());
       var characters =
           characterService
@@ -301,8 +309,13 @@ public class EntityManagementGrpcService
       FindCharacterByNameRequest request,
       StreamObserver<FindCharacterByNameResponse> responseObserver) {
     try {
+      requireGameplayOrProbeAttestation(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getGameInstanceId(),
+          null);
       long tenantId = Long.parseLong(request.getTenantId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       FindCharacterByNameResponse.Builder builder = FindCharacterByNameResponse.newBuilder();
       characterService
           .findByGameplayScopeAndName(
@@ -324,6 +337,15 @@ public class EntityManagementGrpcService
                       "FindCharacterByName",
                       "INVALID_ARGUMENT",
                       ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      FindCharacterByNameResponse response =
+          FindCharacterByNameResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "FindCharacterByName", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -363,7 +385,7 @@ public class EntityManagementGrpcService
       CreateCharacterRequest request, StreamObserver<CreateCharacterResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       long accountId = Long.parseLong(request.getAccountId());
       CharacterDto created =
           characterService.create(
@@ -438,8 +460,14 @@ public class EntityManagementGrpcService
   public void queryInventory(
       QueryInventoryRequest request, StreamObserver<QueryInventoryResponse> responseObserver) {
     try {
+      requireGameplaySessionAttestation(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getCharacterId(),
+          null,
+          null);
       long tenantId = Long.parseLong(request.getTenantId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       var entries =
           inventoryService.listInventory(tenantId, characterId, Pageable.unpaged()).getContent();
@@ -454,6 +482,15 @@ public class EntityManagementGrpcService
               .setError(
                   GrpcAppErrors.error(
                       meterRegistry, logger, "QueryInventory", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      QueryInventoryResponse response =
+          QueryInventoryResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "QueryInventory", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -477,8 +514,14 @@ public class EntityManagementGrpcService
   public void listEquipment(
       ListEquipmentRequest request, StreamObserver<ListEquipmentResponse> responseObserver) {
     try {
+      requireGameplaySessionAttestation(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getCharacterId(),
+          null,
+          null);
       long tenantId = Long.parseLong(request.getTenantId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       var items = equipmentService.listEquipment(tenantId, characterId, Pageable.unpaged());
       ListEquipmentResponse response =
@@ -493,6 +536,15 @@ public class EntityManagementGrpcService
               .setError(
                   GrpcAppErrors.error(
                       meterRegistry, logger, "ListEquipment", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      ListEquipmentResponse response =
+          ListEquipmentResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "ListEquipment", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -517,8 +569,14 @@ public class EntityManagementGrpcService
       WearEquipmentItemRequest request,
       StreamObserver<WearEquipmentItemResponse> responseObserver) {
     try {
+      requireGameplaySessionAttestation(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getCharacterId(),
+          null,
+          null);
       long tenantId = Long.parseLong(request.getTenantId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long itemId = Long.parseLong(request.getItemId());
       Long itemInstanceId =
@@ -537,6 +595,15 @@ public class EntityManagementGrpcService
               .setError(
                   GrpcAppErrors.error(
                       meterRegistry, logger, "WearEquipment", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      WearEquipmentItemResponse response =
+          WearEquipmentItemResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "WearEquipment", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -569,8 +636,14 @@ public class EntityManagementGrpcService
   public void removeEquipment(
       RemoveEquipmentRequest request, StreamObserver<RemoveEquipmentResponse> responseObserver) {
     try {
+      requireGameplaySessionAttestation(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getCharacterId(),
+          null,
+          null);
       long tenantId = Long.parseLong(request.getTenantId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       CharacterEquipmentEntryDto dto =
           equipmentService.removeWornItem(tenantId, characterId, request.getSlot());
@@ -588,6 +661,15 @@ public class EntityManagementGrpcService
                       "RemoveEquipment",
                       "INVALID_ARGUMENT",
                       ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      RemoveEquipmentResponse response =
+          RemoveEquipmentResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "RemoveEquipment", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -625,8 +707,14 @@ public class EntityManagementGrpcService
       ListContainerContentsRequest request,
       StreamObserver<ListContainerContentsResponse> responseObserver) {
     try {
+      requireGameplaySessionAttestation(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getCharacterId(),
+          null,
+          null);
       long tenantId = Long.parseLong(request.getTenantId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
       var items =
@@ -647,6 +735,19 @@ public class EntityManagementGrpcService
                       logger,
                       "ListContainerContents",
                       "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      ListContainerContentsResponse response =
+          ListContainerContentsResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListContainerContents",
+                      ex.getCode(),
                       ex.getMessage()))
               .build();
       responseObserver.onNext(response);
@@ -687,8 +788,14 @@ public class EntityManagementGrpcService
       PutItemIntoContainerRequest request,
       StreamObserver<PutItemIntoContainerResponse> responseObserver) {
     try {
+      requireGameplaySessionAttestation(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getCharacterId(),
+          null,
+          null);
       long tenantId = Long.parseLong(request.getTenantId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
       long itemId = Long.parseLong(request.getItemId());
@@ -719,6 +826,15 @@ public class EntityManagementGrpcService
                       "PutItemIntoContainer",
                       "INVALID_ARGUMENT",
                       ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      PutItemIntoContainerResponse response =
+          PutItemIntoContainerResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "PutItemIntoContainer", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -758,8 +874,14 @@ public class EntityManagementGrpcService
       TakeItemFromContainerRequest request,
       StreamObserver<TakeItemFromContainerResponse> responseObserver) {
     try {
+      requireGameplaySessionAttestation(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getCharacterId(),
+          null,
+          null);
       long tenantId = Long.parseLong(request.getTenantId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
       long itemId = Long.parseLong(request.getItemId());
@@ -789,6 +911,19 @@ public class EntityManagementGrpcService
                       logger,
                       "TakeItemFromContainer",
                       "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      TakeItemFromContainerResponse response =
+          TakeItemFromContainerResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "TakeItemFromContainer",
+                      ex.getCode(),
                       ex.getMessage()))
               .build();
       responseObserver.onNext(response);
@@ -829,8 +964,13 @@ public class EntityManagementGrpcService
       ListRoomGroundInventoryRequest request,
       StreamObserver<ListRoomGroundInventoryResponse> responseObserver) {
     try {
+      requireGameplayOrProbeAttestation(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getGameInstanceId(),
+          request.getRoomInstanceId());
       long tenantId = Long.parseLong(request.getTenantId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       var items =
           inventoryService.listRoomGroundItems(
               tenantId,
@@ -852,6 +992,19 @@ public class EntityManagementGrpcService
                       logger,
                       "ListRoomGroundInventory",
                       "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      ListRoomGroundInventoryResponse response =
+          ListRoomGroundInventoryResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListRoomGroundInventory",
+                      ex.getCode(),
                       ex.getMessage()))
               .build();
       responseObserver.onNext(response);
@@ -893,8 +1046,14 @@ public class EntityManagementGrpcService
       PickupItemFromRoomRequest request,
       StreamObserver<PickupItemFromRoomResponse> responseObserver) {
     try {
+      requireGameplaySessionAttestation(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getCharacterId(),
+          request.getGameInstanceId(),
+          request.getRoomInstanceId());
       long tenantId = Long.parseLong(request.getTenantId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long itemId = Long.parseLong(request.getItemId());
       int quantity = request.getQuantity();
@@ -925,6 +1084,15 @@ public class EntityManagementGrpcService
                       "PickupItemFromRoom",
                       "INVALID_ARGUMENT",
                       ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      PickupItemFromRoomResponse response =
+          PickupItemFromRoomResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "PickupItemFromRoom", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -963,8 +1131,14 @@ public class EntityManagementGrpcService
   public void dropItemToRoom(
       DropItemToRoomRequest request, StreamObserver<DropItemToRoomResponse> responseObserver) {
     try {
+      requireGameplaySessionAttestation(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getCharacterId(),
+          request.getGameInstanceId(),
+          request.getRoomInstanceId());
       long tenantId = Long.parseLong(request.getTenantId());
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long itemId = Long.parseLong(request.getItemId());
       int quantity = request.getQuantity();
@@ -991,6 +1165,15 @@ public class EntityManagementGrpcService
               .setError(
                   GrpcAppErrors.error(
                       meterRegistry, logger, "DropItemToRoom", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      DropItemToRoomResponse response =
+          DropItemToRoomResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "DropItemToRoom", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1023,6 +1206,11 @@ public class EntityManagementGrpcService
   public void listRoomEntities(
       ListRoomEntitiesRequest request, StreamObserver<ListRoomEntitiesResponse> responseObserver) {
     try {
+      requireGameplayOrProbeAttestation(
+          request.getSessionAttestation(),
+          request.getRoomInstance().getTenantId(),
+          request.getRoomInstance().getGameInstanceId(),
+          request.getRoomInstance().getRoomInstanceId());
       requireTenantAccessWhenPresent(Long.parseLong(resolveTenantId(request)));
       var entities =
           roomEntityService.listEntities(
@@ -1041,6 +1229,15 @@ public class EntityManagementGrpcService
                       "ListRoomEntities",
                       "INVALID_ARGUMENT",
                       ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      ListRoomEntitiesResponse response =
+          ListRoomEntitiesResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "ListRoomEntities", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1122,6 +1319,9 @@ public class EntityManagementGrpcService
   }
 
   private void requireTenantAccessWhenPresent(Long tenantId) {
+    if (SessionContext.isInternalService()) {
+      return;
+    }
     if (SessionContext.getAccountId() == null
         && SessionContext.getGlobalRoles().isEmpty()
         && SessionContext.getScopedRolesMap().isEmpty()) {
@@ -1258,5 +1458,30 @@ public class EntityManagementGrpcService
         .setVisible(dto.visible())
         .setVisibleRef(dto.visibleRef() == null ? "" : dto.visibleRef())
         .build();
+  }
+
+  private void requireGameplaySessionAttestation(
+      String token,
+      String tenantId,
+      String characterId,
+      String gameInstanceId,
+      String roomInstanceId) {
+    gameplaySessionAttestationService.requireGameplaySessionMatch(
+        token, tenantId, null, null, characterId, gameInstanceId, roomInstanceId);
+    requireInternalServiceCaller();
+  }
+
+  private void requireGameplayOrProbeAttestation(
+      String token, String tenantId, String gameInstanceId, String roomInstanceId) {
+    gameplaySessionAttestationService.requireGameplayOrProbeMatch(
+        token, tenantId, gameInstanceId, roomInstanceId);
+    requireInternalServiceCaller();
+  }
+
+  private void requireInternalServiceCaller() {
+    if (!SessionContext.isInternalService()) {
+      throw new GameplaySessionAttestationException(
+          "SESSION_ATTESTATION_INVALID", "Gameplay entity RPCs require internal service identity");
+    }
   }
 }

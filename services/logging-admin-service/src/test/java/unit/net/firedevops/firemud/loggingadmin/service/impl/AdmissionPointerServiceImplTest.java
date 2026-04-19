@@ -42,7 +42,7 @@ class AdmissionPointerServiceImplTest {
 
   @Test
   void listPointersFiltersToAccessibleTenant() {
-    SessionContext.setContext("7", List.of(), Map.of("2", List.of("admin")));
+    SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
     when(gameSessionControlPlaneClient.listAdmissionPointers())
         .thenReturn(
             ListAdmissionPointersResponse.newBuilder()
@@ -59,7 +59,7 @@ class AdmissionPointerServiceImplTest {
 
   @Test
   void listPointerAuditRequiresAccessibleTenant() {
-    SessionContext.setContext("7", List.of(), Map.of("2", List.of("admin")));
+    SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
     when(gameSessionControlPlaneClient.listAdmissionPointerAudit("sandbox", "preview"))
         .thenReturn(
             ListAdmissionPointerAuditResponse.newBuilder()

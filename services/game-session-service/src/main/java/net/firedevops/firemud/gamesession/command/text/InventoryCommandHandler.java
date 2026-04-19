@@ -58,9 +58,7 @@ public class InventoryCommandHandler {
 
   private InventoryCommandHandlingResult describeInventory(SessionContext context) {
     try {
-      var response =
-          entityManagementClient.queryInventory(
-              Long.toString(context.tenantId()), Long.toString(context.characterId()));
+      var response = entityManagementClient.queryInventory(context);
       if (response.hasError()) {
         return inventoryUnavailable(
             StringUtils.hasText(response.getError().getMessage())
@@ -84,10 +82,7 @@ public class InventoryCommandHandler {
   private InventoryCommandHandlingResult describeRoomInventory(SessionContext context) {
     try {
       var response =
-          entityManagementClient.listRoomGroundInventory(
-              Long.toString(context.tenantId()),
-              Long.toString(context.gameInstanceId()),
-              context.roomInstanceId());
+          entityManagementClient.listRoomGroundInventory(context, context.roomInstanceId());
       if (response.hasError()) {
         return inventoryUnavailable(
             StringUtils.hasText(response.getError().getMessage())
@@ -177,10 +172,7 @@ public class InventoryCommandHandler {
     try {
       if (pickup) {
         var roomEntities =
-            entityManagementClient.listRoomGroundInventory(
-                Long.toString(context.tenantId()),
-                Long.toString(context.gameInstanceId()),
-                context.roomInstanceId());
+            entityManagementClient.listRoomGroundInventory(context, context.roomInstanceId());
         if (roomEntities.hasError()) {
           return inventoryUnavailable(
               StringUtils.hasText(roomEntities.getError().getMessage())
@@ -204,9 +196,7 @@ public class InventoryCommandHandler {
         }
         var response =
             entityManagementClient.pickupItemFromRoom(
-                Long.toString(context.tenantId()),
-                Long.toString(context.characterId()),
-                Long.toString(context.gameInstanceId()),
+                context,
                 context.roomInstanceId(),
                 item.itemId(),
                 item.explicitInstanceReference() ? item.itemInstanceId() : null,
@@ -229,9 +219,7 @@ public class InventoryCommandHandler {
             itemReference.quantity());
       }
 
-      var inventoryResponse =
-          entityManagementClient.queryInventory(
-              Long.toString(context.tenantId()), Long.toString(context.characterId()));
+      var inventoryResponse = entityManagementClient.queryInventory(context);
       if (inventoryResponse.hasError()) {
         return inventoryUnavailable(
             StringUtils.hasText(inventoryResponse.getError().getMessage())
@@ -255,9 +243,7 @@ public class InventoryCommandHandler {
       }
       var response =
           entityManagementClient.dropItemToRoom(
-              Long.toString(context.tenantId()),
-              Long.toString(context.characterId()),
-              Long.toString(context.gameInstanceId()),
+              context,
               context.roomInstanceId(),
               item.itemId(),
               item.explicitInstanceReference() ? item.itemInstanceId() : null,

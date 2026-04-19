@@ -25,7 +25,9 @@ import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult;
+import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
 import net.firedevops.firemud.accountservice.entity.Profile;
@@ -33,6 +35,7 @@ import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPol
 import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
+import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository;
@@ -56,6 +59,7 @@ import org.mockito.MockitoAnnotations;
 
 class AccountServiceImplTest {
   @Mock private AccountRepository accountRepository;
+  @Mock private AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   @Mock private AccountTenantMembershipRepository accountTenantMembershipRepository;
   @Mock private ProfileRepository profileRepository;
   @Mock private ProfileMapper profileMapper;
@@ -108,6 +112,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("44")
                     .setPointerVersion(17L)
+                    .setVisible(true)
                     .setRequiresCharacterSelection(false)
                     .setStateScope("SHARED")
                     .setCharacterCreationPolicy("ALLOW_NEW")
@@ -122,6 +127,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("44")
                 .setPointerVersion(17L)
+                .setVisible(true)
                 .setRequiresCharacterSelection(false)
                 .setStateScope("SHARED")
                 .setCharacterCreationPolicy("ALLOW_NEW")
@@ -131,6 +137,7 @@ class AccountServiceImplTest {
     service =
         new AccountServiceImpl(
             accountRepository,
+            accountRealmAccessGrantRepository,
             accountTenantMembershipRepository,
             mapper,
             profileRepository,
@@ -440,6 +447,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("99")
                 .setPointerVersion(18L)
+                .setVisible(true)
                 .setRequiresCharacterSelection(false)
                 .setStateScope("SHARED")
                 .setCharacterCreationPolicy("ALLOW_NEW")
@@ -623,6 +631,7 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("91")
                     .setPointerVersion(17L)
+                    .setVisible(true)
                     .setRequiresCharacterSelection(false)
                     .setStateScope("ISOLATED")
                     .setCharacterCreationPolicy("COPIED_ONLY")
@@ -637,6 +646,7 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("91")
                 .setPointerVersion(17L)
+                .setVisible(true)
                 .setRequiresCharacterSelection(false)
                 .setStateScope("ISOLATED")
                 .setCharacterCreationPolicy("COPIED_ONLY")
@@ -662,6 +672,151 @@ class AccountServiceImplTest {
     assertEquals("ForkMara", characters.getFirst().characterName());
     assertEquals("ISOLATED", characters.getFirst().stateScope());
     assertEquals("COPIED_ONLY", characters.getFirst().characterCreationPolicy());
+  }
+
+  @Test
+  void listBootstrapRealmsExcludesNonPublicRealmWithoutGrant() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setDisplayName("Preview Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("55")
+                    .setPointerVersion(19L)
+                    .setVisible(false)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+
+    var realms = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
+
+    assertEquals(0, realms.size());
+  }
+
+  @Test
+  void issueConnectTokenAllowsNonPublicRealmWithGrant() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setDisplayName("Preview Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("55")
+                    .setPointerVersion(19L)
+                    .setVisible(false)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    when(gameSessionClient.getAdmissionPointer("demo", "preview"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("preview")
+                .setRealmDisplayName("Preview Realm")
+                .setTenantId("7")
+                .setGameInstanceId("55")
+                .setPointerVersion(19L)
+                .setVisible(false)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("SHARED")
+                .setCharacterCreationPolicy("ALLOW_NEW")
+                .build());
+    when(accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(true);
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    ConnectTokenResult result =
+        service.issueConnectToken(
+            bootstrap.bootstrapToken(), new ConnectTokenRequest(connectScopeId, "req-preview-1"));
+
+    assertEquals(11L, result.accountId());
+    assertEquals(7L, result.tenantId());
+    assertEquals(55L, result.gameInstanceId());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+  }
+
+  @Test
+  void grantRealmAccessUpsertsRuntimeGrant() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountRealmAccessGrantRepository.findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(Optional.empty());
+    when(accountRealmAccessGrantRepository.save(
+            org.mockito.ArgumentMatchers.any(AccountRealmAccessGrant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var result =
+        service.grantRealmAccess(
+            new RealmAccessGrantRequest(
+                11L, 7L, "demo", "preview", "operator", "preview access", "req-grant-1"));
+
+    assertTrue(result.granted());
+    assertEquals(1L, result.grantVersion());
+    org.mockito.Mockito.verify(accountRealmAccessGrantRepository)
+        .save(org.mockito.ArgumentMatchers.any(AccountRealmAccessGrant.class));
+  }
+
+  @Test
+  void getRealmAccessGrantForRuntimeReturnsGrantState() {
+    Account account = new Account();
+    account.setId(11L);
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AccountRealmAccessGrant grant = new AccountRealmAccessGrant();
+    grant.setGrantVersion(4L);
+    when(accountRealmAccessGrantRepository.findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(Optional.of(grant));
+
+    var result = service.getRealmAccessGrantForRuntime(11L, 7L, "demo", "preview", "req-grant-1");
+
+    assertTrue(result.granted());
+    assertEquals(4L, result.grantVersion());
   }
 
   @Test

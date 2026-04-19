@@ -59,7 +59,7 @@ The same rule applies to non-edge service restarts more broadly: Game Session fr
 - [`runtime-and-data.md`](./runtime-and-data.md)
   - Redis/PostgreSQL ownership, session indexes, tick coordination, script/version fences, and runtime feature-flag handling.
 - [`operations.md`](./operations.md)
-  - readiness/liveness, scaling and rebalancing, failure behavior, dev-isolated mode, and operator-facing notes.
+  - readiness/liveness, scaling and rebalancing, failure behavior, and operator-facing notes.
 - [`configuration.md`](./configuration.md)
   - environment variables, service discovery, TLS, and deployment-specific configuration invariants.
 - [`protocols.md`](./protocols.md)

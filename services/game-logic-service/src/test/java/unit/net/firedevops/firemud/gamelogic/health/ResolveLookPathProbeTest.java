@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc.EntityManagementServiceBlockingStub;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.gamelogic.health.ResolveLookPathProbe.ProbeResult;
@@ -16,6 +17,11 @@ import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc.Worl
 import org.junit.jupiter.api.Test;
 
 class ResolveLookPathProbeTest {
+  private GameplaySessionAttestationService probeAttestationService() {
+    GameplaySessionAttestationService service = mock(GameplaySessionAttestationService.class);
+    when(service.issueInternalProbeAttestation("0", "0", "0")).thenReturn("probe-token");
+    return service;
+  }
 
   @Test
   void probeReturnsUpWhenResolveLookDependenciesAreReachable() {
@@ -37,7 +43,8 @@ class ResolveLookPathProbeTest {
     when(entityStub.listRoomEntities(org.mockito.ArgumentMatchers.any()))
         .thenReturn(ListRoomEntitiesResponse.newBuilder().build());
 
-    ResolveLookPathProbe probe = new ResolveLookPathProbe(worldStub, entityStub);
+    ResolveLookPathProbe probe =
+        new ResolveLookPathProbe(worldStub, entityStub, probeAttestationService());
 
     ProbeResult result = probe.probe("0", "0", "0");
 
@@ -63,7 +70,8 @@ class ResolveLookPathProbeTest {
         .getRoomSnapshot(org.mockito.ArgumentMatchers.any());
 
     ResolveLookPathProbe probe =
-        new ResolveLookPathProbe(worldStub, mock(EntityManagementServiceBlockingStub.class));
+        new ResolveLookPathProbe(
+            worldStub, mock(EntityManagementServiceBlockingStub.class), probeAttestationService());
 
     ProbeResult result = probe.probe("0", "0", "0");
 

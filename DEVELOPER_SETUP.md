@@ -414,13 +414,13 @@ More details on deployment environments and gateway routing can be found in the 
 
 These documents explain how the compose setup differs from production and provide examples of the configuration files.
 
-### Dev-isolated stubbed services
+### Local development model
 
-- Several services expose a **dev-isolated mode** that keeps core flows testable without standing up the full dependency graph. These modes are wired through Gradle `bootRunDevIsolated` tasks and corresponding environment variables, and are intended strictly for local smoke tests and debugging—not for production.
-- When `game-session.dev-isolated` (or `GAME_SESSION_DEV_ISOLATED`) is `true`, the Game Session Service (and dependent tests) uses in-memory replacements (`DevIsolatedSessionContextService`, `DevIsolatedGameInstanceService`, and `DevIsolatedGameInstanceRegistry`) instead of hitting Redis/JPA. This keeps LOGIN + LOOK flows runnable on a developer laptop that lacks PostgreSQL/Redis/Account Service dependencies. You can start this mode with `./gradlew :game-session-service:bootRunDevIsolated` (see `services/game-session-service/README.md` and `design/architecture/microservices/game-session-service/README.md#dev-isolated-mode` for details).
-- The TCP Proxy Service exposes a similar dev-isolated mode controlled by `TCP_PROXY_DEV_ISOLATED`. The `./gradlew :tcp-proxy-service:bootRunDevIsolated` task and the `docker/docker-compose.tcp-proxy-devisolated.yml` profile both set this flag so you can smoke-test Telnet input against the proxy’s in-process echo handler without starting Spring Cloud Gateway, Game Session, or the rest of the stack (see `design/architecture/microservices/tcp-proxy-service/README.md#local-development-and-echo-loop`).
-- Spring Cloud Gateway also provides a `./gradlew :spring-cloud-gateway:bootRunDevIsolated` task that runs with the `dev` profile and enables `TCP_PROXY_DEV_ISOLATED` for local WebSocket debugging that mirrors the proxy’s dev-isolated behavior, while still relying on in-process stubs instead of full upstream services.
-- The dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, and `SessionResumptionFlowTest`) are currently annotated with `@Disabled` and reference the TODO in `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`. They should be revisited and re-enabled once the real Account/Redis/GameInstance wiring is available so Gradle runs against production services instead of the stubbed dev-isolated path.
+- The canonical local path now uses the normal `dev` profile with the real Postgres, Redis, Gateway, Account, and gameplay-service topology.
+- For end-to-end validation, prefer the repo-owned smoke scripts under `dev-tools/` instead of ad hoc single-service shortcuts:
+  - `dev-tools/verify-fresh-bootstrap.sh`
+  - `dev-tools/verify-restart-state.sh`
+- Treat local source-built smoke as the primary proof path for gameplay changes. Docker Compose and smoke workflows should exercise the same runtime topology that production-like environments use, not alternate dependency-light modes.
 
 ### Running Gradle from WSL
 

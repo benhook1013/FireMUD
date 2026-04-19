@@ -50,9 +50,7 @@ public class EquipmentCommandHandler {
   }
 
   private TextCommandInterpretationResult describeEquipment(SessionContext context) {
-    ListEquipmentResponse equipment =
-        entityManagementClient.listEquipment(
-            Long.toString(context.tenantId()), Long.toString(context.characterId()));
+    ListEquipmentResponse equipment = entityManagementClient.listEquipment(context);
     if (equipment.hasError()) {
       return equipmentUnavailable(equipment.getError().getMessage());
     }
@@ -93,10 +91,7 @@ public class EquipmentCommandHandler {
     InventoryItem carried = resolution.item().orElseThrow();
     WearEquipmentItemResponse response =
         entityManagementClient.wearEquipment(
-            Long.toString(context.tenantId()),
-            Long.toString(context.characterId()),
-            carried.getItemId(),
-            carried.getItemInstanceId());
+            context, carried.getItemId(), carried.getItemInstanceId());
     if (response.hasError()) {
       return equipmentFailure(response.getError().getCode(), response.getError().getMessage());
     }
@@ -122,9 +117,7 @@ public class EquipmentCommandHandler {
     if (itemReference.quantity() != 1) {
       return equipmentInvalidArgument("REMOVE", "REMOVE takes a single equipped item at a time");
     }
-    ListEquipmentResponse equipment =
-        entityManagementClient.listEquipment(
-            Long.toString(context.tenantId()), Long.toString(context.characterId()));
+    ListEquipmentResponse equipment = entityManagementClient.listEquipment(context);
     if (equipment.hasError()) {
       return equipmentUnavailable(equipment.getError().getMessage());
     }
@@ -136,10 +129,7 @@ public class EquipmentCommandHandler {
     }
     EquipmentItem worn = resolved.orElseThrow();
     RemoveEquipmentResponse response =
-        entityManagementClient.removeEquipment(
-            Long.toString(context.tenantId()),
-            Long.toString(context.characterId()),
-            worn.getSlot());
+        entityManagementClient.removeEquipment(context, worn.getSlot());
     if (response.hasError()) {
       return equipmentFailure(response.getError().getCode(), response.getError().getMessage());
     }
@@ -184,9 +174,7 @@ public class EquipmentCommandHandler {
   }
 
   private EquipmentResolution resolveCarriedItem(SessionContext context, String reference) {
-    var inventory =
-        entityManagementClient.queryInventory(
-            Long.toString(context.tenantId()), Long.toString(context.characterId()));
+    var inventory = entityManagementClient.queryInventory(context);
     if (inventory.hasError()) {
       return EquipmentResolution.unavailable(
           StringUtils.hasText(inventory.getError().getMessage())

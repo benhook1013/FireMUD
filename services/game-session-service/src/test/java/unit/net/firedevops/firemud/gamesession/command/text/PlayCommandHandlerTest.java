@@ -112,7 +112,7 @@ class PlayCommandHandlerTest {
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(entityManagementClient.findCharacterByName(
-            "22", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "demo"))
+            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "demo"))
         .thenReturn(
             Optional.of(
                 net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
@@ -160,7 +160,7 @@ class PlayCommandHandlerTest {
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(entityManagementClient.findCharacterByName(
-            "22", "2", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Emberline"))
+            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Emberline"))
         .thenReturn(
             Optional.of(
                 net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
@@ -392,7 +392,7 @@ class PlayCommandHandlerTest {
                     123L, 22L, "sandbox", "preview", 41L, 1L, "scope-1", "jti-1", "req-1",
                     "gw-1")));
     when(entityManagementClient.findCharacterByName(
-            "22", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED, "Sora"))
+            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED, "Sora"))
         .thenReturn(
             Optional.of(
                 net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()

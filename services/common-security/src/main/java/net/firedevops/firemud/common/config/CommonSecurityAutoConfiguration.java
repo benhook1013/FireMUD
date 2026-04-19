@@ -10,6 +10,7 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.GrpcAuthProperties;
 import net.firedevops.firemud.common.security.GrpcClientAuth;
 import net.firedevops.firemud.common.security.HttpAuthProperties;
@@ -101,6 +102,14 @@ public class CommonSecurityAutoConfiguration {
         return GrpcClientAuth.attach(stub, jwtUtil, runtimeIdentityProvider.getIfAvailable());
       }
     };
+  }
+
+  @Bean
+  @ConditionalOnBean(name = "jwtUtil")
+  @ConditionalOnMissingBean(GameplaySessionAttestationService.class)
+  GameplaySessionAttestationService gameplaySessionAttestationService(
+      @Qualifier("jwtUtil") JwtUtil jwtUtil) {
+    return new GameplaySessionAttestationService(jwtUtil);
   }
 
   @Bean

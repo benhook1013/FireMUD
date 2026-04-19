@@ -124,6 +124,7 @@ public class CommunicationAggregationService {
           ListRoomEntitiesRequest.newBuilder()
               .setTenantId(request.getTenantId())
               .setRoomInstance(resolveRoomInstance(request))
+              .setSessionAttestation(request.getSessionAttestation())
               .build());
     } catch (StatusRuntimeException ex) {
       LOG.warn("EntityManagementService unavailable for communication send", ex);

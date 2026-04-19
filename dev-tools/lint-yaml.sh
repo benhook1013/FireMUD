@@ -34,6 +34,14 @@ mapfile -t yaml_files < <(
     ':!:k8s/helm/**/templates/**'
 )
 
+existing_yaml_files=()
+for yaml_file in "${yaml_files[@]}"; do
+  if [ -f "$yaml_file" ]; then
+    existing_yaml_files+=("$yaml_file")
+  fi
+done
+yaml_files=("${existing_yaml_files[@]}")
+
 if [ "${#yaml_files[@]}" -eq 0 ]; then
   echo "No tracked YAML files matched lint scope."
   exit 0

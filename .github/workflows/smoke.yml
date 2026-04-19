@@ -171,7 +171,7 @@ jobs:
               if (value === "success") return "✅";
               if (value === "failure") return "❌";
               if (value === "cancelled") return "⚪";
-              if (value === "tracked-by-smoke-gate") return "🕒";
+              if (value === "tracked-by-smoke-gate") return "⏳";
               return "⏭️";
             };
 
@@ -179,7 +179,7 @@ jobs:
             if (["failure", "cancelled", "timed_out"].includes(liteResult)) {
               headline = "❌ Smoke tests failed";
             } else if (fullEnabled) {
-              headline = "🕒 Full smoke is tracked by Smoke Gate";
+              headline = "⏳ Full smoke is tracked by Smoke Gate";
             } else if (!liteEnabled) {
               headline = "⏭️ Smoke tests skipped";
             }

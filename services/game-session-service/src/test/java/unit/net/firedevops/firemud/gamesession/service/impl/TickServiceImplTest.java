@@ -11,7 +11,6 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.lang.reflect.Field;
 import java.time.Duration;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,12 +44,7 @@ class TickServiceImplTest {
     sessionContextService = mock(SessionContextService.class);
     service =
         new TickServiceImpl(
-            redisTemplate,
-            meterRegistry,
-            conflictTracker,
-            repository,
-            new DevIsolatedProperties(false),
-            sessionContextService);
+            redisTemplate, meterRegistry, conflictTracker, repository, sessionContextService);
     ((TickServiceImpl) service).init();
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
     instance.setTenantId(1L);

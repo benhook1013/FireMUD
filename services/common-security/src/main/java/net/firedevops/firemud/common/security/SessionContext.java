@@ -101,7 +101,7 @@ public final class SessionContext {
       return true;
     }
     List<String> roles = getScopedRoles(String.valueOf(tenantId));
-    return roles.contains("tenantAdmin") || roles.contains("admin") || roles.contains("moderator");
+    return roles.contains("tenantAdmin") || roles.contains("moderator");
   }
 
   /** Throws 403 when the current caller cannot act on the provided tenant. */

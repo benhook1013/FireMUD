@@ -703,7 +703,7 @@ jobs:
 
             const body = [
               "### Preview Summary",
-              "⚪ Preview environment destroyed",
+              "⏭️ Preview environment destroyed",
               "",
               `- PR: #${prNumber}`,
               `- Head SHA: \`${process.env.PREVIEW_HEAD_SHA || "unknown"}\``,

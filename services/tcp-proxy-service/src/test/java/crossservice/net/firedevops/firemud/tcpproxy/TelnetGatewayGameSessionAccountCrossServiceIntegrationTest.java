@@ -836,7 +836,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("spring.application.name", "game-session-service");
     props.put("server.port", "0");
     props.put("spring.grpc.server.port", "0");
-    props.put("game-session.dev-isolated", "false");
     props.put("game-session.require-authenticated-commands", "true");
     props.put("firemud.services.accountService", "localhost:" + accountPort);
     props.put("firemud.services.gameLogicService", "localhost:" + gameLogicPort);

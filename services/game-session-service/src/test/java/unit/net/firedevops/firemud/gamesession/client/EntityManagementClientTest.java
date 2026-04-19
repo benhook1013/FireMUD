@@ -10,6 +10,7 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
@@ -19,9 +20,15 @@ import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
+import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
 
 class EntityManagementClientTest {
+  private static final SessionContext ROOM_CONTEXT =
+      new SessionContext(0L, 1L, 0L, "", 7L, "", 1L, "R-1", "");
+  private static final SessionContext GAMEPLAY_CONTEXT =
+      new SessionContext(0L, 1L, 0L, "", 7L, "", 0L, "99", "");
+
   @Test
   void pickupItemFromRoomForwardsRequestAndReturnsInventoryItem() throws Exception {
     EntityManagementClient client = newClient();
@@ -32,10 +39,11 @@ class EntityManagementClientTest {
             net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest.newBuilder()
                 .setTenantId("1")
                 .setCharacterId("7")
-                .setGameInstanceId("GI-1")
+                .setGameInstanceId("1")
                 .setRoomInstanceId("R-1")
                 .setItemId("99")
                 .setQuantity(2)
+                .setSessionAttestation("attestation")
                 .build()))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
@@ -50,7 +58,7 @@ class EntityManagementClientTest {
     setStub(client, stub);
 
     PickupItemFromRoomResponse response =
-        client.pickupItemFromRoom("1", "7", "GI-1", "R-1", "99", null, null, 2);
+        client.pickupItemFromRoom(ROOM_CONTEXT, "R-1", "99", null, null, null, 2);
 
     assertThat(response.getInventoryItem().getItemName()).isEqualTo("Torch");
     assertThat(response.getInventoryItem().getQuantity()).isEqualTo(2);
@@ -66,17 +74,18 @@ class EntityManagementClientTest {
             net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest.newBuilder()
                 .setTenantId("1")
                 .setCharacterId("7")
-                .setGameInstanceId("GI-1")
+                .setGameInstanceId("1")
                 .setRoomInstanceId("R-1")
                 .setItemId("99")
                 .setQuantity(1)
+                .setSessionAttestation("attestation")
                 .build()))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
                     RoomGroundInventoryItem.newBuilder()
                         .setTenantId("1")
-                        .setGameInstanceId("GI-1")
+                        .setGameInstanceId("1")
                         .setRoomInstanceId("R-1")
                         .setItemId("99")
                         .setItemName("Torch")
@@ -87,7 +96,7 @@ class EntityManagementClientTest {
     setStub(client, stub);
 
     DropItemToRoomResponse response =
-        client.dropItemToRoom("1", "7", "GI-1", "R-1", "99", null, null, 1);
+        client.dropItemToRoom(ROOM_CONTEXT, "R-1", "99", null, null, null, 1);
 
     assertThat(response.getRoomGroundItem().getItemName()).isEqualTo("Torch");
     assertThat(response.getRoomGroundItem().getQuantity()).isEqualTo(1);
@@ -104,6 +113,7 @@ class EntityManagementClientTest {
                 .setTenantId("1")
                 .setCharacterId("7")
                 .setContainerInstanceId("99")
+                .setSessionAttestation("attestation")
                 .build()))
         .thenReturn(
             ListContainerContentsResponse.newBuilder()
@@ -117,7 +127,7 @@ class EntityManagementClientTest {
                 .build());
     setStub(client, stub);
 
-    ListContainerContentsResponse response = client.listContainerContents("1", "7", "99");
+    ListContainerContentsResponse response = client.listContainerContents(GAMEPLAY_CONTEXT, "99");
 
     assertThat(response.getItems(0).getItemName()).isEqualTo("Torch");
     assertThat(response.getItems(0).getQuantity()).isEqualTo(2);
@@ -137,6 +147,7 @@ class EntityManagementClientTest {
                 .setItemId("100")
                 .setItemInstanceId("200")
                 .setQuantity(1)
+                .setSessionAttestation("attestation")
                 .build()))
         .thenReturn(
             PutItemIntoContainerResponse.newBuilder()
@@ -151,7 +162,7 @@ class EntityManagementClientTest {
     setStub(client, stub);
 
     PutItemIntoContainerResponse response =
-        client.putItemIntoContainer("1", "7", "99", "100", "200", 1);
+        client.putItemIntoContainer(GAMEPLAY_CONTEXT, "99", "100", "200", 1);
 
     assertThat(response.getContainerItem().getItemName()).isEqualTo("Torch");
     assertThat(response.getContainerItem().getQuantity()).isEqualTo(1);
@@ -171,6 +182,7 @@ class EntityManagementClientTest {
                 .setItemId("100")
                 .setItemInstanceId("200")
                 .setQuantity(1)
+                .setSessionAttestation("attestation")
                 .build()))
         .thenReturn(
             TakeItemFromContainerResponse.newBuilder()
@@ -184,18 +196,27 @@ class EntityManagementClientTest {
     setStub(client, stub);
 
     TakeItemFromContainerResponse response =
-        client.takeItemFromContainer("1", "7", "99", "100", "200", 1);
+        client.takeItemFromContainer(GAMEPLAY_CONTEXT, "99", "100", "200", 1);
 
     assertThat(response.getInventoryItem().getItemName()).isEqualTo("Torch");
     assertThat(response.getInventoryItem().getQuantity()).isEqualTo(1);
   }
 
   private static EntityManagementClient newClient() {
+    GameplaySessionAttestationService attestationService =
+        mock(GameplaySessionAttestationService.class);
+    when(attestationService.issueGameplaySessionAttestation("1", "0", "0", "7", "1", "R-1"))
+        .thenReturn("attestation");
+    when(attestationService.issueGameplaySessionAttestation("1", "0", "0", "7", "0", ""))
+        .thenReturn("attestation");
+    when(attestationService.issueGameplaySessionAttestation("1", "0", "0", "7", "0", "99"))
+        .thenReturn("attestation");
     return new EntityManagementClient(
         new ServiceEndpointsProperties(),
         new CommonGrpcClientProperties(),
         mock(GrpcChannelFactory.class),
-        BlockingGrpcStubCustomizer.noop());
+        BlockingGrpcStubCustomizer.noop(),
+        attestationService);
   }
 
   private static void setStub(EntityManagementClient client, Object stub) throws Exception {

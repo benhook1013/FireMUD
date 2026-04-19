@@ -74,6 +74,7 @@ public class LookAggregationService {
                   .setTenantId(resolveTenantId(request))
                   .setRoomInstance(resolveRoomInstance(request))
                   .setPreferredLocale(request.getPreferredLocale())
+                  .setSessionAttestation(request.getSessionAttestation())
                   .build());
       if (response.hasError()) {
         throw statusFromError(response.getError(), "WorldManagement");
@@ -91,6 +92,7 @@ public class LookAggregationService {
               ListRoomEntitiesRequest.newBuilder()
                   .setTenantId(resolveTenantId(request))
                   .setRoomInstance(resolveRoomInstance(request))
+                  .setSessionAttestation(request.getSessionAttestation())
                   .build());
       if (response.hasError()) {
         throw statusFromError(response.getError(), "EntityManagement");

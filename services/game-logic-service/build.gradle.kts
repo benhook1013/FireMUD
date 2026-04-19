@@ -7,5 +7,6 @@ plugins {
 }
 
 dependencies {
+    implementation(project(":common-security"))
     annotationProcessor(libs.spring.boot.configuration.processor)
 }

@@ -17,6 +17,8 @@ import net.firedevops.firemud.account.v1.ExportAccountRequest;
 import net.firedevops.firemud.account.v1.ExportAccountResponse;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
 import net.firedevops.firemud.account.v1.GetProfileResponse;
+import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
@@ -157,6 +159,41 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       GetTenantMembershipForRuntimeResponse response =
           GetTenantMembershipForRuntimeResponse.newBuilder()
               .setError(appError("GetTenantMembershipForRuntime", "NOT_FOUND", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "accountGrpc.getRealmAccessGrantForRuntime")
+  public void getRealmAccessGrantForRuntime(
+      GetRealmAccessGrantForRuntimeRequest request,
+      StreamObserver<GetRealmAccessGrantForRuntimeResponse> responseObserver) {
+    try {
+      var dto =
+          accountService.getRealmAccessGrantForRuntime(
+              Long.valueOf(request.getAccountId()),
+              Long.valueOf(request.getTenantId()),
+              request.getWorldSlug(),
+              request.getRealmSlug(),
+              request.getRequestId());
+      GetRealmAccessGrantForRuntimeResponse response =
+          GetRealmAccessGrantForRuntimeResponse.newBuilder()
+              .setAccountId(String.valueOf(dto.accountId()))
+              .setTenantId(String.valueOf(dto.tenantId()))
+              .setWorldSlug(dto.worldSlug())
+              .setRealmSlug(dto.realmSlug())
+              .setGranted(dto.granted())
+              .setGrantVersion(dto.grantVersion())
+              .setEvaluatedAt(dto.evaluatedAt())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      GetRealmAccessGrantForRuntimeResponse response =
+          GetRealmAccessGrantForRuntimeResponse.newBuilder()
+              .setError(appError("GetRealmAccessGrantForRuntime", "NOT_FOUND", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

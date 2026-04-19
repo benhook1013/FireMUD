@@ -61,10 +61,10 @@ For the design of the Telnet and protocol-bridging path, see:
      - Tune MCP guardrails (`TCP_PROXY_MCP_NEGOTIATION_FAILURE_MAX`, `TCP_PROXY_MCP_NEGOTIATION_FAILURE_WINDOW_MS`, `TCP_PROXY_MCP_MAX_ACTIVE_CORDS`, `TCP_PROXY_MCP_MAX_ACTIVE_DATA_TAGS`, `TCP_PROXY_MCP_MAX_CONTROL_LINES_PER_SEC`) only as needed, and prefer fixing misbehaving client scripts before broadly relaxing limits.
 
 3. **Run Telnet smoke tests**
-   - Use the Telnet smoke script described in the TCP Proxy README (or the `dev-echo-loop.sh` flow) to:
+   - Use the canonical Telnet smoke script described in the TCP Proxy README to:
      - Connect to the proxy with `telnet` or a test client.
      - Run baseline gameplay admission without advanced hints: `LOGIN` + `PLAY` + `LOOK`.
-     - Run advanced attach hint path: `SESSION` + `LOGIN` + `PLAY` + `LOOK`.
+     - Run any supported advanced attach hint path with `LOGIN` + `PLAY` + `LOOK`.
      - Confirm both flows match expected WebSocket behavior for the same account/character.
      - Capture the raw transcript and include it in incident notes.
 

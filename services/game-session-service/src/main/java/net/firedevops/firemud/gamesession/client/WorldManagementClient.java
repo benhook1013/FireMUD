@@ -21,15 +21,10 @@ import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for the World Management Service. */
 @Component
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = false)
 public final class WorldManagementClient
     extends AbstractBlockingGrpcClient<
         WorldManagementServiceGrpc.WorldManagementServiceBlockingStub> {

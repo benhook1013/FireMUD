@@ -29,7 +29,7 @@ class ContainerCommandHandlerTest {
 
   @Test
   void containerViewReturnsStructuredContents() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(entityManagementClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -41,7 +41,7 @@ class ContainerCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
+    when(entityManagementClient.listContainerContents(context, "container-10"))
         .thenReturn(
             ListContainerContentsResponse.newBuilder()
                 .addItems(
@@ -72,7 +72,7 @@ class ContainerCommandHandlerTest {
 
   @Test
   void putMovesItemIntoContainerAndRefreshesView() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(entityManagementClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -89,8 +89,7 @@ class ContainerCommandHandlerTest {
                         .setVisibleRef("torch3")
                         .build())
                 .build());
-    when(entityManagementClient.putItemIntoContainer(
-            "22", "911", "container-10", "99", null, null, 1))
+    when(entityManagementClient.putItemIntoContainer(context, "container-10", "99", null, null, 1))
         .thenReturn(
             PutItemIntoContainerResponse.newBuilder()
                 .setContainerItem(
@@ -102,7 +101,7 @@ class ContainerCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
+    when(entityManagementClient.listContainerContents(context, "container-10"))
         .thenReturn(
             ListContainerContentsResponse.newBuilder()
                 .addItems(
@@ -131,7 +130,7 @@ class ContainerCommandHandlerTest {
 
   @Test
   void putIntoContainerRejectsExplicitRefWithQuantityGreaterThanOne() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(entityManagementClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -167,7 +166,7 @@ class ContainerCommandHandlerTest {
 
   @Test
   void takeMovesItemOutOfContainerAndRefreshesView() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(entityManagementClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -178,7 +177,7 @@ class ContainerCommandHandlerTest {
                         .setContainerInstanceId("container-10")
                         .build())
                 .build());
-    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
+    when(entityManagementClient.listContainerContents(context, "container-10"))
         .thenReturn(
             ListContainerContentsResponse.newBuilder()
                 .addItems(
@@ -191,8 +190,7 @@ class ContainerCommandHandlerTest {
                         .build())
                 .build(),
             ListContainerContentsResponse.newBuilder().build());
-    when(entityManagementClient.takeItemFromContainer(
-            "22", "911", "container-10", "99", null, null, 2))
+    when(entityManagementClient.takeItemFromContainer(context, "container-10", "99", null, null, 2))
         .thenReturn(
             TakeItemFromContainerResponse.newBuilder()
                 .setInventoryItem(
@@ -217,12 +215,12 @@ class ContainerCommandHandlerTest {
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(1).payload();
     assertThat(view.lines()).containsExactly("It is empty.");
     verify(entityManagementClient)
-        .takeItemFromContainer("22", "911", "container-10", "99", null, null, 2);
+        .takeItemFromContainer(context, "container-10", "99", null, null, 2);
   }
 
   @Test
   void takeFromContainerRejectsExplicitRefWithQuantityGreaterThanOne() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(entityManagementClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -233,7 +231,7 @@ class ContainerCommandHandlerTest {
                         .setVisibleRef("oldchest10")
                         .build())
                 .build());
-    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
+    when(entityManagementClient.listContainerContents(context, "container-10"))
         .thenReturn(
             ListContainerContentsResponse.newBuilder()
                 .addItems(
@@ -263,7 +261,7 @@ class ContainerCommandHandlerTest {
 
   @Test
   void putIntoContainerAllowsExplicitStackRefWithQuantitySelection() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(entityManagementClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -282,7 +280,7 @@ class ContainerCommandHandlerTest {
                         .build())
                 .build());
     when(entityManagementClient.putItemIntoContainer(
-            "22", "911", "container-10", "99", null, "ammo/iron", 3))
+            context, "container-10", "99", null, "ammo/iron", 3))
         .thenReturn(
             PutItemIntoContainerResponse.newBuilder()
                 .setContainerItem(
@@ -294,7 +292,7 @@ class ContainerCommandHandlerTest {
                         .setQuantity(3)
                         .build())
                 .build());
-    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
+    when(entityManagementClient.listContainerContents(context, "container-10"))
         .thenReturn(ListContainerContentsResponse.newBuilder().build());
 
     TextCommandInterpretationResult result =
@@ -311,7 +309,7 @@ class ContainerCommandHandlerTest {
 
   @Test
   void takeFromContainerAllowsExplicitStackRefWithQuantitySelection() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(entityManagementClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -322,7 +320,7 @@ class ContainerCommandHandlerTest {
                         .setVisibleRef("oldchest10")
                         .build())
                 .build());
-    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
+    when(entityManagementClient.listContainerContents(context, "container-10"))
         .thenReturn(
             ListContainerContentsResponse.newBuilder()
                 .addItems(
@@ -336,7 +334,7 @@ class ContainerCommandHandlerTest {
                 .build(),
             ListContainerContentsResponse.newBuilder().build());
     when(entityManagementClient.takeItemFromContainer(
-            "22", "911", "container-10", "99", null, "ammo/iron", 3))
+            context, "container-10", "99", null, "ammo/iron", 3))
         .thenReturn(
             TakeItemFromContainerResponse.newBuilder()
                 .setInventoryItem(

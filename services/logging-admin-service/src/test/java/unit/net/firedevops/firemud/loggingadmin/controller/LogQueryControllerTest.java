@@ -63,7 +63,7 @@ class LogQueryControllerTest {
   void queryRejectsCrossTenantScopedAdmin() throws Exception {
     QueryLogsRequest request = new QueryLogsRequest(1L, "msg");
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("admin"))));
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(

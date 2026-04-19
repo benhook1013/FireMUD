@@ -4,13 +4,17 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipRequest;
 import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult;
+import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
+import net.firedevops.firemud.accountservice.dto.RealmAccessGrantResult;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -37,5 +41,23 @@ public class InternalRuntimeController {
                 request.tenantId(),
                 request.realmSlug(),
                 request.requestId())));
+  }
+
+  @PostMapping("/realm-access-grants")
+  public ResponseEntity<ApiResponse<RealmAccessGrantResult>> grantRealmAccess(
+      @Valid @RequestBody RealmAccessGrantRequest request) {
+    SessionContext.requireGlobalPrivilegedRole();
+    return ResponseEntity.ok(ApiResponse.success(accountService.grantRealmAccess(request)));
+  }
+
+  @DeleteMapping("/realm-access-grants")
+  public ResponseEntity<ApiResponse<Void>> revokeRealmAccess(
+      @RequestParam("accountId") Long accountId,
+      @RequestParam("tenantId") Long tenantId,
+      @RequestParam("worldSlug") String worldSlug,
+      @RequestParam("realmSlug") String realmSlug) {
+    SessionContext.requireGlobalPrivilegedRole();
+    accountService.revokeRealmAccess(accountId, tenantId, worldSlug, realmSlug);
+    return ResponseEntity.ok(ApiResponse.success(null));
   }
 }

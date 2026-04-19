@@ -74,7 +74,7 @@ class MoveCommandHandlerTest {
                     .build())
             .setRoomName("Crafting Hall of Ember")
             .build();
-    when(gameLogicClient.resolveMove("22", "42", "911", "7", "R-1021", "north", ""))
+    when(gameLogicClient.resolveMove(context, "R-1021", "north", ""))
         .thenReturn(
             MoveResult.newBuilder().setSuccess(true).setDestinationLook(destinationLook).build());
     PlayerOutput destinationOutput =
@@ -125,7 +125,7 @@ class MoveCommandHandlerTest {
 
   @Test
   void moveFailurePropagatesInvalidExitWithoutSavingSession() {
-    when(gameLogicClient.resolveMove("22", "42", "911", "7", "R-1021", "west", ""))
+    when(gameLogicClient.resolveMove(context, "R-1021", "west", ""))
         .thenReturn(
             MoveResult.newBuilder()
                 .setSuccess(false)
@@ -175,7 +175,7 @@ class MoveCommandHandlerTest {
                     .build())
             .setRoomName("Crafting Hall of Ember")
             .build();
-    when(gameLogicClient.resolveMove("22", "42", "911", "7", "R-1021", "north", ""))
+    when(gameLogicClient.resolveMove(context, "R-1021", "north", ""))
         .thenReturn(
             MoveResult.newBuilder().setSuccess(true).setDestinationLook(destinationLook).build());
 

@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -82,7 +83,6 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
     webEnvironment = WebEnvironment.RANDOM_PORT,
     properties = {
       "spring.profiles.active=test",
-      "game-session.dev-isolated=false",
       "game-session.require-authenticated-commands=true",
       "firemud.database.enabled=false",
       "spring.data.redis.repositories.enabled=false",
@@ -315,15 +315,20 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("1"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
-    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1"), eq("1021"), eq("")))
+    when(gameLogicClient.resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq("")))
         .thenReturn(lookResult);
-    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1"), eq("1021"), eq("fr")))
+    when(gameLogicClient.resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq("fr")))
         .thenReturn(lookResult);
-    when(gameLogicClient.resolveLook(eq("22"), eq("42"), eq("123"), eq("1"), eq("1021"), eq("")))
+    when(gameLogicClient.resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 42L, 123L, 1L, "1021")), eq("1021"), eq("")))
         .thenReturn(lookResult);
-    when(gameLogicClient.resolveLook(eq("22"), eq("1"), eq("123"), eq("1"), eq("1021"), eq("")))
+    when(gameLogicClient.resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 1L, 123L, 1L, "1021")), eq("1021"), eq("")))
         .thenReturn(lookResult);
-    when(gameLogicClient.resolveLook(eq("22"), eq("2"), eq("123"), eq("1"), eq("1021"), eq("")))
+    when(gameLogicClient.resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 2L, 123L, 1L, "1021")), eq("1021"), eq("")))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
@@ -482,7 +487,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     verify(commandService).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService).enqueue("41", "LOOK", false);
-    verify(gameLogicClient).resolveLook("22", "41", "123", "1", "1021", "");
+    verify(gameLogicClient)
+        .resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq(""));
     verify(lookCacheService)
         .cache(
             eq(22L),
@@ -867,7 +874,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     .setDescription("porte etroite")
                     .build())
             .build();
-    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1"), eq("1021"), eq("fr")))
+    when(gameLogicClient.resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq("fr")))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
@@ -944,7 +952,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
             .setLongDescription("A northern hall used for movement verification.")
             .build();
     when(gameLogicClient.resolveMove(
-            eq("22"), eq("42"), eq("123"), eq("1"), eq("1021"), eq("north"), eq("")))
+            argThat(ctx -> matchesContext(ctx, 22L, 42L, 123L, 1L, "1021")),
+            eq("1021"),
+            eq("north"),
+            eq("")))
         .thenReturn(
             net.firedevops.firemud.gamelogic.v1.MoveResult.newBuilder()
                 .setSuccess(true)
@@ -1019,7 +1030,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 42L))
         .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("2045"));
 
-    verify(gameLogicClient).resolveMove("22", "42", "123", "1", "1021", "north", "");
+    verify(gameLogicClient)
+        .resolveMove(
+            argThat(ctx -> matchesContext(ctx, 22L, 42L, 123L, 1L, "1021")),
+            eq("1021"),
+            eq("north"),
+            eq(""));
     verify(lookCacheService)
         .cache(
             eq(22L),
@@ -1957,6 +1973,21 @@ class GameSessionWebSocketHandlerIntegrationTest {
       }
     }
     return false;
+  }
+
+  private static boolean matchesContext(
+      net.firedevops.firemud.gamesession.service.SessionContext context,
+      long tenantId,
+      long sessionId,
+      long characterId,
+      long gameInstanceId,
+      String roomInstanceId) {
+    return context != null
+        && context.tenantId() == tenantId
+        && context.sessionId() == sessionId
+        && context.characterId() == characterId
+        && context.gameInstanceId() == gameInstanceId
+        && roomInstanceId.equals(context.roomInstanceId());
   }
 
   private boolean waitForPresenceCount(long tenantId, long gameInstanceId, int expectedCount)

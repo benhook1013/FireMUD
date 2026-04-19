@@ -8,7 +8,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -46,7 +45,6 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new DevIsolatedProperties(false),
             disconnectDeduplicationService,
             gameplayPresenceLifecycleService);
 
@@ -105,7 +103,6 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new DevIsolatedProperties(false),
             disconnectDeduplicationService,
             gameplayPresenceLifecycleService);
 
@@ -139,7 +136,6 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new DevIsolatedProperties(false),
             disconnectDeduplicationService,
             gameplayPresenceLifecycleService);
 
@@ -189,7 +185,6 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new DevIsolatedProperties(false),
             disconnectDeduplicationService,
             gameplayPresenceLifecycleService);
 
@@ -236,7 +231,6 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new DevIsolatedProperties(false),
             disconnectDeduplicationService,
             gameplayPresenceLifecycleService);
 
@@ -288,7 +282,6 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new DevIsolatedProperties(false),
             disconnectDeduplicationService,
             gameplayPresenceLifecycleService);
 

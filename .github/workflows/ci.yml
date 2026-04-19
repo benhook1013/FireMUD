@@ -576,6 +576,7 @@ jobs:
               if (result === "success") return "✅";
               if (result === "failure") return "❌";
               if (result === "cancelled") return "⚪";
+              if (["pending", "in_progress", "queued"].includes(result)) return "⏳";
               return "⏭️";
             };
 
@@ -607,7 +608,7 @@ jobs:
             const headline = failedChecks.length > 0
               ? "❌ One or more validation checks failed"
               : pendingChecks.length > 0
-              ? "🟡 Validation checks are still running"
+              ? "⏳ Validation checks are still running"
               : "✅ All validation checks passed";
 
             const body = [

@@ -20,7 +20,6 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.ValueOperations;
@@ -29,10 +28,6 @@ import org.springframework.util.StringUtils;
 
 /** Redis-backed gameplay presence store for the first WHO implementation. */
 @Service
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = true)
 public final class RedisGameplayPresenceService implements GameplayPresenceService {
   private static final Logger logger = LoggingUtil.getLogger(RedisGameplayPresenceService.class);
   private static final String PRESENCE_KEY_TEMPLATE = "gameplaypresence:session:%d";
@@ -262,7 +257,6 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
       String normalized = String.valueOf(role).trim().toLowerCase(Locale.ROOT);
       if (normalized.equals("platformadmin")
           || normalized.equals("tenantadmin")
-          || normalized.equals("admin")
           || normalized.equals("god")) {
         return true;
       }

@@ -5,7 +5,6 @@ import io.opentelemetry.api.trace.Span;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer;
@@ -17,15 +16,10 @@ import net.firedevops.firemud.gamesession.service.SessionRateLimiter;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.slf4j.Logger;
 import org.slf4j.MDC;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 /** Default implementation of {@link CommandService}. */
 @Service
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = false)
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected collaborators are framework-managed and retained internally")
@@ -38,7 +32,6 @@ public class CommandServiceImpl implements CommandService {
   private final TickService tickService;
 
   private final SessionRateLimiter sessionRateLimiter;
-  private final DevIsolatedProperties devIsolatedProperties;
   private final GameInstanceRepository gameInstanceRepository;
   private final SessionContextService sessionContextService;
 
@@ -47,12 +40,10 @@ public class CommandServiceImpl implements CommandService {
   public CommandServiceImpl(
       TickService tickService,
       SessionRateLimiter sessionRateLimiter,
-      DevIsolatedProperties devIsolatedProperties,
       GameInstanceRepository gameInstanceRepository,
       SessionContextService sessionContextService) {
     this.tickService = tickService;
     this.sessionRateLimiter = sessionRateLimiter;
-    this.devIsolatedProperties = devIsolatedProperties;
     this.gameInstanceRepository = gameInstanceRepository;
     this.sessionContextService = sessionContextService;
   }
@@ -79,14 +70,6 @@ public class CommandServiceImpl implements CommandService {
           sessionContext.map(SessionContext::characterId).filter(id -> id > 0).orElse(null),
           sessionIdText,
           GameSessionCommandLogSanitizer.sanitize(command));
-
-      if (devIsolatedProperties.isDevIsolated()) {
-        logger.info(
-            "Dev-isolated mode enabled; acknowledging enqueue for session {} command {}",
-            sessionIdText,
-            GameSessionCommandLogSanitizer.sanitize(command));
-        return CommandEnqueueResult.success();
-      }
 
       if (command == null || command.isBlank()) {
         return CommandEnqueueResult.failure("INVALID_ARGUMENT", "Command cannot be blank");

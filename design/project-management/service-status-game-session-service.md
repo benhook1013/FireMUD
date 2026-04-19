@@ -23,12 +23,11 @@
 
 ## Partial / Stubbed / Deferred Areas
 
-- `dev-isolated` fallbacks still exist for dependency-light local experimentation and should continue shrinking over time.
 - The core login/session and gameplay ingress path is now covered by real integration and cross-service tests; remaining hardening work is mostly cleanup of the last developer-only shortcuts and deeper runtime polish.
 - Longer-horizon topics like cross-region handoff, advanced tick hardening, and richer runtime feature application remain future work.
 - `regionId` enrichment in gameplay logs remains deferred until the command/session paths have one canonical current-region source rather than competing ad hoc derivations.
 
 ## Planning Notes
 
-- The biggest near-term need is not another login/LOOK rewrite; it is extending gameplay while gradually replacing dev-isolated shortcuts with real infrastructure-backed behavior.
+- The biggest near-term need is not another login/LOOK rewrite; it is extending gameplay on top of the now-canonical infrastructure-backed runtime behavior.
 - Use vertical slices for active gameplay work and platform-hardening phase docs for follow-on runtime work.

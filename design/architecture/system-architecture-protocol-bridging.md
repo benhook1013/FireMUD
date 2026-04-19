@@ -253,7 +253,7 @@ whose path contains `/ws/game/**` (or the configured alias) so Telnet and WebSoc
 `GATEWAY_WS_URL` must match a name present in the Gateway certificate’s SANs; pointing it at a bare IP or an unrelated hostname causes TLS validation to fail on the TCP
 Proxy side and increments `tcpproxy.gateway.handshake.failures{reason="cert_validation"}`. For mTLS certificate loading and watcher details, see the TCP Proxy Service design’s WebSocket mTLS section.
 
-Dev-only diagnostic routes (for example `/dev/echo`) may exist to support isolated local testing, but they are not valid targets for staging/production. Player-facing environments must always bridge to the gameplay entry point so the gateway’s standard filters, metrics, and downstream routing apply consistently for Telnet and native WebSocket clients.
+Player-facing and local-development environments must bridge to the gameplay entry point so the gateway’s standard filters, metrics, and downstream routing apply consistently for Telnet and native WebSocket clients.
 
 ### TCP Flow Benefits
 

@@ -9,6 +9,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
@@ -35,12 +36,16 @@ class WorldManagementGrpcServiceTest {
     WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
-    SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
+    GameplaySessionAttestationService attestationService =
+        Mockito.mock(GameplaySessionAttestationService.class);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
     return new WorldManagementGrpcService(
         pingService,
         roomService,
         activationService,
         digestService,
+        attestationService,
         meterRegistry,
         new ObjectMapper());
   }
@@ -50,12 +55,16 @@ class WorldManagementGrpcServiceTest {
     WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
-    SessionContext.clear();
+    GameplaySessionAttestationService attestationService =
+        Mockito.mock(GameplaySessionAttestationService.class);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
     return new WorldManagementGrpcService(
         pingService,
         roomService,
         activationService,
         digestService,
+        attestationService,
         meterRegistry,
         new ObjectMapper());
   }
@@ -70,13 +79,15 @@ class WorldManagementGrpcServiceTest {
         .thenReturn(
             new WorldDraftDesignDigestService.WorldDraftDesignDigest(
                 "1", "7", "version:7", "digest-world", 1));
-    SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             pingService,
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
             digestService,
+            Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
             new ObjectMapper());
 
@@ -108,7 +119,8 @@ class WorldManagementGrpcServiceTest {
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
     Mockito.when(
             activationService.prepareWorldInstance(
                 Mockito.argThat(
@@ -133,6 +145,7 @@ class WorldManagementGrpcServiceTest {
             roomService,
             activationService,
             digestService,
+            Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
             new ObjectMapper());
 
@@ -274,6 +287,7 @@ class WorldManagementGrpcServiceTest {
         GetRoomSnapshotRequest.newBuilder()
             .setTenantId("1")
             .setPreferredLocale("fr")
+            .setSessionAttestation("probe")
             .setRoomInstance(
                 RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
             .build(),
@@ -321,6 +335,7 @@ class WorldManagementGrpcServiceTest {
         GetRoomSnapshotRequest.newBuilder()
             .setTenantId("1")
             .setPreferredLocale("fr")
+            .setSessionAttestation("probe")
             .setRoomInstance(
                 RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
             .build(),
@@ -349,7 +364,7 @@ class WorldManagementGrpcServiceTest {
   }
 
   @Test
-  void getRoomSnapshotAllowsUnauthenticatedInternalReadPath() {
+  void getRoomSnapshotAllowsInternalServiceReadPath() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
     Mockito.when(roomService.getRoomSnapshot(1L, 41L, 1L, "fr"))
@@ -367,6 +382,7 @@ class WorldManagementGrpcServiceTest {
         GetRoomSnapshotRequest.newBuilder()
             .setTenantId("1")
             .setPreferredLocale("fr")
+            .setSessionAttestation("probe")
             .setRoomInstance(
                 RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
             .build(),
@@ -389,18 +405,19 @@ class WorldManagementGrpcServiceTest {
   }
 
   @Test
-  void getRoomReturnsPermissionDeniedWhenTenantAccessFails() {
+  void getRoomRejectsNonInternalGameplayCaller() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
     WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("test-account", List.of(), Map.of("9", List.of("admin")));
+    SessionContext.setContext("test-account", List.of(), Map.of("9", List.of("tenantAdmin")));
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             pingService,
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
             digestService,
+            Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
             new ObjectMapper());
 
@@ -409,6 +426,7 @@ class WorldManagementGrpcServiceTest {
     service.getRoom(
         net.firedevops.firemud.worldmanagement.v1.GetRoomRequest.newBuilder()
             .setTenantId("1")
+            .setSessionAttestation("probe")
             .setRoomInstance(
                 RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
             .build(),
@@ -425,9 +443,13 @@ class WorldManagementGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    assertEquals("SESSION_ATTESTATION_INVALID", ref.get().getError().getCode());
     assertEquals(
         1.0,
-        meterRegistry.get("grpc.app_error").tag("code", "PERMISSION_DENIED").counter().count());
+        meterRegistry
+            .get("grpc.app_error")
+            .tag("code", "SESSION_ATTESTATION_INVALID")
+            .counter()
+            .count());
   }
 }

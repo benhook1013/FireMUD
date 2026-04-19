@@ -11,31 +11,39 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
+import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.CharacterFriendDto;
 import net.firedevops.firemud.entitymanagement.service.FriendService;
+import net.firedevops.firemud.test.WithFiremudHttpAuthTestProperties;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(FriendController.class)
+@Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
+@WithFiremudHttpAuthTestProperties
+@TestPropertySource(
+    properties = {
+      "firemud.auth.http.authenticated-path-patterns[0]=/tenants/*/characters/*/friends/**"
+    })
 class FriendControllerTest {
 
   @Autowired private MockMvc mockMvc;
+  @Autowired private JwtUtil jwtUtil;
 
   @MockitoBean private FriendService friendService;
-
-  @BeforeEach
-  void setUpSecurityContext() {
-    installTenantContext(Map.of("1", List.of("admin")));
-  }
 
   @AfterEach
   void clearSecurityContext() {
@@ -48,7 +56,9 @@ class FriendControllerTest {
         .thenReturn(new PageImpl<>(List.of(new CharacterFriendDto(2L, 3L, 123L))));
 
     mockMvc
-        .perform(get("/tenants/1/characters/2/friends"))
+        .perform(
+            get("/tenants/1/characters/2/friends")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantToken("1")))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.content[0].friendId").value(3));
@@ -62,25 +72,31 @@ class FriendControllerTest {
         .perform(
             post("/tenants/1/characters/2/friends")
                 .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantToken("1"))
                 .content("{\"friendId\":3}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.friendId").value(3));
 
     mockMvc
-        .perform(delete("/tenants/1/characters/2/friends/3"))
+        .perform(
+            delete("/tenants/1/characters/2/friends/3")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantToken("1")))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
   }
 
   @Test
   void listRejectsCallerWithoutTenantAccess() throws Exception {
-    installTenantContext(Map.of("9", List.of("admin")));
-
-    mockMvc.perform(get("/tenants/1/characters/2/friends")).andExpect(status().isForbidden());
+    mockMvc
+        .perform(
+            get("/tenants/1/characters/2/friends")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantToken("9")))
+        .andExpect(status().isForbidden());
   }
 
-  private void installTenantContext(Map<String, List<String>> scopedRoles) {
-    SessionContext.setContext("test-account", List.of(), scopedRoles);
+  private String tenantToken(String tenantId) {
+    return jwtUtil.generateToken(
+        "test-account", Map.of("scopedRoles", Map.of(tenantId, List.of("tenantAdmin"))));
   }
 }

@@ -12,7 +12,6 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.ResolvedLaunchDescriptor;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
@@ -23,7 +22,6 @@ import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -34,10 +32,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /** Default implementation of {@link GameInstanceService}. */
 @Service
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = false)
 public class GameInstanceServiceImpl implements GameInstanceService {
   private static final Logger logger = LoggingUtil.getLogger(GameInstanceServiceImpl.class);
   private static final String STATUS_STARTING = "STARTING";
@@ -54,7 +48,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private final EntityManagementClient entityManagementClient;
   private final SagaRunner sagaRunner;
   private final MeterRegistry meterRegistry;
-  private final DevIsolatedProperties devIsolatedProperties;
   private final TransactionOperations transactionOperations;
 
   @Autowired
@@ -68,7 +61,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       EntityManagementClient entityManagementClient,
       @Nullable SagaRunner sagaRunner,
       MeterRegistry meterRegistry,
-      DevIsolatedProperties devIsolatedProperties,
       PlatformTransactionManager transactionManager) {
     this(
         repository,
@@ -80,7 +72,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         entityManagementClient,
         sagaRunner,
         meterRegistry,
-        devIsolatedProperties,
         new TransactionTemplate(transactionManager));
   }
 
@@ -94,7 +85,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       EntityManagementClient entityManagementClient,
       @Nullable SagaRunner sagaRunner,
       MeterRegistry meterRegistry,
-      DevIsolatedProperties devIsolatedProperties,
       TransactionOperations transactionOperations) {
     this.repository = repository;
     this.mapper = mapper;
@@ -105,7 +95,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     this.entityManagementClient = entityManagementClient;
     this.sagaRunner = sagaRunner;
     this.meterRegistry = meterRegistry;
-    this.devIsolatedProperties = devIsolatedProperties;
     this.transactionOperations = transactionOperations;
   }
 
@@ -124,34 +113,12 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         null,
         null,
         new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
-        new DevIsolatedProperties(false),
         immediateTransactionOperations());
   }
 
   @Override
   @Timed(value = "gamesession.start")
   public GameInstanceDto startSession(StartSessionRequest request, boolean replaceExistingFirst) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      logger.info(
-          "Dev-isolated mode enabled; acknowledging start for tenant {} template {} controlPlaneRequestId {}",
-          request.tenantId(),
-          request.gameTemplateId(),
-          request.controlPlaneRequestId());
-      return new GameInstanceDto(
-          -1L,
-          request.tenantId(),
-          "launch:" + request.gameTemplateId(),
-          null,
-          request.gameTemplateId(),
-          null,
-          null,
-          null,
-          null,
-          null,
-          request.ownerAccountId(),
-          STATUS_RUNNING);
-    }
-
     logger.info(
         "Starting game session for tenant {} template {} controlPlaneRequestId {}",
         request.tenantId(),
@@ -197,23 +164,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   @Override
   @Timed(value = "gamesession.stop")
   public GameInstanceDto stopSession(long sessionId) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      logger.info("Dev-isolated mode enabled; acknowledging stop for session {}", sessionId);
-      return new GameInstanceDto(
-          sessionId,
-          0L,
-          "dev-isolated",
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          0L,
-          STATUS_STOPPED);
-    }
-
     GameInstanceDto runningState = inTransaction(() -> stageStopSession(sessionId), "stage stop");
     boolean stateDeleted = false;
     try {
@@ -230,23 +180,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   @Override
   @Timed(value = "gamesession.restart")
   public GameInstanceDto restartSession(long sessionId) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      logger.info("Dev-isolated mode enabled; acknowledging restart for session {}", sessionId);
-      return new GameInstanceDto(
-          sessionId,
-          0L,
-          "dev-isolated",
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          0L,
-          STATUS_RUNNING);
-    }
-
     GameInstanceDto previousState =
         inTransaction(() -> stageRestartSession(sessionId), "stage restart");
     GameInstanceDto runtimeState = withStatus(previousState, STATUS_RUNNING);

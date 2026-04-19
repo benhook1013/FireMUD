@@ -11,7 +11,6 @@ import java.util.Set;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.stereotype.Service;
@@ -19,10 +18,6 @@ import org.springframework.util.StringUtils;
 
 /** Persists session context metadata in Redis keys scoped by tenant/session. */
 @Service
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = true)
 public final class RedisSessionContextService implements SessionContextService {
   private static final int MAX_SAVE_RETRIES = 8;
   private final RedisTemplate<String, Object> redisTemplate;

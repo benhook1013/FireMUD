@@ -9,7 +9,6 @@ import static org.mockito.Mockito.mock;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -56,8 +55,7 @@ class IpConnectionLimiterImplTest {
         .when(redis)
         .delete(anyString());
 
-    IpConnectionLimiterImpl limiter =
-        new IpConnectionLimiterImpl(redis, 1, 60, new DevIsolatedProperties(false));
+    IpConnectionLimiterImpl limiter = new IpConnectionLimiterImpl(redis, 1, 60);
     assertTrue(limiter.canAccept("1.2.3.4"));
     assertTrue(limiter.tryRegister("1.2.3.4", 1L));
     assertFalse(limiter.tryRegister("1.2.3.4", 2L));
@@ -81,8 +79,7 @@ class IpConnectionLimiterImplTest {
     store.put("ipconn:1.2.3.4", "1");
     store.put("sessionip:9", "1.2.3.4");
 
-    IpConnectionLimiterImpl limiter =
-        new IpConnectionLimiterImpl(redis, 1, 60, new DevIsolatedProperties(false));
+    IpConnectionLimiterImpl limiter = new IpConnectionLimiterImpl(redis, 1, 60);
 
     assertTrue(limiter.canAccept("1.2.3.4", 9L));
     assertFalse(limiter.canAccept("1.2.3.4", 10L));
@@ -116,8 +113,7 @@ class IpConnectionLimiterImplTest {
     store.put("ipconn:1.2.3.4", "1");
     store.put("sessionip:9", "1.2.3.4");
 
-    IpConnectionLimiterImpl limiter =
-        new IpConnectionLimiterImpl(redis, 1, 60, new DevIsolatedProperties(false));
+    IpConnectionLimiterImpl limiter = new IpConnectionLimiterImpl(redis, 1, 60);
 
     assertTrue(limiter.transferRegistration("1.2.3.4", 9L, 10L));
     assertFalse(store.containsKey("sessionip:9"));

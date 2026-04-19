@@ -58,10 +58,7 @@ public class MoveCommandHandler {
       try {
         MoveResult response =
             gameLogicClient.resolveMove(
-                Long.toString(context.tenantId()),
-                Long.toString(context.sessionId()),
-                Long.toString(context.characterId()),
-                Long.toString(context.gameInstanceId()),
+                context,
                 StringUtils.hasText(context.roomInstanceId())
                     ? context.roomInstanceId()
                     : gameLogicProperties.getDefaultRoomId(),

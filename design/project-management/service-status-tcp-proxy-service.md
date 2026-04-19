@@ -2,7 +2,7 @@
 
 ## Current Coverage
 
-- Telnet ingress, hidden bootstrap metadata, WebSocket bridging, buffering, and local dev echo flows are implemented.
+- Telnet ingress, hidden bootstrap metadata, WebSocket bridging, and buffering are implemented on the canonical gameplay ingress path.
 - The proxy participates in the current Telnet-backed `WORLDS`, `LOGIN`, `PLAY`, `LOOK`, and shared communication gameplay slices.
 - Cross-service harnesses and lighter gateway-stub-based testing patterns exist for the proxy path.
 

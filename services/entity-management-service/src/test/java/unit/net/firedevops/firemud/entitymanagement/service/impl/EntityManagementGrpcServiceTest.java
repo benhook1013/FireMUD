@@ -8,6 +8,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
@@ -51,6 +52,10 @@ import org.mockito.Mockito;
 import org.springframework.data.domain.Pageable;
 
 class EntityManagementGrpcServiceTest {
+  private GameplaySessionAttestationService attestationService() {
+    return Mockito.mock(GameplaySessionAttestationService.class);
+  }
+
   private EntityManagementGrpcService newService(
       PingService pingService,
       CharacterService characterService,
@@ -60,7 +65,8 @@ class EntityManagementGrpcServiceTest {
       io.micrometer.core.instrument.MeterRegistry meterRegistry) {
     EntityDraftDesignDigestService digestService =
         Mockito.mock(EntityDraftDesignDigestService.class);
-    SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
     ContainerService containerService = Mockito.mock(ContainerService.class);
     return new EntityManagementGrpcService(
         pingService,
@@ -70,6 +76,7 @@ class EntityManagementGrpcServiceTest {
         inventoryService,
         containerService,
         roomEntityService,
+        attestationService(),
         meterRegistry);
   }
 
@@ -92,6 +99,7 @@ class EntityManagementGrpcServiceTest {
         inventoryService,
         containerService,
         roomEntityService,
+        attestationService(),
         meterRegistry);
   }
 
@@ -105,7 +113,8 @@ class EntityManagementGrpcServiceTest {
       io.micrometer.core.instrument.MeterRegistry meterRegistry) {
     EntityDraftDesignDigestService digestService =
         Mockito.mock(EntityDraftDesignDigestService.class);
-    SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
     return new EntityManagementGrpcService(
         pingService,
         characterService,
@@ -114,6 +123,7 @@ class EntityManagementGrpcServiceTest {
         inventoryService,
         containerService,
         roomEntityService,
+        attestationService(),
         meterRegistry);
   }
 
@@ -128,7 +138,8 @@ class EntityManagementGrpcServiceTest {
     ContainerService containerService = Mockito.mock(ContainerService.class);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     var meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
     Mockito.when(digestService.getDraftDesignDigest("1", "7"))
         .thenReturn(
             new EntityDraftDesignDigestService.EntityDraftDesignDigest(
@@ -142,6 +153,7 @@ class EntityManagementGrpcServiceTest {
             inventoryService,
             containerService,
             roomEntityService,
+            attestationService(),
             meterRegistry);
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
@@ -295,6 +307,7 @@ class EntityManagementGrpcServiceTest {
             .setTenantId("1")
             .setGameInstanceId("GI-1")
             .setRoomInstanceId("R-1")
+            .setSessionAttestation("probe")
             .build(),
         new StreamObserver<>() {
           @Override
@@ -537,7 +550,7 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
-  void listRoomEntitiesAllowsUnauthenticatedInternalReadPath() {
+  void listRoomEntitiesAllowsInternalServiceReadPath() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
     EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
@@ -564,7 +577,7 @@ class EntityManagementGrpcServiceTest {
                     true,
                     null)));
     EntityManagementGrpcService service =
-        newServiceWithoutContext(
+        newService(
             pingService,
             characterService,
             equipmentService,
@@ -583,6 +596,7 @@ class EntityManagementGrpcServiceTest {
                     .setGameInstanceId("2")
                     .setRoomInstanceId("3")
                     .build())
+            .setSessionAttestation("probe")
             .build(),
         new StreamObserver<>() {
           @Override
@@ -604,7 +618,7 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
-  void queryInventoryReturnsPermissionDeniedWhenTenantAccessFails() {
+  void queryInventoryRejectsNonInternalGameplayCaller() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
     EntityDraftDesignDigestService digestService =
@@ -614,7 +628,7 @@ class EntityManagementGrpcServiceTest {
     ContainerService containerService = Mockito.mock(ContainerService.class);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("test-account", List.of(), Map.of("9", List.of("admin")));
+    SessionContext.setContext("test-account", List.of(), Map.of("9", List.of("tenantAdmin")));
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
             pingService,
@@ -624,6 +638,7 @@ class EntityManagementGrpcServiceTest {
             inventoryService,
             containerService,
             roomEntityService,
+            attestationService(),
             meterRegistry);
 
     AtomicReference<QueryInventoryResponse> ref = new AtomicReference<>();
@@ -642,10 +657,14 @@ class EntityManagementGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    assertEquals("SESSION_ATTESTATION_INVALID", ref.get().getError().getCode());
     assertEquals(
         1.0,
-        meterRegistry.get("grpc.app_error").tag("code", "PERMISSION_DENIED").counter().count());
+        meterRegistry
+            .get("grpc.app_error")
+            .tag("code", "SESSION_ATTESTATION_INVALID")
+            .counter()
+            .count());
   }
 
   @Test
@@ -1128,6 +1147,7 @@ class EntityManagementGrpcServiceTest {
             .setRoomInstanceId("R-1")
             .setItemId("99")
             .setQuantity(1)
+            .setSessionAttestation("attestation")
             .build(),
         new StreamObserver<>() {
           @Override
@@ -1182,6 +1202,7 @@ class EntityManagementGrpcServiceTest {
             .setRoomInstanceId("R-1")
             .setItemId("99")
             .setQuantity(1)
+            .setSessionAttestation("attestation")
             .build(),
         new StreamObserver<>() {
           @Override

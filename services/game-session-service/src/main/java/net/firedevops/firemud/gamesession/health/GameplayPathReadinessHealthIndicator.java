@@ -11,16 +11,11 @@ import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.health.GameplayLocalPathReadinessProbe.ProbeResult;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
 
 /** Readiness indicator for the currently exposed gameplay login and first-command path. */
 @Component("gameplayPathReadiness")
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = false)
 public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
   private static final String COMPONENT = "game-session-service";
   private static final String CONTRACT = "LOGIN->LOOK";

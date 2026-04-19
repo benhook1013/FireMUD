@@ -201,7 +201,6 @@ services:
       SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: game_session_service
       SPRING_FLYWAY_TABLE: flyway_schema_history_game_session_service
       FIREMUD_DATABASE_ENABLED: "true"
-      GAME_SESSION_DEV_ISOLATED: "false"
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/firemud
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
       SPRING_DATASOURCE_USERNAME: firemud
