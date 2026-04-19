@@ -10,6 +10,10 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
+import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
 import org.springframework.stereotype.Component;
@@ -57,5 +61,24 @@ public class GameDesignClient
     ListVersionsRequest request =
         ListVersionsRequest.newBuilder().setTenantId(String.valueOf(tenantId)).build();
     return stub().listVersions(request);
+  }
+
+  public GetPublishedReleaseBundleResponse getPublishedReleaseBundle(
+      long tenantId, long versionId) {
+    GetPublishedReleaseBundleRequest request =
+        GetPublishedReleaseBundleRequest.newBuilder()
+            .setTenantId(String.valueOf(tenantId))
+            .setVersionId(versionId)
+            .build();
+    return stub().getPublishedReleaseBundle(request);
+  }
+
+  public GetVersionStateResponse getVersionState(long tenantId, long versionId) {
+    GetVersionStateRequest request =
+        GetVersionStateRequest.newBuilder()
+            .setTenantId(String.valueOf(tenantId))
+            .setVersionId(versionId)
+            .build();
+    return stub().getVersionState(request);
   }
 }

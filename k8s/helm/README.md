@@ -3,6 +3,7 @@
 This directory contains Helm charts for deploying FireMUD services.
 Charts are provided for the **Account Service** and **Game Session Service** as focused examples.
 The umbrella chart under `firemud/` is the evolving deployment surface for the hosted `pr-preview` environment.
+The same chart is also used for the fixed `dev-demo-cluster` hosted `develop` environment, currently via a separate values example and workflow.
 
 The files `values-local.yaml` and `values-dev.yaml` demonstrate how runtime
 settings such as Redis connection info, tick interval, and feature flags can be
@@ -50,6 +51,13 @@ helm upgrade --install pr-123 ./firemud \
 - persistent storage for PostgreSQL, MinIO, and Redis
 - conservative preview capacity assumptions for the single-node Hetzner host
 - stubbed first-create seed/bootstrap hooks that can be replaced once the runtime data model stabilizes
+
+`firemud/values-dev-demo.example.yaml` documents the fixed `develop` hosted environment contract:
+
+- stable namespace/release/hostname for the shared `develop` branch environment
+- fixed TCP NodePort separate from the per-PR preview range
+- the same full-stack hosted smoke target (`LOGIN -> PLAY -> LOOK`) as PR preview
+- clean-redeploy expectations for a reproducible shared-branch environment
 
 Current limitation:
 

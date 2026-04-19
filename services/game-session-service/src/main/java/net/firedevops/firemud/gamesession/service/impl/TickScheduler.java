@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -26,9 +25,6 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
 /** Periodically processes ticks for all running sessions. */
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected repository and service are not exposed")
 @Component
 @ConditionalOnProperty(
     name = "game-session.dev-isolated",

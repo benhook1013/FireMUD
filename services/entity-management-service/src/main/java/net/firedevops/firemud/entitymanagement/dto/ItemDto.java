@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.dto;
 
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import net.firedevops.firemud.entitymanagement.entity.ItemStackCompatibilityMode;
 
 public record ItemDto(
     Long id,
@@ -10,4 +11,6 @@ public record ItemDto(
     String description,
     String equipmentSlot,
     boolean container,
-    boolean stackable) {}
+    boolean stackable,
+    ItemStackCompatibilityMode stackCompatibilityMode,
+    String defaultStackFamilyKey) {}

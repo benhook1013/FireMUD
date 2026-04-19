@@ -21,13 +21,18 @@ components:
       properties:
         tenantId:
           type: string
-        runtimeVersion:
+        gameTemplateId:
+          type: string
+        controlPlaneRequestId:
           type: string
         ownerAccountId:
           type: integer
+        clientIp:
+          type: string
       required:
         - tenantId
-        - runtimeVersion
+        - gameTemplateId
+        - controlPlaneRequestId
         - ownerAccountId
     GameInstanceDto:
       type: object
@@ -37,6 +42,18 @@ components:
         tenantId:
           type: string
         runtimeVersion:
+          type: string
+        gameTemplateId:
+          type: string
+        launchDescriptorId:
+          type: string
+        versionId:
+          type: string
+        releaseBundleId:
+          type: string
+        versionStateEpoch:
+          type: string
+        generationConfigRevision:
           type: string
         ownerAccountId:
           type: integer

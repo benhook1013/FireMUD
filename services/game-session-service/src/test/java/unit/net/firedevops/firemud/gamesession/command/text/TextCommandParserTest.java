@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class TextCommandParserTest {
@@ -21,6 +22,78 @@ class TextCommandParserTest {
     TextCommandPayload.Credentials payload = (TextCommandPayload.Credentials) command.payload();
     assertEquals("DemoUser", payload.loginName());
     assertEquals("swordfish", payload.password());
+  }
+
+  @Test
+  void parserResolvesAliasesThroughRegistryMetadata() {
+    TextCommandParser parser =
+        new TextCommandParser(
+            new TextCommandRegistry() {
+              @Override
+              public Optional<TextCommandDefinition> findDefinition(TextCommandType type) {
+                return Optional.empty();
+              }
+
+              @Override
+              public Optional<TextCommandDefinition> findDefinitionByAlias(String alias) {
+                if (!"peer".equalsIgnoreCase(alias)) {
+                  return Optional.empty();
+                }
+                return Optional.of(
+                    new TextCommandDefinition(
+                        TextCommandType.WHO,
+                        List.of("peer"),
+                        TextCommandDispatchGroup.WHO,
+                        TextCommandStageRequirement.GAMEPLAY,
+                        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+                        TextCommandActionCategory.META,
+                        TextCommandSource.EXTENSION));
+              }
+            });
+
+    TextCommand command = parser.parse("peer");
+
+    assertEquals(TextCommandType.WHO, command.type());
+    assertEquals("peer", command.aliasUsed());
+  }
+
+  @Test
+  void parserCarriesAuthoredCommandIdentityAndInvocationPayload() {
+    TextCommandParser parser =
+        new TextCommandParser(
+            new TextCommandRegistry() {
+              @Override
+              public Optional<TextCommandDefinition> findDefinition(TextCommandType type) {
+                return Optional.empty();
+              }
+
+              @Override
+              public Optional<TextCommandDefinition> findDefinitionByAlias(String alias) {
+                if (!"salute".equalsIgnoreCase(alias)) {
+                  return Optional.empty();
+                }
+                return Optional.of(
+                    new TextCommandDefinition(
+                        "wave-salute",
+                        TextCommandType.AUTHORED,
+                        List.of("salute"),
+                        TextCommandDispatchGroup.AUTHORED,
+                        TextCommandStageRequirement.GAMEPLAY,
+                        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+                        TextCommandActionCategory.GAMEPLAY,
+                        TextCommandSource.GAME_AUTHORED));
+              }
+            });
+
+    TextCommand command = parser.parse("salute captain");
+
+    assertEquals(TextCommandType.AUTHORED, command.type());
+    assertEquals("wave-salute", command.commandId());
+    assertEquals("salute", command.aliasUsed());
+    assertEquals(List.of("captain"), command.args());
+    assertTrue(command.authoredActionPayload().isPresent());
+    assertEquals("wave-salute", command.authoredActionPayload().orElseThrow().commandId());
+    assertEquals(List.of("captain"), command.authoredActionPayload().orElseThrow().args());
   }
 
   @Test
@@ -69,14 +142,50 @@ class TextCommandParserTest {
   }
 
   @Test
-  void parsesPlayWithWorldAndOptionalCharacter() {
+  void parsesPlayWithWorldAndOptionalRealmOrCharacter() {
     TextCommand command = parser.parse("PLAY demo Emberline");
 
     assertEquals(TextCommandType.PLAY, command.type());
     assertEquals("PLAY", command.aliasUsed());
     assertEquals(List.of("demo", "Emberline"), command.args());
     assertEquals("PLAY demo Emberline", command.rawLine());
-    assertTrue(command.payload() instanceof TextCommandPayload.Selection);
+    assertTrue(command.payload() instanceof TextCommandPayload.PlayRequest);
+    assertEquals("demo", command.playRequestPayload().orElseThrow().worldSelector());
+    assertEquals("Emberline", command.playRequestPayload().orElseThrow().realmSelector());
+    assertEquals(null, command.playRequestPayload().orElseThrow().characterSelector());
+  }
+
+  @Test
+  void parsesPlayWithExplicitRealmAndCharacter() {
+    TextCommand command = parser.parse("PLAY sandbox preview Emberline");
+
+    assertEquals(TextCommandType.PLAY, command.type());
+    assertEquals(List.of("sandbox", "preview", "Emberline"), command.args());
+    assertTrue(command.payload() instanceof TextCommandPayload.PlayRequest);
+    assertEquals("sandbox", command.playRequestPayload().orElseThrow().worldSelector());
+    assertEquals("preview", command.playRequestPayload().orElseThrow().realmSelector());
+    assertEquals("Emberline", command.playRequestPayload().orElseThrow().characterSelector());
+  }
+
+  @Test
+  void parsesRealmsWithWorldSelector() {
+    TextCommand command = parser.parse("REALMS sandbox");
+
+    assertEquals(TextCommandType.REALMS, command.type());
+    assertEquals(List.of("sandbox"), command.args());
+    assertTrue(command.payload() instanceof TextCommandPayload.RealmBrowseRequest);
+    assertEquals("sandbox", command.realmBrowsePayload().orElseThrow().worldSelector());
+  }
+
+  @Test
+  void parsesCharsWithOptionalRealmSelector() {
+    TextCommand command = parser.parse("CHARS sandbox preview");
+
+    assertEquals(TextCommandType.CHARS, command.type());
+    assertEquals(List.of("sandbox", "preview"), command.args());
+    assertTrue(command.payload() instanceof TextCommandPayload.CharacterBrowseRequest);
+    assertEquals("sandbox", command.characterBrowsePayload().orElseThrow().worldSelector());
+    assertEquals("preview", command.characterBrowsePayload().orElseThrow().realmSelector());
   }
 
   @Test
@@ -112,6 +221,19 @@ class TextCommandParserTest {
     assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
     assertTrue(command.viewRequestPayload().isPresent());
     assertEquals("WHO", command.viewRequestPayload().orElseThrow().viewName());
+  }
+
+  @Test
+  void parsesFriendsAsViewRequest() {
+    TextCommand command = parser.parse("FRIENDS");
+
+    assertEquals(TextCommandType.FRIENDS, command.type());
+    assertEquals("FRIENDS", command.aliasUsed());
+    assertTrue(command.args().isEmpty());
+    assertEquals("FRIENDS", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertTrue(command.viewRequestPayload().isPresent());
+    assertEquals("FRIENDS", command.viewRequestPayload().orElseThrow().viewName());
   }
 
   @Test

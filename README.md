@@ -1,7 +1,7 @@
 # FireMUD Game Platform
 
 [![Status: Under Development](https://img.shields.io/badge/Status-Under_Development-yellow)](./design/project-management/task-list.md)
-[![License: Business Source License 1.1](https://img.shields.io/badge/License-Business_Source_License_1.1-blue.svg)](LICENSE.md)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-blue.svg)](LICENSE.md)
 [![CI](https://github.com/benhook1013/FireMUD/actions/workflows/ci.yml/badge.svg)](https://github.com/benhook1013/FireMUD/actions/workflows/ci.yml)
 
 [![Backend: Java Spring](https://img.shields.io/badge/Backend-Java_Spring_Framework-green)](https://spring.io/)
@@ -15,7 +15,7 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 
 FireMUD is a modern engine for classic text-based online RPGs: creators use it to build persistent shared worlds with rooms, items, NPCs, and quests, and players connect over the web or Telnet to explore, chat, and adventure together in real time.
 
-*This project uses the [Business Source License 1.1](LICENSE.md). Each official release records its own Apache 2.0 conversion date two years after publication. See our [FAQ](FAQ.md) and [release process](design/operations/release-process.md) for details.*
+*This project uses the [PolyForm Noncommercial License 1.0.0](LICENSE.md). Commercial use is not permitted without a separate written agreement. See our [FAQ](FAQ.md) and [release process](design/operations/release-process.md) for details.*
 
 ## Table of Contents
 

@@ -64,9 +64,6 @@ jobs:
         with:
           ref: ${{ inputs.head_sha }}
 
-      - name: 📝 Create CI .env placeholder
-        run: touch .env
-
       - name: Generate Dev Certificates
         run: ./dev-tools/generate-dev-certs.sh dev-tools/certs
 
@@ -77,50 +74,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🧹 Reset Smoke Stack State
-        run: |
-          docker compose \
-            -f docker/docker-compose.yml \
-            -f docker/docker-compose.override.yml \
-            -f docker/docker-compose.smoke-images.override.yml \
-            down \
-            -v \
-            --remove-orphans || true
-
-      - name: 🚀 Start Smoke Stack
-        run: |
-          docker compose \
-            -f docker/docker-compose.yml \
-            -f docker/docker-compose.override.yml \
-            -f docker/docker-compose.smoke-images.override.yml \
-            up \
-            -d \
-            --wait \
-            --wait-timeout 180 \
-            postgres \
-            redis-coord \
-            redis-cache \
-            account-service \
-            entity-management-service \
-            gateway \
-            game-logic-service \
-            game-session-service \
-            logging-admin-service \
-            tcp-proxy-service \
-            world-management-service
-
       - name: 📦 Install WebSocket smoke dependency
         run: python3 -m pip install --disable-pip-version-check websocket-client
 
-      - name: 🧪 Direct WebSocket LOGIN + LOOK (Game Session)
-        run: |
-          cd services/game-session-service
-          bash ./websocket-login-look-smoke.sh
-
-      - name: 🧪 Telnet LOGIN + LOOK (TCP Proxy)
-        run: |
-          cd services/tcp-proxy-service
-          bash ./telnet-login-look-smoke.sh
+      - name: 🧪 Run Canonical Image Smoke Proof
+        run: SMOKE_IMAGE_TAG="${{ inputs.image_tag }}" bash ./dev-tools/verify-smoke-images.sh
 
       - name: 📜 Dump Docker Compose Logs on Failure
         if: failure()

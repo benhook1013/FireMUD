@@ -43,7 +43,11 @@ public class ProfileController {
     ProfileDto dto =
         accountService.updateProfile(
             new UpdateProfileRequest(
-                request.tenantId(), accountId, request.displayName(), request.bio()));
+                request.tenantId(),
+                accountId,
+                request.displayName(),
+                request.bio(),
+                request.presenceVisibilityPolicy()));
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 }

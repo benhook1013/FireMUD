@@ -2,7 +2,6 @@ package net.firedevops.firemud.entitymanagement.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -14,7 +13,6 @@ import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.CharacterFriendDto;
-import net.firedevops.firemud.entitymanagement.security.JwtAuthInterceptor;
 import net.firedevops.firemud.entitymanagement.service.FriendService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,10 +31,9 @@ class FriendControllerTest {
   @Autowired private MockMvc mockMvc;
 
   @MockitoBean private FriendService friendService;
-  @MockitoBean private JwtAuthInterceptor jwtAuthInterceptor;
 
   @BeforeEach
-  void setUpSecurityContext() throws Exception {
+  void setUpSecurityContext() {
     installTenantContext(Map.of("1", List.of("admin")));
   }
 
@@ -83,13 +80,7 @@ class FriendControllerTest {
     mockMvc.perform(get("/tenants/1/characters/2/friends")).andExpect(status().isForbidden());
   }
 
-  private void installTenantContext(Map<String, List<String>> scopedRoles) throws Exception {
-    doAnswer(
-            invocation -> {
-              SessionContext.setContext("test-account", List.of(), scopedRoles);
-              return true;
-            })
-        .when(jwtAuthInterceptor)
-        .preHandle(any(), any(), any());
+  private void installTenantContext(Map<String, List<String>> scopedRoles) {
+    SessionContext.setContext("test-account", List.of(), scopedRoles);
   }
 }

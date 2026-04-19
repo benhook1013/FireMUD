@@ -6,13 +6,8 @@ import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.Status;
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.JwtException;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /** Intercepts gRPC calls to extract and validate JWT tokens. */
@@ -45,22 +40,7 @@ public class AuthTokenInterceptor implements ServerInterceptor {
     }
     String token = authHeader.substring(7);
     try {
-      Jws<Claims> claims = jwtUtil.parseToken(token);
-      Claims payload = claims.getPayload();
-      String accountId = payload.get("accountId", String.class);
-      List<?> globalRaw = payload.get("globalRoles", List.class);
-      List<String> globalRoles =
-          globalRaw == null ? List.of() : globalRaw.stream().map(String::valueOf).toList();
-      Map<?, ?> scopedRaw = payload.get("scopedRoles", Map.class);
-      Map<String, List<String>> scopedRoles = new HashMap<>();
-      if (scopedRaw != null) {
-        for (Map.Entry<?, ?> e : scopedRaw.entrySet()) {
-          List<?> rolesRaw = e.getValue() instanceof List<?> list ? list : List.of();
-          scopedRoles.put(
-              String.valueOf(e.getKey()), rolesRaw.stream().map(String::valueOf).toList());
-        }
-      }
-      SessionContext.setContext(accountId, globalRoles, scopedRoles);
+      SessionClaims.fromJwt(jwtUtil.parseToken(token)).applyToSession();
       ServerCall.Listener<ReqT> listener = next.startCall(call, headers);
       return new ForwardingServerCallListener.SimpleForwardingServerCallListener<>(listener) {
         @Override

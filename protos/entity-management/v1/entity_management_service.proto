@@ -26,6 +26,7 @@ service EntityManagementService {
   rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
   rpc FindCharacterByName(FindCharacterByNameRequest) returns (FindCharacterByNameResponse);
   rpc ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse);
+  rpc CleanupRuntimeInstance(CleanupRuntimeInstanceRequest) returns (CleanupRuntimeInstanceResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
 }
 
@@ -33,6 +34,8 @@ message CreateCharacterRequest {
   string tenant_id = 1;
   string account_id = 2;
   string name = 3;
+  string game_instance_id = 4;
+  PlayableStateScope playable_state_scope = 5;
 }
 
 message CreateCharacterResponse {
@@ -144,6 +147,7 @@ message PutItemIntoContainerRequest {
   string item_id = 4;
   int32 quantity = 5;
   string item_instance_id = 6;
+  string stack_family_key = 7;
 }
 
 message PutItemIntoContainerResponse {
@@ -158,6 +162,7 @@ message TakeItemFromContainerRequest {
   string item_id = 4;
   int32 quantity = 5;
   string item_instance_id = 6;
+  string stack_family_key = 7;
 }
 
 message TakeItemFromContainerResponse {
@@ -198,6 +203,7 @@ message PickupItemFromRoomRequest {
   int32 quantity = 6;
   string container_instance_id = 7;
   string item_instance_id = 8;
+  string stack_family_key = 9;
 }
 
 message PickupItemFromRoomResponse {
@@ -215,6 +221,7 @@ message DropItemToRoomRequest {
   int32 quantity = 6;
   string container_instance_id = 7;
   string item_instance_id = 8;
+  string stack_family_key = 9;
 }
 
 message DropItemToRoomResponse {
@@ -223,9 +230,17 @@ message DropItemToRoomResponse {
   shared.v1.ErrorDetail error = 3;
 }
 
+enum PlayableStateScope {
+  PLAYABLE_STATE_SCOPE_UNSPECIFIED = 0;
+  PLAYABLE_STATE_SCOPE_SHARED = 1;
+  PLAYABLE_STATE_SCOPE_ISOLATED = 2;
+}
+
 message ListCharactersByAccountRequest {
   string tenant_id = 1;
   string account_id = 2;
+  string game_instance_id = 3;
+  PlayableStateScope playable_state_scope = 4;
 }
 
 message Character {
@@ -251,6 +266,8 @@ message ListCharactersByAccountResponse {
 message FindCharacterByNameRequest {
   string tenant_id = 1;
   string name = 2;
+  string game_instance_id = 3;
+  PlayableStateScope playable_state_scope = 4;
 }
 
 message FindCharacterByNameResponse {
@@ -298,14 +315,31 @@ message ListRoomEntitiesResponse {
   string room_instance_id = 6;
 }
 
+message CleanupRuntimeInstanceRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string termination_request_id = 3;
+}
+
+message CleanupRuntimeInstanceResponse {
+  int64 deleted_room_ground_entries = 1;
+  int64 deleted_item_stacks = 2;
+  int64 deleted_item_instances = 3;
+  int64 deleted_container_instances = 4;
+  shared.v1.ErrorDetail error = 5;
+}
+
 message GetDraftDesignDigestRequest {
   string tenant_id = 1;
-  string version_id = 2;
+  oneof scope {
+    string version_id = 2;
+    string script_patch_version = 3;
+  }
 }
 
 message GetDraftDesignDigestResponse {
   string tenant_id = 1;
-  string version_id = 2;
+  string scope_value = 2;
   string applied_commit_id = 3;
   string content_digest = 4;
   int32 digest_schema_version = 5;

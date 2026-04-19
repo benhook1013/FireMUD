@@ -116,7 +116,8 @@ public class ContainerCommandHandler {
       InventoryItem inventoryItem = resolvedItem.orElseThrow();
       if (transfer.quantity() > 1
           && ContainerIdentitySupport.matchesExplicitReference(
-              inventoryItem, transfer.itemReference())) {
+              inventoryItem, transfer.itemReference())
+          && !isStackSelection(inventoryItem, transfer.itemReference())) {
         return containerInvalidArgument("Explicit item refs require quantity 1 for PUT");
       }
 
@@ -128,13 +129,19 @@ public class ContainerCommandHandler {
               inventoryItem.getItemId(),
               ContainerIdentitySupport.matchesExplicitReference(
                           inventoryItem, transfer.itemReference())
+                      && !isStackSelection(inventoryItem, transfer.itemReference())
                       && !inventoryItem.getItemInstanceId().isBlank()
                   ? inventoryItem.getItemInstanceId()
                   : null,
+              stackFamilyKey(inventoryItem, transfer.itemReference()),
               transfer.quantity());
       if (response.hasError()) {
         return containerFailure(
-            errorCode(response.getError().getCode()), response.getError().getMessage());
+            errorCode(response.getError().getCode()),
+            stackSelectionGuidance(
+                response.getError().getMessage(),
+                transfer.itemReference(),
+                "Use INVENTORY to find the explicit stack ref and retry with that ref."));
       }
 
       List<PlayerOutput> outputs = new ArrayList<>();
@@ -205,7 +212,8 @@ public class ContainerCommandHandler {
       ContainerItem containerItem = resolvedItem.orElseThrow();
       if (transfer.quantity() > 1
           && ContainerIdentitySupport.matchesExplicitReference(
-              containerItem, transfer.itemReference())) {
+              containerItem, transfer.itemReference())
+          && !isStackSelection(containerItem, transfer.itemReference())) {
         return containerInvalidArgument("Explicit item refs require quantity 1 for TAKE");
       }
 
@@ -217,13 +225,21 @@ public class ContainerCommandHandler {
               containerItem.getItemId(),
               ContainerIdentitySupport.matchesExplicitReference(
                           containerItem, transfer.itemReference())
+                      && !isStackSelection(containerItem, transfer.itemReference())
                       && !containerItem.getItemInstanceId().isBlank()
                   ? containerItem.getItemInstanceId()
                   : null,
+              stackFamilyKey(containerItem, transfer.itemReference()),
               transfer.quantity());
       if (response.hasError()) {
         return containerFailure(
-            errorCode(response.getError().getCode()), response.getError().getMessage());
+            errorCode(response.getError().getCode()),
+            stackSelectionGuidance(
+                response.getError().getMessage(),
+                transfer.itemReference(),
+                "Use CONTAINER "
+                    + transfer.containerReference()
+                    + " to find the explicit stack ref and retry with that ref."));
       }
 
       List<PlayerOutput> outputs = new ArrayList<>();
@@ -323,6 +339,33 @@ public class ContainerCommandHandler {
 
   private String quantitySuffix(int quantity) {
     return quantity > 1 ? " x" + quantity : "";
+  }
+
+  private boolean isStackSelection(InventoryItem item, String reference) {
+    return !item.getItemInstanceId().isBlank()
+        ? false
+        : ContainerIdentitySupport.matchesExplicitReference(item, reference);
+  }
+
+  private boolean isStackSelection(ContainerItem item, String reference) {
+    return !item.getItemInstanceId().isBlank()
+        ? false
+        : ContainerIdentitySupport.matchesExplicitReference(item, reference);
+  }
+
+  private String stackFamilyKey(InventoryItem item, String reference) {
+    return isStackSelection(item, reference) ? item.getVisibleRef() : null;
+  }
+
+  private String stackFamilyKey(ContainerItem item, String reference) {
+    return isStackSelection(item, reference) ? item.getVisibleRef() : null;
+  }
+
+  private String stackSelectionGuidance(String reason, String itemReference, String guidance) {
+    if (reason != null && reason.contains("explicit stack selection required")) {
+      return "Multiple stack families match \"" + itemReference + "\". " + guidance;
+    }
+    return reason;
   }
 
   private String compactReferenceSuffix(InventoryItem item) {

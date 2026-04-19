@@ -13,6 +13,7 @@ import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
 import net.firedevops.firemud.entitymanagement.entity.ItemStack;
+import net.firedevops.firemud.entitymanagement.entity.ItemStackCompatibilityMode;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
@@ -104,6 +105,7 @@ class ContainerServiceImplTest {
     stack.setTenantId(1L);
     stack.setContainerInstance(containerInstance);
     stack.setItem(arrows);
+    stack.setStackFamilyKey("ammo/iron");
     stack.setCompatibilityFingerprint("item-definition:100");
     stack.setQuantity(4);
 
@@ -122,6 +124,7 @@ class ContainerServiceImplTest {
     assertEquals(1, result.getTotalElements());
     assertEquals(4, result.getContent().get(0).quantity());
     assertNull(result.getContent().get(0).itemInstanceId());
+    assertEquals("ammo/iron", result.getContent().get(0).visibleRef());
   }
 
   @Test
@@ -164,7 +167,7 @@ class ContainerServiceImplTest {
     when(itemInstanceRepo.save(any(ItemInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var stored = service.putItemIntoContainer(1L, 1L, 500L, 3L, null, 1);
+    var stored = service.putItemIntoContainer(1L, 1L, 500L, 3L, null, null, 1);
 
     assertEquals("Torch", stored.itemName());
     assertEquals(1, stored.quantity());
@@ -197,12 +200,14 @@ class ContainerServiceImplTest {
     containerInstance.setCharacter(character);
     containerInstance.setItem(container);
     Item arrows = item(3L, 1L, "Arrows", false, true);
+    arrows.setStackCompatibilityMode(ItemStackCompatibilityMode.DEFINITION_AND_FAMILY);
     ItemStack inventoryStack = new ItemStack();
     inventoryStack.setId(41L);
     inventoryStack.setTenantId(1L);
     inventoryStack.setCharacter(character);
     inventoryStack.setItem(arrows);
-    inventoryStack.setCompatibilityFingerprint("item-definition:3");
+    inventoryStack.setStackFamilyKey("ammo/iron");
+    inventoryStack.setCompatibilityFingerprint("item-definition:3:family:ammo/iron");
     inventoryStack.setQuantity(5);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
@@ -210,20 +215,27 @@ class ContainerServiceImplTest {
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(arrows));
     when(itemStackRepo
-            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
-                1L, 1L, 3L, "item-definition:3"))
-        .thenReturn(Optional.of(inventoryStack));
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
+                1L, 1L, 3L))
+        .thenReturn(List.of(inventoryStack));
     when(itemStackRepo.findByTenantIdAndContainerInstance_IdAndItem_IdAndCompatibilityFingerprint(
-            1L, 500L, 3L, "item-definition:3"))
+            1L, 500L, 3L, "item-definition:3:family:ammo/iron"))
         .thenReturn(Optional.empty());
     when(itemStackRepo.save(any(ItemStack.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var stored = service.putItemIntoContainer(1L, 1L, 500L, 3L, null, 2);
+    var stored = service.putItemIntoContainer(1L, 1L, 500L, 3L, null, null, 2);
 
     assertEquals(2, stored.quantity());
     assertEquals(3, inventoryStack.getQuantity());
     assertNull(stored.itemInstanceId());
+    assertEquals("ammo/iron", stored.visibleRef());
+    org.mockito.ArgumentCaptor<ItemStack> saved =
+        org.mockito.ArgumentCaptor.forClass(ItemStack.class);
+    Mockito.verify(itemStackRepo, Mockito.atLeastOnce()).save(saved.capture());
+    ItemStack destination = saved.getAllValues().get(saved.getAllValues().size() - 1);
+    assertEquals("ammo/iron", destination.getStackFamilyKey());
+    assertEquals("item-definition:3:family:ammo/iron", destination.getCompatibilityFingerprint());
   }
 
   @Test
@@ -266,7 +278,7 @@ class ContainerServiceImplTest {
     when(itemInstanceRepo.save(any(ItemInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var taken = service.takeItemFromContainer(1L, 1L, 500L, 3L, 42L, 1);
+    var taken = service.takeItemFromContainer(1L, 1L, 500L, 3L, 42L, null, 1);
 
     assertEquals("Torch", taken.itemName());
     assertEquals(character, second.getCharacter());
@@ -308,9 +320,74 @@ class ContainerServiceImplTest {
     IllegalArgumentException ex =
         assertThrows(
             IllegalArgumentException.class,
-            () -> service.putItemIntoContainer(1L, 1L, 500L, 3L, null, 1));
+            () -> service.putItemIntoContainer(1L, 1L, 500L, 3L, null, null, 1));
 
     assertEquals("Nested containers are not supported", ex.getMessage());
+  }
+
+  @Test
+  void putItemIntoContainerSelectsExplicitStackFamilyWhenMultipleFamiliesExist() {
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ContainerServiceImpl service =
+        new ContainerServiceImpl(
+            containerInstanceRepo,
+            itemInstanceRepo,
+            characterRepo,
+            itemRepo,
+            itemStackRepo,
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
+
+    Character character = character(1L, 1L);
+    Item container = item(2L, 1L, "Chest", true, false);
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(500L);
+    containerInstance.setTenantId(1L);
+    containerInstance.setCharacter(character);
+    containerInstance.setItem(container);
+    Item arrows = item(3L, 1L, "Arrows", false, true);
+    arrows.setStackCompatibilityMode(ItemStackCompatibilityMode.DEFINITION_AND_FAMILY);
+    ItemStack first = new ItemStack();
+    first.setId(41L);
+    first.setTenantId(1L);
+    first.setCharacter(character);
+    first.setItem(arrows);
+    first.setStackFamilyKey("ammo/iron");
+    first.setCompatibilityFingerprint("item-definition:3:family:ammo/iron");
+    first.setQuantity(5);
+    ItemStack second = new ItemStack();
+    second.setId(42L);
+    second.setTenantId(1L);
+    second.setCharacter(character);
+    second.setItem(arrows);
+    second.setStackFamilyKey("ammo/steel");
+    second.setCompatibilityFingerprint("item-definition:3:family:ammo/steel");
+    second.setQuantity(4);
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+        .thenReturn(Optional.of(containerInstance));
+    when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(arrows));
+    when(itemStackRepo
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
+                1L, 1L, 3L))
+        .thenReturn(List.of(first, second));
+    when(itemStackRepo.findByTenantIdAndContainerInstance_IdAndItem_IdAndCompatibilityFingerprint(
+            1L, 500L, 3L, "item-definition:3:family:ammo/steel"))
+        .thenReturn(Optional.empty());
+    when(itemStackRepo.save(any(ItemStack.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var stored = service.putItemIntoContainer(1L, 1L, 500L, 3L, null, "ammo/steel", 2);
+
+    assertEquals("ammo/steel", stored.visibleRef());
+    assertEquals(2, second.getQuantity());
+    assertEquals(5, first.getQuantity());
   }
 
   private static Character character(Long id, Long tenantId) {
@@ -329,6 +406,7 @@ class ContainerServiceImplTest {
     item.setDescription(name + " desc");
     item.setContainer(container);
     item.setStackable(stackable);
+    item.setStackCompatibilityMode(ItemStackCompatibilityMode.DEFINITION_ONLY);
     return item;
   }
 

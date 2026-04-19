@@ -7,10 +7,10 @@ import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring")
 public interface WorldEventMapper {
-  @Mapping(target = "regionId", source = "region.id")
+  @Mapping(target = "regionId", source = "regionInstance.id")
   WorldEventDto toDto(WorldEvent entity);
 
-  @Mapping(target = "region.id", source = "regionId")
+  @Mapping(target = "regionInstance.id", source = "regionId")
   @Mapping(target = "version", ignore = true)
   WorldEvent toEntity(WorldEventDto dto);
 }

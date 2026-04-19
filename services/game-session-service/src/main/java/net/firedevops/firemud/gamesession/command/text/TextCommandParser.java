@@ -1,29 +1,66 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 /** Parses player-provided text lines into {@link TextCommand} objects. */
+@Component
 public class TextCommandParser {
+  private final TextCommandRegistry registry;
+
+  @Autowired
+  public TextCommandParser(TextCommandRegistry registry) {
+    this.registry = Objects.requireNonNull(registry, "registry must not be null");
+  }
+
+  TextCommandParser() {
+    this(new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider())));
+  }
+
   public TextCommand parse(String rawLine) {
     String source = rawLine == null ? "" : rawLine;
     String trimmed = source.trim();
     if (trimmed.isEmpty()) {
       return new TextCommand(
-          TextCommandType.NOOP, List.of(), source, "", new TextCommandPayload.None());
+          TextCommandType.NOOP.name().toLowerCase(java.util.Locale.ROOT),
+          TextCommandType.NOOP,
+          List.of(),
+          source,
+          "",
+          new TextCommandPayload.None());
     }
 
     String[] tokens = trimmed.split("\\s+");
     String aliasUsed = tokens[0];
-    TextCommandType type = TextCommandType.fromToken(aliasUsed);
+    TextCommandDefinition resolvedDefinition =
+        registry.findDefinitionByAlias(aliasUsed).orElse(null);
+    TextCommandType type =
+        resolvedDefinition == null ? TextCommandType.UNKNOWN : resolvedDefinition.type();
+    String commandId =
+        resolvedDefinition == null
+            ? TextCommandType.fromToken(aliasUsed).name().toLowerCase(java.util.Locale.ROOT)
+            : resolvedDefinition.commandId();
     ParsedCommandData parsed =
         switch (type) {
           case WORLDS ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WORLDS"));
+          case REALMS -> parseRealms(tokens);
+          case CHARS -> parseChars(tokens);
           case LOGOUT -> new ParsedCommandData(List.of(), new TextCommandPayload.None());
           case AFK -> parseAfk(tokens);
           case HELP -> parseHelp(tokens);
           case WHO -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WHO"));
+          case FRIENDS ->
+              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("FRIENDS"));
+          case AUTHORED ->
+              new ParsedCommandData(
+                  parseRemainingTokens(tokens),
+                  new TextCommandPayload.AuthoredActionInvocation(
+                      commandId, parseRemainingTokens(tokens)));
           case INVENTORY ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("INVENTORY"));
           case EQUIPMENT ->
@@ -42,7 +79,7 @@ public class TextCommandParser {
           case MOVE -> parseMove(aliasUsed, tokens);
           case UNKNOWN -> parseUnknown(tokens);
         };
-    return new TextCommand(type, parsed.args(), source, aliasUsed, parsed.payload());
+    return new TextCommand(commandId, type, parsed.args(), source, aliasUsed, parsed.payload());
   }
 
   private ParsedCommandData parseLogin(String[] tokens) {
@@ -58,10 +95,30 @@ public class TextCommandParser {
 
   private ParsedCommandData parsePlay(String[] tokens) {
     List<String> args = parseRemainingTokens(tokens);
-    if (!args.isEmpty()) {
-      return new ParsedCommandData(
-          args,
-          new TextCommandPayload.Selection(args.get(0), args.size() > 1 ? args.get(1) : null));
+    if (!args.isEmpty()
+        && TextCommandPayload.fromLegacy(TextCommandType.PLAY, args)
+            instanceof TextCommandPayload.PlayRequest playRequest) {
+      return new ParsedCommandData(args, playRequest);
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+  }
+
+  private ParsedCommandData parseRealms(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (!args.isEmpty()
+        && TextCommandPayload.fromLegacy(TextCommandType.REALMS, args)
+            instanceof TextCommandPayload.RealmBrowseRequest browseRequest) {
+      return new ParsedCommandData(args, browseRequest);
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+  }
+
+  private ParsedCommandData parseChars(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (!args.isEmpty()
+        && TextCommandPayload.fromLegacy(TextCommandType.CHARS, args)
+            instanceof TextCommandPayload.CharacterBrowseRequest browseRequest) {
+      return new ParsedCommandData(args, browseRequest);
     }
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }
@@ -207,7 +264,26 @@ public class TextCommandParser {
       String canonical = canonicalDirection(verb);
       return canonical.isEmpty() ? List.of() : List.of(canonical);
     }
-    return List.of(Arrays.copyOfRange(tokens, 1, tokens.length));
+    return normalizeGoSyntax(verb, Arrays.copyOfRange(tokens, 1, tokens.length));
+  }
+
+  private List<String> normalizeGoSyntax(String verb, String[] remainingTokens) {
+    if (!verb.equalsIgnoreCase("go")) {
+      return List.of(remainingTokens);
+    }
+    if (remainingTokens.length == 0) {
+      return List.of();
+    }
+    String canonicalDirection = canonicalDirection(remainingTokens[0]);
+    if (canonicalDirection.isEmpty()) {
+      return List.of(remainingTokens);
+    }
+    ArrayList<String> normalized = new ArrayList<>();
+    normalized.add(canonicalDirection);
+    if (remainingTokens.length > 1) {
+      normalized.addAll(List.of(Arrays.copyOfRange(remainingTokens, 1, remainingTokens.length)));
+    }
+    return List.copyOf(normalized);
   }
 
   private String canonicalDirection(String token) {

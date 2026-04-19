@@ -14,7 +14,6 @@ import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
 import java.time.Duration;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -23,11 +22,14 @@ import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
@@ -387,20 +389,7 @@ class LookWebSocketCrossServiceTest {
   private long insertGameInstance(boolean clearExisting) {
     DataSource dataSource = GAME_SESSION.bean(DataSource.class);
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
-    jdbc.execute(
-        """
-        CREATE TABLE IF NOT EXISTS game_instances (
-          id BIGSERIAL PRIMARY KEY,
-          tenant_id BIGINT NOT NULL,
-          runtime_version VARCHAR(100) NOT NULL,
-          script_patch_version VARCHAR(100),
-          script_patch_pinned_at TIMESTAMP NULL,
-          script_patch_pinned_by VARCHAR(200) NULL,
-          script_patch_pinned_reason VARCHAR(500) NULL,
-          owner_account_id BIGINT NOT NULL,
-          status VARCHAR(20) NOT NULL
-        )
-        """);
+    GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
     if (clearExisting) {
       GAME_SESSION
           .bean(StringRedisTemplate.class)
@@ -411,16 +400,7 @@ class LookWebSocketCrossServiceTest {
       jdbc.update("DELETE FROM game_instances");
       GAME_SESSION.bean(ScreenBufferService.class).clear(TENANT_ID, 1L, ACCOUNT_ID);
     }
-    return Optional.ofNullable(
-            jdbc.queryForObject(
-                "INSERT INTO game_instances (tenant_id, runtime_version, script_patch_version, owner_account_id, status) VALUES (?, ?, ?, ?, ?) RETURNING id",
-                Long.class,
-                TENANT_ID,
-                "0.1.0",
-                "initial",
-                ACCOUNT_ID,
-                "ACTIVE"))
-        .orElseThrow(() -> new IllegalStateException("Game instance insert did not return an id"));
+    return GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, ACCOUNT_ID, 7L);
   }
 
   private List<String> runLookSequence(long sessionId) throws Exception {
@@ -883,6 +863,24 @@ class LookWebSocketCrossServiceTest {
                               .setGameplayAvailable(true)
                               .setEntitlementVersion(1L)
                               .setTenantBillingSequence(1L)
+                              .setEvaluatedAt("2026-03-30T00:00:00Z")
+                              .build());
+                      responseObserver.onCompleted();
+                    }
+
+                    @Override
+                    public void ensurePublicProductionPlayerMembership(
+                        EnsurePublicProductionPlayerMembershipRequest request,
+                        StreamObserver<EnsurePublicProductionPlayerMembershipResponse>
+                            responseObserver) {
+                      responseObserver.onNext(
+                          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
+                              .setAccountId(request.getAccountId())
+                              .setTenantId(request.getTenantId())
+                              .setRealmSlug(request.getRealmSlug())
+                              .setGameplayAdmissionAllowed(gameplayAdmissionAllowed)
+                              .setMembershipVersion(1L)
+                              .setCreated(gameplayAdmissionAllowed)
                               .setEvaluatedAt("2026-03-30T00:00:00Z")
                               .build());
                       responseObserver.onCompleted();

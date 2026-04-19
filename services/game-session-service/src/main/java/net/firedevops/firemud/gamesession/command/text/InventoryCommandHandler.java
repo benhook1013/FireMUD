@@ -196,7 +196,7 @@ public class InventoryCommandHandler {
               "No room item matches \"" + itemReferenceValue + "\"");
         }
         ResolvedItem item = resolved.orElseThrow();
-        if (itemReference.quantity() > 1 && item.explicitReference()) {
+        if (itemReference.quantity() > 1 && item.explicitInstanceReference()) {
           return inventoryMutationFailure(
               "INVALID_ARGUMENT",
               itemReferenceValue,
@@ -209,14 +209,18 @@ public class InventoryCommandHandler {
                 Long.toString(context.gameInstanceId()),
                 context.roomInstanceId(),
                 item.itemId(),
-                item.explicitReference() ? item.itemInstanceId() : null,
+                item.explicitInstanceReference() ? item.itemInstanceId() : null,
                 item.containerInstanceId(),
+                item.stackFamilyKey(),
                 itemReference.quantity());
         if (response.hasError()) {
           return inventoryMutationFailure(
               errorCode(response.getError().getCode()),
               itemReferenceValue,
-              response.getError().getMessage());
+              stackSelectionGuidance(
+                  response.getError().getMessage(),
+                  itemReferenceValue,
+                  "Use INV HERE to find the explicit stack ref and retry with that ref."));
         }
         return inventoryMutationSuccess(
             context,
@@ -243,7 +247,7 @@ public class InventoryCommandHandler {
             "No carried item matches \"" + itemReferenceValue + "\"");
       }
       ResolvedItem item = resolved.orElseThrow();
-      if (itemReference.quantity() > 1 && item.explicitReference()) {
+      if (itemReference.quantity() > 1 && item.explicitInstanceReference()) {
         return inventoryMutationFailure(
             "INVALID_ARGUMENT",
             itemReferenceValue,
@@ -256,14 +260,18 @@ public class InventoryCommandHandler {
               Long.toString(context.gameInstanceId()),
               context.roomInstanceId(),
               item.itemId(),
-              item.explicitReference() ? item.itemInstanceId() : null,
+              item.explicitInstanceReference() ? item.itemInstanceId() : null,
               item.containerInstanceId(),
+              item.stackFamilyKey(),
               itemReference.quantity());
       if (response.hasError()) {
         return inventoryMutationFailure(
             errorCode(response.getError().getCode()),
             itemReferenceValue,
-            response.getError().getMessage());
+            stackSelectionGuidance(
+                response.getError().getMessage(),
+                itemReferenceValue,
+                "Use INVENTORY to find the explicit stack ref and retry with that ref."));
       }
       return inventoryMutationSuccess(
           context,
@@ -348,7 +356,8 @@ public class InventoryCommandHandler {
                     item.getItemInstanceId(),
                     item.getItemName(),
                     item.getContainerInstanceId(),
-                    matchesExplicitReference(item, reference)));
+                    matchesExplicitInstanceReference(item, reference),
+                    stackFamilyKey(item, reference)));
   }
 
   private Optional<ResolvedItem> findCarriedItem(List<InventoryItem> items, String reference) {
@@ -362,7 +371,9 @@ public class InventoryCommandHandler {
                     item.getItemInstanceId(),
                     item.getItemName(),
                     ContainerIdentitySupport.resolveContainerInstanceId(item),
-                    ContainerIdentitySupport.matchesExplicitReference(item, reference)));
+                    ContainerIdentitySupport.matchesExplicitReference(item, reference)
+                        && !isStackSelection(item),
+                    stackFamilyKey(item, reference)));
   }
 
   private boolean matchesReference(RoomGroundInventoryItem item, String reference) {
@@ -373,10 +384,40 @@ public class InventoryCommandHandler {
         || matchesReference(item.getItemInstanceId(), reference);
   }
 
-  private boolean matchesExplicitReference(RoomGroundInventoryItem item, String reference) {
-    return matchesReference(item.getVisibleRef(), reference)
-        || matchesReference(item.getContainerInstanceId(), reference)
-        || matchesReference(item.getItemInstanceId(), reference);
+  private boolean matchesExplicitInstanceReference(RoomGroundInventoryItem item, String reference) {
+    return matchesReference(item.getItemInstanceId(), reference)
+        || (!isStackSelection(item)
+            && (matchesReference(item.getVisibleRef(), reference)
+                || matchesReference(item.getContainerInstanceId(), reference)));
+  }
+
+  private boolean isStackSelection(InventoryItem item) {
+    return !StringUtils.hasText(item.getItemInstanceId())
+        && StringUtils.hasText(item.getVisibleRef());
+  }
+
+  private boolean isStackSelection(RoomGroundInventoryItem item) {
+    return !StringUtils.hasText(item.getItemInstanceId())
+        && StringUtils.hasText(item.getVisibleRef());
+  }
+
+  private String stackFamilyKey(InventoryItem item, String reference) {
+    return isStackSelection(item) && matchesReference(item.getVisibleRef(), reference)
+        ? item.getVisibleRef()
+        : null;
+  }
+
+  private String stackFamilyKey(RoomGroundInventoryItem item, String reference) {
+    return isStackSelection(item) && matchesReference(item.getVisibleRef(), reference)
+        ? item.getVisibleRef()
+        : null;
+  }
+
+  private String stackSelectionGuidance(String reason, String itemReference, String guidance) {
+    if (reason != null && reason.contains("explicit stack selection required")) {
+      return "Multiple stack families match \"" + itemReference + "\". " + guidance;
+    }
+    return reason;
   }
 
   private boolean matchesReference(String candidate, String reference) {
@@ -394,5 +435,6 @@ public class InventoryCommandHandler {
       String itemInstanceId,
       String itemName,
       String containerInstanceId,
-      boolean explicitReference) {}
+      boolean explicitInstanceReference,
+      String stackFamilyKey) {}
 }

@@ -12,22 +12,12 @@ from pathlib import Path
 class NoticeContext:
     copyright_year: int
     release_date: date
-    change_date: date
-
-
-def add_years_safe(value: date, years: int) -> date:
-    try:
-        return value.replace(year=value.year + years)
-    except ValueError:
-        # February 29th rolls back to February 28th on non-leap years.
-        return value.replace(month=2, day=28, year=value.year + years)
 
 
 def render_notice(template_text: str, context: NoticeContext) -> str:
     replacements = {
         "{{COPYRIGHT_YEAR}}": str(context.copyright_year),
         "{{RELEASE_DATE}}": context.release_date.isoformat(),
-        "{{CHANGE_DATE}}": context.change_date.isoformat(),
     }
 
     rendered = template_text
@@ -67,7 +57,6 @@ def main() -> None:
     context = NoticeContext(
         copyright_year=args.release_date.year,
         release_date=args.release_date,
-        change_date=add_years_safe(args.release_date, 2),
     )
 
     rendered = render_notice(template_text, context)

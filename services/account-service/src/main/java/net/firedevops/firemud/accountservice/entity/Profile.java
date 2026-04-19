@@ -30,6 +30,11 @@ public class Profile {
   @Column(length = 255)
   private String bio;
 
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false, length = 32)
+  private ProfilePresenceVisibilityPolicy presenceVisibilityPolicy =
+      ProfilePresenceVisibilityPolicy.FRIENDS_ONLY;
+
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP",
       justification = "Account reference is managed by JPA and intentionally exposed")

@@ -10,7 +10,7 @@ This document collects common questions and answers about the FireMUD Game Platf
   FireMUD is a modular platform for hosting and creating text-based MUD games. It provides real-time multiplayer services and integrated tools for game creators.
 
 - **Is FireMUD open source?**
-  FireMUD is source-available under the Business Source License 1.1. Each official release carries its own change date and automatically switches to the Apache 2.0 License two years after publication. Private use, self-hosting, and modification are allowed unless they fall under the restricted commercial uses listed in [LICENSE.md](LICENSE.md).
+  FireMUD is source-available under the PolyForm Noncommercial License 1.0.0. Personal use, private self-hosting, and modification are allowed for noncommercial purposes as described in [LICENSE.md](LICENSE.md). Commercial use requires a separate written agreement.
 
 ---
 
@@ -55,7 +55,7 @@ This document collects common questions and answers about the FireMUD Game Platf
   Yes. GitHub Actions can build Docker images, run tests, and push images to a registry. From there you can deploy those images to any Kubernetes cluster using actions that invoke `kubectl` or Helm. Many projects use this workflow for CI/CD.
 
 - **How are new versions published?**
-  Each FireMUD service is tagged and released through GitHub Actions. The resulting Docker images are pushed to a registry and deployed to Kubernetes. Every official release records its own publication date, BSL change date, and dependency notices as part of the release process before later converting to Apache 2.0.
+  Each FireMUD service is tagged and released through GitHub Actions. The resulting Docker images are pushed to a registry and deployed to Kubernetes. Official releases publish a release-specific `NOTICE.md` and dependency notices as part of the release process.
 
 - **How are mTLS certificates issued?**
   The Kubernetes cluster runs `cert-manager`, which automatically issues and renews TLS and mTLS certificates for each service. Certificates are stored as Kubernetes Secrets and mounted into the pods.

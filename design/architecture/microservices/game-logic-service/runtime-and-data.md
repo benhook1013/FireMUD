@@ -31,6 +31,11 @@ Role classification: Game Logic is a digest-gate participant for full publishes,
 
 For full-version publish gating, this service is still a required digest participant even though it does not orchestrate Saga steps. It must expose `GetDraftDesignDigest(tenantId, versionId)` and publish a service-local digest input manifest with:
 
+Implementation Notes:
+
+- The current implementation explicitly attests an empty owned-rule manifest and returns synthetic `appliedCommitId = "version:<versionId>"`, because Game Logic does not yet own version-scoped draft rule tables.
+- That empty-manifest digest is intentional: it keeps the participant matrix canonical without inventing fake hidden state for this service.
+
 - included objects such as version-scoped rule and configuration tables this service owns that affect runtime command behavior;
 - excluded objects such as runtime queues, caches, telemetry tables, and other non-launchability data;
 - canonicalization rules covering stable ordering, normalization, and null or default handling before hashing; and

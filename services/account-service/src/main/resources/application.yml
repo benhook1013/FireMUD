@@ -43,11 +43,35 @@ firemud:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
-  auth:
-    jwt-expiration-ms: 3600000
-    session-expiration-ms: 3600000
-    player-bootstrap-expiration-ms: 300000
-    connect-token-expiration-ms: 30000
+  account:
+    tokens:
+      session-expiration-ms: 3600000
+      player-bootstrap-expiration-ms: 300000
+      connect-scope-expiration-ms: 120000
+      connect-token-expiration-ms: 30000
+  gameplay:
+    catalog:
+      worlds:
+        - slug: demo
+          display-name: Demo World
+          realms:
+            - slug: production
+              display-name: Live Realm
+              tenant-id: ${FIREMUD_BOOTSTRAP_DEMO_TENANT_ID:1}
+              game-instance-id: ${FIREMUD_BOOTSTRAP_DEMO_GAME_INSTANCE_ID:1}
+              pointer-version: ${FIREMUD_BOOTSTRAP_DEMO_POINTER_VERSION:1}
+              visible: true
+              requires-character-selection: false
+        - slug: sandbox
+          display-name: Builder Sandbox
+          realms:
+            - slug: production
+              display-name: Live Realm
+              tenant-id: ${FIREMUD_BOOTSTRAP_SANDBOX_TENANT_ID:1}
+              game-instance-id: ${FIREMUD_BOOTSTRAP_SANDBOX_GAME_INSTANCE_ID:2}
+              pointer-version: ${FIREMUD_BOOTSTRAP_SANDBOX_POINTER_VERSION:1}
+              visible: true
+              requires-character-selection: true
   mail:
     from: no-reply@firemud.local
     verification-url: http://localhost:8080/auth/verify-email?token=%s
@@ -55,6 +79,31 @@ firemud:
   payment:
     stripe-api-key: test-key
     platform-fee-percent: 5
+  auth:
+    http:
+      enabled: true
+      role-requirement: PRIVILEGED
+      public-path-patterns:
+        - /auth/login
+        - /auth/player-bootstrap
+        - /auth/bootstrap/**
+        - /auth/connect-token
+        - /auth/request-password-reset
+        - /auth/complete-password-reset
+        - /auth/request-email-verification
+        - /auth/verify-email
+        - /auth/recover-username
+        - /accounts
+        - /accounts/
+        - /ping
+        - /.well-known/**
+    grpc:
+      public-methods:
+        - account.v1.AccountService/Authenticate
+        - account.v1.AccountService/Ping
+        - account.v1.AccountService/GetTenantMembershipForRuntime
+        - account.v1.AccountService/EnsurePublicProductionPlayerMembership
+        - account.v1.AccountService/GetTenantEntitlementsForRuntime
 
 management:
   endpoints:

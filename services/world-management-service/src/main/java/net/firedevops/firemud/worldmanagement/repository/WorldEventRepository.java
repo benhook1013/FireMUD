@@ -11,8 +11,10 @@ import org.springframework.stereotype.Repository;
 public interface WorldEventRepository extends JpaRepository<WorldEvent, Long> {
   List<WorldEvent> findByProcessedFalseAndExecuteAtBefore(LocalDateTime time);
 
+  void deleteByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
+
   @Query(
       "select e from WorldEvent e where e.processed = false and e.executeAt <= :time"
-          + " and (e.region is null or e.region.shardId = :shardId)")
+          + " and (e.regionInstance is null or e.regionInstance.shardId = :shardId)")
   List<WorldEvent> findDueEventsForShard(LocalDateTime time, Integer shardId);
 }

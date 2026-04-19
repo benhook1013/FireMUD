@@ -32,6 +32,9 @@ public class Character {
   @Column(nullable = false)
   private Long accountId;
 
+  @Column(nullable = false, length = 120)
+  private String playableStateKey;
+
   @Column(nullable = false, length = 100)
   private String name;
 

@@ -67,7 +67,14 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
 
 ### Instance tables
 
-- `region_instance`, `zone_instance`, and `room_instance` materialize topology for a running game instance based on the chosen version and any runtime procedural generation.
+- Implementation Notes:
+
+- The first runtime lifecycle substrate is now live through `world_instance` plus first-cut `region_instance` rows keyed by `(tenantId, gameInstanceId)`.
+- `lifecycle_epoch` is the current concrete fenced token used by the prepare/activate/fail/terminate lifecycle RPCs.
+- `world_instance.termination_request_id` and `terminated_at` now retain the canonical shutdown workflow identity and terminal completion timestamp for runtime-instance teardown.
+- `zone_instance`, `room_instance`, and `room_instance_exit` are now live as runtime topology storage keyed by `(tenantId, gameInstanceId, ...)`, so the main named follow-through work has moved from topology rows to later runtime world-state families.
+
+- `region_instance`, `zone_instance`, `room_instance`, and `room_instance_exit` materialize topology for a running game instance based on the chosen version and any runtime procedural generation.
 - `instance` tracks temporary copies of zones for instanced gameplay, with `expires_at` defining when instances enter `InstanceTermination`.
 - `world_instance_status`, or equivalent lifecycle state, tracks monotonic lifecycle transitions: `PREPARING -> (ACTIVE | FAILED_PRE_ACTIVATION)` and `ACTIVE -> TERMINATING -> TERMINATED`.
 - `FAILED_PRE_ACTIVATION` is terminal for that `gameInstanceId`; recovery is modeled as provisioning a new `gameInstanceId` and rerunning world creation.
@@ -81,7 +88,7 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
 - Published versions carry a frozen `generationConfigRevision` or equivalent hash derived from the version-scoped design inputs committed at publish time.
 - `generation_run`, or equivalent, persists deterministic generation artifacts for replay-safe publish and reconciliation.
 - Runtime-instance `generation_run` rows tied to instance creation are diagnostic/runtime provenance only and are not cutover payload rows.
-- `world_event` stores timed changes such as weather updates.
+- `world_event` stores timed runtime changes such as weather updates and is keyed by `(tenantId, gameInstanceId)` with optional `region_instance` scope.
 - `region_instance.weather`, or equivalent, records current weather state for live regions.
 
 Redis caches hot rooms for active sessions to speed up lookups. Cached rooms use keys `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` and must never be keyed by template identifiers because runtime rows may diverge from template state.
@@ -94,7 +101,7 @@ World Management must classify its runtime persistence surface for cutover and m
   - none are mandatory in the initial implementation slice;
   - any future world-bound metadata that survives beyond a single room-instance layout and references versioned templates.
 - `S3` world-owned ephemeral state:
-  - `region_instance`, `zone_instance`, `room_instance`;
+  - `region_instance`, `zone_instance`, `room_instance`, `room_instance_exit`;
   - `character_location`, `npc_location`, and occupancy rows;
   - ambient runtime state such as weather, door state, hazard state, instanced events, and instance-scoped schedules;
   - `world_event` rows tied to a specific `gameInstanceId`.
@@ -110,6 +117,11 @@ Initial-slice rule:
 ## Digest Input Manifest
 
 World Management is a required publish-gate participant and maintains a stable digest manifest for `GetDraftDesignDigest(versionId)`:
+
+Implementation Notes:
+
+- The current implementation computes the digest from the tenant’s draft topology rows using the existing tenant-scoped schema and returns synthetic `appliedCommitId = "version:<versionId>"`.
+- That keeps the publish gate honest against the current data model while the broader target-state `(tenantId, versionId)` draft graph is still being shaped into service storage.
 
 - Included objects:
   - version-scoped topology tables such as `region_template`, `zone_template`, `room_template`, `terrain_template`, `room_exit_template`, and equivalent normalized topology relations;
@@ -156,6 +168,7 @@ World events are persisted in `world_event` and processed periodically by `World
 World event invariants:
 
 - Events are runtime-only and keyed by `(tenantId, gameInstanceId)`, never `(tenantId, versionId)`.
+- `world_event.region_instance_id` must reference runtime `region_instance` rows, not template `region` rows.
 - Event application must be idempotent through a stable event identity or derived identity tuple.
 - Weather change events update runtime weather state before notifying other services.
 - Event application must use the same effect-shaped ambient mutation contract used by tick execution, guarded by `EffectId` and scoped by runtime instance identifiers.

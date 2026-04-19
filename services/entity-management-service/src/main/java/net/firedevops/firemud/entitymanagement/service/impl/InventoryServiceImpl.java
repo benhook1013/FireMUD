@@ -68,7 +68,8 @@ public class InventoryServiceImpl implements InventoryService {
     Item item = requireItem(tenantId, itemId);
     if (stackableItemSupport.usesStackStorage(item)) {
       incrementInventoryStack(character, item, quantity);
-      return inventoryDtoForStackMutation(character, item, quantity);
+      return inventoryDtoForStackMutation(
+          character, item, stackableItemSupport.defaultStackFamilyKey(item), quantity);
     }
     List<ItemInstance> created = createCarriedItemInstances(character, item, quantity);
     return inventoryDtoForMutation(created.get(0), quantity);
@@ -134,6 +135,7 @@ public class InventoryServiceImpl implements InventoryService {
       Long itemId,
       Long itemInstanceId,
       String containerInstanceId,
+      String stackFamilyKey,
       int quantity) {
     requirePositiveQuantity(quantity);
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
@@ -141,10 +143,22 @@ public class InventoryServiceImpl implements InventoryService {
     Character character = requireCharacter(tenantId, characterId);
     Item item = requireItem(tenantId, itemId);
     if (stackableItemSupport.usesStackStorage(item)) {
-      moveInventoryStackToRoom(
-          tenantId, character, normalizedGameInstanceId, normalizedRoomInstanceId, item, quantity);
+      String selectedStackFamilyKey =
+          moveInventoryStackToRoom(
+              tenantId,
+              character,
+              normalizedGameInstanceId,
+              normalizedRoomInstanceId,
+              item,
+              normalizeOptionalText(stackFamilyKey),
+              quantity);
       return roomGroundDtoForStackMutation(
-          tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, item, quantity);
+          tenantId,
+          normalizedGameInstanceId,
+          normalizedRoomInstanceId,
+          item,
+          selectedStackFamilyKey,
+          quantity);
     }
     List<ItemInstance> selected =
         requireCarriedItemInstances(
@@ -165,6 +179,7 @@ public class InventoryServiceImpl implements InventoryService {
       Long itemId,
       Long itemInstanceId,
       String containerInstanceId,
+      String stackFamilyKey,
       int quantity) {
     requirePositiveQuantity(quantity);
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
@@ -172,9 +187,16 @@ public class InventoryServiceImpl implements InventoryService {
     Character character = requireCharacter(tenantId, characterId);
     Item item = requireItem(tenantId, itemId);
     if (stackableItemSupport.usesStackStorage(item)) {
-      moveRoomStackToInventory(
-          tenantId, character, normalizedGameInstanceId, normalizedRoomInstanceId, item, quantity);
-      return inventoryDtoForStackMutation(character, item, quantity);
+      String selectedStackFamilyKey =
+          moveRoomStackToInventory(
+              tenantId,
+              character,
+              normalizedGameInstanceId,
+              normalizedRoomInstanceId,
+              item,
+              normalizeOptionalText(stackFamilyKey),
+              quantity);
+      return inventoryDtoForStackMutation(character, item, selectedStackFamilyKey, quantity);
     }
     List<ItemInstance> selected =
         requireRoomItemInstances(
@@ -227,7 +249,14 @@ public class InventoryServiceImpl implements InventoryService {
   }
 
   private void incrementInventoryStack(Character character, Item item, int quantity) {
-    String compatibilityFingerprint = stackableItemSupport.compatibilityFingerprint(item);
+    incrementInventoryStack(
+        character, item, quantity, stackableItemSupport.defaultStackFamilyKey(item));
+  }
+
+  private void incrementInventoryStack(
+      Character character, Item item, int quantity, String stackFamilyKey) {
+    String compatibilityFingerprint =
+        stackableItemSupport.compatibilityFingerprint(item, stackFamilyKey);
     ItemStack stack =
         itemStackRepository
             .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
@@ -238,6 +267,8 @@ public class InventoryServiceImpl implements InventoryService {
                   created.setTenantId(character.getTenantId());
                   created.setCharacter(character);
                   created.setItem(item);
+                  created.setStackFamilyKey(
+                      stackableItemSupport.normalizeStackFamilyKey(stackFamilyKey));
                   created.setCompatibilityFingerprint(compatibilityFingerprint);
                   created.setQuantity(0);
                   return created;
@@ -246,21 +277,20 @@ public class InventoryServiceImpl implements InventoryService {
     itemStackRepository.save(stack);
   }
 
-  private void moveInventoryStackToRoom(
+  private String moveInventoryStackToRoom(
       Long tenantId,
       Character character,
       String gameInstanceId,
       String roomInstanceId,
       Item item,
+      String stackFamilyKey,
       int quantity) {
-    String compatibilityFingerprint = stackableItemSupport.compatibilityFingerprint(item);
     ItemStack source =
-        itemStackRepository
-            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
-                tenantId, character.getId(), item.getId(), compatibilityFingerprint)
-            .orElseThrow(() -> new IllegalArgumentException("Inventory item not found"));
+        requireSingleInventoryStackSource(
+            tenantId, character.getId(), item, stackFamilyKey, "Inventory item not found");
     requireStackQuantity(source, quantity, "Inventory item not found");
     decrementOrDelete(source, quantity);
+    String compatibilityFingerprint = source.getCompatibilityFingerprint();
     ItemStack destination =
         itemStackRepository
             .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
@@ -272,30 +302,82 @@ public class InventoryServiceImpl implements InventoryService {
                   created.setGameInstanceId(gameInstanceId);
                   created.setRoomInstanceId(roomInstanceId);
                   created.setItem(item);
+                  created.setStackFamilyKey(source.getStackFamilyKey());
                   created.setCompatibilityFingerprint(compatibilityFingerprint);
                   created.setQuantity(0);
                   return created;
                 });
     destination.setQuantity(destination.getQuantity() + quantity);
     itemStackRepository.save(destination);
+    return source.getStackFamilyKey();
   }
 
-  private void moveRoomStackToInventory(
+  private String moveRoomStackToInventory(
       Long tenantId,
       Character character,
       String gameInstanceId,
       String roomInstanceId,
       Item item,
+      String stackFamilyKey,
       int quantity) {
-    String compatibilityFingerprint = stackableItemSupport.compatibilityFingerprint(item);
     ItemStack source =
-        itemStackRepository
-            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
-                tenantId, gameInstanceId, roomInstanceId, item.getId(), compatibilityFingerprint)
-            .orElseThrow(() -> new IllegalArgumentException("Room ground item not found"));
+        requireSingleRoomStackSource(
+            tenantId,
+            gameInstanceId,
+            roomInstanceId,
+            item,
+            stackFamilyKey,
+            "Room ground item not found");
     requireStackQuantity(source, quantity, "Room ground item not found");
     decrementOrDelete(source, quantity);
-    incrementInventoryStack(character, item, quantity);
+    incrementInventoryStack(character, item, quantity, source.getStackFamilyKey());
+    return source.getStackFamilyKey();
+  }
+
+  private ItemStack requireSingleInventoryStackSource(
+      Long tenantId, Long characterId, Item item, String stackFamilyKey, String notFoundMessage) {
+    List<ItemStack> stacks =
+        itemStackRepository
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
+                tenantId, characterId, item.getId());
+    return requireSingleStackSource(stacks, item, stackFamilyKey, notFoundMessage);
+  }
+
+  private ItemStack requireSingleRoomStackSource(
+      Long tenantId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Item item,
+      String stackFamilyKey,
+      String notFoundMessage) {
+    List<ItemStack> stacks =
+        itemStackRepository
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
+                tenantId, gameInstanceId, roomInstanceId, item.getId());
+    return requireSingleStackSource(stacks, item, stackFamilyKey, notFoundMessage);
+  }
+
+  private ItemStack requireSingleStackSource(
+      List<ItemStack> stacks, Item item, String stackFamilyKey, String notFoundMessage) {
+    if (stacks.isEmpty()) {
+      throw new IllegalArgumentException(notFoundMessage);
+    }
+    if (stackFamilyKey != null) {
+      return stacks.stream()
+          .filter(
+              stack ->
+                  stackFamilyKey.equals(
+                      stackableItemSupport.normalizeStackFamilyKey(stack.getStackFamilyKey())))
+          .findFirst()
+          .orElseThrow(() -> new IllegalArgumentException(notFoundMessage));
+    }
+    if (stacks.size() > 1) {
+      throw new IllegalArgumentException(
+          "Multiple stack families exist for item "
+              + item.getId()
+              + "; explicit stack selection required");
+    }
+    return stacks.get(0);
   }
 
   private List<ItemInstance> requireCarriedItemInstances(
@@ -431,7 +513,7 @@ public class InventoryServiceImpl implements InventoryService {
         stack.getQuantity(),
         null,
         null,
-        null);
+        stackSelector(stack));
   }
 
   private InventoryEntryDto inventoryDtoForMutation(ItemInstance instance, int quantity) {
@@ -448,7 +530,7 @@ public class InventoryServiceImpl implements InventoryService {
   }
 
   private InventoryEntryDto inventoryDtoForStackMutation(
-      Character character, Item item, int quantity) {
+      Character character, Item item, String stackFamilyKey, int quantity) {
     return new InventoryEntryDto(
         character.getTenantId(),
         character.getId(),
@@ -458,7 +540,7 @@ public class InventoryServiceImpl implements InventoryService {
         quantity,
         null,
         null,
-        null);
+        stackFamilyKey);
   }
 
   private RoomGroundInventoryEntryDto toRoomGroundDto(ItemInstance instance) {
@@ -486,7 +568,7 @@ public class InventoryServiceImpl implements InventoryService {
         stack.getQuantity(),
         null,
         null,
-        null);
+        stackSelector(stack));
   }
 
   private RoomGroundInventoryEntryDto roomGroundDtoForMutation(
@@ -505,7 +587,12 @@ public class InventoryServiceImpl implements InventoryService {
   }
 
   private RoomGroundInventoryEntryDto roomGroundDtoForStackMutation(
-      Long tenantId, String gameInstanceId, String roomInstanceId, Item item, int quantity) {
+      Long tenantId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Item item,
+      String stackFamilyKey,
+      int quantity) {
     return new RoomGroundInventoryEntryDto(
         tenantId,
         gameInstanceId,
@@ -516,7 +603,11 @@ public class InventoryServiceImpl implements InventoryService {
         quantity,
         null,
         null,
-        null);
+        stackFamilyKey);
+  }
+
+  private String stackSelector(ItemStack stack) {
+    return stackableItemSupport.normalizeStackFamilyKey(stack.getStackFamilyKey());
   }
 
   private Long resolveContainerInstanceId(ItemInstance itemInstance) {

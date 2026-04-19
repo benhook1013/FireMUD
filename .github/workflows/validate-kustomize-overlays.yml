@@ -15,6 +15,10 @@ permissions:
   contents: read
   packages: read
 
+concurrency:
+  group: validate-kustomize-overlays-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate-overlays:
     runs-on: ubuntu-latest

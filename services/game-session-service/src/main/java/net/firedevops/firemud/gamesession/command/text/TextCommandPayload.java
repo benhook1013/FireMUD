@@ -8,7 +8,9 @@ public sealed interface TextCommandPayload
     permits TextCommandPayload.None,
         TextCommandPayload.Tokens,
         TextCommandPayload.Credentials,
-        TextCommandPayload.Selection,
+        TextCommandPayload.RealmBrowseRequest,
+        TextCommandPayload.CharacterBrowseRequest,
+        TextCommandPayload.PlayRequest,
         TextCommandPayload.AfkRequest,
         TextCommandPayload.ItemReference,
         TextCommandPayload.ContainerTransfer,
@@ -16,6 +18,7 @@ public sealed interface TextCommandPayload
         TextCommandPayload.Message,
         TextCommandPayload.TargetedMessage,
         TextCommandPayload.Directional,
+        TextCommandPayload.AuthoredActionInvocation,
         TextCommandPayload.ViewRequest {
 
   record None() implements TextCommandPayload {}
@@ -28,7 +31,13 @@ public sealed interface TextCommandPayload
 
   record Credentials(String loginName, String password, String otp) implements TextCommandPayload {}
 
-  record Selection(String primary, String secondary) implements TextCommandPayload {}
+  record RealmBrowseRequest(String worldSelector) implements TextCommandPayload {}
+
+  record CharacterBrowseRequest(String worldSelector, String realmSelector)
+      implements TextCommandPayload {}
+
+  record PlayRequest(String worldSelector, String realmSelector, String characterSelector)
+      implements TextCommandPayload {}
 
   record AfkRequest(Boolean enabled) implements TextCommandPayload {}
 
@@ -45,6 +54,13 @@ public sealed interface TextCommandPayload
 
   record Directional(String direction) implements TextCommandPayload {}
 
+  record AuthoredActionInvocation(String commandId, List<String> args)
+      implements TextCommandPayload {
+    public AuthoredActionInvocation {
+      args = List.copyOf(args == null ? List.of() : args);
+    }
+  }
+
   record ViewRequest(String viewName) implements TextCommandPayload {}
 
   static TextCommandPayload fromLegacy(TextCommandType type, List<String> args) {
@@ -52,7 +68,16 @@ public sealed interface TextCommandPayload
     return switch (type) {
       case NOOP, LOGOUT -> new None();
       case AFK -> new AfkRequest(true);
-      case WORLDS, LOOK, QUICKLOOK, WHO, INVENTORY, EQUIPMENT -> new ViewRequest(type.name());
+      case WORLDS, LOOK, QUICKLOOK, WHO, FRIENDS, INVENTORY, EQUIPMENT ->
+          new ViewRequest(type.name());
+      case REALMS ->
+          parseRealmBrowseRequest(safeArgs)
+              .<TextCommandPayload>map(request -> request)
+              .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
+      case CHARS ->
+          parseCharacterBrowseRequest(safeArgs)
+              .<TextCommandPayload>map(request -> request)
+              .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
       case HELP -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs);
       case GET, DROP ->
           parseQuantityAwareItemReference(safeArgs)
@@ -76,9 +101,9 @@ public sealed interface TextCommandPayload
                   safeArgs.get(0), safeArgs.get(1), safeArgs.size() > 2 ? safeArgs.get(2) : "")
               : new Tokens(safeArgs);
       case PLAY ->
-          !safeArgs.isEmpty()
-              ? new Selection(safeArgs.get(0), safeArgs.size() > 1 ? safeArgs.get(1) : null)
-              : new Tokens(safeArgs);
+          parsePlayRequest(safeArgs)
+              .<TextCommandPayload>map(request -> request)
+              .orElseGet(() -> new Tokens(safeArgs));
       case SAY ->
           !safeArgs.isEmpty() && StringUtils.hasText(safeArgs.get(0))
               ? new Message(safeArgs.get(0))
@@ -87,6 +112,7 @@ public sealed interface TextCommandPayload
           safeArgs.size() >= 2
               ? new TargetedMessage(safeArgs.get(0), safeArgs.get(1))
               : new Tokens(safeArgs);
+      case AUTHORED -> new AuthoredActionInvocation("authored", safeArgs);
       case MOVE ->
           !safeArgs.isEmpty() && StringUtils.hasText(safeArgs.get(0))
               ? new Directional(safeArgs.get(0))
@@ -154,6 +180,55 @@ public sealed interface TextCommandPayload
       return java.util.Optional.empty();
     }
     return java.util.Optional.of(new ContainerView(containerReference));
+  }
+
+  private static java.util.Optional<PlayRequest> parsePlayRequest(List<String> args) {
+    if (args == null || args.isEmpty()) {
+      return java.util.Optional.empty();
+    }
+    String worldSelector = normalizeSelectorToken(args.get(0));
+    if (!StringUtils.hasText(worldSelector)) {
+      return java.util.Optional.empty();
+    }
+    String realmSelector = args.size() > 1 ? normalizeSelectorToken(args.get(1)) : null;
+    String characterSelector =
+        args.size() > 2 ? String.join(" ", args.subList(2, args.size())).trim() : null;
+    if (characterSelector != null && characterSelector.isBlank()) {
+      characterSelector = null;
+    }
+    return java.util.Optional.of(new PlayRequest(worldSelector, realmSelector, characterSelector));
+  }
+
+  private static java.util.Optional<RealmBrowseRequest> parseRealmBrowseRequest(List<String> args) {
+    if (args == null || args.isEmpty()) {
+      return java.util.Optional.empty();
+    }
+    String worldSelector = normalizeSelectorToken(args.get(0));
+    if (!StringUtils.hasText(worldSelector)) {
+      return java.util.Optional.empty();
+    }
+    return java.util.Optional.of(new RealmBrowseRequest(worldSelector));
+  }
+
+  private static java.util.Optional<CharacterBrowseRequest> parseCharacterBrowseRequest(
+      List<String> args) {
+    if (args == null || args.isEmpty()) {
+      return java.util.Optional.empty();
+    }
+    String worldSelector = normalizeSelectorToken(args.get(0));
+    if (!StringUtils.hasText(worldSelector)) {
+      return java.util.Optional.empty();
+    }
+    String realmSelector = args.size() > 1 ? normalizeSelectorToken(args.get(1)) : null;
+    return java.util.Optional.of(new CharacterBrowseRequest(worldSelector, realmSelector));
+  }
+
+  private static String normalizeSelectorToken(String value) {
+    if (value == null) {
+      return null;
+    }
+    String normalized = value.trim();
+    return normalized.isEmpty() ? null : normalized;
   }
 
   private static int indexOfIgnoreCase(List<String> args, String token) {

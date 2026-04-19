@@ -39,6 +39,11 @@ class AggregatingTextCommandRegistryTest {
         TextCommandActionCategory.META,
         TextCommandSource.PLATFORM_BUILT_IN);
     assertDefinition(
+        TextCommandType.FRIENDS,
+        TextCommandDispatchGroup.FRIENDS,
+        TextCommandActionCategory.SOCIAL,
+        TextCommandSource.PLATFORM_BUILT_IN);
+    assertDefinition(
         TextCommandType.MOVE,
         TextCommandDispatchGroup.MOVE,
         TextCommandActionCategory.GAMEPLAY,
@@ -53,19 +58,32 @@ class AggregatingTextCommandRegistryTest {
         TextCommandDispatchGroup.ITEM,
         TextCommandActionCategory.GAMEPLAY,
         TextCommandSource.PLATFORM_BUILT_IN);
+
+    assertEquals(
+        List.of(TextCommandActionTag.MOVEMENT),
+        registry.findDefinition(TextCommandType.MOVE).orElseThrow().actionTags());
+    assertEquals(
+        List.of(TextCommandActionTag.COMMUNICATION),
+        registry.findDefinition(TextCommandType.SAY).orElseThrow().actionTags());
+    assertEquals(
+        List.of(TextCommandActionTag.INVENTORY),
+        registry.findDefinition(TextCommandType.INVENTORY).orElseThrow().actionTags());
   }
 
   @Test
   void builtInRegistryOnlyOwnsExplicitPlatformCommands() {
     assertFalse(registry.findDefinition(TextCommandType.NOOP).isPresent());
     assertFalse(registry.findDefinition(TextCommandType.UNKNOWN).isPresent());
+    assertFalse(registry.findDefinition(TextCommandType.AUTHORED).isPresent());
     assertTrue(registry.findDefinition(TextCommandType.LOGIN).isPresent());
   }
 
   @Test
   void activeBuiltInCommandSurfaceIsExplicitlyRegistered() {
     for (TextCommandType type : TextCommandType.values()) {
-      if (type == TextCommandType.NOOP || type == TextCommandType.UNKNOWN) {
+      if (type == TextCommandType.NOOP
+          || type == TextCommandType.UNKNOWN
+          || type == TextCommandType.AUTHORED) {
         continue;
       }
       TextCommandDefinition definition = registry.findDefinition(type).orElseThrow();
@@ -73,6 +91,7 @@ class AggregatingTextCommandRegistryTest {
       assertEquals(TextCommandSource.PLATFORM_BUILT_IN, definition.source(), type.name());
       assertNotEquals(
           TextCommandDispatchGroup.ENQUEUE_ONLY, definition.dispatchGroup(), type.name());
+      assertFalse(definition.aliases().isEmpty(), type.name());
     }
   }
 
@@ -81,6 +100,7 @@ class AggregatingTextCommandRegistryTest {
     TextCommandDefinition duplicate =
         new TextCommandDefinition(
             TextCommandType.LOGIN,
+            List.of("new-login"),
             TextCommandDispatchGroup.HELP,
             TextCommandStageRequirement.NONE,
             TextCommandPromptPolicy.NEVER,
@@ -93,6 +113,35 @@ class AggregatingTextCommandRegistryTest {
             () -> new AggregatingTextCommandRegistry(List.of(builtIns, () -> List.of(duplicate))));
 
     assertTrue(exception.getMessage().contains("Duplicate text command definition"));
+  }
+
+  @Test
+  void registryRejectsDuplicateAliasesAcrossProviders() {
+    TextCommandDefinition duplicateAlias =
+        new TextCommandDefinition(
+            TextCommandType.UNKNOWN,
+            List.of("login"),
+            TextCommandDispatchGroup.HELP,
+            TextCommandStageRequirement.NONE,
+            TextCommandPromptPolicy.NEVER,
+            TextCommandActionCategory.META,
+            TextCommandSource.EXTENSION);
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new AggregatingTextCommandRegistry(
+                    List.of(builtIns, () -> List.of(duplicateAlias))));
+
+    assertTrue(exception.getMessage().contains("Duplicate text command alias"));
+  }
+
+  @Test
+  void registryFindsDefinitionsByAliasCaseInsensitively() {
+    TextCommandDefinition definition = registry.findDefinitionByAlias("LoGoFf").orElseThrow();
+
+    assertEquals(TextCommandType.LOGOUT, definition.type());
   }
 
   private void assertDefinition(

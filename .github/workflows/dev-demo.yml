@@ -1,0 +1,487 @@
+name: Develop Dev Demo Environment
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Dev-demo operation
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - destroy
+      image_tag:
+        description: Image tag to deploy; defaults to the target SHA
+        required: false
+        default: ""
+        type: string
+      head_sha:
+        description: Head SHA to align the environment with
+        required: false
+        default: ""
+        type: string
+      hostname:
+        description: Fixed dev-demo hostname
+        required: false
+        default: dev.preview.firedevops.net
+        type: string
+      telnet_port:
+        description: Fixed dev-demo TCP NodePort
+        required: false
+        default: "32016"
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: dev-demo-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  dev-demo-plan:
+    name: Dev Demo Plan
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.derive.outputs.action }}
+      namespace: ${{ steps.derive.outputs.namespace }}
+      release_name: ${{ steps.derive.outputs.release_name }}
+      hostname: ${{ steps.derive.outputs.hostname }}
+      image_tag: ${{ steps.derive.outputs.image_tag }}
+      head_sha: ${{ steps.derive.outputs.head_sha }}
+      telnet_port: ${{ steps.derive.outputs.telnet_port }}
+    steps:
+      - name: Derive dev-demo target
+        id: derive
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            ACTION="deploy"
+            HEAD_SHA="${{ github.sha }}"
+            HOSTNAME="dev.preview.firedevops.net"
+            TELNET_PORT="32016"
+            IMAGE_TAG=""
+          else
+            ACTION="${{ inputs.action }}"
+            HEAD_SHA="${{ inputs.head_sha }}"
+            HOSTNAME="${{ inputs.hostname }}"
+            TELNET_PORT="${{ inputs.telnet_port }}"
+            IMAGE_TAG="${{ inputs.image_tag }}"
+          fi
+          if [ -z "$HEAD_SHA" ]; then
+            HEAD_SHA="${GITHUB_SHA}"
+          fi
+          if [ -z "$IMAGE_TAG" ]; then
+            IMAGE_TAG="${HEAD_SHA}"
+          fi
+          {
+            echo "action=${ACTION}"
+            echo "namespace=dev"
+            echo "release_name=dev"
+            echo "hostname=${HOSTNAME}"
+            echo "image_tag=${IMAGE_TAG}"
+            echo "head_sha=${HEAD_SHA}"
+            echo "telnet_port=${TELNET_PORT}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Show derived dev-demo target
+        run: |
+          cat <<EOF
+          action=${{ steps.derive.outputs.action }}
+          namespace=${{ steps.derive.outputs.namespace }}
+          release_name=${{ steps.derive.outputs.release_name }}
+          hostname=${{ steps.derive.outputs.hostname }}
+          image_tag=${{ steps.derive.outputs.image_tag }}
+          head_sha=${{ steps.derive.outputs.head_sha }}
+          telnet_port=${{ steps.derive.outputs.telnet_port }}
+          EOF
+
+  dev-demo-deploy:
+    name: Deploy Dev Demo Release
+    runs-on:
+      - self-hosted
+      - preview
+    needs: dev-demo-plan
+    if: ${{ needs.dev-demo-plan.outputs.action == 'deploy' }}
+    environment: dev-demo-cluster
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v5
+        with:
+          version: v1.33.4
+
+      - name: Set up Helm
+        run: |
+          if ! command -v helm >/dev/null 2>&1; then
+            HELM_VERSION="v3.20.1"
+            INSTALL_DIR="$HOME/.local/bin"
+            mkdir -p "$INSTALL_DIR"
+            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+            tar -xzf /tmp/helm.tgz -C /tmp
+            install /tmp/linux-amd64/helm "$INSTALL_DIR/helm"
+          fi
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          helm version
+
+      - name: Write preview kubeconfig
+        env:
+          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
+          PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
+        run: |
+          KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
+          bash ./dev-tools/preview/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+
+      - name: Verify cluster access
+        run: |
+          kubectl get namespace kube-system >/dev/null
+          kubectl auth can-i list namespaces --all-namespaces
+
+      - name: Reset dev-demo namespace for clean deploy
+        run: |
+          bash ./dev-tools/preview/delete-preview-namespace.sh \
+            "${{ needs.dev-demo-plan.outputs.namespace }}" \
+            "${{ needs.dev-demo-plan.outputs.release_name }}"
+
+      - name: Ensure dev-demo namespace exists
+        run: |
+          bash ./dev-tools/dev-demo/ensure-dev-demo-namespace.sh \
+            "${{ needs.dev-demo-plan.outputs.namespace }}"
+
+      - name: Ensure GHCR pull secret exists
+        env:
+          PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
+          PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
+        run: |
+          bash ./dev-tools/preview/ensure-ghcr-pull-secret.sh "${{ needs.dev-demo-plan.outputs.namespace }}"
+
+      - name: Wait for develop runtime images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "DEV_DEMO_STAGE=wait-for-images" >> "$GITHUB_ENV"
+          bash ./dev-tools/preview/wait-for-preview-images.sh "${{ needs.dev-demo-plan.outputs.image_tag }}"
+
+      - name: Ensure dev-demo gRPC TLS secret exists
+        run: |
+          bash ./dev-tools/preview/ensure-grpc-tls-secret.sh "${{ needs.dev-demo-plan.outputs.namespace }}"
+
+      - name: Render dev-demo values
+        run: |
+          bash ./dev-tools/dev-demo/render-dev-demo-values.sh \
+            k8s/helm/firemud/values-dev-demo.example.yaml \
+            /tmp/dev-demo-values.yaml \
+            "${{ needs.dev-demo-plan.outputs.namespace }}" \
+            "${{ needs.dev-demo-plan.outputs.release_name }}" \
+            "${{ needs.dev-demo-plan.outputs.hostname }}" \
+            "${{ needs.dev-demo-plan.outputs.image_tag }}" \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}"
+
+      - name: Validate dev-demo chart render
+        run: |
+          helm template "${{ needs.dev-demo-plan.outputs.release_name }}" k8s/helm/firemud \
+            -f /tmp/dev-demo-values.yaml \
+            --namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
+            >/tmp/dev-demo-rendered.yaml
+          kubectl apply --dry-run=server -n "${{ needs.dev-demo-plan.outputs.namespace }}" -f /tmp/dev-demo-rendered.yaml
+          wc -l /tmp/dev-demo-rendered.yaml
+
+      - name: Upload rendered dev-demo artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dev-demo-render-${{ needs.dev-demo-plan.outputs.release_name }}
+          path: |
+            /tmp/dev-demo-values.yaml
+            /tmp/dev-demo-rendered.yaml
+
+      - name: Record reconciled dev-demo target
+        run: |
+          bash ./dev-tools/dev-demo/annotate-dev-demo-namespace.sh \
+            "${{ needs.dev-demo-plan.outputs.namespace }}" \
+            "${{ needs.dev-demo-plan.outputs.head_sha }}" \
+            "${{ needs.dev-demo-plan.outputs.image_tag }}" \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}"
+
+      - name: Summarize dev-demo target
+        run: |
+          bash ./dev-tools/dev-demo/write-dev-demo-summary.sh \
+            target \
+            "${{ needs.dev-demo-plan.outputs.head_sha }}" \
+            "${{ needs.dev-demo-plan.outputs.image_tag }}" \
+            "${{ needs.dev-demo-plan.outputs.hostname }}" \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy dev-demo release
+        id: deploy-release
+        continue-on-error: true
+        run: |
+          echo "DEV_DEMO_STAGE=deploy" >> "$GITHUB_ENV"
+          helm upgrade --install "${{ needs.dev-demo-plan.outputs.release_name }}" k8s/helm/firemud \
+            -f /tmp/dev-demo-values.yaml \
+            --namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
+            --wait \
+            --timeout 15m
+
+      - name: Show deployed dev-demo services
+        if: ${{ always() }}
+        run: |
+          kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" get pods,svc,ingress
+
+      - name: Show dev-demo rollout diagnostics
+        if: ${{ always() && steps.deploy-release.outcome == 'failure' }}
+        run: |
+          echo "=== pods ==="
+          kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" get pods -o wide || true
+          echo
+          echo "=== events ==="
+          kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" get events --sort-by=.lastTimestamp | tail -n 120 || true
+          echo
+          echo "=== pod describe ==="
+          for pod in $(kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" get pods --no-headers | awk '$2 != $3 || $3 != "Running" {print $1}'); do
+            echo "--- ${pod} ---"
+            kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" describe pod "${pod}" || true
+            echo
+          done
+          echo "=== recent logs ==="
+          for deployment in account-service automation-scripting-service entity-management-service game-design-service game-logic-service game-session-service logging-admin-service social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service; do
+            echo "--- ${deployment} ---"
+            kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" logs "deploy/${deployment}" --tail=120 || true
+            echo
+          done
+
+      - name: Fail if dev-demo rollout did not complete
+        if: ${{ always() && steps.deploy-release.outcome == 'failure' }}
+        run: |
+          echo "Dev-demo rollout failed during helm upgrade/install."
+          exit 1
+
+      - name: Create dev-demo smoke account
+        if: ${{ steps.deploy-release.outcome == 'success' }}
+        env:
+          PREVIEW_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+          PREVIEW_TENANT_ID: "1"
+          PREVIEW_EMAIL: demo@example.com
+          PREVIEW_PASSWORD: swordfish
+        run: |
+          echo "DEV_DEMO_STAGE=bootstrap" >> "$GITHUB_ENV"
+          BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py
+          cat >"${BOOTSTRAP_SCRIPT}" <<'PY'
+          import json
+          import time
+          import urllib.error
+          import urllib.request
+
+          tenant_id = 1
+          game_template_id = 1
+          email = "demo@example.com"
+          password = "swordfish"
+
+          def readiness_ok(url):
+            try:
+              with urllib.request.urlopen(url, timeout=10) as response:
+                body = response.read().decode("utf-8", errors="ignore")
+                return response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", "")
+            except OSError:
+              return False
+
+          def wait_for_ready(name, url, timeout_seconds=60):
+            deadline = time.time() + timeout_seconds
+            while time.time() < deadline:
+              if readiness_ok(url):
+                return
+              time.sleep(2)
+            raise SystemExit(f"{name} readiness did not report UP at {url}")
+
+          def post_json(url, payload):
+            request = urllib.request.Request(
+              url,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+            )
+            try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                return response.status, response.read().decode("utf-8", errors="ignore")
+            except urllib.error.HTTPError as exc:
+              return exc.code, exc.read().decode("utf-8", errors="ignore")
+
+          wait_for_ready("account-service", "http://account-service:8080/actuator/health/readiness")
+          wait_for_ready("entity-management-service", "http://entity-management-service:8080/actuator/health/readiness")
+          wait_for_ready("game-design-service", "http://game-design-service:8080/actuator/health/readiness")
+          wait_for_ready("game-logic-service", "http://game-logic-service:8080/actuator/health/readiness")
+          wait_for_ready("world-management-service", "http://world-management-service:8080/actuator/health/readiness")
+          wait_for_ready("game-session-service", "http://game-session-service:8080/actuator/health/readiness")
+
+          status, account_body = post_json(
+            "http://account-service:8080/accounts",
+            {
+              "tenantId": tenant_id,
+              "username": "demo",
+              "email": email,
+              "password": password,
+            },
+          )
+          print(account_body)
+          if status >= 400:
+            raise SystemExit(f"Account bootstrap failed with status {status}: {account_body}")
+          account_payload = json.loads(account_body or "{}")
+          account_id = (((account_payload.get("data") or {}).get("id")))
+          if not account_id:
+            raise SystemExit(f"Dev-demo smoke account response did not include account id: {account_body}")
+
+          status, session_body = post_json(
+            "http://game-session-service:8080/sessions",
+            {
+              "tenantId": tenant_id,
+              "gameTemplateId": game_template_id,
+              "controlPlaneRequestId": "dev-demo-smoke-bootstrap",
+              "ownerAccountId": account_id,
+            },
+          )
+          print(session_body)
+          if status >= 400:
+            raise SystemExit(f"Dev-demo smoke session bootstrap failed with status {status}: {session_body}")
+          PY
+          BOOTSTRAP_POD_LOG=/tmp/dev-demo-bootstrap-pod.log
+          trap 'kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true; kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true' EXIT
+          kubectl -n "${PREVIEW_NAMESPACE}" create configmap dev-demo-bootstrap-script \
+            --from-file=bootstrap.py="${BOOTSTRAP_SCRIPT}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
+          cat <<'EOF' | kubectl -n "${PREVIEW_NAMESPACE}" apply -f -
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: dev-demo-bootstrap
+          spec:
+            restartPolicy: Never
+            terminationGracePeriodSeconds: 0
+            containers:
+              - name: dev-demo-bootstrap
+                image: python:3.12-alpine
+                command: ["python", "/tmp/bootstrap.py"]
+                volumeMounts:
+                  - name: bootstrap-script
+                    mountPath: /tmp
+            volumes:
+              - name: bootstrap-script
+                configMap:
+                  name: dev-demo-bootstrap-script
+          EOF
+          if ! kubectl -n "${PREVIEW_NAMESPACE}" wait --for=condition=Ready pod/dev-demo-bootstrap --timeout=90s >/dev/null 2>&1; then
+            :
+          fi
+          if ! kubectl -n "${PREVIEW_NAMESPACE}" wait --for=jsonpath='{.status.phase}'=Succeeded pod/dev-demo-bootstrap --timeout=120s >/dev/null 2>&1; then
+            echo "Dev-demo bootstrap pod did not succeed."
+            kubectl -n "${PREVIEW_NAMESPACE}" logs dev-demo-bootstrap || true
+            kubectl -n "${PREVIEW_NAMESPACE}" describe pod dev-demo-bootstrap || true
+            exit 1
+          fi
+          kubectl -n "${PREVIEW_NAMESPACE}" logs dev-demo-bootstrap | tee "${BOOTSTRAP_POD_LOG}"
+          kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
+          kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
+
+      - name: Smoke dev-demo over TCP
+        if: ${{ steps.deploy-release.outcome == 'success' }}
+        env:
+          PREVIEW_BASE_URL: https://${{ needs.dev-demo-plan.outputs.hostname }}
+          SMOKE_TELNET_HOST: ${{ needs.dev-demo-plan.outputs.hostname }}
+          TCP_PORT: ${{ needs.dev-demo-plan.outputs.telnet_port }}
+          SMOKE_TARGET_LABEL: dev-demo
+          SMOKE_USERNAME: demo@example.com
+          SMOKE_PASSWORD: swordfish
+        run: |
+          echo "DEV_DEMO_STAGE=smoke" >> "$GITHUB_ENV"
+          set -o pipefail
+          SMOKE_TRANSCRIPT=/tmp/dev-demo-hosted-tcp-smoke.log
+          if ! bash ./dev-tools/preview/preview-login-look-smoke.sh 2>&1 | tee "${SMOKE_TRANSCRIPT}"; then
+            echo "=== Dev-demo TCP smoke transcript ==="
+            cat "${SMOKE_TRANSCRIPT}"
+            exit 1
+          fi
+
+      - name: Summarize dev-demo access
+        if: ${{ steps.deploy-release.outcome == 'success' }}
+        run: |
+          bash ./dev-tools/dev-demo/write-dev-demo-summary.sh \
+            success \
+            "${{ needs.dev-demo-plan.outputs.head_sha }}" \
+            "${{ needs.dev-demo-plan.outputs.image_tag }}" \
+            "${{ needs.dev-demo-plan.outputs.hostname }}" \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo ""
+            echo "- Demo login: demo@example.com / swordfish"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize dev-demo failure
+        if: ${{ always() && failure() }}
+        run: |
+          bash ./dev-tools/dev-demo/write-dev-demo-summary.sh \
+            failure \
+            "${{ needs.dev-demo-plan.outputs.head_sha }}" \
+            "${{ needs.dev-demo-plan.outputs.image_tag }}" \
+            "${{ needs.dev-demo-plan.outputs.hostname }}" \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}" \
+            "${DEV_DEMO_STAGE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+
+  dev-demo-destroy:
+    name: Destroy Dev Demo Release
+    runs-on:
+      - self-hosted
+      - preview
+    needs: dev-demo-plan
+    if: ${{ needs.dev-demo-plan.outputs.action == 'destroy' }}
+    environment: dev-demo-cluster
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v5
+        with:
+          version: v1.33.4
+
+      - name: Set up Helm
+        run: |
+          if ! command -v helm >/dev/null 2>&1; then
+            HELM_VERSION="v3.20.1"
+            INSTALL_DIR="$HOME/.local/bin"
+            mkdir -p "$INSTALL_DIR"
+            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+            tar -xzf /tmp/helm.tgz -C /tmp
+            install /tmp/linux-amd64/helm "$INSTALL_DIR/helm"
+          fi
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          helm version
+
+      - name: Write preview kubeconfig
+        env:
+          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
+          PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
+        run: |
+          KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
+          bash ./dev-tools/preview/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+
+      - name: Delete dev-demo namespace and release
+        run: |
+          bash ./dev-tools/preview/delete-preview-namespace.sh \
+            "${{ needs.dev-demo-plan.outputs.namespace }}" \
+            "${{ needs.dev-demo-plan.outputs.release_name }}"
+
+      - name: Summarize dev-demo destroy
+        run: |
+          bash ./dev-tools/dev-demo/write-dev-demo-summary.sh \
+            destroyed \
+            "${{ needs.dev-demo-plan.outputs.head_sha }}" \
+            "${{ needs.dev-demo-plan.outputs.image_tag }}" \
+            "${{ needs.dev-demo-plan.outputs.hostname }}" \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
