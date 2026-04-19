@@ -16,6 +16,7 @@ import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.test.WithFiremudPrivilegedHttpAuthTestProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,12 +31,9 @@ import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(AccountController.class)
 @Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
+@WithFiremudPrivilegedHttpAuthTestProperties
 @TestPropertySource(
     properties = {
-      "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000",
-      "firemud.auth.http.enabled=true",
-      "firemud.auth.http.role-requirement=PRIVILEGED",
       "firemud.auth.http.public-path-patterns[0]=/accounts",
       "firemud.auth.http.public-path-patterns[1]=/accounts/"
     })
