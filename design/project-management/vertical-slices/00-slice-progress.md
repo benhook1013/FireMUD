@@ -56,18 +56,32 @@ These are not broad audit topics anymore; they are real future slices with known
 
 1. [10 Scripting, Automation, and Runtime Orchestration](./10-task-list-scripting-automation-and-runtime-orchestration-vertical-slice.md)
    Remaining: the scripting domain now has a canonical family instead of fragmented indirect coverage; `10.1` through `10.5` are the bounded runtime/control-plane cuts, while design-time publication boundaries remain intentionally anchored in `08.4`.
-2. [02.1.1 Email OTP and Text Auth Options](./02.1.1-task-list-email-otp-and-text-auth-options-vertical-slice.md)
-3. [02.1.5 Admin and God Capability and Visibility](./02.1.5-task-list-admin-god-capability-and-visibility-vertical-slice.md)
-4. [02.1.4.1 Account Versus Character Social Scope](./02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
-5. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
-6. [02.13.10 Structured Transcript and Replay End State](./02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
-7. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
-8. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
-9. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
-10. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
-11. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
-12. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
-13. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
+2. [02.1.6 Global Account and Tenant Authorization Convergence](./02.1.6-task-list-global-account-and-tenant-authorization-convergence-vertical-slice.md)
+   Remaining: land the canonical global-account versus tenant-membership versus realm-grant split so player bootstrap, account lifecycle, tenant roles, and non-public realm access stop drifting around tenant-bound legacy assumptions.
+3. [02.18.12 Internal Service Identity and Session Attestation](./02.18.12-task-list-internal-service-identity-and-session-attestation-vertical-slice.md)
+   Remaining: replace default internal `platformAdmin` escalation with explicit service identity and add the documented gameplay-domain SessionAttestation seam for delegated gameplay RPCs.
+4. [02.18.13 Runtime Feature Flag Authority Convergence](./02.18.13-task-list-runtime-feature-flag-authority-convergence-vertical-slice.md)
+   Remaining: remove split Logging & Admin / Game Session flag persistence and land one canonical runtime feature-flag authority.
+5. [02.18.14 Moderation Policy Definition and Enforcement Split](./02.18.14-task-list-moderation-policy-definition-and-enforcement-split-vertical-slice.md)
+   Remaining: replace destructive moderation substrate with policy-state plus real gameplay/chat enforcement owners.
+6. [02.18.15 World and Session Lifecycle Concurrency Hardening](./02.18.15-task-list-world-and-session-lifecycle-concurrency-hardening-vertical-slice.md)
+   Remaining: tighten current lifecycle concurrency and crash-safety before the heavier durable-command train.
+7. [02.15.7 Gateway Edge Allowlist and Management Contract Convergence](./02.15.7-task-list-gateway-edge-allowlist-and-management-contract-convergence-vertical-slice.md)
+   Remaining: converge the public edge route surface and gateway-management contracts on the documented curated edge model.
+8. [03.1 Same-Fence LOOK Read Consistency](./03.1-task-list-same-fence-look-read-consistency-vertical-slice.md)
+   Remaining: land the docs-only same-fence `LOOK` contract on the live World ↔ Entity ↔ Game Logic seam.
+9. [02.1.1 Email OTP and Text Auth Options](./02.1.1-task-list-email-otp-and-text-auth-options-vertical-slice.md)
+10. [02.1.5 Admin and God Capability and Visibility](./02.1.5-task-list-admin-god-capability-and-visibility-vertical-slice.md)
+11. [02.1.4.1 Account Versus Character Social Scope](./02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
+12. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
+13. [02.13.10 Structured Transcript and Replay End State](./02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
+14. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
+15. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
+16. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
+17. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
+18. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
+19. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
+20. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
 
 ### 4. Discussion-gated follow-ups
 
