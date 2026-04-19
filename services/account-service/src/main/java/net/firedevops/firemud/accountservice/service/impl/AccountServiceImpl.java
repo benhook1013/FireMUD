@@ -199,25 +199,8 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.authenticate")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
       Long tenantId, String username, String password, String otp) {
-    Optional<Account> accountOpt = findAccountForAuthentication(username);
-    Account account =
-        accountOpt.orElseThrow(
-            () ->
-                new AuthenticationException(
-                    AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
-    if (!verifyPassword(password, account.getPasswordHash())) {
-      throw new AuthenticationException(
-          AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials");
-    }
+    Account account = authenticateAccountIdentity(username, password, otp);
     requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
-    if (account.getTwoFactorSecret() != null
-        && ("admin".equals(account.getRole()) || "moderator".equals(account.getRole()))) {
-      TOTPGenerator generator = new TOTPGenerator.Builder(account.getTwoFactorSecret()).build();
-      if (otp == null || !generator.verify(otp)) {
-        throw new AuthenticationException(
-            AuthenticationErrorCodes.OTP_REQUIRED, "Invalid 2FA code");
-      }
-    }
     String token =
         jwtUtil.generateToken(
             account.getId().toString(),
@@ -233,32 +216,32 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.player_bootstrap")
   public PlayerBootstrapResult issuePlayerBootstrap(
       Long tenantId, String username, String password, String otp) {
-    var auth = authenticate(tenantId, username, password, otp);
+    Account account = authenticateAccountIdentity(username, password, otp);
     String jti = UUID.randomUUID().toString();
     long issuedAt = System.currentTimeMillis();
     long expiresAt = issuedAt + tokenProperties.getPlayerBootstrapExpirationMs();
     String bootstrapToken =
         mintToken(
-            String.valueOf(auth.accountId()),
+            String.valueOf(account.getId()),
             tokenProperties.getPlayerBootstrapExpirationMs(),
             Map.of(
                 "aud",
                 "player-bootstrap",
                 "accountId",
-                auth.accountId(),
+                account.getId(),
                 "tenantId",
                 tenantId,
                 "jti",
                 jti));
     sessionService.storeSession(
         tenantId,
-        auth.accountId(),
+        account.getId(),
         bootstrapToken,
         tokenProperties.getPlayerBootstrapExpirationMs());
     logger.info(
-        "Issued player bootstrap token for account {} tenant {}", auth.accountId(), tenantId);
+        "Issued player bootstrap token for account {} tenant {}", account.getId(), tenantId);
     return new PlayerBootstrapResult(
-        auth.accountId(),
+        account.getId(),
         bootstrapToken,
         Instant.ofEpochMilli(issuedAt).toString(),
         Instant.ofEpochMilli(expiresAt).toString());
@@ -707,16 +690,34 @@ public class AccountServiceImpl implements AccountService {
     return accountRepository.findByEmail(usernameOrEmail);
   }
 
+  private Account authenticateAccountIdentity(String username, String password, String otp) {
+    Optional<Account> accountOpt = findAccountForAuthentication(username);
+    Account account =
+        accountOpt.orElseThrow(
+            () ->
+                new AuthenticationException(
+                    AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
+    if (!verifyPassword(password, account.getPasswordHash())) {
+      throw new AuthenticationException(
+          AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials");
+    }
+    if (account.getTwoFactorSecret() != null
+        && ("platformAdmin".equals(account.getRole())
+            || "admin".equals(account.getRole())
+            || "moderator".equals(account.getRole()))) {
+      TOTPGenerator generator = new TOTPGenerator.Builder(account.getTwoFactorSecret()).build();
+      if (otp == null || !generator.verify(otp)) {
+        throw new AuthenticationException(
+            AuthenticationErrorCodes.OTP_REQUIRED, "Invalid 2FA code");
+      }
+    }
+    return account;
+  }
+
   private Account requireAccount(Long accountId) {
     return accountRepository
         .findById(accountId)
         .orElseThrow(() -> new IllegalArgumentException("Account not found"));
-  }
-
-  private Account requireAccountWithMembership(Long accountId, Long tenantId) {
-    Account account = requireAccount(accountId);
-    requireMembership(accountId, tenantId);
-    return account;
   }
 
   private void requireGameplayMembership(Long accountId, Long tenantId, String message) {
@@ -727,10 +728,6 @@ public class AccountServiceImpl implements AccountService {
     if (!membership.isGameplayAdmissionAllowed()) {
       throw new IllegalArgumentException(message);
     }
-  }
-
-  private void requireMembership(Long accountId, Long tenantId) {
-    requireGameplayMembership(accountId, tenantId, "Account not found");
   }
 
   private boolean hasAnyMembership(Long accountId) {
@@ -871,7 +868,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.export")
   public AccountDataExportDto exportAccountData(Long tenantId, Long accountId) {
-    Account account = requireAccountWithMembership(accountId, tenantId);
+    Account account = requireAccount(accountId);
     Profile profile =
         profileRepository.findByAccountIdAndTenantId(accountId, tenantId).orElse(null);
     return new AccountDataExportDto(
@@ -882,7 +879,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.delete")
   public void deleteAccount(Long tenantId, Long accountId) {
-    Account account = requireAccountWithMembership(accountId, tenantId);
+    Account account = requireAccount(accountId);
     paymentTransactionRepository.deleteByAccountId(accountId, tenantId);
     subscriptionRepository.deleteByAccountId(accountId, tenantId);
     profileRepository
@@ -902,7 +899,6 @@ public class AccountServiceImpl implements AccountService {
         accountRepository
             .findByEmail(request.email())
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
-    requireMembership(account.getId(), request.tenantId());
     net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
         new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
     token.setAccount(account);
@@ -944,7 +940,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.request_email_verification")
   public void requestEmailVerification(Long tenantId, Long accountId) {
-    Account account = requireAccountWithMembership(accountId, tenantId);
+    Account account = requireAccount(accountId);
     EmailVerificationToken token = new EmailVerificationToken();
     token.setAccount(account);
     token.setTenantId(tenantId);
@@ -986,7 +982,7 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.link_external")
   public void linkExternalAccount(
       net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest request) {
-    Account account = requireAccountWithMembership(request.accountId(), request.tenantId());
+    Account account = requireAccount(request.accountId());
 
     if (externalAccountRepository.existsByTenantIdAndAccountIdAndProvider(
         request.tenantId(), request.accountId(), request.provider())) {
@@ -1010,7 +1006,6 @@ public class AccountServiceImpl implements AccountService {
         accountRepository
             .findByEmail(request.email())
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
-    requireMembership(account.getId(), request.tenantId());
     runAfterCommit(
         () ->
             emailService.sendEmail(

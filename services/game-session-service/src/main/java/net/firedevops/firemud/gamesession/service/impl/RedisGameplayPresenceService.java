@@ -261,6 +261,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
     for (Object role : roles) {
       String normalized = String.valueOf(role).trim().toLowerCase(Locale.ROOT);
       if (normalized.equals("platformadmin")
+          || normalized.equals("tenantadmin")
           || normalized.equals("admin")
           || normalized.equals("god")) {
         return true;

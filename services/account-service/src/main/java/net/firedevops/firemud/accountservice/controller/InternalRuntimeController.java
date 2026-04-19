@@ -6,6 +6,7 @@ import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipReque
 import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -28,6 +29,7 @@ public class InternalRuntimeController {
   public ResponseEntity<ApiResponse<PublicProductionMembershipResult>>
       ensurePublicProductionMembership(
           @Valid @RequestBody PublicProductionMembershipRequest request) {
+    SessionContext.requireGlobalPrivilegedRole();
     return ResponseEntity.ok(
         ApiResponse.success(
             accountService.ensurePublicProductionPlayerMembership(

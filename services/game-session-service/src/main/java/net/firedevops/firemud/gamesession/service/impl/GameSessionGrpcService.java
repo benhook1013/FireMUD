@@ -770,8 +770,7 @@ public final class GameSessionGrpcService
   }
 
   private void requireGlobalPrivilegedRole() {
-    List<String> roles = SessionContext.getGlobalRoles();
-    if (roles.contains("platformAdmin") || roles.contains("moderator")) {
+    if (SessionContext.hasGlobalPrivilegedRole()) {
       return;
     }
     throw new AuthorizationException("Admin role required");

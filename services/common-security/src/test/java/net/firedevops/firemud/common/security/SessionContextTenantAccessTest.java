@@ -20,7 +20,7 @@ class SessionContextTenantAccessTest {
 
   @Test
   void allowsGlobalAdminAcrossTenants() {
-    SessionContext.setContext("1", List.of("platformAdmin"), Map.of("7", List.of("admin")));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of("7", List.of("tenantAdmin")));
 
     assertTrue(SessionContext.hasTenantAccess(42L));
     assertDoesNotThrow(() -> SessionContext.requireTenantAccess(42L));
@@ -34,5 +34,15 @@ class SessionContextTenantAccessTest {
     assertDoesNotThrow(() -> SessionContext.requireTenantAccess(7L));
     assertFalse(SessionContext.hasTenantAccess(8L));
     assertThrows(ResponseStatusException.class, () -> SessionContext.requireTenantAccess(8L));
+  }
+
+  @Test
+  void allowsCurrentAccountWithoutTenantRole() {
+    SessionContext.setContext("42", List.of(), Map.of());
+
+    assertTrue(SessionContext.hasAccountAccess(7L, 42L));
+    assertDoesNotThrow(() -> SessionContext.requireAccountAccess(7L, 42L));
+    assertFalse(SessionContext.hasAccountAccess(7L, 43L));
+    assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, 43L));
   }
 }

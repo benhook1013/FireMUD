@@ -180,3 +180,8 @@ Entry format:
 2026-04-19
 
 - Stale `application-dev.yml` files that only swap services onto H2/Flyway-off local behavior are architectural drift now that the canonical dev path is the real Postgres/Redis topology. Keep `dev` overrides only for intentional local behavior, not silent fake persistence.
+
+- `2026-04-19`: shared HTTP auth should default to authenticated transport and leave ownership/admin semantics to explicit app policy
+  - Context: executing the audit-derived account/tenant authorization slice exposed that `account-service` had broad `PRIVILEGED` HTTP auth on every non-public route, which meant account-owned surfaces like profile/export/delete could only ever be reached by admin-style callers and made the controller/service ownership checks mostly decorative
+  - Observation: using one blanket privileged HTTP gate for a whole service hides the real distinction between authenticated user surfaces, tenant-scoped management surfaces, and true global/internal admin routes; it tends to push ownership semantics into ad hoc public-path exceptions instead of explicit policy at the actual endpoints
+  - Expected pattern: shared HTTP auth should establish authenticated identity by default, while service code explicitly guards the few truly privileged routes and separately enforces current-account, tenant-scoped, or global-operator access as appropriate

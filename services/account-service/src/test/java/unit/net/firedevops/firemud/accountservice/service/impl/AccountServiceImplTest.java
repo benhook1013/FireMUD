@@ -218,8 +218,6 @@ class AccountServiceImplTest {
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(7L, 1L))
-        .thenReturn(Optional.of(membership(account, 1L)));
 
     PlayerBootstrapResult result = service.issuePlayerBootstrap(1L, "demo", "password", null);
 
@@ -283,6 +281,24 @@ class AccountServiceImplTest {
             () -> service.authenticate(1L, "demo@example.com", "password", null));
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
+  }
+
+  @Test
+  void authenticateRejectsMissingGameplayMembership() {
+    Account account = new Account();
+    account.setId(7L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(7L, 1L))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.authenticate(1L, "demo", "password", null));
+
+    assertEquals("Invalid credentials", exception.getMessage());
   }
 
   @Test
@@ -697,8 +713,6 @@ class AccountServiceImplTest {
     account.setId(1L);
     account.setEmail("demo@example.com");
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
-        .thenReturn(Optional.of(membership(account, 1L)));
 
     service.requestPasswordReset(new PasswordResetRequest(1L, "demo@example.com"));
 
@@ -720,8 +734,6 @@ class AccountServiceImplTest {
     account.setUsername("demo");
     account.setEmail("demo@example.com");
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
-        .thenReturn(Optional.of(membership(account, 1L)));
 
     service.sendUsernameReminder(
         new net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest(
@@ -741,8 +753,6 @@ class AccountServiceImplTest {
     Account account = new Account();
     account.setId(5L);
     when(accountRepository.findById(5L)).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(5L, 1L))
-        .thenReturn(Optional.of(membership(account, 1L)));
     when(externalAccountRepository.existsByTenantIdAndAccountIdAndProvider(1L, 5L, "google"))
         .thenReturn(false);
 
@@ -764,8 +774,6 @@ class AccountServiceImplTest {
     account.setId(6L);
     account.setEmail("demo@example.com");
     when(accountRepository.findById(6L)).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(6L, 1L))
-        .thenReturn(Optional.of(membership(account, 1L)));
 
     service.requestEmailVerification(1L, 6L);
 

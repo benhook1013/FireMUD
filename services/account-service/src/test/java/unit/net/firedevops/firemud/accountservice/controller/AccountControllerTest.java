@@ -16,7 +16,7 @@ import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
-import net.firedevops.firemud.test.WithFiremudPrivilegedHttpAuthTestProperties;
+import net.firedevops.firemud.test.WithFiremudHttpAuthTestProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,7 +31,7 @@ import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(AccountController.class)
 @Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
-@WithFiremudPrivilegedHttpAuthTestProperties
+@WithFiremudHttpAuthTestProperties
 @TestPropertySource(
     properties = {
       "firemud.auth.http.public-path-patterns[0]=/accounts",
@@ -70,7 +70,7 @@ class AccountControllerTest {
   @Test
   void deleteAccountAllowsScopedTenantAdmin() throws Exception {
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("7", List.of("admin"))));
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("7", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -84,7 +84,7 @@ class AccountControllerTest {
   @Test
   void deleteAccountRejectsCrossTenantScopedAdmin() throws Exception {
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("admin"))));
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -102,6 +102,19 @@ class AccountControllerTest {
     mockMvc
         .perform(
             get("/accounts/42/export")
+                .param("tenantId", "7")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"));
+  }
+
+  @Test
+  void deleteAccountAllowsCurrentAccountWithoutPrivilegedTenantRole() throws Exception {
+    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+
+    mockMvc
+        .perform(
+            delete("/accounts/42")
                 .param("tenantId", "7")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())

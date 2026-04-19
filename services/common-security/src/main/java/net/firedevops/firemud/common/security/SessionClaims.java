@@ -7,18 +7,27 @@ import java.util.List;
 import java.util.Map;
 
 public record SessionClaims(
-    String accountId, List<String> globalRoles, Map<String, List<String>> scopedRoles) {
+    String accountId,
+    List<String> globalRoles,
+    Map<String, List<String>> scopedRoles,
+    boolean internalService,
+    String serviceName,
+    String serviceInstanceId) {
 
   public static SessionClaims fromJwt(Jws<Claims> jwt) {
     Claims payload = jwt.getPayload();
     return new SessionClaims(
         payload.get("accountId", String.class),
         extractGlobalRoles(payload),
-        extractScopedRoles(payload));
+        extractScopedRoles(payload),
+        Boolean.TRUE.equals(payload.get("internalService", Boolean.class)),
+        payload.get("serviceName", String.class),
+        payload.get("serviceInstanceId", String.class));
   }
 
   public void applyToSession() {
-    SessionContext.setContext(accountId, globalRoles, scopedRoles);
+    SessionContext.setContext(
+        accountId, globalRoles, scopedRoles, internalService, serviceName, serviceInstanceId);
   }
 
   public boolean hasPrivilegedRole() {
@@ -26,7 +35,7 @@ public record SessionClaims(
       return true;
     }
     for (List<String> roles : scopedRoles.values()) {
-      if (roles.contains("admin") || roles.contains("moderator")) {
+      if (roles.contains("tenantAdmin") || roles.contains("admin") || roles.contains("moderator")) {
         return true;
       }
     }
