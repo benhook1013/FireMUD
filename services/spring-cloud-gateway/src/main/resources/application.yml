@@ -71,6 +71,8 @@ management:
         readiness:
           include: readinessState,gameplayRouteReadiness
 
+---
+
 spring:
   config:
     activate:
