@@ -8,6 +8,7 @@ import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.socialgroups.client.LoggingAdminClient;
+import net.firedevops.firemud.socialgroups.client.ModerationPolicyClient;
 import net.firedevops.firemud.socialgroups.config.ChatProperties;
 import net.firedevops.firemud.socialgroups.dto.ChatMessageDto;
 import net.firedevops.firemud.socialgroups.dto.SendMessageRequestDto;
@@ -35,6 +36,7 @@ public class ChatServiceImpl implements ChatService {
   private final ChatMessageMapper mapper;
   private final ProfanityFilter profanityFilter;
   private final LoggingAdminClient loggingAdminClient;
+  private final ModerationPolicyClient moderationPolicyClient;
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
   private final ChatProperties chatProperties;
@@ -47,6 +49,7 @@ public class ChatServiceImpl implements ChatService {
       ChatMessageMapper mapper,
       ProfanityFilter profanityFilter,
       LoggingAdminClient loggingAdminClient,
+      ModerationPolicyClient moderationPolicyClient,
       RedisTemplate<String, Object> redisTemplate,
       MeterRegistry meterRegistry,
       ChatProperties chatProperties) {
@@ -54,6 +57,7 @@ public class ChatServiceImpl implements ChatService {
     this.mapper = mapper;
     this.profanityFilter = profanityFilter;
     this.loggingAdminClient = loggingAdminClient;
+    this.moderationPolicyClient = moderationPolicyClient;
     this.redisTemplate = redisTemplate;
     this.meterRegistry = meterRegistry;
     this.chatProperties = copyProps(chatProperties);
@@ -81,6 +85,7 @@ public class ChatServiceImpl implements ChatService {
   @Transactional
   public ChatMessageDto sendMessage(SendMessageRequestDto request) {
     logger.info("Chat message from {}", request.senderAccountId());
+    enforceChatPolicy(request.tenantId(), request.senderAccountId());
     String filtered = profanityFilter.filter(request.content());
     if (!filtered.equals(request.content())) {
       runAfterCommit(
@@ -115,6 +120,22 @@ public class ChatServiceImpl implements ChatService {
           }
         });
     return mapper.toDto(saved);
+  }
+
+  private void enforceChatPolicy(long tenantId, long accountId) {
+    var decision = moderationPolicyClient.evaluateChatSend(tenantId, accountId);
+    if (decision.hasError()
+        && (decision.getError().getCode() != null && !decision.getError().getCode().isBlank())) {
+      throw new IllegalStateException(
+          "Moderation policy check failed: "
+              + decision.getError().getCode()
+              + ": "
+              + decision.getError().getMessage());
+    }
+    if (!decision.getAllowed()) {
+      throw new IllegalStateException(
+          "Chat send denied by moderation policy: " + decision.getAction());
+    }
   }
 
   private void safeReportModeration(long tenantId, long accountId, String description) {

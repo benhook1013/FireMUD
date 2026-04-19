@@ -471,6 +471,9 @@ public class WorldManagementGrpcService
         RoomSnapshot.newBuilder()
             .setRoomInstanceId(snapshot.roomId().toString())
             .setTenantId(snapshot.tenantId().toString())
+            .setGameInstanceId(snapshot.gameInstanceId().toString())
+            .setWorldSnapshotId(
+                readFence(snapshot.tenantId(), snapshot.gameInstanceId(), snapshot.roomId()))
             .setRoomName(snapshot.roomName())
             .setShortDescription(snapshot.shortDescription())
             .setLongDescription(snapshot.longDescription());
@@ -540,6 +543,10 @@ public class WorldManagementGrpcService
       builder.setCost(exit.cost());
     }
     return builder.build();
+  }
+
+  private String readFence(long tenantId, long gameInstanceId, long roomInstanceId) {
+    return tenantId + ":" + gameInstanceId + ":" + roomInstanceId;
   }
 
   private String toJson(RoomDto dto) {

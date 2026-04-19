@@ -10,6 +10,7 @@ import java.util.stream.Stream;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
+import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
@@ -130,6 +131,20 @@ public final class CrossServiceAppHarness {
     @Primary
     GrpcServiceDiscoverer grpcServiceDiscoverer() {
       return org.mockito.Mockito.mock(GrpcServiceDiscoverer.class);
+    }
+
+    @Bean
+    @Primary
+    ModerationPolicyClient moderationPolicyClient() {
+      ModerationPolicyClient client = org.mockito.Mockito.mock(ModerationPolicyClient.class);
+      org.mockito.Mockito.when(
+              client.evaluateGameplayAdmission(
+                  org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+          .thenReturn(
+              net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
+                  .setAllowed(true)
+                  .build());
+      return client;
     }
 
     @Bean

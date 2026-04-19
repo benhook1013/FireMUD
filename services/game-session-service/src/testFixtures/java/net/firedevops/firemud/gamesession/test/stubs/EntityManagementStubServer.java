@@ -28,7 +28,8 @@ public final class EntityManagementStubServer implements AutoCloseable {
                   public void listRoomEntities(
                       ListRoomEntitiesRequest request,
                       StreamObserver<ListRoomEntitiesResponse> responseObserver) {
-                    responseObserver.onNext(roomEntities.get());
+                    String roomInstanceId = request.getRoomInstance().getRoomInstanceId();
+                    responseObserver.onNext(stampReadFence(roomEntities.get(), roomInstanceId));
                     responseObserver.onCompleted();
                   }
 
@@ -65,6 +66,17 @@ public final class EntityManagementStubServer implements AutoCloseable {
 
   public void resetRoomEntities() {
     roomEntities.set(LookTestFixtures.sampleEntities());
+  }
+
+  private ListRoomEntitiesResponse stampReadFence(
+      ListRoomEntitiesResponse response, String roomInstanceId) {
+    return ListRoomEntitiesResponse.newBuilder()
+        .setTenantId(LookTestFixtures.TENANT)
+        .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
+        .setRoomInstanceId(roomInstanceId)
+        .setEntitySnapshotId(LookTestFixtures.readFence(roomInstanceId))
+        .addAllEntities(response.getEntitiesList())
+        .build();
   }
 
   @Override

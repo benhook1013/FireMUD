@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -36,6 +37,8 @@ class PlayCommandHandlerTest {
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
+  private final ModerationPolicyClient moderationPolicyClient =
+      Mockito.mock(ModerationPolicyClient.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
@@ -70,9 +73,15 @@ class PlayCommandHandlerTest {
             gameLogicProperties,
             accountClient,
             entityManagementClient,
+            moderationPolicyClient,
             firstPartyConnectContextRegistry,
             gameplayPresenceLifecycleService,
             meterRegistry);
+    when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong()))
+        .thenReturn(
+            net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
+                .setAllowed(true)
+                .build());
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -152,6 +161,36 @@ class PlayCommandHandlerTest {
                 gameLogicProperties.getDefaultRoomId(),
                 "jwt-token",
                 0L));
+  }
+
+  @Test
+  void playRejectsModerationPolicyDeniedAdmission() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(entityManagementClient.findCharacterByName(
+            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "demo"))
+        .thenReturn(
+            Optional.of(
+                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                    .setId("7001")
+                    .setName("demo")
+                    .build()));
+    when(moderationPolicyClient.evaluateGameplayAdmission(22L, 123L))
+        .thenReturn(
+            net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
+                .setAllowed(false)
+                .setAction("gameplay_ban")
+                .build());
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("MODERATION_POLICY_DENIED");
+    Mockito.verify(sessionContextService, Mockito.never()).save(Mockito.any());
+    Mockito.verify(gameplayPresenceLifecycleService, Mockito.never())
+        .registerConnected(Mockito.any());
   }
 
   @Test

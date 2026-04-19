@@ -15,6 +15,7 @@ import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -49,6 +50,7 @@ public class PlayCommandHandler {
   private final GameLogicProperties gameLogicProperties;
   private final AccountClient accountClient;
   private final EntityManagementClient entityManagementClient;
+  private final ModerationPolicyClient moderationPolicyClient;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final MeterRegistry meterRegistry;
@@ -62,6 +64,7 @@ public class PlayCommandHandler {
       GameLogicProperties gameLogicProperties,
       AccountClient accountClient,
       EntityManagementClient entityManagementClient,
+      ModerationPolicyClient moderationPolicyClient,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       MeterRegistry meterRegistry) {
@@ -77,6 +80,8 @@ public class PlayCommandHandler {
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
     this.entityManagementClient =
         Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
+    this.moderationPolicyClient =
+        Objects.requireNonNull(moderationPolicyClient, "moderationPolicyClient must not be null");
     this.firstPartyConnectContextRegistry =
         Objects.requireNonNull(
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
@@ -216,6 +221,11 @@ public class PlayCommandHandler {
               null);
         }
         long gameInstanceId = selectedRealm.getGameInstanceId();
+        Optional<PlayCommandHandlingResult> moderationFailure =
+            validateModerationPolicy(context, selectedRealm, selectedTenantTag);
+        if (moderationFailure.isPresent()) {
+          return moderationFailure.get();
+        }
         long characterId = resolveCharacterId(context, selectedRealm, character, characterName);
         try (GameplayLoggingContext gameplayContext =
             GameplayLoggingContext.open(
@@ -284,6 +294,40 @@ public class PlayCommandHandler {
         }
       }
     }
+  }
+
+  private Optional<PlayCommandHandlingResult> validateModerationPolicy(
+      SessionContext context, GameplayCatalogProperties.Realm selectedRealm, String tenantTag) {
+    var decision =
+        moderationPolicyClient.evaluateGameplayAdmission(
+            selectedRealm.getTenantId(), context.accountId());
+    if (decision.hasError()
+        && decision.getError().getCode() != null
+        && !decision.getError().getCode().isBlank()) {
+      return Optional.of(
+          failure(
+              "MODERATION_POLICY_UNAVAILABLE",
+              "Gameplay admission policy unavailable",
+              "error.play.moderation-policy-unavailable",
+              Map.of("errorCode", decision.getError().getCode()),
+              tenantTag,
+              Long.toString(selectedRealm.getGameInstanceId()),
+              null,
+              null));
+    }
+    if (!decision.getAllowed()) {
+      return Optional.of(
+          failure(
+              "MODERATION_POLICY_DENIED",
+              "Gameplay admission denied by moderation policy",
+              "error.play.moderation-policy-denied",
+              Map.of("action", decision.getAction()),
+              tenantTag,
+              Long.toString(selectedRealm.getGameInstanceId()),
+              null,
+              null));
+    }
+    return Optional.empty();
   }
 
   private Optional<PlayCommandHandlingResult> validateFirstPartyConnectScope(

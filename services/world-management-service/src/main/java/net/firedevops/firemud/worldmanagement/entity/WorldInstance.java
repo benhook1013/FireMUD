@@ -75,6 +75,10 @@ public class WorldInstance {
   @Column(name = "updated_at", nullable = false)
   private Instant updatedAt = Instant.now();
 
+  @Version
+  @Column(name = "row_version", nullable = false)
+  private Long rowVersion;
+
   @PrePersist
   @PreUpdate
   void touchUpdatedAt() {

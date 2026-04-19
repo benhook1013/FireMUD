@@ -6,6 +6,7 @@ import java.util.Map;
 public record RoomSnapshotDto(
     Long roomId,
     Long tenantId,
+    Long gameInstanceId,
     String roomName,
     String shortDescription,
     String longDescription,

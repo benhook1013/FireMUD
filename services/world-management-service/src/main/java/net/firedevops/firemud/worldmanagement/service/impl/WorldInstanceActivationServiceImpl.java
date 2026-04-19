@@ -274,7 +274,6 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
   }
 
   @Override
-  @Transactional
   @Timed(value = "world.terminateInstance")
   public WorldInstanceLifecycleSnapshotDto terminateWorldInstance(
       long tenantId,
@@ -297,7 +296,6 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
       worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
       worldInstance = worldInstanceRepository.save(worldInstance);
     } else if (STATUS_TERMINATING.equals(worldInstance.getStatus())) {
-      requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
       if (!terminationRequestId.equals(worldInstance.getTerminationRequestId())) {
         throw new IllegalArgumentException(
             "INVALID_WORLD_INSTANCE_STATE: world instance is terminating under a different request id");

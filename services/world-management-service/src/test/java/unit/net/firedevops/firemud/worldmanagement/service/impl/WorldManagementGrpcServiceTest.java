@@ -316,6 +316,7 @@ class WorldManagementGrpcServiceTest {
             new RoomSnapshotDto(
                 1L,
                 1L,
+                41L,
                 "Room A",
                 "Seed room A",
                 "Seed room A",
@@ -370,7 +371,15 @@ class WorldManagementGrpcServiceTest {
     Mockito.when(roomService.getRoomSnapshot(1L, 41L, 1L, "fr"))
         .thenReturn(
             new RoomSnapshotDto(
-                1L, 1L, "Room A", "Seed room A", "Seed room A", List.of(), Map.of(), List.of()));
+                1L,
+                1L,
+                41L,
+                "Room A",
+                "Seed room A",
+                "Seed room A",
+                List.of(),
+                Map.of(),
+                List.of()));
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));

@@ -33,6 +33,7 @@ import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.command.text.LookTextRenderer;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -139,6 +140,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @MockitoBean private WorldManagementClient worldManagementClient;
 
+  @MockitoBean private ModerationPolicyClient moderationPolicyClient;
+
   @MockitoBean private LookTextRenderer lookTextRenderer;
 
   @MockitoBean private CommandService commandService;
@@ -233,6 +236,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
                   redisSetStore.get(invocation.getArgument(0));
               return members == null ? java.util.Set.of() : new java.util.LinkedHashSet<>(members);
             });
+    when(moderationPolicyClient.evaluateGameplayAdmission(
+            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(
+            net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
+                .setAllowed(true)
+                .build());
 
     LookResult lookResult =
         LookResult.newBuilder()

@@ -53,4 +53,8 @@ public class GameInstance {
 
   @Column(nullable = false, length = 20)
   private String status;
+
+  @Version
+  @Column(name = "row_version", nullable = false)
+  private Long rowVersion;
 }

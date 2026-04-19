@@ -1215,7 +1215,15 @@ public class EntityManagementGrpcService
       var entities =
           roomEntityService.listEntities(
               resolveTenantId(request), resolveGameInstanceId(request), resolveRoomId(request));
-      var builder = ListRoomEntitiesResponse.newBuilder();
+      String tenantId = resolveTenantId(request);
+      String gameInstanceId = resolveGameInstanceId(request);
+      String roomInstanceId = resolveRoomId(request);
+      var builder =
+          ListRoomEntitiesResponse.newBuilder()
+              .setTenantId(tenantId)
+              .setGameInstanceId(gameInstanceId)
+              .setRoomInstanceId(roomInstanceId)
+              .setEntitySnapshotId(readFence(tenantId, gameInstanceId, roomInstanceId));
       entities.stream().map(this::toProto).forEach(builder::addEntities);
       responseObserver.onNext(builder.build());
       responseObserver.onCompleted();
@@ -1316,6 +1324,10 @@ public class EntityManagementGrpcService
       throw new IllegalArgumentException("room_instance.game_instance_id is required");
     }
     return request.getRoomInstance().getGameInstanceId();
+  }
+
+  private String readFence(String tenantId, String gameInstanceId, String roomInstanceId) {
+    return tenantId + ":" + gameInstanceId + ":" + roomInstanceId;
   }
 
   private void requireTenantAccessWhenPresent(Long tenantId) {

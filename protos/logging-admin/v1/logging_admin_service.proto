@@ -12,6 +12,8 @@ service LoggingAdminService {
   rpc QueryLogs(QueryLogsRequest) returns (QueryLogsResponse);
   rpc CreateLogEvent(CreateLogEventRequest) returns (CreateLogEventResponse);
   rpc ApplyModerationAction(ApplyModerationActionRequest) returns (ApplyModerationActionResponse);
+  rpc EvaluateModerationPolicy(EvaluateModerationPolicyRequest)
+      returns (EvaluateModerationPolicyResponse);
   rpc ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse);
 }
 
@@ -55,6 +57,20 @@ message ApplyModerationActionRequest {
 message ApplyModerationActionResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message EvaluateModerationPolicyRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  string scope = 3;
+}
+
+message EvaluateModerationPolicyResponse {
+  bool allowed = 1;
+  string action = 2;
+  string reason = 3;
+  int64 expires_at_epoch_seconds = 4;
+  shared.v1.ErrorDetail error = 5;
 }
 
 message ToggleFeatureFlagRequest {

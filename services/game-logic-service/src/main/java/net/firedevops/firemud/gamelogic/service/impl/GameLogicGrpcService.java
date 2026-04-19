@@ -195,6 +195,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
                   : "WORLD_UNAVAILABLE";
           case DEADLINE_EXCEEDED -> "WORLD_UNAVAILABLE";
           case PERMISSION_DENIED -> "NOT_AUTHORIZED";
+          case FAILED_PRECONDITION -> "READ_FENCE_MISMATCH";
           default -> "LOOK_UNAVAILABLE";
         };
     return GrpcAppErrors.error(meterRegistry, logger, "ResolveLook", mappedCode, description);

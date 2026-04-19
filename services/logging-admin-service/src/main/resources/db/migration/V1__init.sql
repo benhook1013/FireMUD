@@ -7,9 +7,3 @@ CREATE TABLE moderation_actions (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP NULL
 );
-
-CREATE TABLE feature_flag (
-    id BIGSERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    enabled BOOLEAN NOT NULL DEFAULT FALSE
-);

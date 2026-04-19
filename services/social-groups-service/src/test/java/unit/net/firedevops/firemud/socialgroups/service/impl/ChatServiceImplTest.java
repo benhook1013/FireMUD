@@ -1,6 +1,7 @@
 package net.firedevops.firemud.socialgroups.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -9,6 +10,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import java.util.List;
 import net.firedevops.firemud.socialgroups.client.LoggingAdminClient;
+import net.firedevops.firemud.socialgroups.client.ModerationPolicyClient;
 import net.firedevops.firemud.socialgroups.config.ChatProperties;
 import net.firedevops.firemud.socialgroups.dto.ChatMessageDto;
 import net.firedevops.firemud.socialgroups.dto.SendMessageRequestDto;
@@ -29,6 +31,7 @@ class ChatServiceImplTest {
   private ChatMessageRepository repository;
   private ProfanityFilter profanityFilter;
   private LoggingAdminClient loggingAdminClient;
+  private ModerationPolicyClient moderationPolicyClient;
   private RedisTemplate<String, Object> redisTemplate;
   private ListOperations<String, Object> listOps;
   private SimpleMeterRegistry meterRegistry;
@@ -40,10 +43,16 @@ class ChatServiceImplTest {
     repository = mock(ChatMessageRepository.class);
     profanityFilter = mock(ProfanityFilter.class);
     loggingAdminClient = mock(LoggingAdminClient.class);
+    moderationPolicyClient = mock(ModerationPolicyClient.class);
     redisTemplate = mockRedisTemplate();
     listOps = mockListOperations();
     when(redisTemplate.opsForList()).thenReturn(listOps);
     when(profanityFilter.filter(any())).thenAnswer(i -> i.getArgument(0));
+    when(moderationPolicyClient.evaluateChatSend(anyLong(), anyLong()))
+        .thenReturn(
+            net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
+                .setAllowed(true)
+                .build());
     meterRegistry = new SimpleMeterRegistry();
     props = new ChatProperties();
     service =
@@ -52,6 +61,7 @@ class ChatServiceImplTest {
             Mappers.getMapper(ChatMessageMapper.class),
             profanityFilter,
             loggingAdminClient,
+            moderationPolicyClient,
             redisTemplate,
             meterRegistry,
             props);
@@ -129,6 +139,24 @@ class ChatServiceImplTest {
     service.sendMessage(req);
 
     verify(loggingAdminClient).reportChatViolation(1L, 2L, "Filtered profanity");
+  }
+
+  @Test
+  void moderationPolicyDeniesChatBeforePersistence() {
+    when(moderationPolicyClient.evaluateChatSend(1L, 2L))
+        .thenReturn(
+            net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
+                .setAllowed(false)
+                .setAction("chat_mute")
+                .build());
+    SendMessageRequestDto req =
+        new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "hello");
+
+    IllegalStateException ex =
+        assertThrows(IllegalStateException.class, () -> service.sendMessage(req));
+
+    assertEquals("Chat send denied by moderation policy: chat_mute", ex.getMessage());
+    verify(repository, never()).save(any());
   }
 
   @Test

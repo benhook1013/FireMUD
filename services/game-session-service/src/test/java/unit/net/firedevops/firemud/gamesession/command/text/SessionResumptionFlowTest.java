@@ -25,6 +25,7 @@ import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
@@ -71,6 +72,8 @@ class SessionResumptionFlowTest {
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
+  private final ModerationPolicyClient moderationPolicyClient =
+      Mockito.mock(ModerationPolicyClient.class);
   private final GameSessionProperties properties = new GameSessionProperties();
   private final GameplayCatalogProperties gameplayCatalogProperties =
       new GameplayCatalogProperties();
@@ -135,6 +138,11 @@ class SessionResumptionFlowTest {
                 .setMembershipVersion(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
+    when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong()))
+        .thenReturn(
+            net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
+                .setAllowed(true)
+                .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
@@ -196,6 +204,7 @@ class SessionResumptionFlowTest {
             gameLogicProperties,
             accountClient,
             entityManagementClient,
+            moderationPolicyClient,
             firstPartyConnectContextRegistry,
             gameplayPresenceLifecycleService,
             meterRegistry);

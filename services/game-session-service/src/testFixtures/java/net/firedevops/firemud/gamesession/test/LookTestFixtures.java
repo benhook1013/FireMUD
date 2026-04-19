@@ -20,6 +20,10 @@ public final class LookTestFixtures {
 
   private LookTestFixtures() {}
 
+  public static String readFence(String roomInstanceId) {
+    return TENANT + ":" + GAME_INSTANCE_ID + ":" + roomInstanceId;
+  }
+
   public static RoomSnapshot sampleRoomSnapshot() {
     return sampleRoomSnapshot(ROOM_INSTANCE_ID);
   }
@@ -36,8 +40,10 @@ public final class LookTestFixtures {
 
   private static RoomSnapshot sourceRoomSnapshot() {
     return RoomSnapshot.newBuilder()
+        .setTenantId(TENANT)
         .setRoomInstanceId(ROOM_INSTANCE_ID)
         .setGameInstanceId(GAME_INSTANCE_ID)
+        .setWorldSnapshotId(readFence(ROOM_INSTANCE_ID))
         .setRoomName(ROOM_NAME)
         .setShortDescription(
             "You stand in a basalt chamber warmed by the brazier near the western wall.")
@@ -62,8 +68,10 @@ public final class LookTestFixtures {
 
   private static RoomSnapshot destinationRoomSnapshot() {
     return RoomSnapshot.newBuilder()
+        .setTenantId(TENANT)
         .setRoomInstanceId(DESTINATION_ROOM_ID)
         .setGameInstanceId(GAME_INSTANCE_ID)
+        .setWorldSnapshotId(readFence(DESTINATION_ROOM_ID))
         .setRoomName(DESTINATION_ROOM_NAME)
         .setShortDescription("A soot-dark hall ringed with anvils and cooling braziers.")
         .setLongDescription(
@@ -79,6 +87,10 @@ public final class LookTestFixtures {
   }
 
   public static ListRoomEntitiesResponse sampleEntities() {
+    return sampleEntities(ROOM_INSTANCE_ID);
+  }
+
+  public static ListRoomEntitiesResponse sampleEntities(String roomInstanceId) {
     RoomEntity kobold =
         RoomEntity.newBuilder()
             .setEntityId("NPC-001")
@@ -104,6 +116,10 @@ public final class LookTestFixtures {
             .addStateFlags("wearable:BACK")
             .build();
     return ListRoomEntitiesResponse.newBuilder()
+        .setTenantId(TENANT)
+        .setGameInstanceId(GAME_INSTANCE_ID)
+        .setRoomInstanceId(roomInstanceId)
+        .setEntitySnapshotId(readFence(roomInstanceId))
         .addEntities(kobold)
         .addEntities(player)
         .addEntities(item)

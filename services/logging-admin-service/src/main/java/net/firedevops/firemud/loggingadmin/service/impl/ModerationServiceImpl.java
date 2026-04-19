@@ -3,14 +3,12 @@ package net.firedevops.firemud.loggingadmin.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
+import java.util.List;
+import java.util.Locale;
 import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.common.saga.SagaBuilder;
-import net.firedevops.firemud.common.saga.SagaException;
-import net.firedevops.firemud.common.saga.SagaRunner;
-import net.firedevops.firemud.loggingadmin.client.AccountClient;
-import net.firedevops.firemud.loggingadmin.client.GameSessionClient;
 import net.firedevops.firemud.loggingadmin.dto.ApplyModerationActionRequest;
 import net.firedevops.firemud.loggingadmin.dto.ModerationActionDto;
+import net.firedevops.firemud.loggingadmin.dto.ModerationPolicyDecisionDto;
 import net.firedevops.firemud.loggingadmin.entity.ModerationAction;
 import net.firedevops.firemud.loggingadmin.mapper.ModerationActionMapper;
 import net.firedevops.firemud.loggingadmin.repository.ModerationActionRepository;
@@ -24,24 +22,20 @@ import org.springframework.stereotype.Service;
     justification = "Injected clients and repositories remain internal")
 public class ModerationServiceImpl implements ModerationService {
   private static final Logger logger = LoggingUtil.getLogger(ModerationServiceImpl.class);
+  private static final String SCOPE_GAMEPLAY_ADMISSION = "GAMEPLAY_ADMISSION";
+  private static final String SCOPE_CHAT_SEND = "CHAT_SEND";
+  private static final List<String> GAMEPLAY_BLOCK_ACTIONS =
+      List.of("ban", "account_ban", "gameplay_ban");
+  private static final List<String> CHAT_BLOCK_ACTIONS =
+      List.of("ban", "account_ban", "chat_ban", "chat_mute");
 
   private final ModerationActionRepository repository;
   private final ModerationActionMapper mapper;
-  private final AccountClient accountClient;
-  private final GameSessionClient gameSessionClient;
-  private final SagaRunner sagaRunner;
 
   public ModerationServiceImpl(
-      ModerationActionRepository repository,
-      ModerationActionMapper mapper,
-      AccountClient accountClient,
-      GameSessionClient gameSessionClient,
-      SagaRunner sagaRunner) {
+      ModerationActionRepository repository, ModerationActionMapper mapper) {
     this.repository = repository;
     this.mapper = mapper;
-    this.accountClient = accountClient;
-    this.gameSessionClient = gameSessionClient;
-    this.sagaRunner = sagaRunner;
   }
 
   @Override
@@ -55,25 +49,33 @@ public class ModerationServiceImpl implements ModerationService {
     entity.setAction(request.action());
     entity.setReason(request.reason());
     entity.setCreatedAt(Instant.now());
-    final ModerationAction[] ref = new ModerationAction[] {entity};
+    return mapper.toDto(repository.save(entity));
+  }
 
-    SagaBuilder builder = new SagaBuilder("adminBan");
-    builder
-        .step(
-            "recordAction", () -> ref[0] = repository.save(ref[0]), () -> repository.delete(ref[0]))
-        .step(
-            "deleteAccount",
-            () -> accountClient.deleteAccount(request.tenantId(), request.accountId()))
-        .step("stopSession", () -> gameSessionClient.stopSession(request.sessionId()));
-
-    try {
-      var saga = builder.build();
-      sagaRunner.run(saga);
-    } catch (SagaException e) {
-      logger.warn("Admin operation saga failed", e);
-      throw new IllegalStateException("Moderation action failed", e);
+  @Override
+  @Timed(value = "moderation.evaluatePolicy")
+  public ModerationPolicyDecisionDto evaluatePolicy(long tenantId, long accountId, String scope) {
+    List<String> blockingActions = blockingActionsFor(scope);
+    if (blockingActions.isEmpty()) {
+      throw new IllegalArgumentException("Unknown moderation policy scope: " + scope);
     }
+    return repository
+        .findActivePolicyActions(tenantId, accountId, blockingActions, Instant.now())
+        .stream()
+        .findFirst()
+        .map(
+            action ->
+                new ModerationPolicyDecisionDto(
+                    false, action.getAction(), action.getReason(), action.getExpiresAt()))
+        .orElseGet(() -> new ModerationPolicyDecisionDto(true, "", "", null));
+  }
 
-    return mapper.toDto(ref[0]);
+  private List<String> blockingActionsFor(String scope) {
+    String normalized = scope == null ? "" : scope.trim().toUpperCase(Locale.ROOT);
+    return switch (normalized) {
+      case SCOPE_GAMEPLAY_ADMISSION -> GAMEPLAY_BLOCK_ACTIONS;
+      case SCOPE_CHAT_SEND -> CHAT_BLOCK_ACTIONS;
+      default -> List.of();
+    };
   }
 }

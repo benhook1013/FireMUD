@@ -37,6 +37,7 @@ import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.gamelogic.GameLogicServiceApplication;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
+import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
@@ -1247,6 +1248,18 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     @Primary
     ConflictTracker conflictTracker() {
       return key -> {};
+    }
+
+    @Bean
+    @Primary
+    ModerationPolicyClient moderationPolicyClient() {
+      ModerationPolicyClient client = Mockito.mock(ModerationPolicyClient.class);
+      Mockito.when(client.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong()))
+          .thenReturn(
+              net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
+                  .setAllowed(true)
+                  .build());
+      return client;
     }
 
     @Bean(name = "gameInstanceServiceImpl")
