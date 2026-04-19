@@ -1,0 +1,178 @@
+package unit.net.firedevops.firemud.common.config;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.google.protobuf.Empty;
+import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.Status;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jws;
+import java.util.List;
+import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
+import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.GrpcAuthProperties;
+import net.firedevops.firemud.common.security.HttpAuthProperties;
+import net.firedevops.firemud.common.security.HttpJwtAuthInterceptor;
+import net.firedevops.firemud.common.security.JwtUtil;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.context.runner.ReactiveWebApplicationContextRunner;
+import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+
+class CommonSecurityAutoConfigurationTest {
+  private final ApplicationContextRunner contextRunner =
+      new ApplicationContextRunner()
+          .withConfiguration(
+              AutoConfigurations.of(
+                  ConfigurationPropertiesAutoConfiguration.class,
+                  CommonSecurityAutoConfiguration.class,
+                  CommonSecurityServletAutoConfiguration.class));
+
+  @Test
+  void registersSharedGrpcAuthInterceptorWhenEnabled() {
+    contextRunner
+        .withPropertyValues(
+            "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
+            "firemud.auth.grpc.public-methods[0]=firemud.gateway.v1.GatewayManagementService/Ping")
+        .run(
+            ctx -> {
+              assertThat(ctx).hasSingleBean(AuthTokenInterceptor.class);
+              GrpcAuthProperties props = ctx.getBean(GrpcAuthProperties.class);
+              assertThat(props.getPublicMethods())
+                  .containsExactly("firemud.gateway.v1.GatewayManagementService/Ping");
+            });
+  }
+
+  @Test
+  void registersSharedHttpAuthWhenEnabled() {
+    new WebApplicationContextRunner()
+        .withConfiguration(
+            AutoConfigurations.of(
+                ConfigurationPropertiesAutoConfiguration.class,
+                CommonSecurityAutoConfiguration.class,
+                CommonSecurityServletAutoConfiguration.class))
+        .withPropertyValues(
+            "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
+            "firemud.auth.http.enabled=true",
+            "firemud.auth.http.public-path-patterns[0]=/ping")
+        .run(
+            ctx -> {
+              assertThat(ctx).hasSingleBean(HttpJwtAuthInterceptor.class);
+              HttpAuthProperties props = ctx.getBean(HttpAuthProperties.class);
+              assertThat(props.getPublicPathPatterns()).containsExactly("/ping");
+            });
+  }
+
+  @Test
+  void reactiveAppsDoNotLoadServletHttpAuthAutoConfiguration() {
+    new ReactiveWebApplicationContextRunner()
+        .withConfiguration(
+            AutoConfigurations.of(
+                ConfigurationPropertiesAutoConfiguration.class,
+                CommonSecurityAutoConfiguration.class,
+                CommonSecurityServletAutoConfiguration.class))
+        .withPropertyValues(
+            "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
+            "firemud.auth.http.enabled=true")
+        .run(
+            ctx -> {
+              assertThat(ctx).doesNotHaveBean(HttpJwtAuthInterceptor.class);
+              assertThat(ctx).hasSingleBean(JwtUtil.class);
+            });
+  }
+
+  @Test
+  void sharedGrpcAuthInterceptorCanBeDisabledForCustomServerPolicy() {
+    contextRunner
+        .withPropertyValues(
+            "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
+            "firemud.auth.grpc.interceptor-enabled=false")
+        .run(
+            ctx -> {
+              assertThat(ctx).doesNotHaveBean(AuthTokenInterceptor.class);
+              assertThat(ctx).hasSingleBean(JwtUtil.class);
+            });
+  }
+
+  @Test
+  void configuredPublicMethodsBypassBearerRequirement() {
+    contextRunner
+        .withPropertyValues(
+            "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
+            "firemud.auth.grpc.public-methods[0]=demo.Service/Ping")
+        .run(
+            ctx -> {
+              AuthTokenInterceptor interceptor = ctx.getBean(AuthTokenInterceptor.class);
+              @SuppressWarnings({"rawtypes", "unchecked"})
+              ServerCall call = Mockito.mock(ServerCall.class);
+              @SuppressWarnings({"rawtypes", "unchecked"})
+              ServerCallHandler next = Mockito.mock(ServerCallHandler.class);
+              MethodDescriptor<Empty, Empty> methodDescriptor = unaryMethod("demo.Service/Ping");
+              Mockito.when(call.getMethodDescriptor()).thenReturn(methodDescriptor);
+              Mockito.when(next.startCall(Mockito.eq(call), Mockito.any(Metadata.class)))
+                  .thenReturn(new ServerCall.Listener<>() {});
+
+              interceptor.interceptCall(call, new Metadata(), next);
+
+              Mockito.verify(next).startCall(Mockito.eq(call), Mockito.any(Metadata.class));
+            });
+  }
+
+  @Test
+  void jwtUtilStillCarriesRoleClaims() {
+    contextRunner
+        .withPropertyValues("firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234")
+        .run(
+            ctx -> {
+              JwtUtil jwtUtil = ctx.getBean(JwtUtil.class);
+              String token =
+                  jwtUtil.generateToken(
+                      "user", java.util.Map.of("globalRoles", List.of("platformAdmin")));
+              Jws<Claims> claims = jwtUtil.parseToken(token);
+              assertThat(claims.getPayload().getSubject()).isEqualTo("user");
+              assertThat(claims.getPayload().get("globalRoles", List.class))
+                  .containsExactly("platformAdmin");
+            });
+  }
+
+  @Test
+  void protectedMethodsStillRequireBearerToken() {
+    contextRunner
+        .withPropertyValues("firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234")
+        .run(
+            ctx -> {
+              AuthTokenInterceptor interceptor = ctx.getBean(AuthTokenInterceptor.class);
+              @SuppressWarnings({"rawtypes", "unchecked"})
+              ServerCall call = Mockito.mock(ServerCall.class);
+              @SuppressWarnings({"rawtypes", "unchecked"})
+              ServerCallHandler next = Mockito.mock(ServerCallHandler.class);
+              MethodDescriptor<Empty, Empty> methodDescriptor =
+                  unaryMethod("demo.Service/Protected");
+              Mockito.when(call.getMethodDescriptor()).thenReturn(methodDescriptor);
+
+              interceptor.interceptCall(call, new Metadata(), next);
+
+              ArgumentCaptor<Status> statusCaptor = ArgumentCaptor.forClass(Status.class);
+              Mockito.verify(call).close(statusCaptor.capture(), Mockito.any(Metadata.class));
+              assertThat(statusCaptor.getValue().getCode())
+                  .isEqualTo(Status.UNAUTHENTICATED.getCode());
+            });
+  }
+
+  private MethodDescriptor<Empty, Empty> unaryMethod(String fullMethodName) {
+    return MethodDescriptor.<Empty, Empty>newBuilder()
+        .setFullMethodName(fullMethodName)
+        .setType(MethodDescriptor.MethodType.UNARY)
+        .setRequestMarshaller(io.grpc.protobuf.ProtoUtils.marshaller(Empty.getDefaultInstance()))
+        .setResponseMarshaller(io.grpc.protobuf.ProtoUtils.marshaller(Empty.getDefaultInstance()))
+        .build();
+  }
+}

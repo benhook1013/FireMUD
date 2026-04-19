@@ -43,6 +43,11 @@ Entity Management must also expose a read-only design-time synchronization surfa
 
 Entity Management is a required publish-gate participant and must maintain a stable digest manifest for `GetDraftDesignDigest(versionId)`:
 
+Implementation Notes:
+
+- The current implementation hashes the tenant’s draft entity-definition tables in their existing tenant-scoped schema and returns synthetic `appliedCommitId = "version:<versionId>"`.
+- That preserves one canonical digest gate now while the future fully version-scoped entity-template graph remains implementation follow-through.
+
 - Included objects:
   - version-scoped entity-template tables such as item, NPC, equipment, loot-table, and balance-curve definitions keyed by `(tenantId, versionId)`;
   - normalized template-binding rows that affect published entity semantics, such as loot mappings or equipment/archetype constraints.

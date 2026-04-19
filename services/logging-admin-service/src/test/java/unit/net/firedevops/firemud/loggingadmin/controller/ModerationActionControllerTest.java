@@ -7,9 +7,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
+import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
-import net.firedevops.firemud.loggingadmin.config.AuthConfig;
 import net.firedevops.firemud.loggingadmin.dto.ApplyModerationActionRequest;
 import net.firedevops.firemud.loggingadmin.dto.ModerationActionDto;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
@@ -28,11 +29,13 @@ import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(ModerationActionController.class)
 @AutoConfigureMockMvc(addFilters = false)
-@Import(AuthConfig.class)
+@Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
 @TestPropertySource(
     properties = {
       "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000"
+      "firemud.auth.jwt-expiration-ms=3600000",
+      "firemud.auth.http.enabled=true",
+      "firemud.auth.http.role-requirement=PRIVILEGED"
     })
 class ModerationActionControllerTest {
 

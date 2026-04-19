@@ -13,6 +13,9 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 - `GET /sagas/{id}/steps` – inspect steps for a saga instance.
 - `POST /admin/tick-remediation/pause` – operator-facing pause request that audits intent and then calls the Game Session control-plane pause surface for the selected scope.
 - `POST /admin/tick-remediation/resume` – operator-facing resume request that audits intent and then calls the Game Session control-plane resume surface for the selected scope.
+- `GET /admin/admission-pointers` – list the caller-visible gameplay admission pointers exposed by Game Session control-plane.
+- `GET /admin/admission-pointers/{worldSlug}/{realmSlug}/audit` – read the append-only cutover audit history for one gameplay realm pointer.
+- `POST /admin/admission-pointers` – operator-facing cutover mutation that forwards to Game Session compare-and-set admission-pointer control plane and derives the actor from the authenticated session rather than trusting caller-supplied actor identity.
 
 ```bash
 curl http://localhost:8080/ping
@@ -39,7 +42,7 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 | Surface | Examples | Required auth path | Notes |
 | --- | --- | --- | --- |
 | Public/infra health | `GET /ping`, `Ping` | Internal network + platform health policy | Not a user-authenticated business operation. |
-| Admin/operator APIs (HTTP) | `/logs/query`, `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*`, `/admin/tick-remediation/*` | JWT middleware (`AuthTokenInterceptor` + route classification) | External tools must enter via Gateway allowlisted routes. |
+| Admin/operator APIs (HTTP) | `/logs/query`, `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*`, `/admin/tick-remediation/*`, `/admin/admission-pointers*` | JWT middleware (`AuthTokenInterceptor` + route classification) | External tools must enter via Gateway allowlisted routes. |
 | Service-to-service control/ingest (gRPC internal) | Internal lifecycle/event ingestion and trusted backend calls | mTLS caller identity + explicit service authorization checks | Never exposed at public ingress; role claims are required only for user-scoped actions. |
 
 ## Availability Classes by Endpoint Family

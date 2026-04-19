@@ -14,7 +14,6 @@ import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
 import java.time.Duration;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -22,6 +21,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
@@ -30,10 +31,13 @@ import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
+import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.ChatEntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
+import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
+import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -172,6 +176,37 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketFriendsShowsCanonicalCrossGamePresence() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    SOCIAL_STUB.setFriendPresenceEntries(
+        List.of(
+            FriendPresenceEntry.newBuilder()
+                .setFriendAccountId(Long.toString(SORA_ACCOUNT_ID))
+                .setOnline(true)
+                .setCharacterId(ChatTestFixtures.PLAYER_SORA)
+                .setCharacterName("Sora")
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("production")
+                .setRealmDisplayName("Live Realm")
+                .setActivityState(
+                    FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
+                .build()));
+
+    List<String> responses = runCommunicationSequence(sessionId, "FRIENDS");
+
+    assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(responses.get(2)).contains("Sora - online in Demo World / Live Realm (idle)");
+    assertThat(SOCIAL_STUB.lastPresenceRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getTenantId()).isEqualTo(Long.toString(TENANT_ID));
+              assertThat(request.getAccountId()).isEqualTo(Long.toString(ACCOUNT_ID));
+            });
+  }
+
+  @Test
   void websocketWhisperPushesTargetAndObserverViewsToLiveRecipients() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
@@ -268,6 +303,7 @@ class CommunicationWebSocketCrossServiceTest {
           props.put("firemud.database.enabled", "true");
           props.put("spring.jpa.hibernate.ddl-auto", "none");
           props.put("firemud.services.entityManagementService", ENTITY_STUB.endpoint());
+          props.put("firemud.services.socialGroupsService", SOCIAL_STUB.endpoint());
         });
   }
 
@@ -288,31 +324,9 @@ class CommunicationWebSocketCrossServiceTest {
         .bean(ScreenBufferService.class)
         .clear(TENANT_ID, DEMO_WORLD_INSTANCE_ID, Long.parseLong(ChatTestFixtures.PLAYER_NYX));
     JdbcTemplate jdbc = new JdbcTemplate(GAME_SESSION.bean(javax.sql.DataSource.class));
-    jdbc.execute(
-        """
-        CREATE TABLE IF NOT EXISTS game_instances (
-          id BIGSERIAL PRIMARY KEY,
-          tenant_id BIGINT NOT NULL,
-          runtime_version VARCHAR(100) NOT NULL,
-          script_patch_version VARCHAR(100),
-          script_patch_pinned_at TIMESTAMP NULL,
-          script_patch_pinned_by VARCHAR(200) NULL,
-          script_patch_pinned_reason VARCHAR(500) NULL,
-          owner_account_id BIGINT NOT NULL,
-          status VARCHAR(20) NOT NULL
-        )
-        """);
+    GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
     jdbc.update("DELETE FROM game_instances");
-    return Optional.ofNullable(
-            jdbc.queryForObject(
-                "INSERT INTO game_instances (tenant_id, runtime_version, script_patch_version, owner_account_id, status) VALUES (?, ?, ?, ?, ?) RETURNING id",
-                Long.class,
-                TENANT_ID,
-                "0.1.0",
-                "initial",
-                ACCOUNT_ID,
-                "ACTIVE"))
-        .orElseThrow(() -> new IllegalStateException("Game instance insert did not return an id"));
+    return GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, ACCOUNT_ID, 7L);
   }
 
   private void seedLiveTargetSession() {
@@ -431,6 +445,24 @@ class CommunicationWebSocketCrossServiceTest {
                               .setGameplayAvailable(true)
                               .setEntitlementVersion(1L)
                               .setTenantBillingSequence(1L)
+                              .setEvaluatedAt("2026-03-30T00:00:00Z")
+                              .build());
+                      responseObserver.onCompleted();
+                    }
+
+                    @Override
+                    public void ensurePublicProductionPlayerMembership(
+                        EnsurePublicProductionPlayerMembershipRequest request,
+                        StreamObserver<EnsurePublicProductionPlayerMembershipResponse>
+                            responseObserver) {
+                      responseObserver.onNext(
+                          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
+                              .setAccountId(request.getAccountId())
+                              .setTenantId(request.getTenantId())
+                              .setRealmSlug(request.getRealmSlug())
+                              .setGameplayAdmissionAllowed(true)
+                              .setMembershipVersion(1L)
+                              .setCreated(true)
                               .setEvaluatedAt("2026-03-30T00:00:00Z")
                               .build());
                       responseObserver.onCompleted();

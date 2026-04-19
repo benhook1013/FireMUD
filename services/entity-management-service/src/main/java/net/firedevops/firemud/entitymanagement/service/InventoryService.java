@@ -23,6 +23,7 @@ public interface InventoryService {
       Long itemId,
       Long itemInstanceId,
       String containerInstanceId,
+      String stackFamilyKey,
       int quantity);
 
   InventoryEntryDto pickupItemFromRoom(
@@ -33,5 +34,6 @@ public interface InventoryService {
       Long itemId,
       Long itemInstanceId,
       String containerInstanceId,
+      String stackFamilyKey,
       int quantity);
 }

@@ -7,6 +7,8 @@ enum TextCommandDispatchGroup {
   HELP,
   ACTIVITY,
   WHO,
+  FRIENDS,
+  AUTHORED,
   ITEM,
   COMMUNICATION,
   MOVE,

@@ -40,6 +40,26 @@ Realm-scoped playable state may follow either of these patterns:
 - **Shared-state realm** – the realm uses the tenant's normal live character state, so the same character identity, progression, and durable inventory are reused when the player enters that realm.
 - **Isolated-state realm** – the realm uses instance-local gameplay state for that `gameInstanceId` rather than the tenant's normal live character state. That isolated state may start from a copied source snapshot, seeded/sample data, or fresh standalone state. Playtest forks are the canonical copied-state example: copied characters remain associated with the same platform account and tenant, but the fork keeps its own fork-local progression, inventory, and other runtime state.
 
+Minimum downstream consequences of realm policy:
+
+- Shared-state realms reuse the tenant's normal live gameplay state namespace for the selected character.
+- Isolated-state realms must treat at least the following as realm-/instance-scoped gameplay state keyed to the resolved `gameInstanceId`:
+  - visible character roster for `CHARS`;
+  - character progression/resources;
+  - durable inventory/equipment/containment state;
+  - learned or pinned gameplay loadout/state that materially affects play in that realm.
+- Tenant membership, account ownership, billing state, and cross-tenant control-plane identity remain tenant-scoped regardless of realm mode.
+- Social/account-level relationships may remain tenant- or account-scoped unless a dedicated gameplay design says otherwise, but they must not be used to silently collapse isolated gameplay state back into the tenant's live production state.
+
+Character-selection and creation policy must also respect realm mode:
+
+- `CHARS` lists the character choices valid for the resolved `{tenantId, gameInstanceId}` target, not a tenant-wide superset.
+- Shared-state realms normally expose the tenant's normal live durable roster for that account.
+- Isolated-state realms expose only that realm's valid roster, which may consist of copied fork-local characters, seeded/sample characters, newly created realm-local characters, or a policy-defined subset of those.
+- `CHARS` must return one realm-local decision surface for the selected target: the visible roster plus a bounded `creationPolicy` / equivalent flag explaining whether fresh character creation is allowed, denied, or limited to a documented realm-local mode. Clients must not infer creation rules by comparing roster contents to tenant-wide state.
+- If an isolated realm forbids fresh character creation, admission must fail with an explicit character-selection denial rather than implying the caller may create into the tenant's normal live roster.
+- If an isolated realm allows both copied characters and fresh realm-local creation, both appear as one realm-local roster/creation experience for that target. The client must not require a separate "copied vs new" mode switch to enter the realm.
+
 This distinction is normative for all realm-aware flows:
 
 - `REALMS` describes which player-addressable realms exist for a tenant.
@@ -57,6 +77,54 @@ This model underpins both authentication and authorization:
   - existing caller-bound tenant membership for any visible realm the caller is allowed to enter, and
   - public-production discovery for tenants whose default production realm is live and gameplay-admissible.
   Worlds that fail both visibility sources, or fail entitlement checks, must not appear in discovery responses.
+
+### Realm Catalog and Admission-Pointer Contract
+
+Realm routing is a control-plane/runtime contract, not merely a lobby rendering concern.
+
+The platform distinguishes between:
+
+- a **realm catalog** describing which realms are player-addressable for one tenant; and
+- an **admission pointer** describing which concrete `gameInstanceId` is currently admissible for one `{tenantId, realmSlug}` target.
+
+Minimum realm-catalog facts for one visible realm are:
+
+- `tenantId`
+- `tenantSlug`
+- `realmSlug`
+- bounded player-facing display metadata
+- whether the realm is the default public production realm
+- whether the realm is public-production or explicit-grant-only
+- whether the realm uses shared-state or isolated-state gameplay policy
+
+Minimum admission-pointer facts for one resolved realm are:
+
+- `tenantId`
+- `realmSlug`
+- `admissibleGameInstanceId`
+- `pointerVersion`
+- `updatedAt`
+
+Contract rules:
+
+- `REALMS`, `CHARS`, `PLAY`, bootstrap discovery, connect-token issuance, and reconnect validation must all consume the same realm-catalog and admission-pointer truth.
+- Clients never select raw `gameInstanceId` values directly. They select a world and optional realm, and the server resolves that choice to the current admissible runtime target.
+- Each player-addressable realm resolves to exactly one admissible `gameInstanceId` at a time.
+- If no admissible target exists for a realm, the realm may remain visible for operator/debug surfaces, but ordinary gameplay admission must fail closed rather than guessing a replacement target.
+
+Required read contract:
+
+- `GetAdmissionPointer(tenantId, realmSlug, requestId)` is the authoritative gameplay-admission lookup.
+- The authoritative owner of this pointer contract is the Game Session control plane.
+- Callers must treat missing pointer fields, ambiguous results, or stale pointer state as contract failures rather than inferring defaults.
+
+Pointer freshness and cutover rules:
+
+- `pointerVersion` is monotonic per `{tenantId, realmSlug}`.
+- Any change that can affect which instance is admissible for gameplay admission must advance `pointerVersion`.
+- The current admissible pointer is persisted in Game Session-owned control-plane state together with append-only pointer audit events; gameplay clients and bootstrap flows consume the read surface derived from that state rather than local config snapshots.
+- Connect-token issuance and other admission-critical flows must fail closed if the selected realm target no longer resolves to the same admissible pointer version they were issued against.
+- Realm cutover must therefore look like a control-plane pointer move, not a client-side reinterpretation of slugs or instance names.
 
 ## Account-to-Game Relationships
 
@@ -88,7 +156,7 @@ This model underpins both authentication and authorization:
 - The React frontend loads per-tenant, version-scoped assets from a published
   `manifest.json` in object storage; the Game Design Service is not queried at
   runtime.
-- See [Game Customization Options](./game-customization-options.md) and the
+- See [Game Customization](./system-architecture-game-customization.md) and the
   [Frontend Architecture](./system-architecture-frontend.md) for details.
 
 ## Tenant Configuration & Scaling

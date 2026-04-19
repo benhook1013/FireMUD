@@ -266,6 +266,7 @@ Design-time publication and runtime activation are separate:
 - Publication in Game Design means the plugin bundle is immutable, signed, validated, and available for activation.
 - Activation in Automation & Scripting means a `PUBLISHED` plugin version has been selected for one `(tenantId, gameInstanceId, pluginId)` and admitted into the runtime registry.
 - A plugin version that is `PUBLISHED` in Game Design may still be `DISABLED` or never activated for any instance.
+- Game Design publication visibility and Automation runtime state must remain separate read surfaces. Operator tooling should read immutable publication metadata (for example `GetPublishedPluginVersion`) alongside runtime activation state (`GetPluginStatus`) rather than relying on one synthetic plugin-state enum to encode both concerns.
 
 - Each plugin version is identified by `pluginVersionId`. A registry in the Automation & Scripting Service tracks, per `<tenantId, gameInstanceId, pluginId>`:
   - `activeVersionId` – the plugin version currently enabled.

@@ -156,6 +156,11 @@ Plugin signer-policy admission follows the same fail-closed principle. If signer
 
 This service is a required digest participant for full publishes and script-patch publishes. It must expose `GetDraftDesignDigest` with a typed scope selector `oneof { versionId, scriptPatchVersion }` and maintain a service-local digest input manifest with:
 
+Implementation Notes:
+
+- Script-patch digesting already attests the patch-scoped script graph for `scriptPatchVersion`.
+- The current full-version digest attests the tenant’s draft script graph using the existing schema and returns synthetic `appliedCommitId = "version:<versionId>"` until script definitions are modeled as fully version-scoped draft data.
+
 - Included objects such as version- or patch-scoped script graphs, bindings, and publish-critical metadata that affect runtime execution for the scoped publish type.
 - Excluded objects such as runtime queues, audit and event logs, quota counters, and other non-launchability operational state.
 - Canonicalization rules covering stable ordering, normalized serialization, and deterministic default and null handling before hashing.

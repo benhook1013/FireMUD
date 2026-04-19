@@ -4,14 +4,11 @@ This document defines the minimum release hygiene for FireMUD versions published
 
 ## Release Model
 
-FireMUD uses the Business Source License 1.1 on a per-release basis.
+FireMUD uses the PolyForm Noncommercial License 1.0.0.
 
-- Each official release has its own publication date.
-- Each official release has its own Apache License 2.0 change date exactly two years after publication.
-- The release-specific publication date and change date must be recorded in the NOTICE file distributed with that release.
+- The repository and official releases remain under the same noncommercial license unless FireMUD explicitly publishes different terms for a future version.
+- Each official release records its publication date in the NOTICE file distributed with that release.
 - The repository copy of [`NOTICE.md`](../../NOTICE.md) is a stable repository notice, not the generated release-specific NOTICE artifact.
-
-This matches the parameterization described in [`LICENSE.md`](../../LICENSE.md): the license applies separately to each version, and the change date may vary by version.
 
 ## Required Release Artifacts
 
@@ -37,15 +34,13 @@ If FireMUD later ships runtime or release-tool Python dependencies through a com
 Before publishing a release:
 
 1. Determine the release publication date.
-2. Compute the change date as exactly two years after the publication date.
-3. Generate the release `NOTICE` from [`NOTICE.template.md`](../../NOTICE.template.md) with:
+2. Generate the release `NOTICE` from [`NOTICE.template.md`](../../NOTICE.template.md) with:
    - `COPYRIGHT_YEAR` set to the release year
    - `RELEASE_DATE` set to the publication date
-   - `CHANGE_DATE` set to the per-release Apache conversion date
-4. Generate or assemble the `/licenses` directory for the release artifact if dependency notices are required for included third-party software.
-5. Verify that [`LICENSE.md`](../../LICENSE.md), [`README.md`](../../README.md), and [`FAQ.md`](../../FAQ.md) still describe the current release licensing model accurately.
-6. Verify that `NOTICE` in the release artifact matches the release metadata actually being published.
-7. Verify that trademark wording remains current.
+3. Generate or assemble the `/licenses` directory for the release artifact if dependency notices are required for included third-party software.
+4. Verify that [`LICENSE.md`](../../LICENSE.md), [`README.md`](../../README.md), and [`FAQ.md`](../../FAQ.md) still describe the current release licensing model accurately.
+5. Verify that `NOTICE` in the release artifact matches the release metadata actually being published.
+6. Verify that trademark wording remains current.
 
 ## Release Automation
 
@@ -54,7 +49,6 @@ The tag workflow in [`.github/workflows/release-notes.yml`](../../.github/workfl
 - The workflow uses [`dev-tools/release/generate_notice.py`](../../dev-tools/release/generate_notice.py) and [`NOTICE.template.md`](../../NOTICE.template.md).
 - The workflow runs ORT with plain-text notice reporters and assembles the resulting dependency notices with [`dev-tools/release/assemble_licenses_dir.py`](../../dev-tools/release/assemble_licenses_dir.py).
 - The release publication date comes from the existing GitHub Release `publishedAt` timestamp when present, or falls back to the current UTC date during initial release creation.
-- The change date is computed as exactly two years after the release publication date.
 - The generated file is uploaded to the GitHub Release as `NOTICE.md`.
 - The assembled `/licenses` directory now includes:
   - plain-text notice reports

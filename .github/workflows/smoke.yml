@@ -70,7 +70,9 @@ jobs:
               "gradle/",
               "protos/",
               "docker/",
+              "dev-tools/",
               "services/account-service/",
+              "services/automation-scripting-service/",
               "services/common-data-runtime/",
               "services/common-library/",
               "services/common-platform-core/",
@@ -79,8 +81,10 @@ jobs:
               "services/common-test-support/",
               "services/common-web-support/",
               "services/entity-management-service/",
+              "services/game-design-service/",
               "services/game-logic-service/",
               "services/game-session-service/",
+              "services/logging-admin-service/",
               "services/social-groups-service/",
               "services/spring-cloud-gateway/",
               "services/tcp-proxy-service/",
@@ -91,6 +95,8 @@ jobs:
               "settings.gradle.kts",
               "gradle.properties",
               ".github/workflows/smoke.yml",
+              ".github/workflows/smoke-full.yml",
+              ".github/workflows/runtime-images.yml",
             ]);
 
             const nonDocFiles = files.filter((file) => !docsOnlyPredicate(file));

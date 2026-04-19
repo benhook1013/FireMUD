@@ -15,6 +15,7 @@ public interface ContainerService {
       Long containerInstanceId,
       Long itemId,
       Long itemInstanceId,
+      String stackFamilyKey,
       int quantity);
 
   InventoryEntryDto takeItemFromContainer(
@@ -23,5 +24,6 @@ public interface ContainerService {
       Long containerInstanceId,
       Long itemId,
       Long itemInstanceId,
+      String stackFamilyKey,
       int quantity);
 }

@@ -11,6 +11,8 @@ import org.springframework.stereotype.Repository;
 public interface RoomExitRepository extends JpaRepository<RoomExit, Long> {
   List<RoomExit> findByTenantId(Long tenantId);
 
+  List<RoomExit> findByTenantIdOrderByIdAsc(Long tenantId);
+
   @Query(
       "SELECT re FROM RoomExit re JOIN FETCH re.toRoom WHERE re.tenantId = :tenantId AND re.fromRoom.id = :roomId")
   List<RoomExit> findByTenantIdAndFromRoomId(

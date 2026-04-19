@@ -9,5 +9,6 @@ CREATE TABLE profiles (
     id BIGSERIAL PRIMARY KEY,
     account_id BIGINT NOT NULL REFERENCES accounts(id),
     display_name VARCHAR(100),
-    bio VARCHAR(255)
+    bio VARCHAR(255),
+    presence_visibility_policy VARCHAR(32) NOT NULL DEFAULT 'FRIENDS_ONLY'
 );

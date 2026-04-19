@@ -10,6 +10,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 | --- | --- | --- |
 | `GET` | `/ping` | Basic health check returning `"pong"` |
 | `POST` | `/friends` | Create a friend link |
+| `GET` | `/friends/presence` | List bounded cross-game friend presence for one account |
 | `POST` | `/mail` | Send an asynchronous in-game mail message; mail retrieval endpoints are also available |
 | `POST` | `/guilds` | Create a guild |
 | `POST` | `/guilds/storage` | Add an item to guild storage |
@@ -48,6 +49,7 @@ curl -X POST http://localhost:8080/voice/token \
 - `SendMessage` – publishes a chat message to an in-game channel or player
 - `CreateGuild` – establishes a new guild with an owner account
 - `AddFriend` – adds a friend relationship at the game or account level
+- `ListFriendPresence` – returns bounded account-scoped friend presence, including canonical world/realm labels, conservative last-seen facts, and recent disconnect disposition when policy allows it
 - `SendMail` – stores asynchronous player mail for later retrieval
 
 ```bash

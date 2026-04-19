@@ -62,7 +62,14 @@ server:
 
 firemud:
   auth:
-    jwt-expiration-ms: 3600000
+    http:
+      enabled: true
+      role-requirement: PRIVILEGED
+      public-path-patterns:
+        - /actuator/**
+        - /ping
+        - /ping/
+        - /.well-known/**
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

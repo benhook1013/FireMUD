@@ -61,6 +61,10 @@ server:
     min-response-size: 1024
 
 firemud:
+  auth:
+    http:
+      enabled: true
+      role-requirement: PRIVILEGED
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

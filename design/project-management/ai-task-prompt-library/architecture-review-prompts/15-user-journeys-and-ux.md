@@ -7,8 +7,7 @@ Read the following documents. Follow references only when a listed document clea
 - `design/architecture/user-journeys-creators.md`
 - `design/architecture/user-journeys-operators.md`
 - `design/user-guides/game-creator-guide.md`
-- `design/architecture/game-customization-options.md`
-- `design/project-management/core-requirements.md`
+- `design/architecture/system-architecture-game-customization.md`
 - `design/project-management/core-requirements.md`
 
 Then:

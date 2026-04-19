@@ -8,13 +8,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
+import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
-import net.firedevops.firemud.socialgroups.config.AuthConfig;
-import net.firedevops.firemud.socialgroups.config.WebConfig;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendLinkDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
-import net.firedevops.firemud.socialgroups.security.JwtAuthInterceptor;
 import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
 import net.firedevops.firemud.socialgroups.service.FriendService;
 import org.junit.jupiter.api.Test;
@@ -29,11 +28,12 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(FriendController.class)
-@Import({AuthConfig.class, WebConfig.class, JwtAuthInterceptor.class})
+@Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
 @TestPropertySource(
     properties = {
       "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000"
+      "firemud.auth.jwt-expiration-ms=3600000",
+      "firemud.auth.http.enabled=true"
     })
 class FriendControllerTest {
 
@@ -65,7 +65,21 @@ class FriendControllerTest {
   @Test
   void listFriendPresenceReturnsPresenceList() throws Exception {
     when(friendService.listFriendPresence(1L, 2L))
-        .thenReturn(List.of(new FriendPresenceDto(3L, true, 9L, 99L, "Ben", null, null)));
+        .thenReturn(
+            List.of(
+                new FriendPresenceDto(
+                    3L,
+                    true,
+                    9L,
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    99L,
+                    "Ben",
+                    null,
+                    null,
+                    null)));
 
     String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
     mockMvc
@@ -77,6 +91,8 @@ class FriendControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data[0].friendAccountId").value(3L))
-        .andExpect(jsonPath("$.data[0].online").value(true));
+        .andExpect(jsonPath("$.data[0].online").value(true))
+        .andExpect(jsonPath("$.data[0].worldSlug").value("demo"))
+        .andExpect(jsonPath("$.data[0].realmSlug").value("production"));
   }
 }

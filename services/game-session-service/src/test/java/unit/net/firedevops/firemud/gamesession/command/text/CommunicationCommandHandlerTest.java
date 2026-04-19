@@ -6,7 +6,9 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.Character;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
@@ -26,6 +28,8 @@ import org.mockito.Mockito;
 class CommunicationCommandHandlerTest {
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
+  private final GameplayCatalogProperties gameplayCatalogProperties =
+      new GameplayCatalogProperties();
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final SessionContextService sessionContextService =
@@ -36,13 +40,25 @@ class CommunicationCommandHandlerTest {
   private CommunicationCommandHandler handler;
   private final SessionContext sessionContext =
       new SessionContext(
-          1L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 77L, "room-7", "jwt-token");
+          1L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 1L, "room-7", "jwt-token");
 
   @BeforeEach
   void setUp() {
+    gameplayCatalogProperties.getWorlds().clear();
+    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
+    world.setSlug("demo");
+    world.setDisplayName("Demo World");
+    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+    realm.setSlug("production");
+    realm.setDisplayName("Live Realm");
+    realm.setTenantId(22L);
+    realm.setGameInstanceId(1L);
+    world.setRealms(List.of(realm));
+    gameplayCatalogProperties.setWorlds(List.of(world));
     handler =
         new CommunicationCommandHandler(
             entityManagementClient,
+            new GameplayWorldCatalog(gameplayCatalogProperties),
             gameLogicClient,
             gameLogicProperties,
             sessionContextService,
@@ -92,7 +108,7 @@ class CommunicationCommandHandlerTest {
             "1",
             "911",
             "123",
-            "77",
+            "1",
             "Emberline",
             "room-7",
             CommunicationType.SAY,
@@ -114,7 +130,8 @@ class CommunicationCommandHandlerTest {
 
   @Test
   void tellRequiresOnlineTarget() {
-    when(entityManagementClient.findCharacterByName("22", "Sora"))
+    when(entityManagementClient.findCharacterByName(
+            "22", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Sora"))
         .thenReturn(
             Optional.of(
                 Character.newBuilder()
@@ -123,7 +140,7 @@ class CommunicationCommandHandlerTest {
                     .setAccountId("700")
                     .setName("Sora")
                     .build()));
-    when(sessionContextService.findByGameplayName(22L, 77L, "Sora")).thenReturn(Optional.empty());
+    when(sessionContextService.findByGameplayName(22L, 1L, "Sora")).thenReturn(Optional.empty());
 
     CommunicationCommandHandlingResult result =
         handler.handle(

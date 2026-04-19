@@ -55,6 +55,7 @@ services:
       SERVICE_SCHEMA: account_service
       SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: account_service
       SPRING_FLYWAY_TABLE: flyway_schema_history_account_service
+      FIREMUD_DATABASE_ENABLED: "true"
     env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped

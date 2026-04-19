@@ -6,7 +6,6 @@ This file is the top-level index for active planning materials.
 
 Use the vertical-slice docs in [`vertical-slices/`](./vertical-slices/) as the real working checklists for implementation. Completed slices should stay as short historical records of what was built; new detailed TODOs should be added there rather than to per-service files.
 
-- [Vertical Slice Ideas Index](vertical-slices/00-slice-ideas.md)
 - [Telnet to Gameplay](vertical-slices/01-task-list-telnet-to-gameplay-vertical-slice.md)
 - [Login and Session](vertical-slices/02-task-list-login-and-session-vertical-slice.md)
 - [Login and Session Hardening](vertical-slices/02.1-task-list-login-session-hardening-vertical-slice.md)

@@ -15,6 +15,8 @@ import net.firedevops.firemud.account.v1.CreateAccountRequest;
 import net.firedevops.firemud.account.v1.CreateAccountResponse;
 import net.firedevops.firemud.account.v1.DeleteAccountRequest;
 import net.firedevops.firemud.account.v1.DeleteAccountResponse;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.ExportAccountRequest;
 import net.firedevops.firemud.account.v1.ExportAccountResponse;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
@@ -28,6 +30,7 @@ import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
+import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
@@ -143,7 +146,7 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.createAccount(Mockito.any()))
-        .thenReturn(new AccountDto(1L, 7L, "demo", "e@example.com", "player", true));
+        .thenReturn(new AccountDto(1L, "demo", "e@example.com", "player", true));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<CreateAccountResponse> ref = new AtomicReference<>();
@@ -183,7 +186,8 @@ class AccountGrpcServiceTest {
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.getProfile(1L, 2L))
         .thenReturn(
-            new net.firedevops.firemud.accountservice.dto.ProfileDto(1L, 1L, 2L, "demo", "bio"));
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<GetProfileResponse> ref = new AtomicReference<>();
@@ -208,6 +212,13 @@ class AccountGrpcServiceTest {
             .build()
             .readTree(ref.get().getProfileJson())
             .get("displayName")
+            .asText());
+    assertEquals(
+        "PRIVATE",
+        tools.jackson.databind.json.JsonMapper.builder()
+            .build()
+            .readTree(ref.get().getProfileJson())
+            .path("presenceVisibilityPolicy")
             .asText());
   }
 
@@ -245,6 +256,46 @@ class AccountGrpcServiceTest {
     assertEquals("2", ref.get().getAccountId());
     assertTrue(ref.get().getGameplayAdmissionAllowed());
     assertEquals(44L, ref.get().getMembershipVersion());
+  }
+
+  @Test
+  void ensurePublicProductionPlayerMembershipReturnsResponse() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(
+            accountService.ensurePublicProductionPlayerMembership(2L, 1L, "production", "req-1"))
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult(
+                2L, 1L, "production", 55L, true, "2026-03-30T00:00:00Z"));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<EnsurePublicProductionPlayerMembershipResponse> ref = new AtomicReference<>();
+    service.ensurePublicProductionPlayerMembership(
+        EnsurePublicProductionPlayerMembershipRequest.newBuilder()
+            .setAccountId("2")
+            .setTenantId("1")
+            .setRealmSlug("production")
+            .setRequestId("req-1")
+            .build(),
+        new StreamObserver<EnsurePublicProductionPlayerMembershipResponse>() {
+          @Override
+          public void onNext(EnsurePublicProductionPlayerMembershipResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("2", ref.get().getAccountId());
+    assertEquals("production", ref.get().getRealmSlug());
+    assertTrue(ref.get().getGameplayAdmissionAllowed());
+    assertEquals(55L, ref.get().getMembershipVersion());
+    assertTrue(ref.get().getCreated());
   }
 
   @Test
@@ -295,7 +346,8 @@ class AccountGrpcServiceTest {
         UpdateProfileRequest.newBuilder()
             .setTenantId("1")
             .setAccountId("2")
-            .setProfileJson("{\"displayName\":\"demo\",\"bio\":\"bio\"}")
+            .setProfileJson(
+                "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
             .build(),
         new StreamObserver<UpdateProfileResponse>() {
           @Override

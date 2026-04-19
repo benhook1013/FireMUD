@@ -8,14 +8,14 @@ public final class GameplayStageCommandConstants {
 
   public static final String PLAY_REQUIRED_CODE = "PLAY_REQUIRED";
   public static final String PLAY_REQUIRED_MESSAGE =
-      "You must PLAY first. Use PLAY <world> [character].";
+      "You must PLAY first. Use PLAY <world> [realm] [character].";
 
   public static final String PLAY_INVALID_ARGUMENT_CODE = "INVALID_ARGUMENT";
   public static final String PLAY_INVALID_ARGUMENT_MESSAGE =
       "PLAY command requires a world selector.";
   public static final String PLAY_SELECTION_REQUIRED_CODE = "PLAY_SELECTION_REQUIRED";
   public static final String PLAY_SELECTION_REQUIRED_MESSAGE =
-      "Use WORLDS to browse available worlds, then PLAY <world> [character].";
+      "Use WORLDS to browse available worlds, then PLAY <world> [realm] [character].";
   public static final String WORLD_ACCESS_DENIED_CODE = "WORLD_ACCESS_DENIED";
   public static final String WORLD_ACCESS_DENIED_MESSAGE =
       "You are not allowed to enter that world.";

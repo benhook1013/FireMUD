@@ -3,19 +3,33 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
+import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
+import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
+import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
+import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
+import net.firedevops.firemud.gamedesign.service.PublishGateService;
+import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
+import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
+import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
@@ -27,6 +41,12 @@ class VersionServiceImplTest {
   @Mock private GameRepository gameRepository;
   @Mock private AutomationScriptingClient scriptingClient;
   @Mock private AssetExportService assetExportService;
+  @Mock private PublishAttemptService publishAttemptService;
+  @Mock private PublishGateService publishGateService;
+  @Mock private ControlPlaneDigestService controlPlaneDigestService;
+  @Mock private VersionAssetArtifactService versionAssetArtifactService;
+  @Mock private PublishedReleaseBundleService publishedReleaseBundleService;
+  @Mock private RecordedParticipantDigestService recordedParticipantDigestService;
 
   private VersionServiceImpl service;
 
@@ -36,7 +56,17 @@ class VersionServiceImplTest {
     VersionMapper mapper = Mappers.getMapper(VersionMapper.class);
     service =
         new VersionServiceImpl(
-            versionRepository, gameRepository, mapper, scriptingClient, assetExportService);
+            versionRepository,
+            gameRepository,
+            mapper,
+            scriptingClient,
+            assetExportService,
+            publishAttemptService,
+            publishGateService,
+            controlPlaneDigestService,
+            versionAssetArtifactService,
+            publishedReleaseBundleService,
+            recordedParticipantDigestService);
   }
 
   @Test
@@ -53,20 +83,109 @@ class VersionServiceImplTest {
     when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
         .thenReturn(Optional.of(latest));
 
-    Version saved = new Version();
-    saved.setId(10L);
-    saved.setTenantId("tenant-1");
-    saved.setVersionNumber(8);
-    saved.setNotes("notes");
-    when(versionRepository.save(any(Version.class))).thenReturn(saved);
+    Version savedDraft = new Version();
+    savedDraft.setId(10L);
+    savedDraft.setTenantId("tenant-1");
+    savedDraft.setVersionNumber(8);
+    savedDraft.setNotes("notes");
+    savedDraft.setVersionState(VersionLifecycleState.DRAFT);
+    savedDraft.setVersionStateEpoch(1L);
+    savedDraft.setUpdatedAt(java.time.LocalDateTime.now());
+    Version savedPublished = new Version();
+    savedPublished.setId(10L);
+    savedPublished.setTenantId("tenant-1");
+    savedPublished.setVersionNumber(8);
+    savedPublished.setNotes("notes");
+    savedPublished.setVersionState(VersionLifecycleState.PUBLISHED);
+    savedPublished.setVersionStateEpoch(2L);
+    savedPublished.setUpdatedAt(java.time.LocalDateTime.now());
+    when(versionRepository.save(any(Version.class))).thenReturn(savedDraft, savedPublished);
+    ExportedAssetManifest exportedManifest =
+        new ExportedAssetManifest("abc123", List.of("logo.png", "manifest.json"));
+    when(assetExportService.exportAssets("tenant-1", 8)).thenReturn(exportedManifest);
+    List<PublishParticipantDigestDto> participantDigests =
+        List.of(
+            new PublishParticipantDigestDto(
+                "GAME_DESIGN_CONTROL_PLANE", "10", "version:10", "digest-1", 1, null, null));
+    when(publishGateService.collectFullVersionParticipantDigests(any(VersionDto.class)))
+        .thenReturn(participantDigests);
+    when(versionAssetArtifactService.markExportedUnattested(
+            any(String.class),
+            any(Long.class),
+            any(String.class),
+            any(ExportedAssetManifest.class)))
+        .thenReturn(
+            new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
+                "tenant-1",
+                10L,
+                "EXPORTED_UNATTESTED",
+                1L,
+                "abc123",
+                "workflow-1",
+                null,
+                null,
+                java.time.LocalDateTime.now(),
+                List.of("logo.png", "manifest.json")));
+    when(publishedReleaseBundleService.createFullVersionBundle(
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(String.class),
+            any(List.class)))
+        .thenReturn(
+            new PublishedReleaseBundleDto(
+                1L,
+                "tenant-1",
+                10L,
+                8,
+                "v1",
+                "workflow-1",
+                "abc123",
+                List.of("logo.png", "manifest.json"),
+                participantDigests,
+                "genrev-tenant-1-10",
+                false,
+                null,
+                java.time.LocalDateTime.now()));
+    when(versionAssetArtifactService.markPublished(
+            any(String.class),
+            any(Long.class),
+            any(Long.class),
+            any(String.class),
+            any(String.class)))
+        .thenReturn(
+            new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
+                "tenant-1",
+                10L,
+                "PUBLISHED",
+                2L,
+                "abc123",
+                "workflow-1",
+                null,
+                null,
+                java.time.LocalDateTime.now(),
+                List.of("logo.png", "manifest.json")));
 
     VersionDto dto = service.publishVersion("tenant-1", "notes");
 
     assertEquals(8, dto.versionNumber());
+    assertEquals(VersionLifecycleState.PUBLISHED, dto.versionState());
+    assertEquals(2L, dto.versionStateEpoch());
     verify(gameRepository).findByTenantIdForUpdate("tenant-1");
     verify(versionRepository).findTopByTenantIdOrderByVersionNumberDesc("tenant-1");
-    verify(versionRepository).save(any(Version.class));
+    verify(versionRepository, times(2)).save(any(Version.class));
     verify(assetExportService).exportAssets("tenant-1", 8);
+    verify(publishedReleaseBundleService)
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(String.class),
+            any(List.class));
+    verify(recordedParticipantDigestService)
+        .assertMatchesRecordedDigests(any(String.class), any(), any(List.class));
+    verify(recordedParticipantDigestService)
+        .recordVerifiedDigests(any(String.class), any(), any(String.class), any(List.class));
   }
 
   @Test
@@ -83,19 +202,168 @@ class VersionServiceImplTest {
     when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
         .thenReturn(Optional.of(latest));
 
-    Version saved = new Version();
-    saved.setId(11L);
-    saved.setTenantId("tenant-1");
-    saved.setVersionNumber(8);
-    saved.setScriptPatchVersion("patch-2");
-    saved.setNotes("notes");
-    when(versionRepository.save(any(Version.class))).thenReturn(saved);
+    Version savedDraft = new Version();
+    savedDraft.setId(11L);
+    savedDraft.setTenantId("tenant-1");
+    savedDraft.setVersionNumber(8);
+    savedDraft.setScriptPatchVersion("patch-2");
+    savedDraft.setNotes("notes");
+    savedDraft.setVersionState(VersionLifecycleState.DRAFT);
+    savedDraft.setVersionStateEpoch(1L);
+    savedDraft.setUpdatedAt(java.time.LocalDateTime.now());
+    Version savedPublished = new Version();
+    savedPublished.setId(11L);
+    savedPublished.setTenantId("tenant-1");
+    savedPublished.setVersionNumber(8);
+    savedPublished.setScriptPatchVersion("patch-2");
+    savedPublished.setNotes("notes");
+    savedPublished.setVersionState(VersionLifecycleState.PUBLISHED);
+    savedPublished.setVersionStateEpoch(2L);
+    savedPublished.setUpdatedAt(java.time.LocalDateTime.now());
+    when(versionRepository.save(any(Version.class))).thenReturn(savedDraft, savedPublished);
+    when(publishGateService.collectScriptPatchParticipantDigests(any(VersionDto.class)))
+        .thenReturn(
+            List.of(
+                new PublishParticipantDigestDto(
+                    "AUTOMATION_SCRIPTING",
+                    "patch-2",
+                    "script-patch:patch-2",
+                    "digest-1",
+                    1,
+                    null,
+                    null),
+                new PublishParticipantDigestDto(
+                    "GAME_DESIGN_CONTROL_PLANE",
+                    "patch-2",
+                    "script-patch:patch-2",
+                    "digest-2",
+                    1,
+                    null,
+                    null)));
 
     VersionDto dto = service.publishScriptPatchVersion("tenant-1", 3L, "patch-2", "notes");
 
     assertEquals(8, dto.versionNumber());
-    verify(versionRepository).save(any(Version.class));
+    assertEquals(VersionLifecycleState.PUBLISHED, dto.versionState());
+    verify(versionRepository, times(2)).save(any(Version.class));
     verify(scriptingClient).notifyScriptVersionUpdate("tenant-1", "patch-2", java.util.List.of());
+    verify(recordedParticipantDigestService)
+        .recordVerifiedDigests(any(String.class), any(), any(String.class), any(List.class));
+  }
+
+  @Test
+  void publishVersionPropagatesTypedPublishGateFailures() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+    when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
+        .thenReturn(Optional.empty());
+
+    Version savedDraft = new Version();
+    savedDraft.setId(10L);
+    savedDraft.setTenantId("tenant-1");
+    savedDraft.setVersionNumber(1);
+    savedDraft.setVersionState(VersionLifecycleState.DRAFT);
+    savedDraft.setVersionStateEpoch(1L);
+    savedDraft.setUpdatedAt(java.time.LocalDateTime.now());
+    when(versionRepository.save(any(Version.class))).thenReturn(savedDraft);
+    when(publishGateService.collectFullVersionParticipantDigests(any(VersionDto.class)))
+        .thenReturn(
+            List.of(
+                new PublishParticipantDigestDto(
+                    "GAME_DESIGN_CONTROL_PLANE", "10", "version:10", "digest-1", 1, null, null)));
+    org.mockito.Mockito.doThrow(
+            new PublishGateFailureException(
+                PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH,
+                "recorded digest mismatch"))
+        .when(recordedParticipantDigestService)
+        .assertMatchesRecordedDigests(any(String.class), any(), any(List.class));
+
+    PublishGateFailureException thrown =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            PublishGateFailureException.class, () -> service.publishVersion("tenant-1", "notes"));
+
+    assertEquals(PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH, thrown.failureCode());
+    verify(publishAttemptService)
+        .markFailed(
+            any(String.class),
+            org.mockito.ArgumentMatchers.eq("RECORDED_CONTENT_DIGEST_MISMATCH"),
+            org.mockito.ArgumentMatchers.eq("recorded digest mismatch"));
+  }
+
+  @Test
+  void publishVersionDeletesExportedAssetsWhenAttestationWriteFails() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+    when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
+        .thenReturn(Optional.empty());
+
+    Version savedDraft = new Version();
+    savedDraft.setId(10L);
+    savedDraft.setTenantId("tenant-1");
+    savedDraft.setVersionNumber(1);
+    savedDraft.setVersionState(VersionLifecycleState.DRAFT);
+    savedDraft.setVersionStateEpoch(1L);
+    savedDraft.setUpdatedAt(java.time.LocalDateTime.now());
+    when(versionRepository.save(any(Version.class))).thenReturn(savedDraft);
+    when(assetExportService.exportAssets("tenant-1", 1))
+        .thenReturn(new ExportedAssetManifest("abc123", List.of("manifest.json")));
+    when(publishGateService.collectFullVersionParticipantDigests(any(VersionDto.class)))
+        .thenReturn(
+            List.of(
+                new PublishParticipantDigestDto(
+                    "GAME_DESIGN_CONTROL_PLANE", "10", "version:10", "digest-1", 1, null, null)));
+    when(versionAssetArtifactService.markExportedUnattested(
+            any(String.class),
+            any(Long.class),
+            any(String.class),
+            any(ExportedAssetManifest.class)))
+        .thenReturn(
+            new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
+                "tenant-1",
+                10L,
+                "EXPORTED_UNATTESTED",
+                1L,
+                "abc123",
+                "workflow-1",
+                null,
+                null,
+                java.time.LocalDateTime.now(),
+                List.of("manifest.json")));
+    org.mockito.Mockito.doThrow(new IllegalStateException("bundle failed"))
+        .when(publishedReleaseBundleService)
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(String.class),
+            any(List.class));
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalStateException.class, () -> service.publishVersion("tenant-1", "notes"));
+
+    verify(assetExportService).deleteExportedAssets("tenant-1", 1, List.of("manifest.json"));
+  }
+
+  @Test
+  void getDesignControlPlaneDigestUsesStoredVersionScope() {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionNumber(8);
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    version.setVersionStateEpoch(2L);
+    version.setUpdatedAt(java.time.LocalDateTime.now());
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+    when(controlPlaneDigestService.getDigestForVersion(any(VersionDto.class)))
+        .thenReturn(new DesignControlPlaneDigestDto("tenant-1", "7", "version:7", "digest-1", 1));
+
+    DesignControlPlaneDigestDto dto = service.getDesignControlPlaneDigest("tenant-1", 7L);
+
+    assertEquals("digest-1", dto.contentDigest());
   }
 
   @Test
@@ -109,10 +377,16 @@ class VersionServiceImplTest {
     one.setId(1L);
     one.setTenantId("tenant-1");
     one.setVersionNumber(1);
+    one.setVersionState(VersionLifecycleState.PUBLISHED);
+    one.setVersionStateEpoch(2L);
+    one.setUpdatedAt(java.time.LocalDateTime.now());
     Version two = new Version();
     two.setId(2L);
     two.setTenantId("tenant-1");
     two.setVersionNumber(2);
+    two.setVersionState(VersionLifecycleState.PUBLISHED);
+    two.setVersionStateEpoch(2L);
+    two.setUpdatedAt(java.time.LocalDateTime.now());
     when(versionRepository.findAllByTenantIdOrderByVersionNumberAsc("tenant-1"))
         .thenReturn(List.of(one, two));
 

@@ -8,12 +8,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
-import net.firedevops.firemud.accountservice.config.AuthConfig;
-import net.firedevops.firemud.accountservice.config.WebConfig;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
-import net.firedevops.firemud.accountservice.security.JwtAuthInterceptor;
+import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
+import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
@@ -29,11 +29,13 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(ProfileController.class)
-@Import({AuthConfig.class, WebConfig.class, JwtAuthInterceptor.class})
+@Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
 @TestPropertySource(
     properties = {
       "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000"
+      "firemud.auth.jwt-expiration-ms=3600000",
+      "firemud.auth.http.enabled=true",
+      "firemud.auth.http.role-requirement=PRIVILEGED"
     })
 class ProfileControllerTest {
 
@@ -50,7 +52,8 @@ class ProfileControllerTest {
 
   @Test
   void getProfileReturnsDto() throws Exception {
-    ProfileDto dto = new ProfileDto(1L, 1L, 2L, "demo", "bio");
+    ProfileDto dto =
+        new ProfileDto(1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
     when(accountService.getProfile(1L, 2L)).thenReturn(dto);
 
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
@@ -66,8 +69,10 @@ class ProfileControllerTest {
 
   @Test
   void updateProfileReturnsDto() throws Exception {
-    UpdateProfileRequest req = new UpdateProfileRequest(1L, 2L, "demo", "bio");
-    ProfileDto dto = new ProfileDto(1L, 1L, 2L, "demo", "bio");
+    UpdateProfileRequest req =
+        new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+    ProfileDto dto =
+        new ProfileDto(1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
     when(accountService.updateProfile(req)).thenReturn(dto);
 
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
@@ -79,7 +84,8 @@ class ProfileControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.displayName").value("demo"));
+        .andExpect(jsonPath("$.data.displayName").value("demo"))
+        .andExpect(jsonPath("$.data.presenceVisibilityPolicy").value("PRIVATE"));
   }
 
   @Test

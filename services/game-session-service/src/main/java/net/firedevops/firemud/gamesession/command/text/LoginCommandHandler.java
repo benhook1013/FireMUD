@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -36,6 +37,7 @@ public final class LoginCommandHandler {
   private final AccountClient accountClient;
   private final CommandService commandService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
+  private final GameplayWorldCatalog gameplayWorldCatalog;
   private final DevIsolatedProperties devIsolatedProperties;
   private final DevIsolatedGameInstanceRegistry devIsolatedGameInstanceRegistry;
 
@@ -46,6 +48,7 @@ public final class LoginCommandHandler {
       AccountClient accountClient,
       CommandService commandService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
+      GameplayWorldCatalog gameplayWorldCatalog,
       DevIsolatedProperties devIsolatedProperties,
       ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedGameInstanceRegistryProvider,
       MeterRegistry meterRegistry) {
@@ -58,6 +61,8 @@ public final class LoginCommandHandler {
     this.firstPartyConnectContextRegistry =
         Objects.requireNonNull(
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
+    this.gameplayWorldCatalog =
+        Objects.requireNonNull(gameplayWorldCatalog, "gameplayWorldCatalog must not be null");
     this.devIsolatedProperties =
         Objects.requireNonNull(devIsolatedProperties, "devIsolatedProperties must not be null");
     this.devIsolatedGameInstanceRegistry = devIsolatedGameInstanceRegistryProvider.getIfAvailable();
@@ -163,6 +168,9 @@ public final class LoginCommandHandler {
     if (!Objects.equals(instance.getOwnerAccountId(), verifiedContext.accountId())) {
       return accountMismatchFailure();
     }
+    if (!currentAdmissionPointerMatches(verifiedContext)) {
+      return failure("CONNECT_SCOPE_MISMATCH", "Connect scope invalid");
+    }
 
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
@@ -246,6 +254,25 @@ public final class LoginCommandHandler {
                     : context.gameInstanceId())
         .filter(candidate -> candidate > 0)
         .orElse(sessionId);
+  }
+
+  private boolean currentAdmissionPointerMatches(
+      net.firedevops.firemud.gamesession.service.FirstPartyConnectContext verifiedContext) {
+    if (!StringUtils.hasText(verifiedContext.worldSlug())
+        || !StringUtils.hasText(verifiedContext.realmSlug())) {
+      return false;
+    }
+    Optional<GameplayCatalogProperties.World> world =
+        gameplayWorldCatalog.resolveWorld(verifiedContext.worldSlug());
+    if (world.isEmpty()) {
+      return false;
+    }
+    return gameplayWorldCatalog
+        .resolveRealm(world.orElseThrow(), verifiedContext.realmSlug())
+        .filter(realm -> realm.getTenantId() == verifiedContext.tenantId())
+        .filter(realm -> realm.getGameInstanceId() == verifiedContext.gameInstanceId())
+        .filter(realm -> realm.getPointerVersion() == verifiedContext.pointerVersion())
+        .isPresent();
   }
 
   private static final Map<String, String> CANONICAL_ERROR_MAP =

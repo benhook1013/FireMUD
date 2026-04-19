@@ -49,6 +49,7 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 - Document one canonical current behavior and remove obsolete legacy or transitional guidance.
 - Do not add phased rollout or compatibility narratives unless explicitly requested.
 - Do not use emojis in Markdown headings; they make anchor links harder to reference reliably across renderers.
+- When linking to repo files in Markdown, prefer plain file links without `:line` suffixes. The local app renderer understands line-number file links, but GitHub does not, so the canonical repo style should stay GitHub-compatible.
 
 ## AI Observation Log
 
