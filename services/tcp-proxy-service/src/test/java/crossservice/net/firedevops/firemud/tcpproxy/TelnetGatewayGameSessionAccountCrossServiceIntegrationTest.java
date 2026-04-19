@@ -14,6 +14,7 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,8 @@ import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
@@ -41,6 +44,7 @@ import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
+import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
@@ -92,6 +96,8 @@ import reactor.core.publisher.Mono;
 class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(5);
+  private static final String CROSS_SERVICE_TEST_JWT_SECRET =
+      "stub-secret-key-for-tests-1234567890";
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = 7L;
   private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
@@ -792,6 +798,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("server.port", "0");
     props.put("spring.grpc.server.port", "0");
     props.put("firemud.grpc.plaintext", "true");
+    props.put("firemud.auth.jwt-secret", CROSS_SERVICE_TEST_JWT_SECRET);
     props.put("otel.endpoint", "disabled");
     props.put("firemud.database.enabled", "false");
     props.put(
@@ -817,32 +824,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             .run(toCommandLineArgs(gameSessionProps(gameLogicPort, accountPort)));
 
     JdbcTemplate jdbc = new JdbcTemplate(context.getBean(DataSource.class));
-    jdbc.execute(
-        """
-        CREATE TABLE IF NOT EXISTS game_instances (
-          id BIGSERIAL PRIMARY KEY,
-          tenant_id BIGINT NOT NULL,
-          runtime_version VARCHAR(100) NOT NULL,
-          script_patch_version VARCHAR(100),
-          script_patch_pinned_at TIMESTAMP NULL,
-          script_patch_pinned_by VARCHAR(200) NULL,
-          script_patch_pinned_reason VARCHAR(500) NULL,
-          owner_account_id BIGINT NOT NULL,
-          status VARCHAR(20) NOT NULL
-        )
-        """);
     long insertedId =
-        Optional.ofNullable(
-                jdbc.queryForObject(
-                    "INSERT INTO game_instances (tenant_id, runtime_version, script_patch_version, owner_account_id, status) VALUES (?, ?, ?, ?, ?) RETURNING id",
-                    Long.class,
-                    TENANT_ID,
-                    "0.1.0",
-                    "initial",
-                    ACCOUNT_ID,
-                    "ACTIVE"))
-            .orElseThrow(
-                () -> new IllegalStateException("Game instance insert did not return an id"));
+        GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, ACCOUNT_ID, 7L);
     int port = ((WebServerApplicationContext) context).getWebServer().getPort();
     return new GameSessionHolder(context, port, insertedId);
   }
@@ -869,7 +852,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("firemud.redis.port", String.valueOf(REDIS.getMappedPort(6379)));
     props.put("firemud.database.enabled", "true");
     props.put("spring.main.allow-bean-definition-overriding", "true");
-    props.put("firemud.auth.jwt-secret", "stub-secret-key-for-tests-1234567890");
+    props.put("firemud.auth.jwt-secret", CROSS_SERVICE_TEST_JWT_SECRET);
     props.put("firemud.services.entityManagementService", "localhost:" + ENTITY_STUB.port());
     props.put(
         "management.endpoint.health.group.readiness.include",
@@ -885,12 +868,34 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("spring.datasource.username", POSTGRES.getUsername());
     props.put("spring.datasource.password", POSTGRES.getPassword());
     props.put("spring.jpa.hibernate.ddl-auto", "none");
+    props.put("spring.flyway.enabled", "true");
+    props.put("spring.flyway.locations", "filesystem:" + gameSessionMigrationDir());
     props.put(
         "spring.autoconfigure.exclude",
         "org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,"
             + "org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,"
             + "org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration");
     return props;
+  }
+
+  private static String gameSessionMigrationDir() {
+    return resolveModuleMigrationDir("game-session-service").toString();
+  }
+
+  private static Path resolveModuleMigrationDir(String moduleName) {
+    Path current = Path.of("").toAbsolutePath().normalize();
+    while (current != null) {
+      Path candidate =
+          current
+              .resolve("services")
+              .resolve(moduleName)
+              .resolve("src/main/resources/db/migration");
+      if (candidate.toFile().exists()) {
+        return candidate;
+      }
+      current = current.getParent();
+    }
+    throw new IllegalStateException("Could not resolve migration directory for " + moduleName);
   }
 
   private void seedLiveTargetSession() {
@@ -1126,6 +1131,23 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       responseObserver.onCompleted();
     }
 
+    @Override
+    public void ensurePublicProductionPlayerMembership(
+        EnsurePublicProductionPlayerMembershipRequest request,
+        StreamObserver<EnsurePublicProductionPlayerMembershipResponse> responseObserver) {
+      responseObserver.onNext(
+          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
+              .setAccountId(request.getAccountId())
+              .setTenantId(request.getTenantId())
+              .setRealmSlug(request.getRealmSlug())
+              .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
+              .setMembershipVersion(1L)
+              .setCreated(gameplayAdmissionAllowed.get())
+              .setEvaluatedAt("2026-03-30T00:00:00Z")
+              .build());
+      responseObserver.onCompleted();
+    }
+
     void close() {
       server.shutdownNow();
     }
@@ -1238,20 +1260,28 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           return new GameInstanceDto(
               request.ownerAccountId(),
               request.tenantId(),
-              request.runtimeVersion(),
-              request.scriptPatchVersion(),
+              "stub-template-" + request.gameTemplateId(),
+              null,
+              request.gameTemplateId(),
+              null,
+              null,
+              null,
+              null,
+              null,
               request.ownerAccountId(),
               "RUNNING");
         }
 
         @Override
         public GameInstanceDto stopSession(long sessionId) {
-          return new GameInstanceDto(sessionId, 0L, "stub", null, 0L, "STOPPED");
+          return new GameInstanceDto(
+              sessionId, 0L, "stub", null, null, null, null, null, null, null, 0L, "STOPPED");
         }
 
         @Override
         public GameInstanceDto restartSession(long sessionId) {
-          return new GameInstanceDto(sessionId, 0L, "stub", null, 0L, "RUNNING");
+          return new GameInstanceDto(
+              sessionId, 0L, "stub", null, null, null, null, null, null, null, 0L, "RUNNING");
         }
       };
     }

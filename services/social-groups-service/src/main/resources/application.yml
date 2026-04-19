@@ -55,14 +55,18 @@ management:
           include: readinessState,db
 
 firemud:
+  auth:
+    http:
+      enabled: true
+    grpc:
+      public-methods:
+        - social_groups.v1.SocialGroupsService/Ping
   services:
     logging-admin-service: "logging-admin-service:6565"
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
-  auth:
-    jwt-expiration-ms: 3600000
   voice:
     token-expiration-ms: 300000
   chat:

@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import java.time.Duration;
@@ -44,9 +43,6 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   private final JwtUtil jwtUtil;
   private final LongSupplier currentTimeMillisSupplier;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "RedisTemplate is a shared Spring bean used only internally")
   @Autowired
   public RedisGameplayPresenceService(
       RedisTemplate<String, Object> redisTemplate,

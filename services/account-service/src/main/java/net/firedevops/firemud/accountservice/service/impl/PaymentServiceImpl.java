@@ -10,6 +10,7 @@ import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.PaymentTransaction;
 import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import net.firedevops.firemud.accountservice.service.PaymentService;
@@ -22,6 +23,7 @@ public class PaymentServiceImpl implements PaymentService {
   private static final Logger logger = LoggingUtil.getLogger(PaymentServiceImpl.class);
 
   private final AccountRepository accountRepository;
+  private final AccountTenantMembershipRepository accountTenantMembershipRepository;
   private final PaymentTransactionRepository paymentTransactionRepository;
   private final SubscriptionRepository subscriptionRepository;
   private final StripeClient stripeClient;
@@ -31,10 +33,12 @@ public class PaymentServiceImpl implements PaymentService {
       justification = "Repositories and client are injected and not exposed")
   public PaymentServiceImpl(
       AccountRepository accountRepository,
+      AccountTenantMembershipRepository accountTenantMembershipRepository,
       PaymentTransactionRepository paymentTransactionRepository,
       SubscriptionRepository subscriptionRepository,
       StripeClient stripeClient) {
     this.accountRepository = accountRepository;
+    this.accountTenantMembershipRepository = accountTenantMembershipRepository;
     this.paymentTransactionRepository = paymentTransactionRepository;
     this.subscriptionRepository = subscriptionRepository;
     this.stripeClient = stripeClient;
@@ -44,11 +48,7 @@ public class PaymentServiceImpl implements PaymentService {
   @Timed(value = "payment.create_intent")
   public PaymentIntentDto createPaymentIntent(Long tenantId, Long accountId, Long amountCents) {
     logger.info("Create payment intent {} cents for account {}", amountCents, accountId);
-    Account account =
-        accountRepository
-            .findById(accountId)
-            .filter(a -> a.getTenantId().equals(tenantId))
-            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    Account account = requireAccountMembership(tenantId, accountId);
     long platformFee = stripeClient.calculatePlatformFee(amountCents);
     long creatorShare = amountCents - platformFee;
     StripeClient.IntentResult intent;
@@ -85,11 +85,7 @@ public class PaymentServiceImpl implements PaymentService {
   @Timed(value = "payment.create_donation")
   public PaymentIntentDto createDonation(Long tenantId, Long accountId, Long amountCents) {
     logger.info("Create donation {} cents for account {}", amountCents, accountId);
-    Account account =
-        accountRepository
-            .findById(accountId)
-            .filter(a -> a.getTenantId().equals(tenantId))
-            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    Account account = requireAccountMembership(tenantId, accountId);
     long platformFee = stripeClient.calculatePlatformFee(amountCents);
     long creatorShare = amountCents - platformFee;
     StripeClient.IntentResult intent;
@@ -125,11 +121,7 @@ public class PaymentServiceImpl implements PaymentService {
   @Timed(value = "payment.create_subscription")
   public SubscriptionDto createSubscription(Long tenantId, Long accountId, String planId) {
     logger.info("Create subscription {} for account {}", planId, accountId);
-    Account account =
-        accountRepository
-            .findById(accountId)
-            .filter(a -> a.getTenantId().equals(tenantId))
-            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    Account account = requireAccountMembership(tenantId, accountId);
     Subscription sub = new Subscription();
     sub.setAccount(account);
     sub.setPlanId(planId);
@@ -164,5 +156,14 @@ public class PaymentServiceImpl implements PaymentService {
 
     tx.setStatus("refunded");
     paymentTransactionRepository.save(tx);
+  }
+
+  private Account requireAccountMembership(Long tenantId, Long accountId) {
+    if (!accountTenantMembershipRepository.existsByAccountIdAndTenantId(accountId, tenantId)) {
+      throw new IllegalArgumentException("Account not found");
+    }
+    return accountRepository
+        .findById(accountId)
+        .orElseThrow(() -> new IllegalArgumentException("Account not found"));
   }
 }

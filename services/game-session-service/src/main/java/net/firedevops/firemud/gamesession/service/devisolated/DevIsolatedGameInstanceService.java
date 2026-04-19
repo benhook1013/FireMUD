@@ -31,22 +31,28 @@ public class DevIsolatedGameInstanceService implements GameInstanceService {
     GameInstance instance = new GameInstance();
     instance.setId(sessionId);
     instance.setTenantId(request.tenantId());
-    instance.setRuntimeVersion(request.runtimeVersion());
-    instance.setScriptPatchVersion(request.scriptPatchVersion());
+    instance.setRuntimeVersion("launch:" + request.gameTemplateId());
+    instance.setGameTemplateId(request.gameTemplateId());
     instance.setOwnerAccountId(request.ownerAccountId());
     instance.setStatus("RUNNING");
     registry.register(instance);
     logger.info(
-        "Dev-isolated mode enabled; acknowledging start for tenant {} version {} patch {}; session {}",
+        "Dev-isolated mode enabled; acknowledging start for tenant {} template {} controlPlaneRequestId {}; session {}",
         request.tenantId(),
-        request.runtimeVersion(),
-        request.scriptPatchVersion(),
+        request.gameTemplateId(),
+        request.controlPlaneRequestId(),
         sessionId);
     return new GameInstanceDto(
         sessionId,
         request.tenantId(),
-        request.runtimeVersion(),
-        request.scriptPatchVersion(),
+        instance.getRuntimeVersion(),
+        instance.getScriptPatchVersion(),
+        instance.getGameTemplateId(),
+        instance.getLaunchDescriptorId(),
+        instance.getVersionId(),
+        instance.getReleaseBundleId(),
+        instance.getVersionStateEpoch(),
+        instance.getGenerationConfigRevision(),
         request.ownerAccountId(),
         instance.getStatus());
   }
@@ -56,13 +62,15 @@ public class DevIsolatedGameInstanceService implements GameInstanceService {
     logger.info("Dev-isolated mode enabled; acknowledging stop for session {}", sessionId);
     registry.updateStatus(sessionId, "STOPPED");
     registry.remove(sessionId);
-    return new GameInstanceDto(sessionId, 0L, "dev-isolated", null, 0L, "STOPPED");
+    return new GameInstanceDto(
+        sessionId, 0L, "dev-isolated", null, null, null, null, null, null, null, 0L, "STOPPED");
   }
 
   @Override
   public GameInstanceDto restartSession(long sessionId) {
     logger.info("Dev-isolated mode enabled; acknowledging restart for session {}", sessionId);
     registry.updateStatus(sessionId, "RUNNING");
-    return new GameInstanceDto(sessionId, 0L, "dev-isolated", null, 0L, "RUNNING");
+    return new GameInstanceDto(
+        sessionId, 0L, "dev-isolated", null, null, null, null, null, null, null, 0L, "RUNNING");
   }
 }

@@ -8,4 +8,9 @@ import org.springframework.stereotype.Repository;
 public interface ScriptDefinitionRepository extends JpaRepository<ScriptDefinition, Long> {
   java.util.List<ScriptDefinition> findByTenantIdAndNameIn(
       Long tenantId, java.util.List<String> names);
+
+  java.util.List<ScriptDefinition> findByTenantIdAndScriptVersionOrderByNameAsc(
+      Long tenantId, String scriptVersion);
+
+  java.util.List<ScriptDefinition> findByTenantIdOrderByNameAscScriptVersionAsc(Long tenantId);
 }

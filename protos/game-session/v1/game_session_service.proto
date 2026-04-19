@@ -15,6 +15,9 @@ service GameSessionService {
   rpc EnqueueCommand(EnqueueCommandRequest) returns (EnqueueCommandResponse);
   rpc QueryState(QueryStateRequest) returns (QueryStateResponse);
   rpc QueryAccountPresence(QueryAccountPresenceRequest) returns (QueryAccountPresenceResponse);
+  rpc ListGameplayWorlds(ListGameplayWorldsRequest) returns (ListGameplayWorldsResponse);
+  rpc ListGameplayRealms(ListGameplayRealmsRequest) returns (ListGameplayRealmsResponse);
+  rpc GetAdmissionPointer(GetAdmissionPointerRequest) returns (GetAdmissionPointerResponse);
   rpc ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse);
   // Pause tick execution so a consistent pg_dump can be taken.
   rpc PauseTicks(PauseTicksRequest) returns (PauseTicksResponse);
@@ -29,6 +32,12 @@ service GameSessionService {
 service GameSessionControlPlaneService {
   rpc GetPinnedScriptPatchVersion(GetPinnedScriptPatchVersionRequest)
       returns (GetPinnedScriptPatchVersionResponse);
+  rpc ListAdmissionPointers(ListAdmissionPointersRequest)
+      returns (ListAdmissionPointersResponse);
+  rpc ListAdmissionPointerAudit(ListAdmissionPointerAuditRequest)
+      returns (ListAdmissionPointerAuditResponse);
+  rpc SetAdmissionPointer(SetAdmissionPointerRequest)
+      returns (SetAdmissionPointerResponse);
   rpc SetPinnedScriptPatchVersion(SetPinnedScriptPatchVersionRequest)
       returns (SetPinnedScriptPatchVersionResponse);
   rpc RollbackScriptPatchVersion(RollbackScriptPatchVersionRequest)
@@ -44,10 +53,9 @@ service GameSessionControlPlaneService {
 
 message StartSessionRequest {
   string tenant_id = 1;
-  string runtime_version = 2;
-  string script_patch_version = 3;
+  string game_template_id = 2;
+  string control_plane_request_id = 3;
   string client_ip = 4;
-  string game_instance_id = 5;
   string owner_account_id = 6;
 }
 
@@ -115,6 +123,13 @@ enum AccountPresenceVisibilityPolicy {
   ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF = 4;
 }
 
+enum AccountRecentPresenceDisposition {
+  ACCOUNT_RECENT_PRESENCE_DISPOSITION_UNSPECIFIED = 0;
+  ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS = 1;
+  ACCOUNT_RECENT_PRESENCE_DISPOSITION_LOGOUT = 2;
+  ACCOUNT_RECENT_PRESENCE_DISPOSITION_TAKEOVER = 3;
+}
+
 message AccountPresenceEntry {
   string account_id = 1;
   bool online = 2;
@@ -124,10 +139,71 @@ message AccountPresenceEntry {
   AccountPresenceActivityState activity_state = 6;
   int64 last_seen_at_ms = 7;
   AccountPresenceVisibilityPolicy visibility_policy = 8;
+  string world_slug = 9;
+  string world_display_name = 10;
+  string realm_slug = 11;
+  string realm_display_name = 12;
+  AccountRecentPresenceDisposition recent_disposition = 13;
 }
 
 message QueryAccountPresenceResponse {
   repeated AccountPresenceEntry presences = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListGameplayWorldsRequest {}
+
+message GameplayWorld {
+  string world_slug = 1;
+  string display_name = 2;
+}
+
+message ListGameplayWorldsResponse {
+  repeated GameplayWorld worlds = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListGameplayRealmsRequest {
+  string world_slug = 1;
+}
+
+message GameplayRealm {
+  string world_slug = 1;
+  string realm_slug = 2;
+  string display_name = 3;
+  string tenant_id = 4;
+  string game_instance_id = 5;
+  int64 pointer_version = 6;
+  bool requires_character_selection = 7;
+  string state_scope = 8;
+  string character_creation_policy = 9;
+}
+
+message ListGameplayRealmsResponse {
+  repeated GameplayRealm realms = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetAdmissionPointerRequest {
+  string world_slug = 1;
+  string realm_slug = 2;
+}
+
+message GameplayAdmissionPointer {
+  string world_slug = 1;
+  string world_display_name = 2;
+  string realm_slug = 3;
+  string realm_display_name = 4;
+  string tenant_id = 5;
+  string game_instance_id = 6;
+  int64 pointer_version = 7;
+  bool requires_character_selection = 8;
+  string state_scope = 9;
+  string character_creation_policy = 10;
+}
+
+message GetAdmissionPointerResponse {
+  GameplayAdmissionPointer admission_pointer = 1;
   shared.v1.ErrorDetail error = 2;
 }
 
@@ -192,6 +268,63 @@ message GetPinnedScriptPatchVersionResponse {
   int64 pinned_at_ms = 2;
   string pinned_by = 3;
   shared.v1.ErrorDetail error = 4;
+}
+
+message AdmissionPointerControlPlaneEntry {
+  string world_slug = 1;
+  string world_display_name = 2;
+  string realm_slug = 3;
+  string realm_display_name = 4;
+  string tenant_id = 5;
+  string game_instance_id = 6;
+  int64 pointer_version = 7;
+  bool visible = 8;
+  bool requires_character_selection = 9;
+  string state_scope = 10;
+  string character_creation_policy = 11;
+  string actor_principal = 12;
+  string reason = 13;
+  string control_plane_request_id = 14;
+  int64 occurred_at_ms = 15;
+}
+
+message ListAdmissionPointersRequest {}
+
+message ListAdmissionPointersResponse {
+  repeated AdmissionPointerControlPlaneEntry pointers = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListAdmissionPointerAuditRequest {
+  string world_slug = 1;
+  string realm_slug = 2;
+}
+
+message ListAdmissionPointerAuditResponse {
+  repeated AdmissionPointerControlPlaneEntry audit = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message SetAdmissionPointerRequest {
+  string world_slug = 1;
+  string world_display_name = 2;
+  string realm_slug = 3;
+  string realm_display_name = 4;
+  string tenant_id = 5;
+  string game_instance_id = 6;
+  bool visible = 7;
+  bool requires_character_selection = 8;
+  string state_scope = 9;
+  string character_creation_policy = 10;
+  string actor_principal = 11;
+  string reason = 12;
+  string control_plane_request_id = 13;
+  optional int64 expected_pointer_version = 14;
+}
+
+message SetAdmissionPointerResponse {
+  AdmissionPointerControlPlaneEntry pointer = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message SetPinnedScriptPatchVersionRequest {

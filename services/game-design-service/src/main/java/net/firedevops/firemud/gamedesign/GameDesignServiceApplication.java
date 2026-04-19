@@ -1,14 +1,13 @@
 package net.firedevops.firemud.gamedesign;
 
 import net.firedevops.firemud.common.saga.persistence.EnableSagaEntityScan;
-import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 @SpringBootApplication
 @EnableSagaEntityScan
-@EnableConfigurationProperties(AssetStoreProperties.class)
+@ConfigurationPropertiesScan
 public class GameDesignServiceApplication {
   public static void main(String[] args) {
     SpringApplication.run(GameDesignServiceApplication.class, args);

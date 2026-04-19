@@ -28,7 +28,7 @@ Define alerts for sustained drops in `gamesession.command.look.invocations` or s
 ## Operational Guidance
 
 - When a `LOOK` request fails, consult `gamesession.command.look.failures` to determine the tenant and error code, then follow the log chain: Game Session warning -> Game Logic warning -> downstream stack trace.
-- Use the transcripts stored under `design/project-management/smoke-tests/look/` to validate manual runs match the automation and to tune `LookResultRenderer` formatting.
+- Use local or PR-attached transcripts from manual runs to validate that current behavior matches the documented `LOOK` contract and to tune `LookResultRenderer` formatting.
 
 ## Regression verification
 

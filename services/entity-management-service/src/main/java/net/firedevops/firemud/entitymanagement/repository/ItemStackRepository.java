@@ -8,6 +8,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public interface ItemStackRepository extends JpaRepository<ItemStack, Long> {
@@ -47,4 +48,16 @@ public interface ItemStackRepository extends JpaRepository<ItemStack, Long> {
   List<ItemStack>
       findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
           Long tenantId, Long characterId, Long itemId);
+
+  @EntityGraph(attributePaths = {"item"})
+  List<ItemStack>
+      findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
+          Long tenantId, String gameInstanceId, String roomInstanceId, Long itemId);
+
+  @EntityGraph(attributePaths = {"item", "containerInstance"})
+  List<ItemStack> findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(
+      Long tenantId, Long containerInstanceId, Long itemId);
+
+  @Transactional
+  long deleteByTenantIdAndGameInstanceId(Long tenantId, String gameInstanceId);
 }

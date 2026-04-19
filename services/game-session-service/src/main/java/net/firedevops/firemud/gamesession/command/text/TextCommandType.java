@@ -5,12 +5,15 @@ import java.util.Locale;
 /** Supported text commands exposed to Telnet and WebSocket clients. */
 public enum TextCommandType {
   WORLDS,
+  REALMS,
+  CHARS,
   LOGIN,
   LOGOUT,
   PLAY,
   HELP,
   AFK,
   WHO,
+  FRIENDS,
   INVENTORY,
   EQUIPMENT,
   CONTAINER,
@@ -25,6 +28,7 @@ public enum TextCommandType {
   SAY,
   WHISPER,
   TELL,
+  AUTHORED,
   MOVE,
   NOOP,
   UNKNOWN;
@@ -37,12 +41,15 @@ public enum TextCommandType {
     String normalized = token.trim().toUpperCase(Locale.ROOT);
     return switch (normalized) {
       case "WORLDS" -> WORLDS;
+      case "REALMS" -> REALMS;
+      case "CHARS" -> CHARS;
       case "LOGIN", "LOGON" -> LOGIN;
       case "LOGOUT", "LOGOFF", "QUIT" -> LOGOUT;
       case "PLAY" -> PLAY;
       case "HELP" -> HELP;
       case "AFK", "BRB" -> AFK;
       case "WHO" -> WHO;
+      case "FRIENDS" -> FRIENDS;
       case "INVENTORY", "INV", "I" -> INVENTORY;
       case "EQUIPMENT", "EQUIP", "EQ" -> EQUIPMENT;
       case "CONTAINER", "CONT" -> CONTAINER;
@@ -57,6 +64,7 @@ public enum TextCommandType {
       case "SAY" -> SAY;
       case "WHISPER" -> WHISPER;
       case "TELL" -> TELL;
+      case "AUTHORED" -> AUTHORED;
       case "MOVE",
           "GO",
           "NORTH",

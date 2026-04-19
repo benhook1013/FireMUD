@@ -12,9 +12,9 @@ import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
-import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.DisconnectDeduplicationService;
-import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -43,8 +43,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   private final PingService pingService;
   private final DevIsolatedProperties devIsolatedProperties;
   private final DisconnectDeduplicationService disconnectDeduplicationService;
-  private final AccountRecentPresenceService accountRecentPresenceService;
-  private final GameplayPresenceService gameplayPresenceService;
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -56,16 +55,14 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       PingService pingService,
       DevIsolatedProperties devIsolatedProperties,
       DisconnectDeduplicationService disconnectDeduplicationService,
-      AccountRecentPresenceService accountRecentPresenceService,
-      GameplayPresenceService gameplayPresenceService) {
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService) {
     this.repository = repository;
     this.sessionStateService = sessionStateService;
     this.meterRegistry = meterRegistry;
     this.pingService = pingService;
     this.devIsolatedProperties = devIsolatedProperties;
     this.disconnectDeduplicationService = disconnectDeduplicationService;
-    this.accountRecentPresenceService = accountRecentPresenceService;
-    this.gameplayPresenceService = gameplayPresenceService;
+    this.gameplayPresenceLifecycleService = gameplayPresenceLifecycleService;
   }
 
   @Override
@@ -116,8 +113,9 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     }
     if (StringUtils.hasText(request.getSessionId())) {
       try {
-        accountRecentPresenceService.recordDisconnect(Long.parseLong(request.getSessionId()));
-        gameplayPresenceService.removeBySessionId(Long.parseLong(request.getSessionId()));
+        gameplayPresenceLifecycleService.recordDisconnected(
+            Long.parseLong(request.getSessionId()),
+            AccountRecentPresenceDisposition.TRANSPORT_LOSS);
       } catch (NumberFormatException ignored) {
         // best-effort advisory cleanup only
       }
@@ -133,6 +131,12 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
             instance.getTenantId(),
             instance.getRuntimeVersion(),
             instance.getScriptPatchVersion(),
+            instance.getGameTemplateId(),
+            instance.getLaunchDescriptorId(),
+            instance.getVersionId(),
+            instance.getReleaseBundleId(),
+            instance.getVersionStateEpoch(),
+            instance.getGenerationConfigRevision(),
             instance.getOwnerAccountId(),
             SUSPENDED_STATUS);
     try {

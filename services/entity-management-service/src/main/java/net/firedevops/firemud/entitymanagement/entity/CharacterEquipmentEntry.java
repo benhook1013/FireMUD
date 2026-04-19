@@ -82,6 +82,9 @@ public class CharacterEquipmentEntry {
     copy.setDescription(item.getDescription());
     copy.setEquipmentSlot(item.getEquipmentSlot());
     copy.setContainer(item.isContainer());
+    copy.setStackable(item.isStackable());
+    copy.setStackCompatibilityMode(item.getStackCompatibilityMode());
+    copy.setDefaultStackFamilyKey(item.getDefaultStackFamilyKey());
     return copy;
   }
 
@@ -96,6 +99,9 @@ public class CharacterEquipmentEntry {
       copy.setDescription(item.getDescription());
       copy.setEquipmentSlot(item.getEquipmentSlot());
       copy.setContainer(item.isContainer());
+      copy.setStackable(item.isStackable());
+      copy.setStackCompatibilityMode(item.getStackCompatibilityMode());
+      copy.setDefaultStackFamilyKey(item.getDefaultStackFamilyKey());
       this.item = copy;
     }
   }

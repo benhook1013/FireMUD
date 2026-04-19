@@ -34,6 +34,10 @@ service AutomationScriptingService {
   // Signals that a new script patch version is available
   rpc NotifyScriptVersionUpdate(NotifyScriptVersionUpdateRequest)
       returns (NotifyScriptVersionUpdateResponse);
+
+  // Returns the canonical design-time digest for script definitions that participate in one
+  // script-patch version.
+  rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
 }
 
 // Operator/control-plane surface for patch lifecycle visibility and rollback support.
@@ -125,6 +129,23 @@ message NotifyScriptVersionUpdateRequest {
 message NotifyScriptVersionUpdateResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message GetDraftDesignDigestRequest {
+  string tenant_id = 1;
+  oneof scope {
+    string version_id = 2;
+    string script_patch_version = 3;
+  }
+}
+
+message GetDraftDesignDigestResponse {
+  string tenant_id = 1;
+  string scope_value = 2;
+  string applied_commit_id = 3;
+  string content_digest = 4;
+  int32 digest_schema_version = 5;
+  shared.v1.ErrorDetail error = 6;
 }
 
 enum TriggerMode {

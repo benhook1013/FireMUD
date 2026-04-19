@@ -56,6 +56,14 @@ components:
           type: boolean
         gameInstanceId:
           type: integer
+        worldSlug:
+          type: string
+        worldDisplayName:
+          type: string
+        realmSlug:
+          type: string
+        realmDisplayName:
+          type: string
         characterId:
           type: integer
         characterName:

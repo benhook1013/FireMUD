@@ -89,7 +89,8 @@ class ContainerCommandHandlerTest {
                         .setVisibleRef("torch3")
                         .build())
                 .build());
-    when(entityManagementClient.putItemIntoContainer("22", "911", "container-10", "99", null, 1))
+    when(entityManagementClient.putItemIntoContainer(
+            "22", "911", "container-10", "99", null, null, 1))
         .thenReturn(
             PutItemIntoContainerResponse.newBuilder()
                 .setContainerItem(
@@ -190,7 +191,8 @@ class ContainerCommandHandlerTest {
                         .build())
                 .build(),
             ListContainerContentsResponse.newBuilder().build());
-    when(entityManagementClient.takeItemFromContainer("22", "911", "container-10", "99", null, 2))
+    when(entityManagementClient.takeItemFromContainer(
+            "22", "911", "container-10", "99", null, null, 2))
         .thenReturn(
             TakeItemFromContainerResponse.newBuilder()
                 .setInventoryItem(
@@ -215,7 +217,7 @@ class ContainerCommandHandlerTest {
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(1).payload();
     assertThat(view.lines()).containsExactly("It is empty.");
     verify(entityManagementClient)
-        .takeItemFromContainer("22", "911", "container-10", "99", null, 2);
+        .takeItemFromContainer("22", "911", "container-10", "99", null, null, 2);
   }
 
   @Test
@@ -257,5 +259,104 @@ class ContainerCommandHandlerTest {
     assertThat(result.outputs())
         .singleElement()
         .satisfies(output -> assertThat(output.text()).contains("quantity 1"));
+  }
+
+  @Test
+  void putIntoContainerAllowsExplicitStackRefWithQuantitySelection() {
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("10")
+                        .setItemName("Old Chest")
+                        .setVisibleRef("oldchest10")
+                        .setContainerInstanceId("container-10")
+                        .build())
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("99")
+                        .setItemName("Arrow")
+                        .setVisibleRef("ammo/iron")
+                        .setQuantity(12)
+                        .build())
+                .build());
+    when(entityManagementClient.putItemIntoContainer(
+            "22", "911", "container-10", "99", null, "ammo/iron", 3))
+        .thenReturn(
+            PutItemIntoContainerResponse.newBuilder()
+                .setContainerItem(
+                    ContainerItem.newBuilder()
+                        .setContainerInstanceId("container-10")
+                        .setItemId("99")
+                        .setItemName("Arrow")
+                        .setVisibleRef("ammo/iron")
+                        .setQuantity(3)
+                        .build())
+                .build());
+    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
+        .thenReturn(ListContainerContentsResponse.newBuilder().build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            context,
+            new TextCommand(
+                TextCommandType.PUT,
+                List.of("3", "ammo/iron", "INTO", "old", "chest"),
+                "PUT 3 ammo/iron INTO old chest"));
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs().get(0).text()).isEqualTo("You put Arrow x3 into Old Chest.");
+  }
+
+  @Test
+  void takeFromContainerAllowsExplicitStackRefWithQuantitySelection() {
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setContainerInstanceId("container-10")
+                        .setItemId("50")
+                        .setItemName("Old Chest")
+                        .setVisibleRef("oldchest10")
+                        .build())
+                .build());
+    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
+        .thenReturn(
+            ListContainerContentsResponse.newBuilder()
+                .addItems(
+                    ContainerItem.newBuilder()
+                        .setContainerInstanceId("container-10")
+                        .setItemId("99")
+                        .setItemName("Arrow")
+                        .setVisibleRef("ammo/iron")
+                        .setQuantity(12)
+                        .build())
+                .build(),
+            ListContainerContentsResponse.newBuilder().build());
+    when(entityManagementClient.takeItemFromContainer(
+            "22", "911", "container-10", "99", null, "ammo/iron", 3))
+        .thenReturn(
+            TakeItemFromContainerResponse.newBuilder()
+                .setInventoryItem(
+                    InventoryItem.newBuilder()
+                        .setItemId("99")
+                        .setItemName("Arrow")
+                        .setVisibleRef("ammo/iron")
+                        .setQuantity(3)
+                        .build())
+                .build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            context,
+            new TextCommand(
+                TextCommandType.TAKE,
+                List.of("3", "ammo/iron", "FROM", "old", "chest"),
+                "TAKE 3 ammo/iron FROM old chest"));
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs().get(0).text()).isEqualTo("You take Arrow x3 from Old Chest.");
   }
 }

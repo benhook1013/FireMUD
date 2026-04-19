@@ -12,6 +12,7 @@ service AccountService {
   rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
   rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
   rpc GetTenantMembershipForRuntime(GetTenantMembershipForRuntimeRequest) returns (GetTenantMembershipForRuntimeResponse);
+  rpc EnsurePublicProductionPlayerMembership(EnsurePublicProductionPlayerMembershipRequest) returns (EnsurePublicProductionPlayerMembershipResponse);
   rpc GetTenantEntitlementsForRuntime(GetTenantEntitlementsForRuntimeRequest) returns (GetTenantEntitlementsForRuntimeResponse);
   rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
   rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
@@ -81,6 +82,24 @@ message GetTenantMembershipForRuntimeResponse {
   uint64 membership_version = 4;
   string evaluated_at = 5;
   shared.v1.ErrorDetail error = 6;
+}
+
+message EnsurePublicProductionPlayerMembershipRequest {
+  string account_id = 1;
+  string tenant_id = 2;
+  string realm_slug = 3;
+  string request_id = 4;
+}
+
+message EnsurePublicProductionPlayerMembershipResponse {
+  string account_id = 1;
+  string tenant_id = 2;
+  string realm_slug = 3;
+  bool gameplay_admission_allowed = 4;
+  uint64 membership_version = 5;
+  bool created = 6;
+  string evaluated_at = 7;
+  shared.v1.ErrorDetail error = 8;
 }
 
 message GetTenantEntitlementsForRuntimeRequest {

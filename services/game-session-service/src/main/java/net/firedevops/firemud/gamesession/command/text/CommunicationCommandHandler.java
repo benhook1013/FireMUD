@@ -7,6 +7,8 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
@@ -36,6 +38,7 @@ public class CommunicationCommandHandler {
       "gamesession.command.communication.failures";
 
   private final EntityManagementClient entityManagementClient;
+  private final GameplayWorldCatalog gameplayWorldCatalog;
   private final GameLogicClient gameLogicClient;
   private final GameLogicProperties gameLogicProperties;
   private final SessionContextService sessionContextService;
@@ -156,8 +159,19 @@ public class CommunicationCommandHandler {
           "TELL command requires a target and a message");
     }
     String targetName = payload.orElseThrow().target();
+    GameplayCatalogProperties.Realm currentRealm =
+        gameplayWorldCatalog
+            .resolveRealmByRuntimeTarget(context.tenantId(), context.gameInstanceId())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "No visible realm matches the current gameplay runtime target"));
     Optional<net.firedevops.firemud.entitymanagement.v1.Character> maybeTargetCharacter =
-        entityManagementClient.findCharacterByName(Long.toString(context.tenantId()), targetName);
+        entityManagementClient.findCharacterByName(
+            Long.toString(context.tenantId()),
+            Long.toString(context.gameInstanceId()),
+            toPlayableStateScope(currentRealm),
+            targetName);
     if (maybeTargetCharacter.isEmpty()) {
       return new ParsedCommunication(
           false,
@@ -239,6 +253,13 @@ public class CommunicationCommandHandler {
       case WHISPER -> "gamesession.command.whisper";
       case TELL -> "gamesession.command.tell";
       default -> "gamesession.command.communication";
+    };
+  }
+
+  private PlayableStateScope toPlayableStateScope(GameplayCatalogProperties.Realm realm) {
+    return switch (realm.getStateScope()) {
+      case SHARED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case ISOLATED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
     };
   }
 

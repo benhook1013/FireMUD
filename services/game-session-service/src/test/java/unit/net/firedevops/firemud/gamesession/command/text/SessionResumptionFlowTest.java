@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -17,17 +18,20 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
+import net.firedevops.firemud.gamesession.config.PresenceProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -38,15 +42,19 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedGameInstanceRegistry;
+import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,7 +75,10 @@ class SessionResumptionFlowTest {
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
   private final GameSessionProperties properties = new GameSessionProperties();
-  private final GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(properties);
+  private final GameplayCatalogProperties gameplayCatalogProperties =
+      new GameplayCatalogProperties();
+  private final GameplayWorldCatalog worldCatalog =
+      new GameplayWorldCatalog(gameplayCatalogProperties);
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
@@ -94,11 +105,16 @@ class SessionResumptionFlowTest {
   private final GameplayPresenceService gameplayPresenceService =
       new InMemoryGameplayPresenceService(
           new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
+      new DefaultGameplayPresenceLifecycleService(
+          gameplayPresenceService, accountRecentPresenceService);
   private WorldsCommandHandler worldsHandler;
   private TextCommandInterpreter interpreter;
 
   @BeforeEach
   void setUp() {
+    gameplayCatalogProperties.setWorlds(
+        List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
     when(instanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
@@ -149,6 +165,7 @@ class SessionResumptionFlowTest {
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
+            worldCatalog,
             devIsolatedProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
@@ -195,10 +212,9 @@ class SessionResumptionFlowTest {
             accountClient,
             entityManagementClient,
             firstPartyConnectContextRegistry,
-            accountRecentPresenceService,
-            gameplayPresenceService,
+            gameplayPresenceLifecycleService,
             meterRegistry);
-    worldsHandler = new WorldsCommandHandler(worldCatalog);
+    worldsHandler = new WorldsCommandHandler(worldCatalog, entityManagementClient);
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     interpreter =
@@ -210,15 +226,17 @@ class SessionResumptionFlowTest {
                 sessionAuthenticationService,
                 sessionContextService,
                 gameInstanceService,
-                gameplayPresenceService,
-                accountRecentPresenceService,
+                gameplayPresenceLifecycleService,
                 firstPartyConnectContextRegistry,
                 screenBufferService),
             playHandler,
             moveHandler,
             afkHandler,
             helpHandler,
-            new WhoCommandHandler(gameplayPresenceService),
+            new WhoCommandHandler(
+                gameplayPresenceService,
+                new GameplayPresenceActivityResolver(new PresenceProperties())),
+            new FriendsCommandHandler(Mockito.mock(SocialGroupsClient.class)),
             new InventoryCommandHandler(entityManagementClient),
             new EquipmentCommandHandler(entityManagementClient),
             new ContainerCommandHandler(entityManagementClient),
@@ -226,8 +244,8 @@ class SessionResumptionFlowTest {
             communicationHandler,
             worldsHandler,
             new PromptComposer(),
-            new AggregatingTextCommandRegistry(
-                List.of(new BuiltInTextCommandDefinitionProvider())));
+            new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider())),
+            new TextCommandParser());
   }
 
   @Test
@@ -287,6 +305,8 @@ class SessionResumptionFlowTest {
     assertFalse(firstLookAfterTakeover.commandResult().accepted());
     assertEquals("LOGIN_REQUIRED", firstLookAfterTakeover.commandResult().errorCode());
 
+    verify(accountRecentPresenceService)
+        .recordDisconnect(1L, AccountRecentPresenceDisposition.TAKEOVER);
     assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
   }
@@ -301,6 +321,8 @@ class SessionResumptionFlowTest {
     TextCommandInterpretationResult logout = interpreter.interpret("1", "LOGOUT", false);
     assertTrue(logout.commandResult().accepted());
     assertTrue(sessionContextService.findByTenantAndSessionId(22L, 1L).isEmpty());
+    verify(accountRecentPresenceService)
+        .recordDisconnect(1L, AccountRecentPresenceDisposition.LOGOUT);
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("2", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());
@@ -350,6 +372,22 @@ class SessionResumptionFlowTest {
     assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.takeover").count());
     assertTrue(sessionContextService.findByTenantAndSessionId(22L, 2L).isPresent());
+  }
+
+  private static GameplayCatalogProperties.World world(
+      String slug, long tenantId, long gameInstanceId, boolean requiresCharacterSelection) {
+    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
+    world.setSlug(slug);
+    world.setDisplayName(slug);
+    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+    realm.setSlug("production");
+    realm.setDisplayName("Live Realm");
+    realm.setTenantId(tenantId);
+    realm.setGameInstanceId(gameInstanceId);
+    realm.setVisible(true);
+    realm.setRequiresCharacterSelection(requiresCharacterSelection);
+    world.setRealms(List.of(realm));
+    return world;
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {

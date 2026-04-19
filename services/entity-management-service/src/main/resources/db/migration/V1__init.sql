@@ -3,6 +3,7 @@ CREATE TABLE characters (
     account_id BIGINT NOT NULL,
     name VARCHAR(100) NOT NULL,
     tenant_id BIGINT NOT NULL,
+    playable_state_key VARCHAR(120) NOT NULL DEFAULT 'shared-live',
     level INT NOT NULL DEFAULT 0,
     experience INT NOT NULL DEFAULT 0,
     strength INT NOT NULL DEFAULT 0,
