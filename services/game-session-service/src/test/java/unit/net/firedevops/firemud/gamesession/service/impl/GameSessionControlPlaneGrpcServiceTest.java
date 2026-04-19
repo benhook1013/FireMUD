@@ -14,11 +14,15 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
+import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
@@ -166,6 +170,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
             authorityService,
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
@@ -214,6 +219,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
             authorityService,
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
@@ -252,6 +258,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
@@ -312,6 +319,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
             authorityService,
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
@@ -335,6 +343,53 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(3L, responseRef.get().getAudit(0).getPointerVersion());
   }
 
+  @Test
+  void getGameplayCommandStatusReturnsLedgerRecordForAdminCaller() {
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("cmd-123");
+    command.setTenantId(1L);
+    command.setGameInstanceId(7L);
+    command.setSessionId(41L);
+    command.setAccountId(9L);
+    command.setCharacterId(44L);
+    command.setCommandName("LOOK");
+    command.setSanitizedCommandText("LOOK");
+    command.setRequiresSoloTick(false);
+    command.setExecutionOutcome("STAGED");
+    command.setGameplayResult("PENDING");
+    command.setAcceptedAt(Instant.parse("2026-04-15T00:00:00Z"));
+    command.setStagedAt(Instant.parse("2026-04-15T00:00:01Z"));
+    command.setLastAttemptAt(Instant.parse("2026-04-15T00:00:01Z"));
+    command.setAttemptCount(1);
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    Mockito.when(commandRepository.findByCommandId("cmd-123")).thenReturn(Optional.of(command));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            commandRepository,
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
+    service.getGameplayCommandStatus(
+        GetGameplayCommandStatusRequest.newBuilder().setCommandId("cmd-123").build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetGameplayCommandStatusResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("cmd-123", responseRef.get().getCommand().getCommandId());
+    assertEquals("STAGED", responseRef.get().getCommand().getExecutionOutcome());
+    assertEquals("LOOK", responseRef.get().getCommand().getSanitizedCommandText());
+    assertEquals(
+        Instant.parse("2026-04-15T00:00:01Z").toEpochMilli(),
+        responseRef.get().getCommand().getStagedAtMs());
+  }
+
   private static GameSessionControlPlaneGrpcService newService(GameInstanceRepository repository) {
     return newService(repository, new SimpleMeterRegistry());
   }
@@ -343,6 +398,7 @@ class GameSessionControlPlaneGrpcServiceTest {
       GameInstanceRepository repository, SimpleMeterRegistry meterRegistry) {
     return new GameSessionControlPlaneGrpcService(
         repository,
+        Mockito.mock(GameplayCommandRepository.class),
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
         Mockito.mock(TickService.class),
         meterRegistry);

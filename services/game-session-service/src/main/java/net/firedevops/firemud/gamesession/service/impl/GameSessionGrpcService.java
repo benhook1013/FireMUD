@@ -394,6 +394,9 @@ public final class GameSessionGrpcService
       var commandResult = interpretation.commandResult();
       EnqueueCommandResponse.Builder builder =
           EnqueueCommandResponse.newBuilder().setAccepted(commandResult.accepted());
+      if (commandResult.commandId() != null) {
+        builder.setCommandId(commandResult.commandId());
+      }
       if (commandResult.hasError()) {
         builder.setError(
             GrpcAppErrors.error(

@@ -36,6 +36,8 @@ service GameSessionControlPlaneService {
       returns (ListAdmissionPointersResponse);
   rpc ListAdmissionPointerAudit(ListAdmissionPointerAuditRequest)
       returns (ListAdmissionPointerAuditResponse);
+  rpc GetGameplayCommandStatus(GetGameplayCommandStatusRequest)
+      returns (GetGameplayCommandStatusResponse);
   rpc SetAdmissionPointer(SetAdmissionPointerRequest)
       returns (SetAdmissionPointerResponse);
   rpc SetPinnedScriptPatchVersion(SetPinnedScriptPatchVersionRequest)
@@ -91,6 +93,7 @@ message EnqueueCommandRequest {
 message EnqueueCommandResponse {
   bool accepted = 1;
   shared.v1.ErrorDetail error = 2;
+  string command_id = 3;
 }
 
 message QueryStateRequest {
@@ -304,6 +307,36 @@ message ListAdmissionPointerAuditRequest {
 
 message ListAdmissionPointerAuditResponse {
   repeated AdmissionPointerControlPlaneEntry audit = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetGameplayCommandStatusRequest {
+  string command_id = 1;
+}
+
+message GameplayCommandStatus {
+  string command_id = 1;
+  string tenant_id = 2;
+  string game_instance_id = 3;
+  string session_id = 4;
+  string account_id = 5;
+  string character_id = 6;
+  string command_name = 7;
+  string sanitized_command_text = 8;
+  bool requires_solo_tick = 9;
+  string execution_outcome = 10;
+  string gameplay_result = 11;
+  int64 accepted_at_ms = 12;
+  int64 staged_at_ms = 13;
+  int64 completed_at_ms = 14;
+  int64 last_attempt_at_ms = 15;
+  int32 attempt_count = 16;
+  string failure_code = 17;
+  string failure_message = 18;
+}
+
+message GetGameplayCommandStatusResponse {
+  GameplayCommandStatus command = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

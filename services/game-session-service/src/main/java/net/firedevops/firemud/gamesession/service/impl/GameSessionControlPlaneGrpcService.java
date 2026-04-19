@@ -9,7 +9,9 @@ import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -17,6 +19,9 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutati
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.GameplayCommandStatus;
+import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
+import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
@@ -45,6 +50,7 @@ public final class GameSessionControlPlaneGrpcService
       LoggerFactory.getLogger(GameSessionControlPlaneGrpcService.class);
 
   private final GameInstanceRepository gameInstanceRepository;
+  private final GameplayCommandRepository gameplayCommandRepository;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final TickService tickService;
   private final MeterRegistry meterRegistry;
@@ -54,10 +60,12 @@ public final class GameSessionControlPlaneGrpcService
       justification = "Injected repository/services are internal Spring collaborators")
   public GameSessionControlPlaneGrpcService(
       GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       TickService tickService,
       MeterRegistry meterRegistry) {
     this.gameInstanceRepository = gameInstanceRepository;
+    this.gameplayCommandRepository = gameplayCommandRepository;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
@@ -169,6 +177,49 @@ public final class GameSessionControlPlaneGrpcService
       logger.error("ListAdmissionPointerAudit failed", ex);
       ListAdmissionPointerAuditResponse response =
           ListAdmissionPointerAuditResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getGameplayCommandStatus")
+  public void getGameplayCommandStatus(
+      GetGameplayCommandStatusRequest request,
+      StreamObserver<GetGameplayCommandStatusResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      if (request.getCommandId().isBlank()) {
+        throw new IllegalArgumentException("command_id is required");
+      }
+      GameplayCommand command =
+          gameplayCommandRepository
+              .findByCommandId(request.getCommandId())
+              .orElseThrow(() -> new IllegalArgumentException("Gameplay command not found"));
+      GetGameplayCommandStatusResponse response =
+          GetGameplayCommandStatusResponse.newBuilder().setCommand(toStatus(command)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      GetGameplayCommandStatusResponse response =
+          GetGameplayCommandStatusResponse.newBuilder()
+              .setError(authorizationError("GetGameplayCommandStatus", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      GetGameplayCommandStatusResponse response =
+          GetGameplayCommandStatusResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("GetGameplayCommandStatus failed", ex);
+      GetGameplayCommandStatusResponse response =
+          GetGameplayCommandStatusResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build();
       responseObserver.onNext(response);
@@ -424,6 +475,46 @@ public final class GameSessionControlPlaneGrpcService
         .setControlPlaneRequestId(entry.controlPlaneRequestId())
         .setOccurredAtMs(entry.occurredAt().toEpochMilli())
         .build();
+  }
+
+  private GameplayCommandStatus toStatus(GameplayCommand command) {
+    GameplayCommandStatus.Builder builder =
+        GameplayCommandStatus.newBuilder()
+            .setCommandId(command.getCommandId())
+            .setTenantId(command.getTenantId().toString())
+            .setGameInstanceId(command.getGameInstanceId().toString())
+            .setSessionId(command.getSessionId().toString())
+            .setCommandName(command.getCommandName())
+            .setSanitizedCommandText(command.getSanitizedCommandText())
+            .setRequiresSoloTick(command.isRequiresSoloTick())
+            .setExecutionOutcome(command.getExecutionOutcome())
+            .setGameplayResult(command.getGameplayResult())
+            .setAcceptedAtMs(toEpochMillis(command.getAcceptedAt()))
+            .setLastAttemptAtMs(toEpochMillis(command.getLastAttemptAt()))
+            .setAttemptCount(command.getAttemptCount());
+    if (command.getAccountId() != null) {
+      builder.setAccountId(command.getAccountId().toString());
+    }
+    if (command.getCharacterId() != null) {
+      builder.setCharacterId(command.getCharacterId().toString());
+    }
+    if (command.getStagedAt() != null) {
+      builder.setStagedAtMs(toEpochMillis(command.getStagedAt()));
+    }
+    if (command.getCompletedAt() != null) {
+      builder.setCompletedAtMs(toEpochMillis(command.getCompletedAt()));
+    }
+    if (command.getFailureCode() != null) {
+      builder.setFailureCode(command.getFailureCode());
+    }
+    if (command.getFailureMessage() != null) {
+      builder.setFailureMessage(command.getFailureMessage());
+    }
+    return builder.build();
+  }
+
+  private long toEpochMillis(Instant instant) {
+    return instant == null ? 0L : instant.toEpochMilli();
   }
 
   @Override

@@ -22,8 +22,8 @@ These are narrow enough to implement now and unblock the current runtime/platfor
    Remaining: continue the now-live scope-aware roster plus inventory/equipment alignment into progression, resources, loadout, and later gameplay-state families without reintroducing tenant-wide shortcuts.
 6. [02.1.6 Global Account and Tenant Authorization Convergence](./02.1.6-task-list-global-account-and-tenant-authorization-convergence-vertical-slice.md)
    Remaining: build on the now-live account-identity-first player bootstrap, canonical `tenantAdmin` shared-auth model, account-owned lifecycle enforcement, and non-public realm grant substrate by reconciling the remaining docs/runtime reads.
-7. [02.18.12 Internal Service Identity and Session Attestation](./02.18.12-task-list-internal-service-identity-and-session-attestation-vertical-slice.md)
-   Remaining: build on the now-live explicit internal-service identity claims plus delegated gameplay SessionAttestation validation by moving later gameplay consumers onto the same contract and removing any remaining bearer-only shortcuts.
+7. [02.18.8 Tick Batch and Effect Ledger Hardening](./02.18.8-task-list-tick-batch-and-effect-ledger-hardening-vertical-slice.md)
+   Remaining: build on the now-live first durable batch/effect substrate by adding deeper execution truth beyond the current Redis stage/drain seam, then carry that identity into fencing and downstream idempotent mutation work.
 
 ### 2. Active architecture follow-through
 
@@ -77,15 +77,11 @@ These are not broad audit topics anymore; they are real future slices with known
 
 These are now explicitly tracked and should get a deliberate discussion pass before implementation starts.
 
-1. [02.18.7 Durable Command Ingress and Status Ledger](./02.18.7-task-list-durable-command-ingress-and-status-ledger-vertical-slice.md)
-   Suggested first heavy-substrate slice from the recent crash-safety audit: persist `commandId`, command lifecycle, and terminal convergence so later replay/fencing work has a canonical identity seam.
-2. [02.18.8 Tick Batch and Effect Ledger Hardening](./02.18.8-task-list-tick-batch-and-effect-ledger-hardening-vertical-slice.md)
-   Suggested second heavy-substrate slice: move durable execution truth into `tick_batch` / `tick_effect` style records so Redis becomes coordination rather than the only real in-flight truth.
-3. [02.18.9 Region Epoch, Fencing, and Runtime Ownership](./02.18.9-task-list-region-epoch-fencing-and-runtime-ownership-vertical-slice.md)
+1. [02.18.9 Region Epoch, Fencing, and Runtime Ownership](./02.18.9-task-list-region-epoch-fencing-and-runtime-ownership-vertical-slice.md)
    Suggested third heavy-substrate slice: land durable region ownership and stale-executor fencing once batch/effect identity exists.
-4. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
+2. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
    Suggested fourth heavy-substrate slice: make replay/no-op behavior concrete with durable `EffectId` handling and idempotent apply guards.
-5. [02.18.11 Migrate Live Gameplay Commands Onto the Durable Execution Path](./02.18.11-task-list-migrate-live-gameplay-commands-onto-durable-execution-path-vertical-slice.md)
+3. [02.18.11 Migrate Live Gameplay Commands Onto the Durable Execution Path](./02.18.11-task-list-migrate-live-gameplay-commands-onto-durable-execution-path-vertical-slice.md)
    Suggested migration slice after the earlier substrate exists: start with movement and other direct state-changing gameplay commands.
 
 ### 5. Lower-priority platform/settings expansion
