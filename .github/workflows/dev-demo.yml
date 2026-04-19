@@ -279,6 +279,7 @@ jobs:
           import urllib.request
 
           tenant_id = 1
+          game_template_id = 1
           email = "demo@example.com"
           password = "swordfish"
 
@@ -312,6 +313,10 @@ jobs:
               return exc.code, exc.read().decode("utf-8", errors="ignore")
 
           wait_for_ready("account-service", "http://account-service:8080/actuator/health/readiness")
+          wait_for_ready("entity-management-service", "http://entity-management-service:8080/actuator/health/readiness")
+          wait_for_ready("game-design-service", "http://game-design-service:8080/actuator/health/readiness")
+          wait_for_ready("game-logic-service", "http://game-logic-service:8080/actuator/health/readiness")
+          wait_for_ready("world-management-service", "http://world-management-service:8080/actuator/health/readiness")
           wait_for_ready("game-session-service", "http://game-session-service:8080/actuator/health/readiness")
 
           status, account_body = post_json(
@@ -330,6 +335,19 @@ jobs:
           account_id = (((account_payload.get("data") or {}).get("id")))
           if not account_id:
             raise SystemExit(f"Dev-demo smoke account response did not include account id: {account_body}")
+
+          status, session_body = post_json(
+            "http://game-session-service:8080/sessions",
+            {
+              "tenantId": tenant_id,
+              "gameTemplateId": game_template_id,
+              "controlPlaneRequestId": "dev-demo-smoke-bootstrap",
+              "ownerAccountId": account_id,
+            },
+          )
+          print(session_body)
+          if status >= 400:
+            raise SystemExit(f"Dev-demo smoke session bootstrap failed with status {status}: {session_body}")
           PY
           BOOTSTRAP_POD_LOG=/tmp/dev-demo-bootstrap-pod.log
           trap 'kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true; kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true' EXIT
