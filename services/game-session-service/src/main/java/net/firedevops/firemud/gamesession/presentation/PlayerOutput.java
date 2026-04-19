@@ -51,6 +51,26 @@ public record PlayerOutput(
         PlayerOutputKind.VIEW, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.DEFAULT);
   }
 
+  public static PlayerOutput view(RealmBrowseViewOutput payload) {
+    return new PlayerOutput(
+        PlayerOutputKind.VIEW, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.DEFAULT);
+  }
+
+  public static PlayerOutput view(CharacterBrowseViewOutput payload) {
+    return new PlayerOutput(
+        PlayerOutputKind.VIEW, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.DEFAULT);
+  }
+
+  public static PlayerOutput view(WhoViewOutput payload) {
+    return new PlayerOutput(
+        PlayerOutputKind.VIEW, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.DEFAULT);
+  }
+
+  public static PlayerOutput view(FriendPresenceViewOutput payload) {
+    return new PlayerOutput(
+        PlayerOutputKind.VIEW, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.DEFAULT);
+  }
+
   public static PlayerOutput prompt(String text) {
     return prompt(text, java.util.List.of());
   }
@@ -112,6 +132,10 @@ public record PlayerOutput(
       case LookViewOutput ignored -> null;
       case InventoryViewOutput ignored -> null;
       case WorldsViewOutput ignored -> null;
+      case RealmBrowseViewOutput ignored -> null;
+      case CharacterBrowseViewOutput ignored -> null;
+      case WhoViewOutput ignored -> null;
+      case FriendPresenceViewOutput ignored -> null;
       default -> null;
     };
   }

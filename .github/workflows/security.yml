@@ -85,6 +85,9 @@ jobs:
   secret-compliance:
     name: Secret Compliance Validation
     uses: ./.github/workflows/validate-secret-compliance.yml
+    with:
+      enforcement_mode: ${{ github.event_name == 'pull_request' && 'strict' || 'advisory' }}
+      warning_window_days: 14
 
   security-gate:
     name: Security Gate

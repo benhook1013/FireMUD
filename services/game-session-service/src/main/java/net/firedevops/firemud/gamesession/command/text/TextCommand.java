@@ -7,12 +7,14 @@ import org.springframework.util.StringUtils;
 
 /** Parsed representation of a single text command line. */
 public record TextCommand(
+    String commandId,
     TextCommandType type,
     List<String> args,
     String rawLine,
     String aliasUsed,
     TextCommandPayload payload) {
   public TextCommand {
+    Objects.requireNonNull(commandId, "commandId must not be null");
     Objects.requireNonNull(type, "type must not be null");
     Objects.requireNonNull(args, "args must not be null");
     Objects.requireNonNull(rawLine, "rawLine must not be null");
@@ -21,7 +23,22 @@ public record TextCommand(
   }
 
   public TextCommand(TextCommandType type, List<String> args, String rawLine) {
-    this(type, args, rawLine, extractAlias(rawLine), TextCommandPayload.fromLegacy(type, args));
+    this(
+        defaultCommandId(type),
+        type,
+        args,
+        rawLine,
+        extractAlias(rawLine),
+        TextCommandPayload.fromLegacy(type, args));
+  }
+
+  public TextCommand(
+      TextCommandType type,
+      List<String> args,
+      String rawLine,
+      String aliasUsed,
+      TextCommandPayload payload) {
+    this(defaultCommandId(type), type, args, rawLine, aliasUsed, payload);
   }
 
   public Optional<TextCommandPayload.Credentials> credentialsPayload() {
@@ -30,9 +47,21 @@ public record TextCommand(
         : Optional.empty();
   }
 
-  public Optional<TextCommandPayload.Selection> selectionPayload() {
-    return payload instanceof TextCommandPayload.Selection selection
-        ? Optional.of(selection)
+  public Optional<TextCommandPayload.RealmBrowseRequest> realmBrowsePayload() {
+    return payload instanceof TextCommandPayload.RealmBrowseRequest browseRequest
+        ? Optional.of(browseRequest)
+        : Optional.empty();
+  }
+
+  public Optional<TextCommandPayload.CharacterBrowseRequest> characterBrowsePayload() {
+    return payload instanceof TextCommandPayload.CharacterBrowseRequest browseRequest
+        ? Optional.of(browseRequest)
+        : Optional.empty();
+  }
+
+  public Optional<TextCommandPayload.PlayRequest> playRequestPayload() {
+    return payload instanceof TextCommandPayload.PlayRequest playRequest
+        ? Optional.of(playRequest)
         : Optional.empty();
   }
 
@@ -78,6 +107,12 @@ public record TextCommand(
         : Optional.empty();
   }
 
+  public Optional<TextCommandPayload.AuthoredActionInvocation> authoredActionPayload() {
+    return payload instanceof TextCommandPayload.AuthoredActionInvocation invocation
+        ? Optional.of(invocation)
+        : Optional.empty();
+  }
+
   private static String extractAlias(String rawLine) {
     if (!StringUtils.hasText(rawLine)) {
       return "";
@@ -85,5 +120,9 @@ public record TextCommand(
     String trimmed = rawLine.trim();
     int firstSpace = trimmed.indexOf(' ');
     return firstSpace < 0 ? trimmed : trimmed.substring(0, firstSpace);
+  }
+
+  private static String defaultCommandId(TextCommandType type) {
+    return type.name().toLowerCase(java.util.Locale.ROOT);
   }
 }

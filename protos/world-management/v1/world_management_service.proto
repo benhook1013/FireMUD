@@ -10,11 +10,111 @@ option java_multiple_files = true;
 
 service WorldManagementService {
   rpc Ping(PingRequest) returns (PingResponse);
+  rpc PrepareWorldInstance(PrepareWorldInstanceRequest)
+      returns (PrepareWorldInstanceResponse);
+  rpc ActivatePreparedWorldInstance(ActivatePreparedWorldInstanceRequest)
+      returns (ActivatePreparedWorldInstanceResponse);
+  rpc FailPreparedWorldInstance(FailPreparedWorldInstanceRequest)
+      returns (FailPreparedWorldInstanceResponse);
+  rpc GetWorldInstanceLifecycle(GetWorldInstanceLifecycleRequest)
+      returns (GetWorldInstanceLifecycleResponse);
+  rpc TerminateWorldInstance(TerminateWorldInstanceRequest)
+      returns (TerminateWorldInstanceResponse);
   rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
   rpc GetRoomSnapshot(GetRoomSnapshotRequest) returns (GetRoomSnapshotResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
   rpc ListRoomOccupants(ListRoomOccupantsRequest) returns (ListRoomOccupantsResponse);
   rpc ApplyRoomAmbientStatePatch(ApplyRoomAmbientStatePatchRequest) returns (ApplyRoomAmbientStatePatchResponse);
+}
+
+enum WorldInstanceLifecycleStatus {
+  WORLD_INSTANCE_LIFECYCLE_STATUS_UNSPECIFIED = 0;
+  WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING = 1;
+  WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE = 2;
+  WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION = 3;
+  WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING = 4;
+  WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED = 5;
+}
+
+message WorldInstanceLifecycleSnapshot {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string game_template_id = 3;
+  string control_plane_request_id = 4;
+  string launch_descriptor_id = 5;
+  string version_id = 6;
+  string release_bundle_id = 7;
+  string generation_config_revision = 8;
+  string published_release_bundle_ref = 9;
+  int64 version_state_epoch = 10;
+  int64 lifecycle_epoch = 11;
+  WorldInstanceLifecycleStatus status = 12;
+}
+
+message PrepareWorldInstanceRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string game_template_id = 3;
+  string control_plane_request_id = 4;
+  string launch_descriptor_id = 5;
+  string version_id = 6;
+  string script_patch_version = 7;
+  string runtime_flags_json = 8;
+  string generation_config_revision = 9;
+  string release_bundle_id = 10;
+  string published_release_bundle_ref = 11;
+  int64 version_state_epoch = 12;
+}
+
+message PrepareWorldInstanceResponse {
+  WorldInstanceLifecycleSnapshot world_instance = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ActivatePreparedWorldInstanceRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  int64 expected_lifecycle_epoch = 3;
+}
+
+message ActivatePreparedWorldInstanceResponse {
+  WorldInstanceLifecycleSnapshot world_instance = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message FailPreparedWorldInstanceRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  int64 expected_lifecycle_epoch = 3;
+  string reason = 4;
+}
+
+message FailPreparedWorldInstanceResponse {
+  WorldInstanceLifecycleSnapshot world_instance = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetWorldInstanceLifecycleRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+}
+
+message GetWorldInstanceLifecycleResponse {
+  WorldInstanceLifecycleSnapshot world_instance = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message TerminateWorldInstanceRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  int64 expected_lifecycle_epoch = 3;
+  string termination_request_id = 4;
+  string reason = 5;
+}
+
+message TerminateWorldInstanceResponse {
+  WorldInstanceLifecycleSnapshot world_instance = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message GetRoomRequest {
@@ -135,12 +235,15 @@ message RoomAmbientStatePatch {
 
 message GetDraftDesignDigestRequest {
   string tenant_id = 1;
-  string version_id = 2;
+  oneof scope {
+    string version_id = 2;
+    string script_patch_version = 3;
+  }
 }
 
 message GetDraftDesignDigestResponse {
   string tenant_id = 1;
-  string version_id = 2;
+  string scope_value = 2;
   string applied_commit_id = 3;
   string content_digest = 4;
   int32 digest_schema_version = 5;

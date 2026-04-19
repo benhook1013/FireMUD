@@ -15,6 +15,7 @@ import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendLinkDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
+import net.firedevops.firemud.socialgroups.dto.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.entity.AccountFriendLink;
 import net.firedevops.firemud.socialgroups.entity.FriendLink;
 import net.firedevops.firemud.socialgroups.mapper.FriendLinkMapper;
@@ -98,10 +99,15 @@ public class FriendServiceImpl implements FriendService {
               friendAccountId,
               visibleOnline(entry),
               visibleGameInstanceId(entry),
+              visibleWorldSlug(entry),
+              visibleWorldDisplayName(entry),
+              visibleRealmSlug(entry),
+              visibleRealmDisplayName(entry),
               visibleCharacterId(entry),
               visibleCharacterName(entry),
               visibleActivityState(entry),
-              entry.getLastSeenAtMs() > 0 ? Instant.ofEpochMilli(entry.getLastSeenAtMs()) : null));
+              entry.getLastSeenAtMs() > 0 ? Instant.ofEpochMilli(entry.getLastSeenAtMs()) : null,
+              visibleRecentDisposition(entry)));
     }
 
     return friendAccountIds.stream()
@@ -109,7 +115,19 @@ public class FriendServiceImpl implements FriendService {
             friendAccountId ->
                 byAccountId.getOrDefault(
                     friendAccountId,
-                    new FriendPresenceDto(friendAccountId, false, null, null, null, null, null)))
+                    new FriendPresenceDto(
+                        friendAccountId,
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null)))
         .toList();
   }
 
@@ -148,6 +166,42 @@ public class FriendServiceImpl implements FriendService {
     };
   }
 
+  private String visibleWorldSlug(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getWorldSlug().isBlank() ? null : entry.getWorldSlug();
+    };
+  }
+
+  private String visibleWorldDisplayName(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getWorldDisplayName().isBlank() ? null : entry.getWorldDisplayName();
+    };
+  }
+
+  private String visibleRealmSlug(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getRealmSlug().isBlank() ? null : entry.getRealmSlug();
+    };
+  }
+
+  private String visibleRealmDisplayName(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getRealmDisplayName().isBlank() ? null : entry.getRealmDisplayName();
+    };
+  }
+
   private String visibleCharacterName(AccountPresenceEntry entry) {
     return switch (entry.getVisibilityPolicy()) {
       case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
@@ -163,6 +217,24 @@ public class FriendServiceImpl implements FriendService {
           ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
           null;
       default -> mapActivityState(entry.getActivityState());
+    };
+  }
+
+  private FriendRecentPresenceDisposition visibleRecentDisposition(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF -> null;
+      default -> mapRecentDisposition(entry.getRecentDisposition());
+    };
+  }
+
+  private FriendRecentPresenceDisposition mapRecentDisposition(
+      net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition disposition) {
+    return switch (disposition) {
+      case ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS ->
+          FriendRecentPresenceDisposition.TRANSPORT_LOSS;
+      case ACCOUNT_RECENT_PRESENCE_DISPOSITION_LOGOUT -> FriendRecentPresenceDisposition.LOGOUT;
+      case ACCOUNT_RECENT_PRESENCE_DISPOSITION_TAKEOVER -> FriendRecentPresenceDisposition.TAKEOVER;
+      default -> null;
     };
   }
 }

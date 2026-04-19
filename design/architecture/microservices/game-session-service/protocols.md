@@ -26,7 +26,7 @@ The normal happy path for a human player should therefore be:
 
 ```text
 LOGIN <username> <password> [otp]
-PLAY <world> [character]
+PLAY <world> [realm] [character]
 ```
 
 `WORLDS`, `REALMS`, and `CHARS` are important helper commands, but they are not intended to be mandatory ceremony before ordinary gameplay entry.
@@ -38,7 +38,7 @@ PLAY <world> [character]
 | `WORLDS` | Lists worlds visible to the caller. Before `LOGIN`, this is a public browse/discovery command intended to let players explore the platform before signing up or logging in. After `LOGIN`, it may also include caller-specific membership or entitlement context. | `WORLDS` |
 | `REALMS <world>` | Lists visible realms for a world, where `<world>` is a world slug or a menu index from `WORLDS`. The default public production realm may be visible before membership exists; additional realms require explicit grants. | `REALMS demo` |
 | `CHARS <world> [realm]` | Lists characters for a world and optional realm from the authoritative character store, filtered to `{accountId, tenantId, gameInstanceId}` ownership. | `CHARS demo production` |
-| `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, optional realm, and optional character after `LOGIN`, enforcing tenant authorization, public-admission rules, realm routing, and entitlements. The normal player-facing target is `PLAY <world> [character]`; if the request is ambiguous, the service should return a selection-oriented response instead of treating that ambiguity as a gameplay error. For the default public production realm, the first successful `PLAY` creates the caller's `player` membership atomically via Account Service. | `PLAY demo Sora` |
+| `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, optional realm, and optional character after `LOGIN`, enforcing tenant authorization, public-admission rules, realm routing, and entitlements. Players may omit `[realm]` or `[character]` when the resolved choice is unambiguous; if the request is ambiguous, the service should return a selection-oriented response instead of treating that ambiguity as a gameplay error. For the default public production realm, the first successful `PLAY` creates the caller's `player` membership atomically via Account Service. | `PLAY demo production Sora` |
 | `LOOK` | Requests the current room snapshot aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `SAY <text>` | Standard room-local communication action. Targets the caller's current room and uses the shared communication model to resolve listeners and any observer/interceptor views. | `SAY Hello travelers` |
 | `WHISPER <character> <text>` | Standard directed in-room communication action. Targets one nearby character in the current room; baseline default is full content for sender and target, with observer handling controlled by communication-type and target rules. | `WHISPER Sora The forge smells of brimstone` |
@@ -57,7 +57,7 @@ Telnet and WebSocket clients share the line-based syntax, but transport context 
 
 Prompt-based exchanges are planned but not implemented in this slice for Telnet and non-bootstrap clients. On those transports, bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` First-party `/ws/game/**` sessions with a validated connect context are the exception: bare `LOGIN` consumes the bootstrap-backed context and must not ask the browser to resend credentials.
 
-After `LOGIN` succeeds, the normal player-facing expectation is `PLAY <world> [character]`. `REALMS` and `CHARS` remain available as lobby helper commands when the player's choice is ambiguous or when they want to browse. `PLAY` is the gameplay-admission and gameplay-binding step; it is not merely a continuation of authentication. This step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization, realm routing, public-admission rules, and entitlements.
+After `LOGIN` succeeds, the normal player-facing expectation is `PLAY <world> [realm] [character]`. `REALMS` and `CHARS` remain available as lobby helper commands when the player's choice is ambiguous or when they want to browse. `PLAY` is the gameplay-admission and gameplay-binding step; it is not merely a continuation of authentication. This step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization, realm routing, public-admission rules, and entitlements.
 
 Handshake failures such as HTTP `403` `CONNECT_TOKEN_REJECTED` or `POLICY_DENY` happen before the gameplay protocol is established and therefore are not emitted as text-protocol `ERROR <CODE>` frames. The command examples below begin only after a socket is already open and the line-based gameplay protocol is active.
 
@@ -70,7 +70,7 @@ Canonical first-party `PLAY` scope errors on `/ws/game/**`:
 
 If a gameplay session already exists for the selected `{tenantId, gameInstanceId, characterId}` and is still resumable, meaning its TTL, current membership authority, and current revocation state are all valid, `PLAY` resumes it and rebinds the new socket to the existing session. On successful resume, Game Session also rebinds the session to a fresh backend token for subsequent internal calls rather than depending on the previous token to remain valid. If no resumable session exists but ordinary admission is still allowed, `PLAY` should fall back automatically to a fresh gameplay entry rather than returning a player-chore error that just asks the user to repeat the same command. Even after reconnect, the client must still send an explicit `PLAY` so the platform never guesses which tenant or character to resume.
 
-If a client attempts gameplay commands before `LOGIN` succeeds, the service should return a stage-aware response such as `ERROR LOGIN_REQUIRED Use LOGIN <username> <password>`. If a client is logged in but has not yet completed `PLAY`, the service should return a stage-aware response such as `ERROR PLAY_REQUIRED Use PLAY <world> [character]`. These are menu/progression mistakes, not gameplay-mechanics failures.
+If a client attempts gameplay commands before `LOGIN` succeeds, the service should return a stage-aware response such as `ERROR LOGIN_REQUIRED Use LOGIN <username> <password>`. If a client is logged in but has not yet completed `PLAY`, the service should return a stage-aware response such as `ERROR PLAY_REQUIRED Use PLAY <world> [realm] [character]`. These are menu/progression mistakes, not gameplay-mechanics failures.
 
 ### Login and world-selection examples
 
@@ -134,7 +134,7 @@ OK WORLDS
 1) Demo World (demo)
 
 PLAY demo
-OK PLAY Entered world: Demo World
+OK PLAY Entered world: Demo World / Live Realm
 ```
 
 The transcript above shows the intended prompt flow. In the current implementation the same exchange is represented by a single `LOGIN <username> <password>` call because the prompt-driven handler still returns `ERROR PROMPT_LOGIN_UNSUPPORTED ...`.

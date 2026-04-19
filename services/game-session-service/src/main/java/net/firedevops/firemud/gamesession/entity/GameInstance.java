@@ -21,6 +21,24 @@ public class GameInstance {
   @Column(name = "script_patch_version", length = 100)
   private String scriptPatchVersion;
 
+  @Column(name = "game_template_id")
+  private Long gameTemplateId;
+
+  @Column(name = "launch_descriptor_id", length = 64)
+  private String launchDescriptorId;
+
+  @Column(name = "version_id")
+  private Long versionId;
+
+  @Column(name = "release_bundle_id")
+  private Long releaseBundleId;
+
+  @Column(name = "version_state_epoch")
+  private Long versionStateEpoch;
+
+  @Column(name = "generation_config_revision", length = 128)
+  private String generationConfigRevision;
+
   @Column(name = "script_patch_pinned_at")
   private Instant scriptPatchPinnedAt;
 

@@ -9,8 +9,13 @@ public record AccountPresenceSnapshot(
     long accountId,
     boolean online,
     Long gameInstanceId,
+    String worldSlug,
+    String worldDisplayName,
+    String realmSlug,
+    String realmDisplayName,
     Long characterId,
     String characterName,
     GameplayPresenceActivityState activityState,
     Instant lastSeenAt,
+    AccountRecentPresenceDisposition recentDisposition,
     AccountPresenceVisibilityPolicy visibilityPolicy) {}

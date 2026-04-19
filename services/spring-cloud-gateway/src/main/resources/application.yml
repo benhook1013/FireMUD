@@ -37,6 +37,10 @@ spring:
         client-auth: REQUIRE
 
 firemud:
+  auth:
+    grpc:
+      public-methods:
+        - gateway.v1.GatewayManagementService/Ping
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

@@ -14,6 +14,7 @@ To keep control-plane behavior predictable, transport and ordering guarantees mu
 
 - **Partition key (instance-scoped events)**: events scoped to a running instance (for example `ScriptPatchPinChanged`, `ScriptPatchInstanceRolloutChanged`, and plugin lifecycle events) must use `tenantId` + `gameInstanceId` so ordering is stable for that instance.
 - **Partition key (tenant-scoped patch lifecycle events)**: tenant patch readiness events (`ScriptPatchTenantStatusChanged`) must use `tenantId` only.
+- **Partition key (tenant-scoped design publication events)**: Game Design publication events for script patches and plugin versions must use `tenantId` only.
 - **Ordering**: consumers may assume per-partition order within each event family and scope, but must not assume global order across tenants or instances.
 - **Monotonic sequencing (required)**:
   - All instance-scoped event families must carry `instanceSequence` (monotonic per `(tenantId, gameInstanceId)`).
@@ -62,6 +63,26 @@ Operator consumption rule:
 
 - Use this event family for tenant patch readiness gates and publish validation UX (`READY`, `FAILED`, `SUPERSEDED`).
 
+## `PluginVersionStatusChanged` (Game Design -> Event Bus)
+
+Emitted whenever immutable design-time publication status changes for one plugin version.
+
+Fields:
+
+- `tenantId`
+- `pluginId`
+- `pluginVersionId`
+- `previousDesignStatus`
+- `newDesignStatus` (`UPLOADED` | `SIGNATURE_VERIFIED` | `VALIDATION_FAILED_DESIGN` | `PUBLISHED` | `REVOKED_DESIGN` | `SUPERSEDED`)
+- `tenantSequence`
+- `statusReason` (optional)
+- `occurredAt`
+
+Operator consumption rule:
+
+- Use this event family for creator/operator publication history and design-time eligibility changes only.
+- Do not infer runtime activation, drain, or disablement from this event family; those remain instance-scoped runtime events.
+
 ## `ScriptPatchInstanceRolloutChanged` (Game Session -> Event Bus)
 
 Emitted whenever instance rollout history changes for a patch.
@@ -98,6 +119,11 @@ Fields:
 - `controlPlaneRequestId` (if operator-driven)
 - `actor` and `reason` (if operator-driven)
 - `occurredAt`
+
+Operator consumption rule:
+
+- Use this event family for runtime activation state only.
+- Tooling that needs the full picture must join `PluginVersionStatusChanged` with instance-scoped runtime events/read APIs rather than overloading runtime events to explain design-time publication history.
 
 ## `SignerPolicyVersionObserved` (Automation & Scripting -> Event Bus)
 

@@ -11,6 +11,8 @@ import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.mapper.CharacterMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
+import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.data.domain.Page;
@@ -29,6 +31,7 @@ public class CharacterServiceImpl implements CharacterService {
   private final CharacterMapper characterMapper;
   private final CacheManager cacheManager;
   private final MeterRegistry meterRegistry;
+  private final PlayableStateKeyResolver playableStateKeyResolver;
 
   private Counter cacheHitCounter;
   private Counter cacheMissCounter;
@@ -44,9 +47,26 @@ public class CharacterServiceImpl implements CharacterService {
   @Override
   @Transactional
   @Timed(value = "character.create")
-  public CharacterDto create(CharacterDto dto) {
-    Character entity = characterMapper.toEntity(dto);
-    entity.setLevel(dto.level() > 0 ? dto.level() : 1);
+  public CharacterDto create(
+      Long tenantId,
+      Long accountId,
+      String name,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope) {
+    Character entity = new Character();
+    entity.setTenantId(tenantId);
+    entity.setAccountId(accountId);
+    entity.setName(name);
+    entity.setPlayableStateKey(
+        playableStateKeyResolver.resolve(gameInstanceId, playableStateScope));
+    entity.setLevel(1);
+    entity.setExperience(0);
+    entity.setStrength(10);
+    entity.setAgility(10);
+    entity.setIntelligence(10);
+    entity.setStamina(10);
+    entity.setHealth(100);
+    entity.setMana(50);
     entity = characterRepository.save(entity);
     return characterMapper.toDto(entity);
   }
@@ -99,22 +119,34 @@ public class CharacterServiceImpl implements CharacterService {
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "character.listForAccount")
-  public Page<CharacterDto> listForTenantAndAccount(
-      Long tenantId, Long accountId, Pageable pageable) {
+  public Page<CharacterDto> listForGameplayScope(
+      Long tenantId,
+      Long accountId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      Pageable pageable) {
     return characterRepository
-        .findByTenantIdAndAccountId(tenantId, accountId, pageable)
+        .findByTenantIdAndAccountIdAndPlayableStateKey(
+            tenantId,
+            accountId,
+            playableStateKeyResolver.resolve(gameInstanceId, playableStateScope),
+            pageable)
         .map(characterMapper::toDto);
   }
 
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "character.findByTenantAndName")
-  public java.util.Optional<CharacterDto> findByTenantAndName(Long tenantId, String name) {
+  public java.util.Optional<CharacterDto> findByGameplayScopeAndName(
+      Long tenantId, String gameInstanceId, PlayableStateScope playableStateScope, String name) {
     if (name == null || name.isBlank()) {
       return java.util.Optional.empty();
     }
     return characterRepository
-        .findByTenantIdAndNameIgnoreCase(tenantId, name.trim())
+        .findByTenantIdAndPlayableStateKeyAndNameIgnoreCase(
+            tenantId,
+            playableStateKeyResolver.resolve(gameInstanceId, playableStateScope),
+            name.trim())
         .map(characterMapper::toDto);
   }
 }

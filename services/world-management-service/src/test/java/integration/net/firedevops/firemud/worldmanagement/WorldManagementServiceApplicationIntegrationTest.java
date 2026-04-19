@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.test.HttpTestSupport;
+import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
 import org.junit.jupiter.api.Test;
@@ -49,6 +50,7 @@ class WorldManagementServiceApplicationIntegrationTest {
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private GameDesignClient gameDesignClient;
   @MockitoBean private GameSessionClient gameSessionClient;
+  @MockitoBean private EntityManagementClient entityManagementClient;
 
   @Test
   void pingEndpointReturnsPong() {

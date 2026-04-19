@@ -1,14 +1,29 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import io.micrometer.core.annotation.Timed;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 @Component
 public class HelpCommandHandler {
+  private final ConfiguredAuthoredActionCatalog authoredActionCatalog;
+
+  HelpCommandHandler(ConfiguredAuthoredActionCatalog authoredActionCatalog) {
+    this.authoredActionCatalog =
+        Objects.requireNonNull(authoredActionCatalog, "authoredActionCatalog must not be null");
+  }
+
+  HelpCommandHandler() {
+    this(
+        new ConfiguredAuthoredActionCatalog(
+            new net.firedevops.firemud.gamesession.config.AuthoredActionProperties()));
+  }
+
   @Timed(value = "gamesession.command.help")
   public TextCommandInterpretationResult handle(TextCommand command) {
     if (command == null) {
@@ -23,23 +38,47 @@ public class HelpCommandHandler {
       return unknownTopic(args.get(0));
     }
 
-    return switch (canonicalTopic(args.get(0))) {
+    String resolvedTopic = canonicalTopic(args.get(0));
+    if (resolvedTopic.startsWith("AUTHORED:")) {
+      return authoredActionCatalog
+          .find(resolvedTopic.substring("AUTHORED:".length()))
+          .map(this::success)
+          .orElseGet(() -> unknownTopic(args.get(0)));
+    }
+
+    return switch (resolvedTopic) {
       case "HELP" -> success(topicIndex());
       case "LOGIN" ->
           success(
               "LOGIN <email> <password> [otp]\n"
                   + "Use LOGON as an alias if your client expects it.\n"
-                  + "After login, use PLAY <world> [character].");
+                  + "After login, use PLAY <world> [realm] [character].");
       case "PLAY" ->
           success(
-              "PLAY <world> [character]\n"
-                  + "Select the world to enter and optional character name.");
+              "PLAY <world> [realm] [character]\n"
+                  + "Select the world to enter, optionally name a visible realm, and optionally choose a character.");
+      case "REALMS" ->
+          success(
+              "REALMS <world>\n"
+                  + "List visible realms for the selected world.\n"
+                  + "Use this before CHARS or PLAY when a world exposes more than one realm.");
+      case "CHARS" ->
+          success(
+              "CHARS <world> [realm]\n"
+                  + "List visible characters for the selected world and realm.\n"
+                  + "Use REALMS first when the world exposes more than one realm.");
       case "WHO" ->
           success(
               "WHO\n"
                   + "List currently connected players in this game instance.\n"
                   + "Gods appear first, then players.\n"
                   + "You must already be in-world with PLAY.");
+      case "FRIENDS" ->
+          success(
+              "FRIENDS\n"
+                  + "List your linked friends with bounded cross-game presence.\n"
+                  + "Visible entries show current world/realm labels, character name, and activity state when policy allows.\n"
+                  + "Private or hidden-staff friends stay conservative.");
       case "INVENTORY" ->
           success(
               "INVENTORY shows what you are carrying.\n"
@@ -135,48 +174,95 @@ public class HelpCommandHandler {
     if (!StringUtils.hasText(topic)) {
       return "";
     }
-    return switch (topic.trim().toUpperCase(Locale.ROOT)) {
-      case "HELP" -> "HELP";
-      case "LOGIN", "LOGON" -> "LOGIN";
-      case "PLAY" -> "PLAY";
-      case "WHO" -> "WHO";
-      case "INVENTORY", "INV", "I" -> "INVENTORY";
-      case "EQUIPMENT", "EQUIP", "EQ" -> "EQUIPMENT";
-      case "WEAR" -> "WEAR";
-      case "REMOVE" -> "REMOVE";
-      case "CONTAINER", "CONT" -> "CONTAINER";
-      case "PUT" -> "PUT";
-      case "TAKE" -> "TAKE";
-      case "GET" -> "GET";
-      case "DROP" -> "DROP";
-      case "MOVEMENT", "MOVE", "WALK", "GO" -> "MOVEMENT";
-      case "LOOK", "QUICKLOOK", "QLOOK" -> "LOOK";
-      case "SAY" -> "SAY";
-      case "WHISPER" -> "WHISPER";
-      case "TELL" -> "TELL";
-      default -> "";
-    };
+    String canonical =
+        switch (topic.trim().toUpperCase(Locale.ROOT)) {
+          case "HELP" -> "HELP";
+          case "LOGIN", "LOGON" -> "LOGIN";
+          case "PLAY" -> "PLAY";
+          case "WHO" -> "WHO";
+          case "FRIENDS" -> "FRIENDS";
+          case "INVENTORY", "INV", "I" -> "INVENTORY";
+          case "EQUIPMENT", "EQUIP", "EQ" -> "EQUIPMENT";
+          case "WEAR" -> "WEAR";
+          case "REMOVE" -> "REMOVE";
+          case "CONTAINER", "CONT" -> "CONTAINER";
+          case "PUT" -> "PUT";
+          case "TAKE" -> "TAKE";
+          case "GET" -> "GET";
+          case "DROP" -> "DROP";
+          case "MOVEMENT", "MOVE", "WALK", "GO" -> "MOVEMENT";
+          case "LOOK", "QUICKLOOK", "QLOOK" -> "LOOK";
+          case "SAY" -> "SAY";
+          case "WHISPER" -> "WHISPER";
+          case "TELL" -> "TELL";
+          default -> "";
+        };
+    if (!canonical.isEmpty()) {
+      return canonical;
+    }
+    return authoredActionCatalog
+        .findByAlias(topic)
+        .map(action -> "AUTHORED:" + action.commandId())
+        .orElse("");
   }
 
   private String topicIndex() {
-    return "Help topics:\n"
-        + "- HELP LOGIN\n"
-        + "- HELP PLAY\n"
-        + "- HELP WHO\n"
-        + "- HELP INVENTORY\n"
-        + "- HELP EQUIPMENT\n"
-        + "- HELP CONTAINER\n"
-        + "- HELP PUT\n"
-        + "- HELP TAKE\n"
-        + "- HELP WEAR\n"
-        + "- HELP REMOVE\n"
-        + "- HELP GET\n"
-        + "- HELP DROP\n"
-        + "- HELP MOVEMENT\n"
-        + "- HELP LOOK\n"
-        + "- HELP SAY\n"
-        + "- HELP WHISPER\n"
-        + "- HELP TELL\n"
-        + "Type HELP <TOPIC> to read one of them.";
+    ArrayList<String> lines =
+        new ArrayList<>(
+            List.of(
+                "Help topics:",
+                "- HELP LOGIN",
+                "- HELP PLAY",
+                "- HELP WHO",
+                "- HELP FRIENDS",
+                "- HELP INVENTORY",
+                "- HELP EQUIPMENT",
+                "- HELP CONTAINER",
+                "- HELP PUT",
+                "- HELP TAKE",
+                "- HELP WEAR",
+                "- HELP REMOVE",
+                "- HELP GET",
+                "- HELP DROP",
+                "- HELP MOVEMENT",
+                "- HELP LOOK",
+                "- HELP SAY",
+                "- HELP WHISPER",
+                "- HELP TELL"));
+    if (!authoredActionCatalog.all().isEmpty()) {
+      lines.add("Authored topics:");
+      for (ConfiguredAuthoredActionCatalog.ConfiguredAuthoredAction action :
+          authoredActionCatalog.all()) {
+        lines.add("- HELP " + action.primaryHelpTopic().toUpperCase(Locale.ROOT));
+      }
+    }
+    lines.add("Type HELP <TOPIC> to read one of them.");
+    return String.join("\n", lines);
+  }
+
+  private TextCommandInterpretationResult success(
+      ConfiguredAuthoredActionCatalog.ConfiguredAuthoredAction action) {
+    String topic = action.primaryHelpTopic().toUpperCase(Locale.ROOT);
+    String body =
+        topic
+            + "\n"
+            + firstNonBlank(action.helpSummary(), "Game-authored action.")
+            + (StringUtils.hasText(action.helpDetails()) ? "\n" + action.helpDetails().trim() : "")
+            + authoredAliasSuffix(action);
+    return success(body);
+  }
+
+  private String firstNonBlank(String first, String fallback) {
+    return StringUtils.hasText(first) ? first.trim() : fallback;
+  }
+
+  private String authoredAliasSuffix(
+      ConfiguredAuthoredActionCatalog.ConfiguredAuthoredAction action) {
+    if (action.aliases().size() <= 1) {
+      return "";
+    }
+    List<String> alternateAliases =
+        action.aliases().stream().skip(1).map(alias -> alias.toUpperCase(Locale.ROOT)).toList();
+    return "\nAliases: " + String.join(", ", alternateAliases);
   }
 }

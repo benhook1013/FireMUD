@@ -2,6 +2,7 @@ package net.firedevops.firemud.springcloudgateway.filter;
 
 import io.jsonwebtoken.JwtException;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.SessionClaims;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -61,20 +62,6 @@ public class JwtAuthFilter implements WebFilter, Ordered {
   }
 
   private boolean hasPrivilegedGlobalRole(String token) {
-    var claims = jwtUtil.parseToken(token).getPayload();
-    var rawGlobalRoles = claims.get("globalRoles", java.util.List.class);
-    if (rawGlobalRoles == null) {
-      return false;
-    }
-    for (Object role : rawGlobalRoles) {
-      if (isPrivilegedGlobalRole(String.valueOf(role))) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private boolean isPrivilegedGlobalRole(String role) {
-    return "platformAdmin".equals(role) || "moderator".equals(role);
+    return SessionClaims.fromJwt(jwtUtil.parseToken(token)).hasPrivilegedRole();
   }
 }

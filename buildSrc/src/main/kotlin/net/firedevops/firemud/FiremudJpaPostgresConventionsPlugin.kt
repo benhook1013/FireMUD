@@ -10,6 +10,8 @@ class FiremudJpaPostgresConventionsPlugin : Plugin<Project> {
             val libs = extensions.getByType(VersionCatalogsExtension::class.java).named("libs")
 
             dependencies.add("implementation", libs.findLibrary("spring.boot.starter.data.jpa").get())
+            dependencies.add("implementation", libs.findLibrary("spring-boot-flyway").get())
+            dependencies.add("runtimeOnly", libs.findLibrary("flyway-database-postgresql").get())
             dependencies.add("runtimeOnly", libs.findLibrary("postgresql").get())
         }
     }

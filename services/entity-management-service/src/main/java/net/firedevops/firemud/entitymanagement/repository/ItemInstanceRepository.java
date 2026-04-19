@@ -8,6 +8,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public interface ItemInstanceRepository extends JpaRepository<ItemInstance, Long> {
@@ -60,4 +61,7 @@ public interface ItemInstanceRepository extends JpaRepository<ItemInstance, Long
 
   @EntityGraph(attributePaths = {"character", "item"})
   Optional<ItemInstance> findByIdAndTenantId(Long id, Long tenantId);
+
+  @Transactional
+  long deleteByTenantIdAndGameInstanceId(Long tenantId, String gameInstanceId);
 }

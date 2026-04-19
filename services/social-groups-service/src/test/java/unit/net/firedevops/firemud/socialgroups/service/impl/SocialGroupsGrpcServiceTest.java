@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
+import net.firedevops.firemud.socialgroups.dto.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.dto.SendMessageRequestDto;
 import net.firedevops.firemud.socialgroups.enums.ChatType;
 import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
@@ -190,7 +191,18 @@ class SocialGroupsGrpcServiceTest {
         .thenReturn(
             List.of(
                 new FriendPresenceDto(
-                    3L, true, 9L, 99L, "Ben", null, Instant.parse("2026-04-11T06:15:30Z"))));
+                    3L,
+                    true,
+                    9L,
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    99L,
+                    "Ben",
+                    null,
+                    Instant.parse("2026-04-11T06:15:30Z"),
+                    FriendRecentPresenceDisposition.LOGOUT)));
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -218,8 +230,16 @@ class SocialGroupsGrpcServiceTest {
     assertEquals(1, ref.get().getPresencesCount());
     assertEquals("3", ref.get().getPresences(0).getFriendAccountId());
     assertEquals(true, ref.get().getPresences(0).getOnline());
+    assertEquals("demo", ref.get().getPresences(0).getWorldSlug());
+    assertEquals("Demo World", ref.get().getPresences(0).getWorldDisplayName());
+    assertEquals("production", ref.get().getPresences(0).getRealmSlug());
+    assertEquals("Live Realm", ref.get().getPresences(0).getRealmDisplayName());
     assertEquals(
         Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
         ref.get().getPresences(0).getLastSeenAtMs());
+    assertEquals(
+        net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition
+            .FRIEND_RECENT_PRESENCE_DISPOSITION_LOGOUT,
+        ref.get().getPresences(0).getRecentDisposition());
   }
 }

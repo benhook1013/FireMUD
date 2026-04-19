@@ -21,6 +21,7 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
@@ -30,6 +31,7 @@ import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
@@ -40,11 +42,13 @@ import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
+import net.firedevops.firemud.gamesession.config.PresenceProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -59,11 +63,14 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedGameInstanceRegistry;
+import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
@@ -116,6 +123,9 @@ class TextCommandInterpreterTest {
   private final GameplayPresenceService gameplayPresenceService =
       new InMemoryGameplayPresenceService(
           new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
+      new DefaultGameplayPresenceLifecycleService(
+          gameplayPresenceService, accountRecentPresenceService);
   private TextCommandInterpreter interpreter;
 
   @BeforeEach
@@ -177,6 +187,7 @@ class TextCommandInterpreterTest {
             Mockito.anyString(),
             Mockito.nullable(String.class),
             Mockito.nullable(String.class),
+            Mockito.nullable(String.class),
             Mockito.eq(1)))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
@@ -194,6 +205,7 @@ class TextCommandInterpreterTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),
+            Mockito.nullable(String.class),
             Mockito.nullable(String.class),
             Mockito.nullable(String.class),
             Mockito.eq(1)))
@@ -301,6 +313,10 @@ class TextCommandInterpreterTest {
             gameInstanceRepository,
             devIsolatedProperties,
             devIsolatedRegistryProvider);
+    GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
+    gameplayCatalogProperties.setWorlds(
+        List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
+    GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(gameplayCatalogProperties);
 
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
@@ -309,10 +325,10 @@ class TextCommandInterpreterTest {
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
+            worldCatalog,
             devIsolatedProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
-    GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(gameSessionProperties);
     PlayCommandHandler playHandler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -322,12 +338,14 @@ class TextCommandInterpreterTest {
             accountClient,
             entityManagementClient,
             firstPartyConnectContextRegistry,
-            accountRecentPresenceService,
-            gameplayPresenceService,
+            gameplayPresenceLifecycleService,
             meterRegistry);
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
-    WhoCommandHandler whoHandler = new WhoCommandHandler(gameplayPresenceService);
+    WhoCommandHandler whoHandler =
+        new WhoCommandHandler(
+            gameplayPresenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()));
     LookCommandHandler lookHandler =
         new LookCommandHandler(
             gameLogicClient,
@@ -343,7 +361,19 @@ class TextCommandInterpreterTest {
             lookCacheService,
             devIsolatedProperties,
             new TextPlayerOutputRenderer(new PresentationProperties()));
-    WorldsCommandHandler worldsHandler = new WorldsCommandHandler(worldCatalog);
+    when(entityManagementClient.listCharactersByAccount(
+            "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .thenReturn(
+            net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse.newBuilder()
+                .addCharacters(
+                    net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                        .setId("7001")
+                        .setName("Emberline")
+                        .setLevel(12)
+                        .build())
+                .build());
+    WorldsCommandHandler worldsHandler =
+        new WorldsCommandHandler(worldCatalog, entityManagementClient);
 
     LookResult lookResult =
         LookResult.newBuilder()
@@ -403,8 +433,7 @@ class TextCommandInterpreterTest {
                 sessionAuthenticationService,
                 sessionContextService,
                 gameInstanceService,
-                gameplayPresenceService,
-                accountRecentPresenceService,
+                gameplayPresenceLifecycleService,
                 firstPartyConnectContextRegistry,
                 screenBufferService),
             playHandler,
@@ -412,6 +441,7 @@ class TextCommandInterpreterTest {
             afkHandler,
             helpHandler,
             whoHandler,
+            new FriendsCommandHandler(Mockito.mock(SocialGroupsClient.class)),
             inventoryHandler,
             equipmentHandler,
             containerHandler,
@@ -419,8 +449,8 @@ class TextCommandInterpreterTest {
             communicationHandler,
             worldsHandler,
             new PromptComposer(),
-            new AggregatingTextCommandRegistry(
-                List.of(new BuiltInTextCommandDefinitionProvider())));
+            new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider())),
+            new TextCommandParser());
   }
 
   @Test
@@ -434,6 +464,32 @@ class TextCommandInterpreterTest {
     assertTrue(renderedResponse("WORLDS", interpretation).startsWith("OK WORLDS\n1) Demo World"));
     assertTrue(renderedResponse("WORLDS", interpretation).contains("Demo World"));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void realmsAreVisibleAfterLogin() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "REALMS demo", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertTrue(renderedResponse("REALMS demo", interpretation).contains("Live Realm"));
+    assertTrue(renderedResponse("REALMS demo", interpretation).contains("[shared, allow_new]"));
+  }
+
+  @Test
+  void charsAreVisibleAfterLogin() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "CHARS demo", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertTrue(renderedResponse("CHARS demo", interpretation).contains("Emberline"));
+    assertTrue(
+        renderedResponse("CHARS demo", interpretation)
+            .contains("Realm state: shared, creation: allow_new"));
   }
 
   @Test
@@ -668,7 +724,7 @@ class TextCommandInterpreterTest {
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("PLAY_REQUIRED", interpretation.commandResult().errorCode());
     assertEquals(
-        "ERROR PLAY_REQUIRED You must PLAY first. Use PLAY <world> [character].",
+        "ERROR PLAY_REQUIRED You must PLAY first. Use PLAY <world> [realm] [character].",
         renderedResponse("LOOK", interpretation));
     verify(commandService, never()).enqueue("1", "LOOK", false);
   }
@@ -865,6 +921,27 @@ class TextCommandInterpreterTest {
         new TextCommandParser().parse(rawCommand),
         interpretation.commandResult(),
         interpretation.outputs());
+  }
+
+  private static GameplayCatalogProperties.World world(
+      String slug, long tenantId, long gameInstanceId, boolean requiresCharacterSelection) {
+    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
+    world.setSlug(slug);
+    world.setDisplayName(
+        switch (slug) {
+          case "demo" -> "Demo World";
+          case "sandbox" -> "Builder Sandbox";
+          default -> slug;
+        });
+    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+    realm.setSlug("production");
+    realm.setDisplayName("Live Realm");
+    realm.setTenantId(tenantId);
+    realm.setGameInstanceId(gameInstanceId);
+    realm.setVisible(true);
+    realm.setRequiresCharacterSelection(requiresCharacterSelection);
+    world.setRealms(List.of(realm));
+    return world;
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {

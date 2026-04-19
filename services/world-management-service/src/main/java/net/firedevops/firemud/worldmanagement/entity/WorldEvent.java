@@ -15,9 +15,12 @@ public class WorldEvent {
   @Column(nullable = false)
   private Long tenantId;
 
+  @Column(name = "game_instance_id", nullable = false)
+  private Long gameInstanceId;
+
   @ManyToOne(fetch = FetchType.LAZY)
-  @JoinColumn(name = "region_id")
-  private Region region;
+  @JoinColumn(name = "region_instance_id")
+  private RegionInstance regionInstance;
 
   @Column(nullable = false, length = 50)
   private String eventType;
@@ -38,14 +41,14 @@ public class WorldEvent {
   @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
       value = "EI_EXPOSE_REP",
       justification = "JPA association is intentionally exposed")
-  public Region getRegion() {
-    return region;
+  public RegionInstance getRegionInstance() {
+    return regionInstance;
   }
 
   @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "JPA association stored directly")
-  public void setRegion(Region region) {
-    this.region = region;
+  public void setRegionInstance(RegionInstance regionInstance) {
+    this.regionInstance = regionInstance;
   }
 }

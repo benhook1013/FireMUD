@@ -74,7 +74,7 @@ Creators refine the world and its inhabitants using several services:
 - **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages characters, NPCs, items, and inventory with deferred writes coordinated by the Game Session Service.
 - **Procedural Generation** – The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) provides dungeon seeds and templates. See [Procedural Generation](./system-architecture-procedural-generation.md).
 - **MCP-Enhanced Clients** – Use the [Mud Client Protocol](./system-architecture-mud-client-protocol.md) to drive rich Telnet client features such as status panels, maps, and background notifications.
-- [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
+- [Game Customization](./system-architecture-game-customization.md) covers themes and branding tweaks.
 - **World Editing Tools** – Use the [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md) for room and region editing.
 - **Ability & Action Tools** – Build combat mechanics with the [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md).
 - **Item & Equipment Balancing** – Tune gear progression in the [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md).
@@ -124,7 +124,7 @@ Game Design Service (publish) → Tenant Admin / Platform Admin → Game Session
 5. **Player Experience During Cutover** – New admissions follow the new realm target once the cutover completes. Existing players may reconnect through the normal lobby flow if the old instance drains or disconnects them.
 6. **Rollback** – A `tenantAdmin` may roll back to the previous version or script patch using the same control-plane contract. `platformAdmin` is break-glass override only.
 7. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic pre-activation rollback and deterministic runtime cutover. See [Transaction Strategies](./system-architecture-transactions.md).
-8. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
+8. **Verify Performance** – Check metrics, traces, and rollout signals after deployment; see [Logging & Monitoring](./system-architecture-logging-monitoring.md) and [Testing Strategy](./system-architecture-testing.md).
 
 ```plaintext
 Game Design Service (publish) → Tenant Admin / Platform Admin → Script Patch Pin or Replacement-Instance Cutover
@@ -155,7 +155,7 @@ Hotfix procedures and runtime rollout steps are shared with operators for audita
 
 ## 6. Branding and Customization
 
-Creators adjust the look and feel of their games through the Game Design Service at design time. When a version is published, branding assets are uploaded to tenant- and version-scoped object storage and a `manifest.json` is generated. Runtime clients fetch the manifest for the bundle actually resolved at `PLAY` time, not just "the tenant in general," so production and fork realms can present different branding when they run different published builds. See [Frontend Architecture](./system-architecture-frontend.md) and [Game Customization Options](./game-customization-options.md) for details.
+Creators adjust the look and feel of their games through the Game Design Service at design time. When a version is published, branding assets are uploaded to tenant- and version-scoped object storage and a `manifest.json` is generated. Runtime clients fetch the manifest for the bundle actually resolved at `PLAY` time, not just "the tenant in general," so production and fork realms can present different branding when they run different published builds. See [Frontend Architecture](./system-architecture-frontend.md) and [Game Customization](./system-architecture-game-customization.md) for details.
 
 ---
 
@@ -203,7 +203,7 @@ MCP-Aware Client → TCP Proxy Service → Game Session Service and other backen
 
 - [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md)
 - [Game Creator Guide](../user-guides/game-creator-guide.md)
-- [Game Customization Options](./game-customization-options.md)
+- [Game Customization](./system-architecture-game-customization.md)
 - [Game Templates](./microservices/game-design-service/game-templates.md)
 - [Modding Framework](./microservices/game-design-service/modding-framework.md)
 - [Playtesting & Feedback](../project-management/slice-support/playtesting-feedback.md)

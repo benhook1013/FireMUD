@@ -29,5 +29,13 @@ public class Item {
   @Column(name = "is_stackable", nullable = false)
   private boolean stackable;
 
+  @Enumerated(EnumType.STRING)
+  @Column(name = "stack_compatibility_mode", nullable = false, length = 64)
+  private ItemStackCompatibilityMode stackCompatibilityMode =
+      ItemStackCompatibilityMode.DEFINITION_ONLY;
+
+  @Column(name = "default_stack_family_key", length = 128)
+  private String defaultStackFamilyKey;
+
   @Version private int version;
 }

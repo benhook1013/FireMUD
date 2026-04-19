@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import io.jsonwebtoken.Claims;
 import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.Map;
@@ -68,9 +69,15 @@ class GameplayHandshakeFilterTest {
             .generateToken(
                 "7",
                 Map.of(
+                    "aud", "gameplay-connect",
                     "accountId", "7",
                     "tenantId", "1",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
                     "gameInstanceId", "42",
+                    "pointerVersion", "17",
+                    "connectScopeId", "scope-1",
+                    "requestId", "req-1",
                     "jti", "jti-1"));
 
     MockServerHttpRequest request =
@@ -100,9 +107,15 @@ class GameplayHandshakeFilterTest {
             .generateToken(
                 "7",
                 Map.of(
+                    "aud", "gameplay-connect",
                     "accountId", "7",
                     "tenantId", "1",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
                     "gameInstanceId", "42",
+                    "pointerVersion", "18",
+                    "connectScopeId", "scope-2",
+                    "requestId", "req-2",
                     "jti", "jti-2"));
 
     MockServerHttpRequest request =
@@ -120,6 +133,16 @@ class GameplayHandshakeFilterTest {
         .isEqualTo("42");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context"))
         .isNotBlank();
+    Claims connectContextClaims =
+        new JwtUtil(SECRET, 30_000L)
+            .parseToken(
+                mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context"))
+            .getPayload();
+    assertThat(connectContextClaims.get("worldSlug")).isEqualTo("demo");
+    assertThat(connectContextClaims.get("realmSlug")).isEqualTo("production");
+    assertThat(connectContextClaims.get("pointerVersion")).isEqualTo("18");
+    assertThat(connectContextClaims.get("connectScopeId")).isEqualTo("scope-2");
+    assertThat(connectContextClaims.get("connectRequestId")).isEqualTo("req-2");
     assertThat(
             mutatedExchange
                 .getRequest()
@@ -171,9 +194,15 @@ class GameplayHandshakeFilterTest {
         expiredJwtUtil.generateToken(
             "7",
             Map.of(
+                "aud", "gameplay-connect",
                 "accountId", "7",
                 "tenantId", "1",
+                "worldSlug", "demo",
+                "realmSlug", "production",
                 "gameInstanceId", "42",
+                "pointerVersion", "17",
+                "connectScopeId", "scope-expired",
+                "requestId", "req-expired",
                 "jti", "jti-expired"));
 
     MockServerWebExchange exchange =
@@ -209,9 +238,15 @@ class GameplayHandshakeFilterTest {
             .generateToken(
                 "7",
                 Map.of(
+                    "aud", "gameplay-connect",
                     "accountId", "7",
                     "tenantId", "1",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
                     "gameInstanceId", "42",
+                    "pointerVersion", "17",
+                    "connectScopeId", "scope-replay",
+                    "requestId", "req-replay",
                     "jti", "jti-replay"));
 
     MockServerWebExchange first =
@@ -246,9 +281,15 @@ class GameplayHandshakeFilterTest {
             .generateToken(
                 "7",
                 Map.of(
+                    "aud", "gameplay-connect",
                     "accountId", "7",
                     "tenantId", "1",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
                     "gameInstanceId", "42",
+                    "pointerVersion", "17",
+                    "connectScopeId", "scope-no-redis",
+                    "requestId", "req-no-redis",
                     "jti", "jti-no-redis"));
 
     MockServerWebExchange exchange =

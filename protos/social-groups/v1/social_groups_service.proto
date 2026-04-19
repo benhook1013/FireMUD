@@ -73,6 +73,13 @@ enum FriendPresenceActivityState {
   FRIEND_PRESENCE_ACTIVITY_STATE_EXPLICIT_AFK = 3;
 }
 
+enum FriendRecentPresenceDisposition {
+  FRIEND_RECENT_PRESENCE_DISPOSITION_UNSPECIFIED = 0;
+  FRIEND_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS = 1;
+  FRIEND_RECENT_PRESENCE_DISPOSITION_LOGOUT = 2;
+  FRIEND_RECENT_PRESENCE_DISPOSITION_TAKEOVER = 3;
+}
+
 message FriendPresenceEntry {
   string friend_account_id = 1;
   bool online = 2;
@@ -81,6 +88,11 @@ message FriendPresenceEntry {
   string character_name = 5;
   FriendPresenceActivityState activity_state = 6;
   int64 last_seen_at_ms = 7;
+  string world_slug = 8;
+  string world_display_name = 9;
+  string realm_slug = 10;
+  string realm_display_name = 11;
+  FriendRecentPresenceDisposition recent_disposition = 12;
 }
 
 message ListFriendPresenceResponse {

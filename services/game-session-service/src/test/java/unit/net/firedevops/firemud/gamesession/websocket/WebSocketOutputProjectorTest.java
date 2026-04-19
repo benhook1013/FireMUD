@@ -13,8 +13,10 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretation
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
+import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -98,6 +100,112 @@ class WebSocketOutputProjectorTest {
     assertThat(json.path("outputs").get(0).path("payloadType").asText()).isEqualTo("text_message");
     assertThat(json.path("outputs").get(0).path("payload").path("messageKey").asText())
         .isEqualTo("communication.whisper.actor");
+  }
+
+  @Test
+  void firstPartyWebProjectsWhoViewPayloads() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    String payload =
+        projector.projectCommandResponse(
+            session,
+            new TextCommand(TextCommandType.WHO, List.of(), "WHO"),
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(),
+                List.of(
+                    PlayerOutput.view(
+                        new WhoViewOutput(
+                            List.of(new WhoViewOutput.Entry(1, "Aster", "ACTIVE")),
+                            List.of(new WhoViewOutput.Entry(1, "Ben", "EXPLICIT_AFK")))))),
+            List.of(
+                PlayerOutput.view(
+                    new WhoViewOutput(
+                        List.of(new WhoViewOutput.Entry(1, "Aster", "ACTIVE")),
+                        List.of(new WhoViewOutput.Entry(1, "Ben", "EXPLICIT_AFK"))))),
+            "en-NZ",
+            presentation);
+
+    JsonNode json = objectMapper.readTree(payload);
+    assertThat(json.path("outputs")).hasSize(1);
+    assertThat(json.path("outputs").get(0).path("payloadType").asText()).isEqualTo("who_view");
+    assertThat(
+            json.path("outputs")
+                .get(0)
+                .path("payload")
+                .path("players")
+                .get(0)
+                .path("activityState")
+                .asText())
+        .isEqualTo("EXPLICIT_AFK");
+  }
+
+  @Test
+  void firstPartyWebProjectsFriendsViewPayloads() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    String payload =
+        projector.projectCommandResponse(
+            session,
+            new TextCommand(TextCommandType.FRIENDS, List.of(), "FRIENDS"),
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(),
+                List.of(
+                    PlayerOutput.view(
+                        new FriendPresenceViewOutput(
+                            List.of(
+                                new FriendPresenceViewOutput.Entry(
+                                    1,
+                                    3L,
+                                    "Sora",
+                                    true,
+                                    "demo",
+                                    "Demo World",
+                                    "production",
+                                    "Live Realm",
+                                    "Sora",
+                                    "AUTO_AFK",
+                                    null,
+                                    null)))))),
+            List.of(
+                PlayerOutput.view(
+                    new FriendPresenceViewOutput(
+                        List.of(
+                            new FriendPresenceViewOutput.Entry(
+                                1,
+                                3L,
+                                "Sora",
+                                true,
+                                "demo",
+                                "Demo World",
+                                "production",
+                                "Live Realm",
+                                "Sora",
+                                "AUTO_AFK",
+                                null,
+                                null))))),
+            "en-NZ",
+            presentation);
+
+    JsonNode json = objectMapper.readTree(payload);
+    assertThat(json.path("outputs")).hasSize(1);
+    assertThat(json.path("outputs").get(0).path("payloadType").asText()).isEqualTo("friends_view");
+    assertThat(
+            json.path("outputs")
+                .get(0)
+                .path("payload")
+                .path("friends")
+                .get(0)
+                .path("worldDisplayName")
+                .asText())
+        .isEqualTo("Demo World");
   }
 
   @Test

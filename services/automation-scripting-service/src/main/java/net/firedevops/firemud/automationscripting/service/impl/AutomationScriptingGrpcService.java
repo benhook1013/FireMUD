@@ -10,12 +10,15 @@ import net.firedevops.firemud.automationscripting.model.FormationType;
 import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.service.PingService;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
+import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberRequest;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberResponse;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.CreateFormationRequest;
 import net.firedevops.firemud.automationscripting.v1.CreateFormationResponse;
+import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestRequest;
+import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.ListFormationMembersRequest;
@@ -41,6 +44,7 @@ public class AutomationScriptingGrpcService
       LoggerFactory.getLogger(AutomationScriptingGrpcService.class);
   private final PingService pingService;
   private final ScriptDefinitionService scriptService;
+  private final ScriptDesignDigestService scriptDesignDigestService;
   private final ScriptVersionService scriptVersionService;
   private final NpcFormationService formationService;
   private final MeterRegistry meterRegistry;
@@ -48,11 +52,13 @@ public class AutomationScriptingGrpcService
   public AutomationScriptingGrpcService(
       PingService pingService,
       ScriptDefinitionService scriptService,
+      ScriptDesignDigestService scriptDesignDigestService,
       ScriptVersionService scriptVersionService,
       NpcFormationService formationService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.scriptService = scriptService;
+    this.scriptDesignDigestService = scriptDesignDigestService;
     this.scriptVersionService = scriptVersionService;
     this.formationService = Objects.requireNonNull(formationService);
     this.meterRegistry = meterRegistry;
@@ -255,6 +261,48 @@ public class AutomationScriptingGrpcService
               .setError(GrpcAppErrors.internal(meterRegistry, logger, "UpdateScript", ex))
               .build();
       responseObserver.onNext(resp);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.getDraftDesignDigest")
+  public void getDraftDesignDigest(
+      GetDraftDesignDigestRequest request,
+      StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
+    try {
+      var digest =
+          request.getScopeCase() == GetDraftDesignDigestRequest.ScopeCase.VERSION_ID
+              ? scriptDesignDigestService.getDraftDesignDigestForVersion(
+                  request.getTenantId(), request.getVersionId())
+              : scriptDesignDigestService.getDraftDesignDigestForScriptPatch(
+                  request.getTenantId(), request.getScriptPatchVersion());
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setTenantId(digest.tenantId())
+              .setScopeValue(digest.scopeValue())
+              .setAppliedCommitId(digest.appliedCommitId())
+              .setContentDigest(digest.contentDigest())
+              .setDigestSchemaVersion(digest.digestSchemaVersion())
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "GetDraftDesignDigest", ex))
+              .build());
       responseObserver.onCompleted();
     }
   }

@@ -7,6 +7,7 @@ public record AccountRecentPresenceState(
     long tenantId,
     long accountId,
     long lastSeenAtEpochMs,
+    AccountRecentPresenceDisposition disposition,
     AccountPresenceVisibilityPolicy visibilityPolicy)
     implements Serializable {
   private static final long serialVersionUID = 1L;

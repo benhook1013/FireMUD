@@ -35,14 +35,14 @@ Prerequisites: the TCP Proxy + Gateway stack running locally (see `services/tcp-
 4. Send `LOOK` and copy the multiline response, verifying the text (room name/desc/exits/entities) matches the WebSocket transcript.
 5. To test failure handling, request `LOOK` with a missing room id (by instructing Game Logic to look at a non seeded room). The proxy should relay `ERROR ROOM_NOT_FOUND` or the appropriate downstream error without dropping the connection. Include the final transcript as `look-telnet-<timestamp>.log`.
 
-Document every command/response pair so reproducible cross-service logs can be referenced in regression notes. The sample transcripts under `design/project-management/smoke-tests/look/` (`look-ws-sample.log`, `look-telnet-sample.log`) show the expected formatting for happy-path runs.
+Document every command/response pair so reproducible cross-service logs can be referenced in regression notes. Treat the expected formatting in `03-task-list-data-driven-look-vertical-slice.md` and the canonical smoke scripts under `dev-tools/` as the current source of truth rather than committed transcript artifacts.
 
 For a non-interactive Telnet smoke check that performs `LOGIN` + `LOOK` via the TCP Proxy and asserts `OK LOGIN` / `OK LOOK` appear in the responses, use the helper script in `services/tcp-proxy-service/telnet-login-look-smoke.sh`. This script is designed to complement the manual steps above and can be wired into CI or run locally after starting the full Telnet → Gateway → Game Session stack. The helper must wait for the canonical readiness endpoints for the path under test and fail if readiness does not converge; it should not mask startup races by timing out and continuing anyway or by re-running the full smoke until the stack eventually stabilizes.
 
 ## 3. Notes
 
-- Store the transcripts under `design/project-management/smoke-tests/look/` with filenames describing the transport and timestamp.
-- Reference these scripts in the README/CI docs once the full automated cross-service tests exist.
+- Store any ad hoc transcripts in your local workspace or attach them to the relevant investigation/PR notes; do not treat committed transcript artifacts as canonical repo content.
+- Reference the `dev-tools/verify-fresh-bootstrap.sh`, `dev-tools/verify-restart-state.sh`, or `SMOKE_IMAGE_TAG=<tag> dev-tools/verify-smoke-images.sh` workflows when documenting current end-to-end smoke proof.
 - When replaying the scripts, capture `gamesession.command.look.invocations`/`gamesession.command.look.failures` counters (via `/actuator/prometheus` or the Micrometer endpoint) and log output from Game Session to confirm the metrics/`ERROR <CODE>` mappings fire for both success and failure scenarios.
 - Keep an eye on Game Logic logs for the `Rendered LOOK text` entry emitted by `LookResultRenderer` so you can correlate the structured DTO with the textual transcript when diagnosing discrepancies.
 - Consult `design/project-management/slice-support/look-instrumentation.md` for a deeper dive into the meters/logs that should light up during these runs and how to correlate them back to tenants, error codes, and smoke transcripts.

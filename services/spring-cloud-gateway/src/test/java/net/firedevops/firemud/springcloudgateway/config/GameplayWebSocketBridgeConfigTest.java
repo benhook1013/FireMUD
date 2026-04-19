@@ -17,7 +17,10 @@ class GameplayWebSocketBridgeConfigTest {
   private final ReactiveWebApplicationContextRunner contextRunner =
       new ReactiveWebApplicationContextRunner()
           .withUserConfiguration(
-              GameplayWebSocketBridgeConfig.class, TestRuntimeIdentityConfig.class);
+              GameplayWebSocketBridgeConfig.class, TestRuntimeIdentityConfig.class)
+          .withBean(
+              GameplayWebSocketBridgeProperties.class,
+              () -> new GameplayWebSocketBridgeProperties(null, 0, 0, 0));
 
   @Test
   void gameplayWebSocketPathIsOwnedByGatewayCode() {
