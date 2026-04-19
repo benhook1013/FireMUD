@@ -176,3 +176,7 @@ Entry format:
 
 - Preview deploy surfaced a real `game-design-service` failure in `ResolveLaunchDescriptor`: loading `game_templates` through the full Postgres/JPA path returned an app-level `INTERNAL`, while unit tests around `LaunchDescriptorServiceImpl` were still green because they only mocked the repository layer.
 - Better pattern: when a control-plane/runtime seam depends on real ORM hydration against Postgres types like `jsonb`, keep at least one Testcontainers-backed integration test on the exact service path so preview or smoke is not the first place column-mapping drift appears.
+
+2026-04-19
+
+- Stale `application-dev.yml` files that only swap services onto H2/Flyway-off local behavior are architectural drift now that the canonical dev path is the real Postgres/Redis topology. Keep `dev` overrides only for intentional local behavior, not silent fake persistence.
