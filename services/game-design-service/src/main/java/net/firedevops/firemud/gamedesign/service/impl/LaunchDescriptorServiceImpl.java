@@ -11,10 +11,10 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
-import net.firedevops.firemud.gamedesign.entity.GameTemplate;
 import net.firedevops.firemud.gamedesign.entity.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.model.TemplateReferencePhase;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.repository.GameTemplateLaunchConfigView;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
 import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -52,9 +52,9 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
       throw new IllegalArgumentException(
           "INVALID_TEMPLATE_CONFIGURATION: controlPlaneRequestId is required");
     }
-    GameTemplate template =
+    GameTemplateLaunchConfigView template =
         gameTemplateRepository
-            .findByTenantIdAndId(tenantId, gameTemplateId)
+            .findLaunchConfigByTenantIdAndId(tenantId, gameTemplateId)
             .orElseThrow(
                 () ->
                     new IllegalArgumentException(
@@ -144,7 +144,9 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
   }
 
   private String resolveScriptPatchVersion(
-      GameTemplate template, String requestedScriptPatchVersion, VersionDto version) {
+      GameTemplateLaunchConfigView template,
+      String requestedScriptPatchVersion,
+      VersionDto version) {
     String templateDefault = normalizeBlank(template.getDefaultScriptPatchVersion());
     String requested = normalizeBlank(requestedScriptPatchVersion);
     if (templateDefault != null && requested != null && !templateDefault.equals(requested)) {
@@ -162,7 +164,8 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     return resolved;
   }
 
-  private String resolveRuntimeFlagsJson(GameTemplate template, String requestedRuntimeFlagsJson) {
+  private String resolveRuntimeFlagsJson(
+      GameTemplateLaunchConfigView template, String requestedRuntimeFlagsJson) {
     String templateFlags =
         normalizeBlank(template.getDefaultRuntimeFlagsJson()) == null
             ? "{}"

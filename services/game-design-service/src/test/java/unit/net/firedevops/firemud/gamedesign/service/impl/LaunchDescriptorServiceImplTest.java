@@ -9,11 +9,11 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
-import net.firedevops.firemud.gamedesign.entity.GameTemplate;
 import net.firedevops.firemud.gamedesign.entity.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.TemplateReferencePhase;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.repository.GameTemplateLaunchConfigView;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
 import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -46,14 +46,15 @@ class LaunchDescriptorServiceImplTest {
 
   @Test
   void resolveLaunchDescriptorPersistsDeterministicDescriptor() {
-    GameTemplate template = new GameTemplate();
-    template.setId(9L);
-    template.setTenantId("tenant-1");
-    template.setDefaultVersionId(7L);
-    template.setDefaultScriptPatchVersion("patch-1");
-    template.setDefaultRuntimeFlagsJson("{}");
-    template.setTemplateReferencePhase(TemplateReferencePhase.ENFORCED);
-    when(gameTemplateRepository.findByTenantIdAndId("tenant-1", 9L))
+    GameTemplateLaunchConfigView template =
+        org.mockito.Mockito.mock(GameTemplateLaunchConfigView.class);
+    when(template.getId()).thenReturn(9L);
+    when(template.getTenantId()).thenReturn("tenant-1");
+    when(template.getDefaultVersionId()).thenReturn(7L);
+    when(template.getDefaultScriptPatchVersion()).thenReturn("patch-1");
+    when(template.getDefaultRuntimeFlagsJson()).thenReturn("{}");
+    when(template.getTemplateReferencePhase()).thenReturn(TemplateReferencePhase.ENFORCED);
+    when(gameTemplateRepository.findLaunchConfigByTenantIdAndId("tenant-1", 9L))
         .thenReturn(Optional.of(template));
     when(launchDescriptorRepository.findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
             "tenant-1", 9L, "cp-1"))
@@ -99,8 +100,10 @@ class LaunchDescriptorServiceImplTest {
   void resolveLaunchDescriptorRejectsConflictingRequestReuse() {
     LaunchDescriptor existing = new LaunchDescriptor();
     existing.setRequestHash("other-hash");
-    when(gameTemplateRepository.findByTenantIdAndId("tenant-1", 9L))
-        .thenReturn(Optional.of(new GameTemplate()));
+    GameTemplateLaunchConfigView template =
+        org.mockito.Mockito.mock(GameTemplateLaunchConfigView.class);
+    when(gameTemplateRepository.findLaunchConfigByTenantIdAndId("tenant-1", 9L))
+        .thenReturn(Optional.of(template));
     when(launchDescriptorRepository.findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
             "tenant-1", 9L, "cp-1"))
         .thenReturn(Optional.of(existing));

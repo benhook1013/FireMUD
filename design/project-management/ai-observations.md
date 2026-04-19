@@ -171,3 +171,8 @@ Entry format:
 
 - Secret/compliance evidence age checks are useful as a merge gate on pull requests, but the same time-based threshold can make `develop` or `main` suddenly go red later with no code changes if push/default-branch runs use the same strict mode.
 - Better pattern: keep PR validation strict, but run default-branch or scheduled checks in advisory mode with an explicit warning window so teams see upcoming expiry before the hard threshold lands on a merge-critical branch.
+
+## 2026-04-19 - Postgres-backed launch-descriptor paths need real integration coverage, not just unit mocks
+
+- Preview deploy surfaced a real `game-design-service` failure in `ResolveLaunchDescriptor`: loading `game_templates` through the full Postgres/JPA path returned an app-level `INTERNAL`, while unit tests around `LaunchDescriptorServiceImpl` were still green because they only mocked the repository layer.
+- Better pattern: when a control-plane/runtime seam depends on real ORM hydration against Postgres types like `jsonb`, keep at least one Testcontainers-backed integration test on the exact service path so preview or smoke is not the first place column-mapping drift appears.
