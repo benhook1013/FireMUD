@@ -8,6 +8,10 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
+import net.firedevops.firemud.account.v1.GetProfileRequest;
+import net.firedevops.firemud.account.v1.GetProfileResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
@@ -21,9 +25,12 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
+import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /** gRPC client for the Account Service login endpoint. */
 @Component
@@ -32,6 +39,7 @@ public final class AccountClient
   private static final long READINESS_DEADLINE_SECONDS = 2L;
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final Logger logger = LoggingUtil.getLogger(AccountClient.class);
+  private static final JsonMapper JSON_MAPPER = JsonMapper.builder().build();
 
   private final DevIsolatedProperties devIsolatedProperties;
 
@@ -200,6 +208,85 @@ public final class AccountClient
                 .setCode("ENTITLEMENT_UNAVAILABLE")
                 .setMessage("Entitlement authority unavailable"))
         .build();
+  }
+
+  public EnsurePublicProductionPlayerMembershipResponse ensurePublicProductionPlayerMembership(
+      String accountId, String tenantId, String realmSlug, String requestId) {
+    if (devIsolatedProperties.isDevIsolated() || stub() == null) {
+      return EnsurePublicProductionPlayerMembershipResponse.newBuilder()
+          .setAccountId(accountId)
+          .setTenantId(tenantId)
+          .setRealmSlug(realmSlug)
+          .setGameplayAdmissionAllowed(true)
+          .setMembershipVersion(1L)
+          .setCreated(true)
+          .setEvaluatedAt(java.time.Instant.now().toString())
+          .build();
+    }
+    EnsurePublicProductionPlayerMembershipRequest request =
+        EnsurePublicProductionPlayerMembershipRequest.newBuilder()
+            .setAccountId(accountId)
+            .setTenantId(tenantId)
+            .setRealmSlug(realmSlug)
+            .setRequestId(requestId == null ? "" : requestId)
+            .build();
+    try {
+      return callStub().ensurePublicProductionPlayerMembership(request);
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+        logger.warn(
+            "Account Service unavailable; rebuilding channel and retrying public-production membership",
+            ex);
+        try {
+          initClient();
+          return callStub().ensurePublicProductionPlayerMembership(request);
+        } catch (Exception retryEx) {
+          logger.warn(
+              "Failed to retry Account Service public-production membership after channel reload",
+              retryEx);
+        }
+      } else {
+        logger.warn("Failed to call Account Service public-production membership endpoint", ex);
+      }
+    } catch (Exception ex) {
+      logger.warn("Failed to call Account Service public-production membership endpoint", ex);
+    }
+    return EnsurePublicProductionPlayerMembershipResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                .setMessage("Membership authority unavailable"))
+        .build();
+  }
+
+  public AccountPresenceVisibilityPolicy getPresenceVisibilityPolicy(
+      long tenantId, long accountId) {
+    if (devIsolatedProperties.isDevIsolated() || stub() == null) {
+      return AccountPresenceVisibilityPolicy.FRIENDS_ONLY;
+    }
+    GetProfileRequest request =
+        GetProfileRequest.newBuilder()
+            .setTenantId(Long.toString(tenantId))
+            .setAccountId(Long.toString(accountId))
+            .build();
+    try {
+      GetProfileResponse response = callStub().getProfile(request);
+      if (response.hasError() || response.getProfileJson().isBlank()) {
+        return AccountPresenceVisibilityPolicy.FRIENDS_ONLY;
+      }
+      JsonNode node = JSON_MAPPER.readTree(response.getProfileJson());
+      String value = node.path("presenceVisibilityPolicy").asText("");
+      return value.isBlank()
+          ? AccountPresenceVisibilityPolicy.FRIENDS_ONLY
+          : AccountPresenceVisibilityPolicy.valueOf(value);
+    } catch (Exception ex) {
+      logger.warn(
+          "Failed to resolve account presence visibility policy tenantId={} accountId={}",
+          tenantId,
+          accountId,
+          ex);
+      return AccountPresenceVisibilityPolicy.FRIENDS_ONLY;
+    }
   }
 
   @Override

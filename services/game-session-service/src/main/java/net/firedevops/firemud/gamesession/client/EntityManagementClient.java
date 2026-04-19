@@ -17,6 +17,8 @@ import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
@@ -29,6 +31,7 @@ import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
@@ -95,9 +98,15 @@ public final class EntityManagementClient
     return callStub().ping(PingRequest.newBuilder().build());
   }
 
-  public Optional<Character> findCharacterByName(String tenantId, String name) {
+  public Optional<Character> findCharacterByName(
+      String tenantId, String gameInstanceId, PlayableStateScope playableStateScope, String name) {
     FindCharacterByNameRequest request =
-        FindCharacterByNameRequest.newBuilder().setTenantId(tenantId).setName(name).build();
+        FindCharacterByNameRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setGameInstanceId(gameInstanceId)
+            .setPlayableStateScope(playableStateScope)
+            .setName(name)
+            .build();
     try {
       FindCharacterByNameResponse response =
           stub()
@@ -119,6 +128,41 @@ public final class EntityManagementClient
           ex);
       return Optional.empty();
     }
+  }
+
+  public ListCharactersByAccountResponse listCharactersByAccount(
+      String tenantId,
+      String accountId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope) {
+    ListCharactersByAccountRequest request =
+        ListCharactersByAccountRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setAccountId(accountId)
+            .setGameInstanceId(gameInstanceId)
+            .setPlayableStateScope(playableStateScope)
+            .build();
+    try {
+      return callStub().listCharactersByAccount(request);
+    } catch (StatusRuntimeException ex) {
+      logger.warn(
+          "Failed to call Entity Management list-characters endpoint tenantId={} accountId={}",
+          tenantId,
+          accountId,
+          ex);
+    } catch (Exception ex) {
+      logger.warn(
+          "Failed to call Entity Management list-characters endpoint tenantId={} accountId={}",
+          tenantId,
+          accountId,
+          ex);
+    }
+    return ListCharactersByAccountResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("CHARACTER_LIST_UNAVAILABLE")
+                .setMessage("Character list unavailable"))
+        .build();
   }
 
   public QueryInventoryResponse queryInventory(String tenantId, String characterId) {
@@ -343,6 +387,7 @@ public final class EntityManagementClient
       String containerInstanceId,
       String itemId,
       String itemInstanceId,
+      String stackFamilyKey,
       int quantity) {
     PutItemIntoContainerRequest.Builder request =
         PutItemIntoContainerRequest.newBuilder()
@@ -353,6 +398,9 @@ public final class EntityManagementClient
             .setQuantity(quantity);
     if (itemInstanceId != null && !itemInstanceId.isBlank()) {
       request.setItemInstanceId(itemInstanceId);
+    }
+    if (stackFamilyKey != null && !stackFamilyKey.isBlank()) {
+      request.setStackFamilyKey(stackFamilyKey);
     }
     try {
       return callStub().putItemIntoContainer(request.build());
@@ -382,12 +430,24 @@ public final class EntityManagementClient
         .build();
   }
 
+  public PutItemIntoContainerResponse putItemIntoContainer(
+      String tenantId,
+      String characterId,
+      String containerInstanceId,
+      String itemId,
+      String itemInstanceId,
+      int quantity) {
+    return putItemIntoContainer(
+        tenantId, characterId, containerInstanceId, itemId, itemInstanceId, null, quantity);
+  }
+
   public TakeItemFromContainerResponse takeItemFromContainer(
       String tenantId,
       String characterId,
       String containerInstanceId,
       String itemId,
       String itemInstanceId,
+      String stackFamilyKey,
       int quantity) {
     TakeItemFromContainerRequest.Builder request =
         TakeItemFromContainerRequest.newBuilder()
@@ -398,6 +458,9 @@ public final class EntityManagementClient
             .setQuantity(quantity);
     if (itemInstanceId != null && !itemInstanceId.isBlank()) {
       request.setItemInstanceId(itemInstanceId);
+    }
+    if (stackFamilyKey != null && !stackFamilyKey.isBlank()) {
+      request.setStackFamilyKey(stackFamilyKey);
     }
     try {
       return callStub().takeItemFromContainer(request.build());
@@ -425,6 +488,17 @@ public final class EntityManagementClient
                 .setCode("CONTAINER_UNAVAILABLE")
                 .setMessage("Container service unavailable"))
         .build();
+  }
+
+  public TakeItemFromContainerResponse takeItemFromContainer(
+      String tenantId,
+      String characterId,
+      String containerInstanceId,
+      String itemId,
+      String itemInstanceId,
+      int quantity) {
+    return takeItemFromContainer(
+        tenantId, characterId, containerInstanceId, itemId, itemInstanceId, null, quantity);
   }
 
   public ListRoomEntitiesResponse listRoomEntities(
@@ -475,6 +549,7 @@ public final class EntityManagementClient
       String itemId,
       String itemInstanceId,
       String containerInstanceId,
+      String stackFamilyKey,
       int quantity) {
     PickupItemFromRoomRequest.Builder request =
         PickupItemFromRoomRequest.newBuilder()
@@ -489,6 +564,9 @@ public final class EntityManagementClient
     }
     if (StringUtils.hasText(itemInstanceId)) {
       request.setItemInstanceId(itemInstanceId);
+    }
+    if (StringUtils.hasText(stackFamilyKey)) {
+      request.setStackFamilyKey(stackFamilyKey);
     }
     try {
       return callStub().pickupItemFromRoom(request.build());
@@ -524,6 +602,27 @@ public final class EntityManagementClient
       String gameInstanceId,
       String roomInstanceId,
       String itemId,
+      String itemInstanceId,
+      String containerInstanceId,
+      int quantity) {
+    return pickupItemFromRoom(
+        tenantId,
+        characterId,
+        gameInstanceId,
+        roomInstanceId,
+        itemId,
+        itemInstanceId,
+        containerInstanceId,
+        null,
+        quantity);
+  }
+
+  public PickupItemFromRoomResponse pickupItemFromRoom(
+      String tenantId,
+      String characterId,
+      String gameInstanceId,
+      String roomInstanceId,
+      String itemId,
       String containerInstanceId,
       int quantity) {
     return pickupItemFromRoom(
@@ -534,6 +633,7 @@ public final class EntityManagementClient
         itemId,
         null,
         containerInstanceId,
+        null,
         quantity);
   }
 
@@ -545,6 +645,7 @@ public final class EntityManagementClient
       String itemId,
       String itemInstanceId,
       String containerInstanceId,
+      String stackFamilyKey,
       int quantity) {
     DropItemToRoomRequest.Builder request =
         DropItemToRoomRequest.newBuilder()
@@ -559,6 +660,9 @@ public final class EntityManagementClient
     }
     if (StringUtils.hasText(itemInstanceId)) {
       request.setItemInstanceId(itemInstanceId);
+    }
+    if (StringUtils.hasText(stackFamilyKey)) {
+      request.setStackFamilyKey(stackFamilyKey);
     }
     try {
       return callStub().dropItemToRoom(request.build());
@@ -594,6 +698,27 @@ public final class EntityManagementClient
       String gameInstanceId,
       String roomInstanceId,
       String itemId,
+      String itemInstanceId,
+      String containerInstanceId,
+      int quantity) {
+    return dropItemToRoom(
+        tenantId,
+        characterId,
+        gameInstanceId,
+        roomInstanceId,
+        itemId,
+        itemInstanceId,
+        containerInstanceId,
+        null,
+        quantity);
+  }
+
+  public DropItemToRoomResponse dropItemToRoom(
+      String tenantId,
+      String characterId,
+      String gameInstanceId,
+      String roomInstanceId,
+      String itemId,
       String containerInstanceId,
       int quantity) {
     return dropItemToRoom(
@@ -604,6 +729,7 @@ public final class EntityManagementClient
         itemId,
         null,
         containerInstanceId,
+        null,
         quantity);
   }
 

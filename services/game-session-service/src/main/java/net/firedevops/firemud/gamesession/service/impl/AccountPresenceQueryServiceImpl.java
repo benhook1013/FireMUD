@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -7,11 +8,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
-import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
@@ -28,18 +29,24 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
   private final GameplayPresenceActivityResolver gameplayPresenceActivityResolver;
   private final AccountRecentPresenceService accountRecentPresenceService;
   private final AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver;
+  private final GameplayWorldCatalog gameplayWorldCatalog;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected collaborators are retained only for internal query composition")
   public AccountPresenceQueryServiceImpl(
       GameInstanceRepository gameInstanceRepository,
       GameplayPresenceService gameplayPresenceService,
       GameplayPresenceActivityResolver gameplayPresenceActivityResolver,
       AccountRecentPresenceService accountRecentPresenceService,
-      AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver) {
+      AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver,
+      GameplayWorldCatalog gameplayWorldCatalog) {
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayPresenceService = gameplayPresenceService;
     this.gameplayPresenceActivityResolver = gameplayPresenceActivityResolver;
     this.accountRecentPresenceService = accountRecentPresenceService;
     this.visibilityPolicyResolver = visibilityPolicyResolver;
+    this.gameplayWorldCatalog = gameplayWorldCatalog;
   }
 
   @Override
@@ -60,7 +67,7 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     Map<Long, AccountRecentPresenceState> recentStates =
         accountRecentPresenceService.findByAccountIds(tenantId, requestedIds);
     for (Long accountId : requestedIds) {
-      results.put(accountId, offline(accountId, recentStates.get(accountId)));
+      results.put(accountId, offline(tenantId, accountId, recentStates.get(accountId)));
     }
 
     List<GameInstance> runningInstances =
@@ -74,12 +81,20 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       }
       GameplayPresenceActivityState activityState =
           gameplayPresenceActivityResolver.resolve(presence);
+      GameplayWorldCatalog.RuntimeRealmTarget runtimeTarget =
+          gameplayWorldCatalog
+              .resolveRuntimeTarget(tenantId, presence.gameInstanceId())
+              .orElse(null);
       results.put(
           instance.getOwnerAccountId(),
           new AccountPresenceSnapshot(
               instance.getOwnerAccountId(),
               true,
               presence.gameInstanceId(),
+              runtimeTarget == null ? null : runtimeTarget.worldSlug(),
+              runtimeTarget == null ? null : runtimeTarget.worldDisplayName(),
+              runtimeTarget == null ? null : runtimeTarget.realmSlug(),
+              runtimeTarget == null ? null : runtimeTarget.realmDisplayName(),
               presence.characterId(),
               presence.characterName(),
               activityState,
@@ -87,12 +102,19 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
                   ? Instant.ofEpochMilli(
                       recentStates.get(instance.getOwnerAccountId()).lastSeenAtEpochMs())
                   : null,
-              visibilityPolicyResolver.resolve(presence.role())));
+              recentStates.containsKey(instance.getOwnerAccountId())
+                  ? recentStates.get(instance.getOwnerAccountId()).disposition()
+                  : null,
+              recentStates.containsKey(instance.getOwnerAccountId())
+                  ? recentStates.get(instance.getOwnerAccountId()).visibilityPolicy()
+                  : visibilityPolicyResolver.resolve(
+                      tenantId, instance.getOwnerAccountId(), presence.role())));
     }
     return List.copyOf(new ArrayList<>(results.values()));
   }
 
-  private AccountPresenceSnapshot offline(long accountId, AccountRecentPresenceState recentState) {
+  private AccountPresenceSnapshot offline(
+      long tenantId, long accountId, AccountRecentPresenceState recentState) {
     return new AccountPresenceSnapshot(
         accountId,
         false,
@@ -100,9 +122,14 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
         null,
         null,
         null,
+        null,
+        null,
+        null,
+        null,
         recentState == null ? null : Instant.ofEpochMilli(recentState.lastSeenAtEpochMs()),
+        recentState == null ? null : recentState.disposition(),
         recentState == null
-            ? AccountPresenceVisibilityPolicy.FRIENDS_ONLY
+            ? visibilityPolicyResolver.resolve(tenantId, accountId)
             : recentState.visibilityPolicy());
   }
 }

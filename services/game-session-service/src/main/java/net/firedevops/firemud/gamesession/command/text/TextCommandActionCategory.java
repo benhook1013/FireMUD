@@ -1,7 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 /** Bounded primary category for command/activity semantics. */
-enum TextCommandActionCategory {
+public enum TextCommandActionCategory {
   GAMEPLAY,
   SOCIAL,
   META,

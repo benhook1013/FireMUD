@@ -2,18 +2,16 @@ package net.firedevops.firemud.entitymanagement.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
-import java.util.Map;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
-import net.firedevops.firemud.entitymanagement.security.JwtAuthInterceptor;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,17 +28,10 @@ class CharacterControllerTest {
   @Autowired private MockMvc mockMvc;
 
   @MockitoBean private CharacterService characterService;
-  @MockitoBean private JwtAuthInterceptor jwtAuthInterceptor;
 
   @BeforeEach
-  void setUpSecurityContext() throws Exception {
-    doAnswer(
-            invocation -> {
-              SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
-              return true;
-            })
-        .when(jwtAuthInterceptor)
-        .preHandle(any(), any(), any());
+  void setUpSecurityContext() {
+    SessionContext.setContext("test-account", List.of("platformAdmin"), java.util.Map.of());
   }
 
   @AfterEach
@@ -51,11 +42,19 @@ class CharacterControllerTest {
   @Test
   void listReturnsCharacters() throws Exception {
     CharacterDto dto = new CharacterDto(1L, 1L, 1L, "Hero", 1, 0, 1, 1, 1, 1, 10, 5);
-    when(characterService.listForTenantAndAccount(eq(1L), eq(1L), any(Pageable.class)))
+    when(characterService.listForGameplayScope(
+            eq(1L),
+            eq(1L),
+            eq("44"),
+            eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED),
+            any(Pageable.class)))
         .thenReturn(new PageImpl<>(List.of(dto)));
 
     mockMvc
-        .perform(get("/tenants/1/accounts/1/characters"))
+        .perform(
+            get("/tenants/1/accounts/1/characters")
+                .param("gameInstanceId", "44")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.content[0].name").value("Hero"));

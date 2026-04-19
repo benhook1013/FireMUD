@@ -7,6 +7,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public interface RoomGroundInventoryRepository
@@ -15,4 +16,7 @@ public interface RoomGroundInventoryRepository
   @EntityGraph(attributePaths = {"item"})
   Page<RoomGroundInventoryEntry> findByIdTenantIdAndIdGameInstanceIdAndIdRoomInstanceId(
       Long tenantId, String gameInstanceId, String roomInstanceId, Pageable pageable);
+
+  @Transactional
+  long deleteByIdTenantIdAndIdGameInstanceId(Long tenantId, String gameInstanceId);
 }

@@ -115,7 +115,7 @@ class InventoryCommandHandlerTest {
   }
 
   @Test
-  void inventoryHereReturnsStackedRoomGroundItemsWithoutVisibleRefs() {
+  void inventoryHereReturnsStackedRoomGroundItemsWithStackRefs() {
     when(entityManagementClient.listRoomGroundInventory("22", "77", "room-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
@@ -125,6 +125,7 @@ class InventoryCommandHandlerTest {
                         .setItemName("Arrow")
                         .setItemDescription("A straight wooden arrow")
                         .setQuantity(12)
+                        .setVisibleRef("ammo/iron")
                         .build())
                 .build());
 
@@ -135,7 +136,7 @@ class InventoryCommandHandlerTest {
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
     assertThat(view.title()).isEqualTo("Room Inventory:");
-    assertThat(view.lines()).containsExactly("- Arrow x12 (A straight wooden arrow)");
+    assertThat(view.lines()).containsExactly("- Arrow [ammo/iron] x12 (A straight wooden arrow)");
   }
 
   @Test
@@ -175,7 +176,8 @@ class InventoryCommandHandlerTest {
                         .setItemName("Rough Iron Key")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", null, "", 1))
+    when(entityManagementClient.pickupItemFromRoom(
+            "22", "911", "77", "room-7", "7", null, "", null, 1))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -232,7 +234,8 @@ class InventoryCommandHandlerTest {
                         .setItemName("Torch")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", null, "", 2))
+    when(entityManagementClient.pickupItemFromRoom(
+            "22", "911", "77", "room-7", "7", null, "", null, 2))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -279,9 +282,11 @@ class InventoryCommandHandlerTest {
                         .setItemName("Arrow")
                         .setItemDescription("A straight wooden arrow")
                         .setQuantity(12)
+                        .setVisibleRef("ammo/iron")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", null, "", 3))
+    when(entityManagementClient.pickupItemFromRoom(
+            "22", "911", "77", "room-7", "7", null, "", null, 3))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -315,6 +320,55 @@ class InventoryCommandHandlerTest {
     assertThat(result.outputs().get(0).text()).isEqualTo("You pick up Arrow x3.");
     assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).lines())
         .containsExactly("- Arrow x3 (A straight wooden arrow)");
+  }
+
+  @Test
+  void getWithExplicitStackReferenceAllowsQuantitySelection() {
+    when(entityManagementClient.listRoomGroundInventory("22", "77", "room-7"))
+        .thenReturn(
+            ListRoomGroundInventoryResponse.newBuilder()
+                .addItems(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Arrow")
+                        .setItemDescription("A straight wooden arrow")
+                        .setQuantity(12)
+                        .setVisibleRef("ammo/iron")
+                        .build())
+                .build());
+    when(entityManagementClient.pickupItemFromRoom(
+            "22", "911", "77", "room-7", "7", null, "", "ammo/iron", 3))
+        .thenReturn(
+            PickupItemFromRoomResponse.newBuilder()
+                .setInventoryItem(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Arrow")
+                        .setItemDescription("A straight wooden arrow")
+                        .setQuantity(3)
+                        .setVisibleRef("ammo/iron")
+                        .build())
+                .build());
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Arrow")
+                        .setItemDescription("A straight wooden arrow")
+                        .setQuantity(3)
+                        .setVisibleRef("ammo/iron")
+                        .build())
+                .build());
+
+    InventoryCommandHandlingResult result =
+        handler.handle(
+            context,
+            new TextCommand(TextCommandType.GET, List.of("3", "ammo/iron"), "GET 3 ammo/iron"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.outputs().get(0).text()).isEqualTo("You pick up Arrow x3.");
   }
 
   @Test
@@ -354,7 +408,7 @@ class InventoryCommandHandlerTest {
                         .build())
                 .build());
     when(entityManagementClient.pickupItemFromRoom(
-            "22", "911", "77", "room-7", "ITEM-009", "ITEM-009", "", 1))
+            "22", "911", "77", "room-7", "ITEM-009", "ITEM-009", "", null, 1))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -399,7 +453,8 @@ class InventoryCommandHandlerTest {
                         .build())
                 .build(),
             QueryInventoryResponse.newBuilder().build());
-    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "7", null, "7", 1))
+    when(entityManagementClient.dropItemToRoom(
+            "22", "911", "77", "room-7", "7", null, "7", null, 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -459,7 +514,8 @@ class InventoryCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "7", null, "7", 2))
+    when(entityManagementClient.dropItemToRoom(
+            "22", "911", "77", "room-7", "7", null, "7", null, 2))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -512,6 +568,44 @@ class InventoryCommandHandlerTest {
   }
 
   @Test
+  void dropWithExplicitStackReferenceAllowsQuantitySelection() {
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Arrow")
+                        .setItemDescription("A straight wooden arrow")
+                        .setQuantity(8)
+                        .setVisibleRef("ammo/iron")
+                        .build())
+                .build(),
+            QueryInventoryResponse.newBuilder().build());
+    when(entityManagementClient.dropItemToRoom(
+            "22", "911", "77", "room-7", "7", null, "7", "ammo/iron", 3))
+        .thenReturn(
+            DropItemToRoomResponse.newBuilder()
+                .setRoomGroundItem(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Arrow")
+                        .setItemDescription("A straight wooden arrow")
+                        .setQuantity(3)
+                        .setVisibleRef("ammo/iron")
+                        .build())
+                .build());
+
+    InventoryCommandHandlingResult result =
+        handler.handle(
+            context,
+            new TextCommand(TextCommandType.DROP, List.of("3", "ammo/iron"), "DROP 3 ammo/iron"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.outputs().get(0).text()).isEqualTo("You drop Arrow x3.");
+  }
+
+  @Test
   void dropAllowsNonEmptyCarriedContainerWhenBackendPreservesIdentity() {
     when(entityManagementClient.queryInventory("22", "911"))
         .thenReturn(
@@ -537,7 +631,7 @@ class InventoryCommandHandlerTest {
                         .build())
                 .build());
     when(entityManagementClient.dropItemToRoom(
-            "22", "911", "77", "room-7", "10", null, "container-10", 1))
+            "22", "911", "77", "room-7", "10", null, "container-10", null, 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -574,7 +668,8 @@ class InventoryCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "7", null, "7", 1))
+    when(entityManagementClient.dropItemToRoom(
+            "22", "911", "77", "room-7", "7", null, "7", null, 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setError(

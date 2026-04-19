@@ -14,6 +14,7 @@ The **Game Design Service** manages version metadata and publish workflows for g
 2. The service writes a new `version_id` and associated records to its database, linking the version to each tenant and recording notes and base versions.
 3. During authoring, the Game Design Service applies revisions incrementally to **Draft** template rows hosted by the owning domain services via idempotent design APIs keyed by `(tenantId, versionId)`. At publish time, a Saga coordinates all domain services so they validate and finalize their existing Draft data for the given `tenantId` and `version_id`, marking that data as Published and ready for runtime use. No separate design database is copied into the domain services; they already host the versioned graphs for their domains.
    - Publish-time validation must be based on durable digests: every participating domain service must report `GetDraftDesignDigest` for the publish scope (`oneof {versionId, scriptPatchVersion}`) matching the commit being published (`appliedCommitId`, `contentDigest`, and `digestSchemaVersion`), and the Game Design Service must report a control-plane digest for normalized dependency tables (`game_template_*_ref`, `version_asset`, and related publish-critical metadata) for the same commit/version scope. If any required digest is missing or mismatched, publish must fail fast and the version must remain Draft/OUT_OF_SYNC until reconciliation succeeds. See `design/architecture/microservices/game-design-service/world-editing-tools.md`.
+   - Publish gating must compare like-for-like commit scope across every required participant. A full publish is invalid if required participants attest different `appliedCommitId` values for the target scope, even when each individual digest is otherwise well-formed.
    - Participant selection is fixed by publish type (full publish vs script-only patch) using the matrix in `design/architecture/microservices/game-design-service/version-control.md#digest-participants-by-publish-type`; publish workflows must not change digest participants implicitly at runtime.
    - For versions that use procedural generation, publish must also freeze and persist a `generationConfigRevision`/hash identity for `(tenantId, versionId)` derived from the version-scoped generation inputs committed through Game Design workflows. Mutable World Management operational defaults are not valid publish inputs. World creation for that version must use the frozen identity and fail closed if it cannot be resolved.
 4. As part of the Saga, the Game Design Service runs an **asset export** step for each `(tenantId, versionId)` that uploads design-time assets to object storage, generates a deterministic `manifest.json` for the version, and updates version metadata with the manifest location. This step is implemented as an idempotent Saga step with compensation as described in [Asset Storage Setup](./microservices/game-design-service/asset-storage.md). If this step or another publish step fails irrecoverably, the Saga marks the version as **Failed** and records the asset artifact as `TOMBSTONED` (quarantined) so it is not eligible for activation.
@@ -37,7 +38,9 @@ The **Game Design Service** manages version metadata and publish workflows for g
    - Error/caching contract:
      - `NOT_FOUND` means the version is not release-attested and must be treated as non-launchable.
      - `SCHEMA_VERSION_UNSUPPORTED` means the caller cannot safely interpret the attestation and must fail closed.
+     - A publish workflow that has not yet written `published_release_bundle` is not partially launchable; callers must treat it the same as any other non-attested version.
      - Activation, cutover preflight, and repair workflows must use a fresh attestation read; cached/stale attestation payloads are not sufficient for admission decisions.
+     - Ordinary repair tooling must not mutate the attestation payload for a Published/Active release. If exact-bytes repair cannot reproduce the attested bundle, recovery requires a new `versionId` or a separately defined re-attestation workflow with its own audit and approval contract.
 
    Illustrative attestation payload:
 
@@ -266,7 +269,10 @@ Launch descriptor version-resolution rules:
 - `scriptPatchVersion` is the only supported per-launch patch override and must reference the same `baseVersionId` as the resolved `versionId`.
 - `ResolveLaunchDescriptor` is idempotent per `controlPlaneRequestId`: a retry with the same `(tenantId, gameTemplateId, controlPlaneRequestId)` and the same input fields must return the same descriptor values, and it must not re-resolve to a newer attestation, patch, or runtime default.
 - A fresh launch attempt with a new `controlPlaneRequestId` may resolve against newer valid published state if the underlying template, attestation, or patch data has advanced.
+- A retry that already failed with a deterministic business outcome (for example invalid template wiring, missing attestation, stale version-state epoch, or patch override conflict) must return the same failure result for that `controlPlaneRequestId`; callers must not expect retries on the same launch-attempt identity to “pick up” newer control-plane state.
 - Caller-supplied runtime overrides are only honored when the template leaves the corresponding field unset. If the template already supplies a default, any caller-supplied value for that field is a deterministic launch-descriptor failure instead of being merged heuristically.
+- The launch orchestrator must treat `versionStateEpoch` as part of preflight proof, not informational metadata. If attestation verification or downstream activation sees a different epoch than the one frozen into the descriptor, launch fails closed before any persistent instance row or `PREPARING` world state is created.
+- World Management and Game Session may cache launch-descriptor values only as execution inputs for the current `controlPlaneRequestId`; they must not persist or reuse a descriptor as a rolling "latest launch defaults" record for later requests.
 - `GetPublishedReleaseBundle(tenantId, versionId)` is the canonical release-attestation surface for launch, cutover, and repair. In the initial slice it must expose:
   - `participantDigests[]`
   - `artifactDigests[]` for each exported derived world artifact
@@ -285,6 +291,19 @@ Illustrative launch-descriptor examples:
   - If `targetVersionId` would cause mixed-version dependencies or requires an unapproved remap, descriptor resolution fails before any instance rows are created.
 - Mixed-version rejection:
   - If `game_template_world_ref` resolves to `versionId=v42` while `game_template_entity_ref` resolves to `versionId=v43`, `ResolveLaunchDescriptor` must fail validation instead of choosing one version heuristically.
+
+Required preflight failure outcomes:
+
+- `TEMPLATE_REFERENCE_PHASE_NOT_ENFORCED`
+- `INVALID_TEMPLATE_CONFIGURATION`
+- `SCRIPT_PATCH_OVERRIDE_CONFLICT`
+- `SCRIPT_PATCH_NOT_READY`
+- `RELEASE_BUNDLE_NOT_FOUND`
+- `RELEASE_ATTESTATION_MISMATCH`
+- `VERSION_STATE_EPOCH_STALE`
+- `LAUNCH_REMAP_REQUIRED`
+
+These are deterministic application outcomes. Launch preflight must return them in normal responses and must not encode them as transport errors.
 
 Normalized-template dependency checks require explicit phase enforcement:
 
@@ -589,7 +608,7 @@ For API versioning conventions see [gRPC Protocol Guidelines](./system-architect
 ## Related Documentation
 
 - [Database Migrations](./system-architecture-database-migrations.md)
-- [Game Customization Options](./game-customization-options.md)
+- [Game Customization](./system-architecture-game-customization.md)
 - [Game Session Service](./microservices/game-session-service/README.md)
 - [Service Responsibility Matrix](./service-responsibility-matrix.md)
 - [System Architecture Overview](./system-architecture-overview.md)

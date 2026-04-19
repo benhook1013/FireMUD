@@ -8,4 +8,6 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface ItemRepository extends JpaRepository<Item, Long> {
   Optional<Item> findByIdAndTenantId(Long id, Long tenantId);
+
+  java.util.List<Item> findByTenantIdOrderByIdAsc(Long tenantId);
 }

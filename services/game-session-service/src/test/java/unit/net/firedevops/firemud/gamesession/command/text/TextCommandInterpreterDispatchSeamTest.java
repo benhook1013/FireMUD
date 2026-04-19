@@ -49,15 +49,25 @@ class TextCommandInterpreterDispatchSeamTest {
                   }
                 }));
     TextCommandRegistry registry =
-        type ->
-            Optional.of(
+        new TextCommandRegistry() {
+          @Override
+          public Optional<TextCommandDefinition> findDefinition(TextCommandType type) {
+            return Optional.of(
                 new TextCommandDefinition(
                     type,
+                    List.of("look"),
                     TextCommandDispatchGroup.HELP,
                     TextCommandStageRequirement.GAMEPLAY,
                     TextCommandPromptPolicy.NEVER,
                     TextCommandActionCategory.META,
                     TextCommandSource.PLATFORM_BUILT_IN));
+          }
+
+          @Override
+          public Optional<TextCommandDefinition> findDefinitionByAlias(String alias) {
+            return Optional.empty();
+          }
+        };
     TextCommandInterpreter interpreter =
         new TextCommandInterpreter(
             authenticationService, promptComposer, new TextCommandParser(), registry, dispatcher);

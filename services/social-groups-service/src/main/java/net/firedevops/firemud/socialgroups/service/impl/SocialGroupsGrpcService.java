@@ -23,6 +23,7 @@ import net.firedevops.firemud.socialgroups.v1.AddFriendResponse;
 import net.firedevops.firemud.socialgroups.v1.CreateGuildResponse;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
+import net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.v1.ListFriendPresenceRequest;
 import net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse;
 import net.firedevops.firemud.socialgroups.v1.PingRequest;
@@ -207,6 +208,18 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
         if (presence.gameInstanceId() != null) {
           entry.setGameInstanceId(Long.toString(presence.gameInstanceId()));
         }
+        if (presence.worldSlug() != null && !presence.worldSlug().isBlank()) {
+          entry.setWorldSlug(presence.worldSlug());
+        }
+        if (presence.worldDisplayName() != null && !presence.worldDisplayName().isBlank()) {
+          entry.setWorldDisplayName(presence.worldDisplayName());
+        }
+        if (presence.realmSlug() != null && !presence.realmSlug().isBlank()) {
+          entry.setRealmSlug(presence.realmSlug());
+        }
+        if (presence.realmDisplayName() != null && !presence.realmDisplayName().isBlank()) {
+          entry.setRealmDisplayName(presence.realmDisplayName());
+        }
         if (presence.characterId() != null) {
           entry.setCharacterId(Long.toString(presence.characterId()));
         }
@@ -218,6 +231,9 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
         }
         if (presence.lastSeenAt() != null) {
           entry.setLastSeenAtMs(presence.lastSeenAt().toEpochMilli());
+        }
+        if (presence.recentDisposition() != null) {
+          entry.setRecentDisposition(mapRecentDisposition(presence.recentDisposition()));
         }
         response.addPresences(entry.build());
       }
@@ -312,6 +328,21 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       case ACTIVE -> FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_ACTIVE;
       case AUTO_AFK -> FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK;
       case EXPLICIT_AFK -> FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_EXPLICIT_AFK;
+    };
+  }
+
+  private FriendRecentPresenceDisposition mapRecentDisposition(
+      net.firedevops.firemud.socialgroups.dto.FriendRecentPresenceDisposition disposition) {
+    return switch (disposition) {
+      case TRANSPORT_LOSS ->
+          net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition
+              .FRIEND_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS;
+      case LOGOUT ->
+          net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition
+              .FRIEND_RECENT_PRESENCE_DISPOSITION_LOGOUT;
+      case TAKEOVER ->
+          net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition
+              .FRIEND_RECENT_PRESENCE_DISPOSITION_TAKEOVER;
     };
   }
 

@@ -87,8 +87,8 @@ Implementation notes for wiring the stubbed World/Entity/Account services, captu
 
 ## 7. Developer Workflows, Smoke Tests, and Documentation Updates
 
-- [x] Add or update a smoke test script (or documented curl/WebSocket sequence) that demonstrates `LOGIN` + `LOOK` against the sample world over WebSocket, including the expected room description in the script output or comments (`design/project-management/slice-support/look-smoke-tests.md`) and sample transcript (`look-ws-sample.log`).
-- [x] Add a second smoke test or example transcript that demonstrates `WORLDS` + `LOGIN` + `PLAY` + `LOOK` via Telnet through TCP Proxy and Gateway, verifying that the same room description is returned (same doc) with the sample transcript (`look-telnet-sample.log`).
+- [x] Add or update a smoke test script (or documented curl/WebSocket sequence) that demonstrates `LOGIN` + `LOOK` against the sample world over WebSocket, including the expected room description in the script output or comments (`design/project-management/slice-support/look-smoke-tests.md`).
+- [x] Add a second smoke test or documented Telnet transcript/example that demonstrates `WORLDS` + `LOGIN` + `PLAY` + `LOOK` via Telnet through TCP Proxy and Gateway, verifying that the same room description is returned (same doc).
 - [x] Update the Game Session, Game Logic, World Management, and Entity Management design docs to include a short "Implementation status" note for the `LOOK` slice, clarifying what is live, what is stubbed, and what is deferred to future slices (for example, dynamic lighting, line-of-sight, or script-driven room text).
 - [x] Expand the World Management Service design doc to describe the `/ws/game/**` `LOOK` contract fields, how Game Session aggregates entity/world context before replying to WebSocket/Telnet clients, and what configuration toggles (such as `WORLD_SERVICE_ENDPOINT`) developers can use locally.
 - [x] Revisit the `Minimal Text Command Protocol` and any existing gameplay examples to ensure they reference the data-driven `LOOK` behavior instead of the original hard-coded room stub, updating examples where necessary.

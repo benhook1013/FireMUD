@@ -9,4 +9,6 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface GenerationRuleRepository extends JpaRepository<GenerationRule, Long> {
   Page<GenerationRule> findByTenantId(Long tenantId, Pageable pageable);
+
+  java.util.List<GenerationRule> findByTenantIdOrderByIdAsc(Long tenantId);
 }

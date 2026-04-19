@@ -95,9 +95,9 @@ Billing-safe mutation authority contract:
 
 Runtime caller contract:
 
-- Initial implementation note:
-  - The first executable runtime-admission pass only needs `GetTenantMembershipForRuntime(accountId, tenantId)` and `GetTenantEntitlementsForRuntime(tenantId)` so `PLAY` and reconnect/resume can fail closed on missing gameplay authority instead of relying on Redis session identity alone.
-  - This narrow first pass does not replace the broader target-state contract below. `GetAdmissionPointer`, public-production membership creation, and the fuller bootstrap/discovery surfaces remain part of the intended architecture and should be folded in by follow-up slices rather than forgotten.
+- Current implementation note:
+  - `GetTenantMembershipForRuntime(accountId, tenantId)`, `GetTenantEntitlementsForRuntime(tenantId)`, `GetAdmissionPointer(worldSlug, realmSlug)`, public-production membership creation, and the fuller bootstrap/discovery surfaces are now all live enough that runtime admission no longer depends on Redis session identity or caller-supplied target tuples.
+  - The remaining follow-through is broader reconnect/cutover consumption of the same admission-pointer truth plus later operator-facing tooling around pointer mutation and audit.
 - `GetTenantMembershipForRuntime(accountId, tenantId)` is the authoritative internal membership surface for gameplay/runtime flows.
   - Minimum request fields: `accountId`, `tenantId`, `requestId`.
   - Minimum response fields: `accountId`, `tenantId`, `roles[]`, `gameplayAdmissionAllowed`, `membershipVersion`, `evaluatedAt`.
@@ -107,15 +107,25 @@ Runtime caller contract:
 - `GetAdmissionPointer(tenantId, realmSlug)` is the authoritative gameplay-admissible-instance lookup owned by Game Session.
   - Minimum request fields: `tenantId`, `realmSlug`, `requestId`.
   - Minimum response fields: `tenantId`, `realmSlug`, `admissibleGameInstanceId`, `pointerVersion`, `updatedAt`.
+  - `pointerVersion` is monotonic per `{tenantId, realmSlug}` and is the freshness token callers must use when proving they are still binding against the same realm target they previously resolved.
+  - Account bootstrap discovery, in-band `PLAY`, connect-token issuance, and reconnect validation must all consume this same pointer contract rather than maintaining separate realm-to-instance routing rules.
 - `IssueConnectToken` / `POST /auth/connect-token` is the authoritative gameplay bootstrap token-issuance surface.
   - Minimum request fields: `connectScopeId`, `requestId`.
   - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `realmSlug`, `gameInstanceId`, `jti`, `issuedAt`.
+- Bootstrap discovery surfaces must return `connectScopeId` together with `tenantId`, `realmSlug`, `gameInstanceId`, `pointerVersion`, `evaluatedAt`, and `connectScopeExpiresAt`.
+- `connectScopeExpiresAt` bounds how long the discovery-issued selector may be reused as a convenience token. Once it expires, callers must rerun discovery instead of treating the selector as a durable realm handle.
 - Account Service must expose bootstrap-discovery endpoints that accept only the `player-bootstrap` token profile and return the canonical caller-visible worlds, realms, characters, and a canonical `connectScopeId` selector for each admissible realm target.
 - Account Service must use the authoritative realm-routing contract when issuing `/auth/connect-token` so connect-token scope is pinned to the tenant's current admissible instance for the selected realm instead of a caller-supplied guess.
+- `requestId` is the idempotency key for connect-token issuance. Retrying the same `(accountId, connectScopeId, requestId)` must return the same token payload or the same deterministic application failure rather than minting a new logical issuance result.
 - `EnsurePublicProductionPlayerMembership(accountId, tenantId, realmSlug, requestId)` is the authoritative membership-creation surface for first admission through a tenant's default production realm.
   - It is valid only for the default public production realm and only when the caller satisfies the public-production admission policy.
-  - It must be idempotent for `{accountId, tenantId, realmSlug}` and return the resulting `membershipVersion`.
+  - `requestId` is the attempt idempotency key. Retrying the same `{accountId, tenantId, realmSlug, requestId}` must return the same resulting membership identity/version or the same deterministic application failure.
   - The resulting membership must be immediately visible to `GetTenantMembershipForRuntime`.
+  - Minimum preconditions: the selected realm is still the tenant's default public production realm, it remains publicly visible to the caller, current runtime entitlements still allow gameplay admission, and current admission-pointer state resolves unambiguously for that realm.
+  - Concurrency rule: racing first-join requests must create at most one membership row and all successful callers must observe the same resulting membership identity/version.
+  - Audit rule: successful first-join creation must emit one durable audit/event record carrying at minimum `accountId`, `tenantId`, `realmSlug`, `membershipVersion`, and `requestId`.
+  - Required failure codes at minimum: `PUBLIC_PRODUCTION_ADMISSION_DENIED`, `ADMISSION_POINTER_UNAVAILABLE`, and `TENANT_BILLING_BLOCKED`.
+  - Failed requests are non-committing: they must not leave behind a partial membership row or other admission side effects that later retries could accidentally reuse.
 - Runtime callers must treat missing required fields as contract failure and fail closed rather than inferring defaults.
 
 Membership-change producer contract:

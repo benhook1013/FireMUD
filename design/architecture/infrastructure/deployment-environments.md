@@ -41,7 +41,7 @@ Use these classes as the source of truth for environment roles and control expec
 | --- | --- | --- | --- | --- | --- |
 | `local-dev` | Docker Compose on a developer machine | `.env` plus local files; generated certs/keys allowed | Convenience-first; manual | Local snapshots/ad hoc restore | `./gradlew devUp` / `devDown` |
 | `pr-preview` | Hosted single-node Kubernetes preview cluster with one namespace per PR | Kubernetes Secrets/ConfigMaps plus registry pull credentials | Production-like for HTTPS, auth, and session flows; simplified operator controls acceptable | Per-PR state persists for PR lifetime; no backup/restore guarantee | GitHub Actions deploys PR-tagged images via Helm |
-| `dev-demo-cluster` | Shared but non-player-facing Kubernetes cluster | Kubernetes Secrets/ConfigMaps | Basic hardening; can prioritize iteration speed | Ad hoc unless explicitly scheduled | Helm/manual workflows (`manual-helm-deploy.yml`) |
+| `dev-demo-cluster` | Shared but non-player-facing Kubernetes cluster | Kubernetes Secrets/ConfigMaps | Basic hardening; can prioritize iteration speed | Ad hoc unless explicitly scheduled | Fixed `develop` deploy workflow plus optional manual Helm workflows |
 | `hobby-self-hosted` | Small player-facing deployment with production-like roles at low scale | Kubernetes Secrets/ConfigMaps | Production-like for Tier A credentials; simplified ops acceptable | Operator-managed backups expected | Operator-applied manifests/charts |
 | `staging` | Prod-like Kubernetes cluster with smaller sizing | Kubernetes Secrets/ConfigMaps | Production-like controls; required post-restore secret hardening before playtests | Disposable by default unless explicitly enabling schedules | Git-tracked Kustomize overlays + operator `kubectl apply -k` |
 | `production` | Player-facing Kubernetes cluster | Kubernetes Secrets/ConfigMaps | Strictest controls and change gates | Scheduled backups + verification + mandatory post-restore hardening | Git-tracked Kustomize overlays + operator `kubectl apply -k` |
@@ -63,6 +63,15 @@ Cross-document rules:
 - When this document refers to “preflight” or “promotion evidence,” the authoritative owning contracts are `system-architecture-deploy-preflight-policy.md` and `system-architecture-promotion-attestation.md`; this document defines environment intent, not a parallel policy schema.
 - `dev-demo-cluster` is explicitly **non-promotable** and **non-attestable**. It must not be used as the source of production promotion evidence, rollback evidence, or DR-readiness sign-off. Any validation performed there is informative only.
 - `dev-demo-cluster` may reuse the expected-bindings manifest pattern for local operator convenience, but that manifest is optional and is not part of any player-facing preflight or promotion contract.
+- The current hosted `dev-demo-cluster` deployment may share the same Hetzner preview cluster used for `pr-preview`, but it must remain operationally separate:
+  - fixed namespace `dev`
+  - fixed Helm release `dev`
+  - fixed hostname `dev.preview.firedevops.net`
+  - fixed TCP port `32016`
+  - no inclusion in PR preview capacity counting, janitor cleanup, or PR-comment reporting
+- A light scheduled reconciler may redeploy the fixed `develop` environment when the `dev` namespace is missing or its recorded deployed SHA no longer matches the current `develop` head.
+- The fixed `develop` environment currently favors clean redeploy reproducibility over persistent shared state: the namespace/address stay stable, but the workflow may rebuild the namespace from scratch on each new `develop` deployment.
+- The fixed `develop` environment is intended for stable shared-branch proof and manual smoke, not for promotion evidence or as a substitute for staging.
 
 ---
 

@@ -1,12 +1,10 @@
 package net.firedevops.firemud.accountservice.config;
 
 import net.firedevops.firemud.accountservice.client.StripeClient;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@EnableConfigurationProperties(PaymentProperties.class)
 public class PaymentConfig {
   @Bean
   public StripeClient stripeClient(PaymentProperties props) {

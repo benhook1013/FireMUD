@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 public record WorldEventDto(
     Long id,
     @NotNull Long tenantId,
+    @NotNull Long gameInstanceId,
     Long regionId,
     @NotNull String eventType,
     String eventData,

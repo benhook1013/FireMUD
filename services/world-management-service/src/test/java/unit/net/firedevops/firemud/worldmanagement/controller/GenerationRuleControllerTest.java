@@ -2,7 +2,6 @@ package net.firedevops.firemud.worldmanagement.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -13,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.dto.GenerationRuleDto;
-import net.firedevops.firemud.worldmanagement.security.JwtAuthInterceptor;
 import net.firedevops.firemud.worldmanagement.service.GenerationRuleService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,10 +30,9 @@ class GenerationRuleControllerTest {
   @Autowired private MockMvc mockMvc;
 
   @MockitoBean private GenerationRuleService generationRuleService;
-  @MockitoBean private JwtAuthInterceptor jwtAuthInterceptor;
 
   @BeforeEach
-  void setUpSecurityContext() throws Exception {
+  void setUpSecurityContext() {
     installTenantContext(Map.of("1", List.of("admin")));
   }
 
@@ -68,13 +65,7 @@ class GenerationRuleControllerTest {
         .andExpect(status().isForbidden());
   }
 
-  private void installTenantContext(Map<String, List<String>> scopedRoles) throws Exception {
-    doAnswer(
-            invocation -> {
-              SessionContext.setContext("test-account", List.of(), scopedRoles);
-              return true;
-            })
-        .when(jwtAuthInterceptor)
-        .preHandle(any(), any(), any());
+  private void installTenantContext(Map<String, List<String>> scopedRoles) {
+    SessionContext.setContext("test-account", List.of(), scopedRoles);
   }
 }

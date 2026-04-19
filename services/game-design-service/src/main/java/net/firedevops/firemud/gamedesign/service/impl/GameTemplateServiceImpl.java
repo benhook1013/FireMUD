@@ -6,6 +6,7 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamedesign.dto.GameTemplateDto;
 import net.firedevops.firemud.gamedesign.entity.GameTemplate;
 import net.firedevops.firemud.gamedesign.mapper.GameTemplateMapper;
+import net.firedevops.firemud.gamedesign.model.TemplateReferencePhase;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
 import net.firedevops.firemud.gamedesign.service.GameTemplateService;
 import org.slf4j.Logger;
@@ -28,6 +29,13 @@ public class GameTemplateServiceImpl implements GameTemplateService {
   public GameTemplateDto createTemplate(GameTemplateDto dto) {
     logger.info("Creating game template {}", dto.name());
     GameTemplate entity = mapper.toEntity(dto);
+    if (entity.getDefaultRuntimeFlagsJson() == null
+        || entity.getDefaultRuntimeFlagsJson().isBlank()) {
+      entity.setDefaultRuntimeFlagsJson("{}");
+    }
+    if (entity.getTemplateReferencePhase() == null) {
+      entity.setTemplateReferencePhase(TemplateReferencePhase.ENFORCED);
+    }
     entity = repository.save(entity);
     return mapper.toDto(entity);
   }

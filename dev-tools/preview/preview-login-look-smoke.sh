@@ -6,6 +6,7 @@ TCP_PORT=${TCP_PORT:?TCP_PORT is required}
 SMOKE_USERNAME=${SMOKE_USERNAME:-demo@example.com}
 SMOKE_PASSWORD=${SMOKE_PASSWORD:-swordfish}
 SMOKE_WORLD=${SMOKE_WORLD:-demo}
+SMOKE_TARGET_LABEL=${SMOKE_TARGET_LABEL:-hosted environment}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-20}
 SMOKE_WORLDS_EXPECT=${SMOKE_WORLDS_EXPECT:-OK WORLDS}
 SMOKE_LOGIN_EXPECT=${SMOKE_LOGIN_EXPECT:-OK LOGIN}
@@ -19,7 +20,7 @@ else
   exit 1
 fi
 
-echo "Running hosted preview TCP smoke against ${SMOKE_HOST}:${TCP_PORT}"
+echo "Running ${SMOKE_TARGET_LABEL} TCP smoke against ${SMOKE_HOST}:${TCP_PORT}"
 echo "Using username='${SMOKE_USERNAME}' (password redacted)"
 
 "$PYTHON" - <<'PY'
@@ -96,5 +97,6 @@ while time.time() < session_retry_deadline:
 if last_error is not None:
     raise SystemExit(f"Failed to connect to {host}:{port}: {last_error}") from last_error
 
-print("Hosted preview TCP LOGIN -> PLAY -> LOOK smoke test passed.")
+label = os.environ.get("SMOKE_TARGET_LABEL", "hosted environment")
+print(f"{label} TCP LOGIN -> PLAY -> LOOK smoke test passed.")
 PY

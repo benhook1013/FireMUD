@@ -6,7 +6,6 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
-import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
@@ -14,11 +13,15 @@ import net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
+import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
+import net.firedevops.firemud.entitymanagement.service.RuntimeInstanceCleanupService;
 import net.firedevops.firemud.entitymanagement.v1.Character;
+import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceRequest;
+import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse;
 import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterRequest;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterResponse;
@@ -28,6 +31,8 @@ import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
+import net.firedevops.firemud.entitymanagement.v1.GetDraftDesignDigestRequest;
+import net.firedevops.firemud.entitymanagement.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
@@ -43,6 +48,7 @@ import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
@@ -59,17 +65,19 @@ import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.web.server.ResponseStatusException;
 
 /** Simple gRPC service exposing the Ping RPC. */
-@GrpcService(interceptors = AuthTokenInterceptor.class)
+@GrpcService
 public class EntityManagementGrpcService
     extends EntityManagementServiceGrpc.EntityManagementServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(EntityManagementGrpcService.class);
   private final PingService pingService;
   private final CharacterService characterService;
+  private final EntityDraftDesignDigestService entityDraftDesignDigestService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -92,22 +100,104 @@ public class EntityManagementGrpcService
   private final MeterRegistry meterRegistry;
 
   private final RoomEntityService roomEntityService;
+  private final RuntimeInstanceCleanupService runtimeInstanceCleanupService;
 
+  EntityManagementGrpcService(
+      PingService pingService,
+      CharacterService characterService,
+      EntityDraftDesignDigestService entityDraftDesignDigestService,
+      EquipmentService equipmentService,
+      InventoryService inventoryService,
+      ContainerService containerService,
+      RoomEntityService roomEntityService,
+      RuntimeInstanceCleanupService runtimeInstanceCleanupService,
+      MeterRegistry meterRegistry) {
+    this.pingService = pingService;
+    this.characterService = characterService;
+    this.entityDraftDesignDigestService = entityDraftDesignDigestService;
+    this.equipmentService = equipmentService;
+    this.inventoryService = inventoryService;
+    this.containerService = containerService;
+    this.roomEntityService = roomEntityService;
+    this.runtimeInstanceCleanupService = runtimeInstanceCleanupService;
+    this.meterRegistry = meterRegistry;
+  }
+
+  @Autowired
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
+      EntityDraftDesignDigestService entityDraftDesignDigestService,
       EquipmentService equipmentService,
       InventoryService inventoryService,
       ContainerService containerService,
       RoomEntityService roomEntityService,
       MeterRegistry meterRegistry) {
-    this.pingService = pingService;
-    this.characterService = characterService;
-    this.equipmentService = equipmentService;
-    this.inventoryService = inventoryService;
-    this.containerService = containerService;
-    this.roomEntityService = roomEntityService;
-    this.meterRegistry = meterRegistry;
+    this(
+        pingService,
+        characterService,
+        entityDraftDesignDigestService,
+        equipmentService,
+        inventoryService,
+        containerService,
+        roomEntityService,
+        (tenantId, gameInstanceId, terminationRequestId) ->
+            new net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto(
+                0L, 0L, 0L, 0L),
+        meterRegistry);
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.getDraftDesignDigest")
+  public void getDraftDesignDigest(
+      GetDraftDesignDigestRequest request,
+      StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
+    try {
+      if (request.getScopeCase() != GetDraftDesignDigestRequest.ScopeCase.VERSION_ID) {
+        responseObserver.onNext(
+            GetDraftDesignDigestResponse.newBuilder()
+                .setError(
+                    GrpcAppErrors.error(
+                        meterRegistry,
+                        logger,
+                        "GetDraftDesignDigest",
+                        "UNSUPPORTED_SCOPE",
+                        "entity management supports version_id scope only"))
+                .build());
+        responseObserver.onCompleted();
+        return;
+      }
+      var digest =
+          entityDraftDesignDigestService.getDraftDesignDigest(
+              request.getTenantId(), request.getVersionId());
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setTenantId(digest.tenantId())
+              .setScopeValue(digest.scopeValue())
+              .setAppliedCommitId(digest.appliedCommitId())
+              .setContentDigest(digest.contentDigest())
+              .setDigestSchemaVersion(digest.digestSchemaVersion())
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "GetDraftDesignDigest", ex))
+              .build());
+      responseObserver.onCompleted();
+    }
   }
 
   @Override
@@ -147,7 +237,14 @@ public class EntityManagementGrpcService
       SessionContext.requireTenantAccess(tenantId);
       long accountId = Long.parseLong(request.getAccountId());
       var characters =
-          characterService.listForTenantAndAccount(tenantId, accountId, Pageable.unpaged()).stream()
+          characterService
+              .listForGameplayScope(
+                  tenantId,
+                  accountId,
+                  request.getGameInstanceId(),
+                  requirePlayableStateScope(request.getPlayableStateScope()),
+                  Pageable.unpaged())
+              .stream()
               .map(this::toProto)
               .collect(Collectors.toList());
       ListCharactersByAccountResponse response =
@@ -208,7 +305,11 @@ public class EntityManagementGrpcService
       SessionContext.requireTenantAccess(tenantId);
       FindCharacterByNameResponse.Builder builder = FindCharacterByNameResponse.newBuilder();
       characterService
-          .findByTenantAndName(tenantId, request.getName())
+          .findByGameplayScopeAndName(
+              tenantId,
+              request.getGameInstanceId(),
+              requirePlayableStateScope(request.getPlayableStateScope()),
+              request.getName())
           .map(this::toProto)
           .ifPresent(builder::setCharacter);
       responseObserver.onNext(builder.build());
@@ -264,10 +365,13 @@ public class EntityManagementGrpcService
       long tenantId = Long.parseLong(request.getTenantId());
       SessionContext.requireTenantAccess(tenantId);
       long accountId = Long.parseLong(request.getAccountId());
-      CharacterDto dto =
-          new CharacterDto(
-              null, tenantId, accountId, request.getName(), 1, 0, 10, 10, 10, 10, 100, 50);
-      CharacterDto created = characterService.create(dto);
+      CharacterDto created =
+          characterService.create(
+              tenantId,
+              accountId,
+              request.getName(),
+              request.getGameInstanceId(),
+              requirePlayableStateScope(request.getPlayableStateScope()));
       CreateCharacterResponse response =
           CreateCharacterResponse.newBuilder().setCharacterId(String.valueOf(created.id())).build();
       responseObserver.onNext(response);
@@ -599,6 +703,7 @@ public class EntityManagementGrpcService
               containerInstanceId,
               itemId,
               itemInstanceId,
+              blankToNull(request.getStackFamilyKey()),
               request.getQuantity());
       PutItemIntoContainerResponse response =
           PutItemIntoContainerResponse.newBuilder().setContainerItem(toProto(dto)).build();
@@ -669,6 +774,7 @@ public class EntityManagementGrpcService
               containerInstanceId,
               itemId,
               itemInstanceId,
+              blankToNull(request.getStackFamilyKey()),
               request.getQuantity());
       TakeItemFromContainerResponse response =
           TakeItemFromContainerResponse.newBuilder().setInventoryItem(toProto(dto)).build();
@@ -803,6 +909,7 @@ public class EntityManagementGrpcService
                   ? null
                   : Long.parseLong(request.getItemInstanceId()),
               request.getContainerInstanceId(),
+              blankToNull(request.getStackFamilyKey()),
               quantity);
       PickupItemFromRoomResponse response =
           PickupItemFromRoomResponse.newBuilder().setInventoryItem(toProto(dto)).build();
@@ -872,6 +979,7 @@ public class EntityManagementGrpcService
                   ? null
                   : Long.parseLong(request.getItemInstanceId()),
               request.getContainerInstanceId(),
+              blankToNull(request.getStackFamilyKey()),
               quantity);
       DropItemToRoomResponse response =
           DropItemToRoomResponse.newBuilder().setRoomGroundItem(toProto(dto)).build();
@@ -951,6 +1059,47 @@ public class EntityManagementGrpcService
     }
   }
 
+  @Override
+  @Timed(value = "entityGrpc.cleanupRuntimeInstance")
+  public void cleanupRuntimeInstance(
+      CleanupRuntimeInstanceRequest request,
+      StreamObserver<CleanupRuntimeInstanceResponse> responseObserver) {
+    CleanupRuntimeInstanceResponse.Builder builder = CleanupRuntimeInstanceResponse.newBuilder();
+    try {
+      requireTenantAccessWhenPresent(Long.parseLong(request.getTenantId()));
+      var result =
+          runtimeInstanceCleanupService.cleanupRuntimeInstance(
+              Long.parseLong(request.getTenantId()),
+              request.getGameInstanceId(),
+              request.getTerminationRequestId());
+      builder
+          .setDeletedRoomGroundEntries(result.deletedRoomGroundEntries())
+          .setDeletedItemStacks(result.deletedItemStacks())
+          .setDeletedItemInstances(result.deletedItemInstances())
+          .setDeletedContainerInstances(result.deletedContainerInstances());
+    } catch (NumberFormatException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "CleanupRuntimeInstance",
+              "INVALID_ARGUMENT",
+              "tenant_id must be numeric"));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "CleanupRuntimeInstance",
+              "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "CleanupRuntimeInstance", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
   private String resolveTenantId(ListRoomEntitiesRequest request) {
     if (request.getRoomInstance().getTenantId().isBlank()) {
       return request.getTenantId();
@@ -988,6 +1137,19 @@ public class EntityManagementGrpcService
 
   private String appErrorCode(ResponseStatusException ex) {
     return ex.getStatusCode().value() == 403 ? "PERMISSION_DENIED" : "INVALID_ARGUMENT";
+  }
+
+  private PlayableStateScope requirePlayableStateScope(PlayableStateScope playableStateScope) {
+    if (playableStateScope == null
+        || playableStateScope == PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED
+        || playableStateScope == PlayableStateScope.UNRECOGNIZED) {
+      throw new IllegalArgumentException("playableStateScope must be specified");
+    }
+    return playableStateScope;
+  }
+
+  private String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
   }
 
   private Character toProto(CharacterDto dto) {
