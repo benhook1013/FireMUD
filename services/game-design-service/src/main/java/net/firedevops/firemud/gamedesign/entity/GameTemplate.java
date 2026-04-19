@@ -34,8 +34,7 @@ public class GameTemplate {
   @Column(name = "default_script_patch_version", length = 100)
   private String defaultScriptPatchVersion;
 
-  @Lob
-  @Column(name = "default_runtime_flags_json", nullable = false)
+  @Column(name = "default_runtime_flags_json", nullable = false, columnDefinition = "text")
   private String defaultRuntimeFlagsJson = "{}";
 
   @Enumerated(EnumType.STRING)

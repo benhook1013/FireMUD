@@ -5,7 +5,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.Data;
@@ -39,12 +38,10 @@ public class PublishedReleaseBundle {
   @Column(nullable = false, length = 128)
   private String generationConfigRevision;
 
-  @Lob
-  @Column(nullable = false)
+  @Column(nullable = false, columnDefinition = "text")
   private String requiredManifestAssetKeysJson;
 
-  @Lob
-  @Column(nullable = false)
+  @Column(nullable = false, columnDefinition = "text")
   private String participantDigestsJson = "[]";
 
   @Column(nullable = false)

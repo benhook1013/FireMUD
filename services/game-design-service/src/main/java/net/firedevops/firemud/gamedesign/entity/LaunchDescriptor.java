@@ -5,7 +5,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.Data;
@@ -39,8 +38,7 @@ public class LaunchDescriptor {
   @Column(length = 100)
   private String scriptPatchVersion;
 
-  @Lob
-  @Column(nullable = false)
+  @Column(nullable = false, columnDefinition = "text")
   private String runtimeFlagsJson;
 
   @Column(nullable = false, length = 128)
