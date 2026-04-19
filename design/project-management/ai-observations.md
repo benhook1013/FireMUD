@@ -166,3 +166,8 @@ Entry format:
   - Context: investigating repeated local `configuration cache cannot be reused because an input to unknown location has changed` messages during CLI validation
   - Observation: the actual churn was not a project task mutating random inputs; it came from mixed Gradle launches using different Java homes, with shell runs on `/usr/lib/jvm/java-21-openjdk-amd64` and earlier IDE-triggered daemons on the VS Code Red Hat Java extension JRE. That split invalidated daemon reuse and sometimes degraded configuration-cache reporting to `unknown location`
   - Expected pattern: pin the Gradle daemon JVM with `gradle/gradle-daemon-jvm.properties` (via `updateDaemonJvm`) so shell and IDE launches converge on one daemon/toolchain instead of fighting over whichever JDK happened to launch first
+
+## 2026-04-19 - Time-based compliance metadata should not surprise-fail default-branch maintenance runs
+
+- Secret/compliance evidence age checks are useful as a merge gate on pull requests, but the same time-based threshold can make `develop` or `main` suddenly go red later with no code changes if push/default-branch runs use the same strict mode.
+- Better pattern: keep PR validation strict, but run default-branch or scheduled checks in advisory mode with an explicit warning window so teams see upcoming expiry before the hard threshold lands on a merge-critical branch.
