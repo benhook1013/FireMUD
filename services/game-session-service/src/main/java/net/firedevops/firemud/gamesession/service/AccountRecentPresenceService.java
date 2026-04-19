@@ -9,7 +9,7 @@ public interface AccountRecentPresenceService {
 
   void recordActivity(long sessionId);
 
-  void recordDisconnect(long sessionId);
+  void recordDisconnect(long sessionId, AccountRecentPresenceDisposition disposition);
 
   Map<Long, AccountRecentPresenceState> findByAccountIds(
       long tenantId, Collection<Long> accountIds);

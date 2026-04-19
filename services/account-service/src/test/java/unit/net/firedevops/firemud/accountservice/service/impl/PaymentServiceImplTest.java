@@ -9,6 +9,7 @@ import net.firedevops.firemud.accountservice.dto.PaymentIntentDto;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.PaymentTransaction;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,6 +20,7 @@ import org.mockito.MockitoAnnotations;
 
 class PaymentServiceImplTest {
   @Mock private AccountRepository accountRepository;
+  @Mock private AccountTenantMembershipRepository membershipRepository;
   @Mock private PaymentTransactionRepository txRepo;
   @Mock private SubscriptionRepository subRepo;
   @Mock private StripeClient stripeClient;
@@ -28,14 +30,16 @@ class PaymentServiceImplTest {
   @BeforeEach
   void setup() {
     MockitoAnnotations.openMocks(this);
-    service = new PaymentServiceImpl(accountRepository, txRepo, subRepo, stripeClient);
+    service =
+        new PaymentServiceImpl(
+            accountRepository, membershipRepository, txRepo, subRepo, stripeClient);
   }
 
   @Test
   void createPaymentIntentSetsTenantId() throws Exception {
     Account account = new Account();
     account.setId(1L);
-    account.setTenantId(2L);
+    when(membershipRepository.existsByAccountIdAndTenantId(1L, 2L)).thenReturn(true);
     when(accountRepository.findById(1L)).thenReturn(Optional.of(account));
     when(txRepo.save(any()))
         .thenAnswer(
@@ -65,7 +69,7 @@ class PaymentServiceImplTest {
   void createSubscriptionFailsForWrongTenant() {
     Account account = new Account();
     account.setId(1L);
-    account.setTenantId(5L); // different tenant
+    when(membershipRepository.existsByAccountIdAndTenantId(1L, 2L)).thenReturn(false);
     when(accountRepository.findById(1L)).thenReturn(Optional.of(account));
 
     assertThrows(IllegalArgumentException.class, () -> service.createSubscription(2L, 1L, "plan"));
@@ -90,7 +94,7 @@ class PaymentServiceImplTest {
   void createDonationSetsFlag() throws Exception {
     Account account = new Account();
     account.setId(1L);
-    account.setTenantId(2L);
+    when(membershipRepository.existsByAccountIdAndTenantId(1L, 2L)).thenReturn(true);
     when(accountRepository.findById(1L)).thenReturn(Optional.of(account));
     when(txRepo.save(any()))
         .thenAnswer(

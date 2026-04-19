@@ -7,6 +7,7 @@ import java.util.Optional;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.CurrencyBalance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.CurrencyBalanceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,6 +17,7 @@ import org.mockito.MockitoAnnotations;
 
 class VirtualCurrencyServiceImplTest {
   @Mock private AccountRepository accountRepository;
+  @Mock private AccountTenantMembershipRepository membershipRepository;
   @Mock private CurrencyBalanceRepository balanceRepository;
 
   private VirtualCurrencyServiceImpl service;
@@ -23,16 +25,17 @@ class VirtualCurrencyServiceImplTest {
   @BeforeEach
   void setup() {
     MockitoAnnotations.openMocks(this);
-    service = new VirtualCurrencyServiceImpl(accountRepository, balanceRepository);
+    service =
+        new VirtualCurrencyServiceImpl(accountRepository, membershipRepository, balanceRepository);
   }
 
   @Test
   void addCurrencyCreatesBalance() {
     Account account = new Account();
     account.setId(1L);
-    account.setTenantId(2L);
     when(balanceRepository.findByTenantIdAndAccountIdAndCurrencyCode(2L, 1L, "GOLD"))
         .thenReturn(Optional.empty());
+    when(membershipRepository.existsByAccountIdAndTenantId(1L, 2L)).thenReturn(true);
     when(accountRepository.findById(1L)).thenReturn(Optional.of(account));
     ArgumentCaptor<CurrencyBalance> captor = ArgumentCaptor.forClass(CurrencyBalance.class);
     when(balanceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));

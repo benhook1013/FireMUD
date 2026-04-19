@@ -39,12 +39,18 @@ public class FirstPartyConnectContextService {
       long accountId = parseLong(claims.getSubject());
       long tenantId = parseLong(claims.get("tenantId"));
       long gameInstanceId = parseLong(claims.get("gameInstanceId"));
+      long pointerVersion = parseLong(claims.get("pointerVersion"));
       return Optional.of(
           new FirstPartyConnectContext(
               accountId,
               tenantId,
+              stringClaim(claims, "worldSlug"),
+              stringClaim(claims, "realmSlug"),
               gameInstanceId,
+              pointerVersion,
+              stringClaim(claims, "connectScopeId"),
               stringClaim(claims, "connectTokenJti"),
+              stringClaim(claims, "connectRequestId"),
               stringClaim(claims, "gatewayRequestId")));
     } catch (IllegalArgumentException | JwtException ex) {
       logger.warn("Rejecting invalid first-party connect context", ex);

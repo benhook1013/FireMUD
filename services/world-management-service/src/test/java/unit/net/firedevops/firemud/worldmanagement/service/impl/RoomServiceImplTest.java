@@ -1,6 +1,9 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -11,45 +14,42 @@ import net.firedevops.firemud.common.i18n.LocalizedTextVariants;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
-import net.firedevops.firemud.worldmanagement.entity.Region;
-import net.firedevops.firemud.worldmanagement.entity.Room;
-import net.firedevops.firemud.worldmanagement.entity.RoomExit;
-import net.firedevops.firemud.worldmanagement.entity.Zone;
-import net.firedevops.firemud.worldmanagement.mapper.RoomMapper;
-import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
-import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
+import net.firedevops.firemud.worldmanagement.entity.RegionInstance;
+import net.firedevops.firemud.worldmanagement.entity.RoomInstance;
+import net.firedevops.firemud.worldmanagement.entity.RoomInstanceExit;
+import net.firedevops.firemud.worldmanagement.entity.ZoneInstance;
+import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
+import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mapstruct.factory.Mappers;
 import org.springframework.data.redis.RedisSystemException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import tools.jackson.databind.ObjectMapper;
 
 class RoomServiceImplTest {
-  private RoomRepository repository;
+  private RoomInstanceRepository repository;
   private RedisTemplate<String, Object> redisTemplate;
   private ValueOperations<String, Object> valueOps;
-  private RoomMapper mapper = Mappers.getMapper(RoomMapper.class);
   private RoomServiceImpl service;
   private WorldProperties props;
-  private RoomExitRepository exitRepository;
+  private RoomInstanceExitRepository exitRepository;
 
   @BeforeEach
   void setup() {
-    repository = mock(RoomRepository.class);
+    repository = mock(RoomInstanceRepository.class);
     redisTemplate = mockRedisTemplate();
     valueOps = mockValueOperations();
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
     props = new WorldProperties();
     props.getRoom().setCacheTtlSeconds(1);
-    exitRepository = mock(RoomExitRepository.class);
-    when(exitRepository.findByTenantIdAndFromRoomId(anyLong(), anyLong()))
+    exitRepository = mock(RoomInstanceExitRepository.class);
+    when(exitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
+            anyLong(), anyLong(), anyLong()))
         .thenReturn(Collections.emptyList());
     service =
         new RoomServiceImpl(
             repository,
-            mapper,
             redisTemplate,
             new SimpleMeterRegistry(),
             props,
@@ -60,57 +60,45 @@ class RoomServiceImplTest {
 
   @Test
   void getRoomCachesResult() {
-    Room entity = new Room();
-    entity.setId(1L);
-    entity.setTenantId(1L);
-    Region region = new Region();
-    region.setId(2L);
-    Zone zone = zoneWithRegion(region);
-    entity.setZone(zone);
-    entity.setName("A");
-    when(repository.findById(1L)).thenReturn(Optional.of(entity));
-    RoomDto first = service.getRoom(1L, 1L);
-    assertEquals("A", first.name());
-    verify(valueOps).set("room:1:1", first, java.time.Duration.ofSeconds(1));
+    RoomInstance entity = roomInstance(1L, 41L, 1L, 2L, "A");
+    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1L))
+        .thenReturn(Optional.of(entity));
 
-    when(valueOps.get("room:1:1")).thenReturn(first);
-    RoomDto second = service.getRoom(1L, 1L);
+    RoomDto first = service.getRoom(1L, 41L, 1L);
+
+    assertEquals("A", first.name());
+    verify(valueOps).set("room:1:41:1", first, java.time.Duration.ofSeconds(1));
+
+    when(valueOps.get("room:1:41:1")).thenReturn(first);
+    RoomDto second = service.getRoom(1L, 41L, 1L);
     assertEquals("A", second.name());
-    verify(repository, times(1)).findById(1L);
+    verify(repository, times(1)).findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1L);
   }
 
   @Test
   void getRoomSnapshotIncludesExitsAndDescription() {
-    Room room = new Room();
-    room.setId(1021L);
-    room.setTenantId(1L);
-    Region region = new Region();
-    region.setId(200L);
-    Zone zone = zoneWithRegion(region);
-    room.setZone(zone);
-    room.setName("Candle-lit Antechamber");
+    RoomInstance room = roomInstance(1L, 41L, 1021L, 200L, "Candle-lit Antechamber");
     String longDesc =
         "Stalactites drip along the northern wall while a faint draft carries the smell of damp earth "
             + "from the lower tunnels. Torches flicker in alcoves, casting motion into the shadowy archway to the north.";
     room.setDescription(longDesc);
-    when(repository.findById(1021L)).thenReturn(Optional.of(room));
+    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1021L))
+        .thenReturn(Optional.of(room));
 
-    Room other = new Room();
-    other.setId(2045L);
-    other.setTenantId(1L);
-    other.setZone(zone);
-    other.setName("Crafting Hall of Ember");
+    RoomInstance other = roomInstance(1L, 41L, 2045L, 200L, "Crafting Hall of Ember");
 
-    RoomExit exit = new RoomExit();
+    RoomInstanceExit exit = new RoomInstanceExit();
     exit.setId(5001L);
     exit.setTenantId(1L);
-    exit.setFromRoom(room);
-    exit.setToRoom(other);
+    exit.setGameInstanceId(41L);
+    exit.setFromRoomInstance(room);
+    exit.setToRoomInstance(other);
     exit.setDirection("NORTH");
     exit.setCost(1);
-    when(exitRepository.findByTenantIdAndFromRoomId(1L, 1021L)).thenReturn(List.of(exit));
+    when(exitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(1L, 41L, 1021L))
+        .thenReturn(List.of(exit));
 
-    RoomSnapshotDto snapshot = service.getRoomSnapshot(1L, 1021L, "");
+    RoomSnapshotDto snapshot = service.getRoomSnapshot(1L, 41L, 1021L, "");
     assertEquals("Candle-lit Antechamber", snapshot.roomName());
     assertEquals(longDesc, snapshot.longDescription());
     assertEquals(1, snapshot.exits().size());
@@ -120,48 +108,40 @@ class RoomServiceImplTest {
 
   @Test
   void getRoomSnapshotResolvesLocalizedRoomTextWhenVariantsExist() throws Exception {
-    Room room = new Room();
-    room.setId(1021L);
-    room.setTenantId(1L);
-    Region region = new Region();
-    region.setId(200L);
-    Zone zone = zoneWithRegion(region);
-    room.setZone(zone);
-    room.setName("Candle-lit Antechamber");
+    RoomInstance room = roomInstance(1L, 41L, 1021L, 200L, "Candle-lit Antechamber");
     room.setDescription("Stalactites drip along the northern wall.");
     room.setNameLocalizedVariantsJson(
-        new tools.jackson.databind.ObjectMapper()
+        new ObjectMapper()
             .writeValueAsString(
                 LocalizedTextVariants.source("en-NZ", "Candle-lit Antechamber")
                     .withVariant("fr", "Antichambre eclairee par les chandelles")));
     room.setDescriptionLocalizedVariantsJson(
-        new tools.jackson.databind.ObjectMapper()
+        new ObjectMapper()
             .writeValueAsString(
                 LocalizedTextVariants.source("en-NZ", "Stalactites drip along the northern wall.")
                     .withVariant("fr", "Des stalactites perlent le long du mur nord.")));
-    when(repository.findById(1021L)).thenReturn(Optional.of(room));
+    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1021L))
+        .thenReturn(Optional.of(room));
 
-    Room targetRoom = new Room();
-    targetRoom.setId(2045L);
-    targetRoom.setTenantId(1L);
-    targetRoom.setZone(zone);
-    targetRoom.setName("North Hall");
+    RoomInstance targetRoom = roomInstance(1L, 41L, 2045L, 200L, "North Hall");
     targetRoom.setNameLocalizedVariantsJson(
-        new tools.jackson.databind.ObjectMapper()
+        new ObjectMapper()
             .writeValueAsString(
                 LocalizedTextVariants.source("en-NZ", "North Hall")
                     .withVariant("fr", "Salle du Nord")));
 
-    RoomExit exit = new RoomExit();
+    RoomInstanceExit exit = new RoomInstanceExit();
     exit.setId(5001L);
     exit.setTenantId(1L);
-    exit.setFromRoom(room);
-    exit.setToRoom(targetRoom);
+    exit.setGameInstanceId(41L);
+    exit.setFromRoomInstance(room);
+    exit.setToRoomInstance(targetRoom);
     exit.setDirection("NORTH");
     exit.setCost(1);
-    when(exitRepository.findByTenantIdAndFromRoomId(1L, 1021L)).thenReturn(List.of(exit));
+    when(exitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(1L, 41L, 1021L))
+        .thenReturn(List.of(exit));
 
-    RoomSnapshotDto snapshot = service.getRoomSnapshot(1L, 1021L, "fr");
+    RoomSnapshotDto snapshot = service.getRoomSnapshot(1L, 41L, 1021L, "fr");
 
     assertEquals("Antichambre eclairee par les chandelles", snapshot.roomName());
     assertEquals("Des stalactites perlent le long du mur nord.", snapshot.longDescription());
@@ -173,41 +153,46 @@ class RoomServiceImplTest {
 
   @Test
   void getRoomIgnoresCacheReadFailure() {
-    Room entity = new Room();
-    entity.setId(1L);
-    entity.setTenantId(1L);
-    Region region = new Region();
-    region.setId(2L);
-    entity.setZone(zoneWithRegion(region));
-    entity.setName("A");
-    when(valueOps.get("room:1:1"))
+    RoomInstance entity = roomInstance(1L, 41L, 1L, 2L, "A");
+    when(valueOps.get("room:1:41:1"))
         .thenThrow(new RedisSystemException("boom", new RuntimeException()));
-    when(repository.findById(1L)).thenReturn(Optional.of(entity));
+    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1L))
+        .thenReturn(Optional.of(entity));
 
-    RoomDto dto = service.getRoom(1L, 1L);
+    RoomDto dto = service.getRoom(1L, 41L, 1L);
 
     assertEquals("A", dto.name());
-    verify(repository).findById(1L);
+    verify(repository).findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1L);
   }
 
   @Test
   void getRoomIgnoresCacheWriteFailure() {
-    Room entity = new Room();
-    entity.setId(1L);
-    entity.setTenantId(1L);
-    Region region = new Region();
-    region.setId(2L);
-    entity.setZone(zoneWithRegion(region));
-    entity.setName("A");
-    when(repository.findById(1L)).thenReturn(Optional.of(entity));
+    RoomInstance entity = roomInstance(1L, 41L, 1L, 2L, "A");
+    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1L))
+        .thenReturn(Optional.of(entity));
     doThrow(new RedisSystemException("boom", new RuntimeException()))
         .when(valueOps)
-        .set(eq("room:1:1"), any(), eq(java.time.Duration.ofSeconds(1)));
+        .set(eq("room:1:41:1"), any(), eq(java.time.Duration.ofSeconds(1)));
 
-    RoomDto dto = service.getRoom(1L, 1L);
+    RoomDto dto = service.getRoom(1L, 41L, 1L);
 
     assertEquals("A", dto.name());
-    verify(repository).findById(1L);
+    verify(repository).findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1L);
+  }
+
+  private static RoomInstance roomInstance(
+      long tenantId, long gameInstanceId, long roomInstanceId, long regionInstanceId, String name) {
+    RegionInstance regionInstance = new RegionInstance();
+    regionInstance.setId(regionInstanceId);
+    ZoneInstance zoneInstance = new ZoneInstance();
+    zoneInstance.setRegionInstance(regionInstance);
+    RoomInstance room = new RoomInstance();
+    room.setTenantId(tenantId);
+    room.setGameInstanceId(gameInstanceId);
+    room.setRoomInstanceId(roomInstanceId);
+    room.setZoneInstance(zoneInstance);
+    room.setName(name);
+    return room;
   }
 
   @SuppressWarnings("unchecked")
@@ -218,11 +203,5 @@ class RoomServiceImplTest {
   @SuppressWarnings("unchecked")
   private static ValueOperations<String, Object> mockValueOperations() {
     return mock(ValueOperations.class);
-  }
-
-  private static Zone zoneWithRegion(Region region) {
-    Zone zone = new Zone();
-    zone.setRegion(region);
-    return zone;
   }
 }

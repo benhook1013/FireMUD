@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession;
 
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -24,6 +25,9 @@ import org.springframework.test.util.TestSocketUtils;
 
 /** Shared bootstrap helpers for nested cross-service Spring application contexts in tests. */
 public final class CrossServiceAppHarness {
+  private static final String CROSS_SERVICE_TEST_JWT_SECRET =
+      "stub-secret-key-for-tests-1234567890";
+
   private CrossServiceAppHarness() {}
 
   public static GameLogicHolder startGameLogic(
@@ -40,6 +44,7 @@ public final class CrossServiceAppHarness {
     props.put("server.port", "0");
     props.put("spring.grpc.server.port", String.valueOf(grpcPort));
     props.put("firemud.grpc.plaintext", "true");
+    props.put("firemud.auth.jwt-secret", CROSS_SERVICE_TEST_JWT_SECRET);
     props.put("firemud.database.enabled", "false");
     props.put("otel.endpoint", "disabled");
     props.put("firemud.services.worldManagementService", worldEndpoint);
@@ -66,6 +71,8 @@ public final class CrossServiceAppHarness {
     props.put("spring.grpc.server.port", "0");
     props.put("game-session.dev-isolated", "false");
     props.put("spring.main.allow-bean-definition-overriding", "true");
+    props.put("spring.flyway.enabled", "true");
+    props.put("spring.flyway.locations", "filesystem:" + gameSessionMigrationDir());
     props.put(
         "spring.autoconfigure.exclude",
         "org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,"
@@ -74,6 +81,7 @@ public final class CrossServiceAppHarness {
     props.put("firemud.services.gameLogicService", "localhost:" + gameLogicPort);
     props.put("firemud.services.accountService", "localhost:" + accountPort);
     props.put("firemud.grpc.plaintext", "true");
+    props.put("firemud.auth.jwt-secret", CROSS_SERVICE_TEST_JWT_SECRET);
     props.put("otel.endpoint", "disabled");
     customizer.accept(props);
 
@@ -89,6 +97,26 @@ public final class CrossServiceAppHarness {
     return props.entrySet().stream()
         .flatMap(entry -> Stream.of("--" + entry.getKey() + "=" + String.valueOf(entry.getValue())))
         .toArray(String[]::new);
+  }
+
+  private static String gameSessionMigrationDir() {
+    return resolveModuleMigrationDir("game-session-service").toString();
+  }
+
+  private static Path resolveModuleMigrationDir(String moduleName) {
+    Path current = Path.of("").toAbsolutePath().normalize();
+    while (current != null) {
+      Path candidate =
+          current
+              .resolve("services")
+              .resolve(moduleName)
+              .resolve("src/main/resources/db/migration");
+      if (candidate.toFile().exists()) {
+        return candidate;
+      }
+      current = current.getParent();
+    }
+    throw new IllegalStateException("Could not resolve migration directory for " + moduleName);
   }
 
   @TestConfiguration
@@ -179,20 +207,28 @@ public final class CrossServiceAppHarness {
           return new GameInstanceDto(
               -1L,
               request.tenantId(),
-              request.runtimeVersion(),
-              request.scriptPatchVersion(),
+              "stub-template-" + request.gameTemplateId(),
+              null,
+              request.gameTemplateId(),
+              null,
+              null,
+              null,
+              null,
+              null,
               request.ownerAccountId(),
               "RUNNING");
         }
 
         @Override
         public GameInstanceDto stopSession(long sessionId) {
-          return new GameInstanceDto(sessionId, 0L, "stub", null, 0L, "STOPPED");
+          return new GameInstanceDto(
+              sessionId, 0L, "stub", null, null, null, null, null, null, null, 0L, "STOPPED");
         }
 
         @Override
         public GameInstanceDto restartSession(long sessionId) {
-          return new GameInstanceDto(sessionId, 0L, "stub", null, 0L, "RUNNING");
+          return new GameInstanceDto(
+              sessionId, 0L, "stub", null, null, null, null, null, null, null, 0L, "RUNNING");
         }
       };
     }

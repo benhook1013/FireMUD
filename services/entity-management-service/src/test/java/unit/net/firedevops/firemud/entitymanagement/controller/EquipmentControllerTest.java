@@ -2,7 +2,6 @@ package net.firedevops.firemud.entitymanagement.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -11,10 +10,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
-import java.util.Map;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
-import net.firedevops.firemud.entitymanagement.security.JwtAuthInterceptor;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,17 +29,10 @@ class EquipmentControllerTest {
   @Autowired private MockMvc mockMvc;
 
   @MockitoBean private EquipmentService equipmentService;
-  @MockitoBean private JwtAuthInterceptor jwtAuthInterceptor;
 
   @BeforeEach
-  void setUpSecurityContext() throws Exception {
-    doAnswer(
-            invocation -> {
-              SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
-              return true;
-            })
-        .when(jwtAuthInterceptor)
-        .preHandle(any(), any(), any());
+  void setUpSecurityContext() {
+    SessionContext.setContext("test-account", List.of("platformAdmin"), java.util.Map.of());
   }
 
   @AfterEach

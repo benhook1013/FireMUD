@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamedesign.entity;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import lombok.Data;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Data
 @Entity
@@ -18,8 +20,8 @@ public class Revision {
   @Column(nullable = false)
   private Long authorAccountId;
 
-  @Lob
-  @Column(nullable = false)
+  @JdbcTypeCode(SqlTypes.JSON)
+  @Column(nullable = false, columnDefinition = "jsonb")
   private String data;
 
   @Column(nullable = false)

@@ -9,4 +9,7 @@ import org.springframework.stereotype.Repository;
 public interface CraftingRecipeRepository extends JpaRepository<CraftingRecipe, Long> {
   @EntityGraph(attributePaths = {"ingredients", "ingredients.item", "resultItem"})
   CraftingRecipe findWithIngredientsById(Long id);
+
+  @EntityGraph(attributePaths = {"ingredients", "ingredients.item", "resultItem"})
+  java.util.List<CraftingRecipe> findByTenantIdOrderByIdAsc(Long tenantId);
 }

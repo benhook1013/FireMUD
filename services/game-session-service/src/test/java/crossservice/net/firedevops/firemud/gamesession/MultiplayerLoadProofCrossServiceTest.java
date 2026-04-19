@@ -15,7 +15,6 @@ import java.net.http.WebSocket.Listener;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -26,11 +25,14 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
@@ -193,20 +195,7 @@ class MultiplayerLoadProofCrossServiceTest {
 
   private List<PlayerSeed> prepareGameInstances(int count) {
     JdbcTemplate jdbc = new JdbcTemplate(GAME_SESSION.bean(javax.sql.DataSource.class));
-    jdbc.execute(
-        """
-        CREATE TABLE IF NOT EXISTS game_instances (
-          id BIGSERIAL PRIMARY KEY,
-          tenant_id BIGINT NOT NULL,
-          runtime_version VARCHAR(100) NOT NULL,
-          script_patch_version VARCHAR(100),
-          script_patch_pinned_at TIMESTAMP NULL,
-          script_patch_pinned_by VARCHAR(200) NULL,
-          script_patch_pinned_reason VARCHAR(500) NULL,
-          owner_account_id BIGINT NOT NULL,
-          status VARCHAR(20) NOT NULL
-        )
-        """);
+    GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
     GAME_SESSION
         .bean(org.springframework.data.redis.core.StringRedisTemplate.class)
         .getConnectionFactory()
@@ -219,17 +208,7 @@ class MultiplayerLoadProofCrossServiceTest {
     for (int i = 0; i < count; i++) {
       long accountId = ACCOUNT_ID_BASE + i + 1;
       long sessionId =
-          Optional.ofNullable(
-                  jdbc.queryForObject(
-                      "INSERT INTO game_instances (tenant_id, runtime_version, script_patch_version, owner_account_id, status) VALUES (?, ?, ?, ?, ?) RETURNING id",
-                      Long.class,
-                      TENANT_ID,
-                      "0.1.0",
-                      "initial",
-                      accountId,
-                      "ACTIVE"))
-              .orElseThrow(
-                  () -> new IllegalStateException("Game instance insert did not return an id"));
+          GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, accountId, 7L);
       players.add(
           new PlayerSeed(
               sessionId, accountId, "player" + (i + 1) + "@example.com", "player-" + (i + 1)));
@@ -376,6 +355,24 @@ class MultiplayerLoadProofCrossServiceTest {
                               .setGameplayAvailable(true)
                               .setEntitlementVersion(1L)
                               .setTenantBillingSequence(1L)
+                              .setEvaluatedAt("2026-03-30T00:00:00Z")
+                              .build());
+                      responseObserver.onCompleted();
+                    }
+
+                    @Override
+                    public void ensurePublicProductionPlayerMembership(
+                        EnsurePublicProductionPlayerMembershipRequest request,
+                        StreamObserver<EnsurePublicProductionPlayerMembershipResponse>
+                            responseObserver) {
+                      responseObserver.onNext(
+                          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
+                              .setAccountId(request.getAccountId())
+                              .setTenantId(request.getTenantId())
+                              .setRealmSlug(request.getRealmSlug())
+                              .setGameplayAdmissionAllowed(true)
+                              .setMembershipVersion(1L)
+                              .setCreated(true)
                               .setEvaluatedAt("2026-03-30T00:00:00Z")
                               .build());
                       responseObserver.onCompleted();

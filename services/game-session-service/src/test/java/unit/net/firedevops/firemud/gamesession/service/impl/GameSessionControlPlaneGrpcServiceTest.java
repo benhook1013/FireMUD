@@ -9,14 +9,24 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
+import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
+import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
+import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
+import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
+import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse;
 import org.junit.jupiter.api.AfterEach;
@@ -129,6 +139,202 @@ class GameSessionControlPlaneGrpcServiceTest {
         meterRegistry.get("grpc.app_error").tag("code", "PERMISSION_DENIED").counter().count());
   }
 
+  @Test
+  void setAdmissionPointerAllowsAdminCaller() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authorityService.listPointerAudit("demo", "production"))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerAuditEntry(
+                    "demo",
+                    "production",
+                    "Demo World",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    3L,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    "tester",
+                    "cutover",
+                    "req-1",
+                    Instant.parse("2026-04-15T00:00:00Z"))));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            authorityService,
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<SetAdmissionPointerResponse> responseRef = new AtomicReference<>();
+    service.setAdmissionPointer(
+        SetAdmissionPointerRequest.newBuilder()
+            .setWorldSlug("demo")
+            .setWorldDisplayName("Demo World")
+            .setRealmSlug("production")
+            .setRealmDisplayName("Live Realm")
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setVisible(true)
+            .setRequiresCharacterSelection(false)
+            .setStateScope("SHARED")
+            .setCharacterCreationPolicy("ALLOW_NEW")
+            .setActorPrincipal("tester")
+            .setReason("cutover")
+            .setControlPlaneRequestId("req-1")
+            .setExpectedPointerVersion(2L)
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(SetAdmissionPointerResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("demo", responseRef.get().getPointer().getWorldSlug());
+    assertEquals(3L, responseRef.get().getPointer().getPointerVersion());
+    Mockito.verify(authorityService)
+        .upsertPointer(
+            Mockito.argThat(mutation -> Objects.equals(mutation.expectedPointerVersion(), 2L)));
+  }
+
+  @Test
+  void setAdmissionPointerRejectsStaleExpectedVersion() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authorityService.upsertPointer(Mockito.any()))
+        .thenThrow(
+            new AdmissionPointerVersionMismatchException(
+                "expected_pointer_version does not match current pointer version"));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            authorityService,
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<SetAdmissionPointerResponse> responseRef = new AtomicReference<>();
+    service.setAdmissionPointer(
+        SetAdmissionPointerRequest.newBuilder()
+            .setWorldSlug("demo")
+            .setWorldDisplayName("Demo World")
+            .setRealmSlug("production")
+            .setRealmDisplayName("Live Realm")
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setVisible(true)
+            .setRequiresCharacterSelection(false)
+            .setStateScope("SHARED")
+            .setCharacterCreationPolicy("ALLOW_NEW")
+            .setActorPrincipal("tester")
+            .setReason("cutover")
+            .setControlPlaneRequestId("req-2")
+            .setExpectedPointerVersion(2L)
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(SetAdmissionPointerResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+  }
+
+  @Test
+  void listAdmissionPointersRequiresAdminCaller() {
+    SessionContext.setContext("1", List.of("player"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
+    service.listAdmissionPointers(
+        ListAdmissionPointersRequest.getDefaultInstance(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListAdmissionPointersResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("PERMISSION_DENIED", responseRef.get().getError().getCode());
+  }
+
+  @Test
+  void listAdmissionPointerAuditReturnsEntriesForAdminCaller() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authorityService.listPointerAudit("demo", "production"))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerAuditEntry(
+                    "demo",
+                    "production",
+                    "Demo World",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    3L,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    "tester",
+                    "cutover",
+                    "req-1",
+                    Instant.parse("2026-04-15T00:00:00Z")),
+                new GameplayAdmissionPointerAuditEntry(
+                    "demo",
+                    "production",
+                    "Demo World",
+                    "Live Realm",
+                    1L,
+                    6L,
+                    2L,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    "tester",
+                    "previous",
+                    "req-0",
+                    Instant.parse("2026-04-14T00:00:00Z"))));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            authorityService,
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListAdmissionPointerAuditResponse> responseRef = new AtomicReference<>();
+    service.listAdmissionPointerAudit(
+        ListAdmissionPointerAuditRequest.newBuilder()
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListAdmissionPointerAuditResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals(2, responseRef.get().getAuditCount());
+    assertEquals("demo", responseRef.get().getAudit(0).getWorldSlug());
+    assertEquals(3L, responseRef.get().getAudit(0).getPointerVersion());
+  }
+
   private static GameSessionControlPlaneGrpcService newService(GameInstanceRepository repository) {
     return newService(repository, new SimpleMeterRegistry());
   }
@@ -136,7 +342,10 @@ class GameSessionControlPlaneGrpcServiceTest {
   private static GameSessionControlPlaneGrpcService newService(
       GameInstanceRepository repository, SimpleMeterRegistry meterRegistry) {
     return new GameSessionControlPlaneGrpcService(
-        repository, Mockito.mock(TickService.class), meterRegistry);
+        repository,
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+        Mockito.mock(TickService.class),
+        meterRegistry);
   }
 
   private static class NoopObserver<T> implements StreamObserver<T> {

@@ -10,6 +10,7 @@ import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.mapper.CharacterMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
+import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
@@ -24,13 +25,15 @@ class CharacterServiceImplTest {
     var cacheManager = new ConcurrentMapCacheManager("characterGraph");
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     CharacterServiceImpl service =
-        new CharacterServiceImpl(repo, mapper, cacheManager, meterRegistry);
+        new CharacterServiceImpl(
+            repo, mapper, cacheManager, meterRegistry, new PlayableStateKeyResolver());
     service.initMetrics();
 
     Character character = new Character();
     character.setId(1L);
     character.setTenantId(1L);
     character.setAccountId(1L);
+    character.setPlayableStateKey("shared-live");
     character.setName("Test");
     character.setLevel(1);
     character.setExperience(0);
@@ -56,13 +59,15 @@ class CharacterServiceImplTest {
     var cacheManager = new ConcurrentMapCacheManager("characterGraph");
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     CharacterServiceImpl service =
-        new CharacterServiceImpl(repo, mapper, cacheManager, meterRegistry);
+        new CharacterServiceImpl(
+            repo, mapper, cacheManager, meterRegistry, new PlayableStateKeyResolver());
     service.initMetrics();
 
     Character character = new Character();
     character.setId(1L);
     character.setTenantId(1L);
     character.setAccountId(1L);
+    character.setPlayableStateKey("shared-live");
     character.setName("Test");
 
     when(repo.findWithInventoryById(1L)).thenReturn(Optional.of(character));

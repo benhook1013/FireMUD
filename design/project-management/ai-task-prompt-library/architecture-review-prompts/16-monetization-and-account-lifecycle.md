@@ -9,7 +9,6 @@ Read the following documents. Follow references only when a listed document clea
 - `design/architecture/system-architecture-authentication.md`
 - `design/architecture/system-architecture-multi-tenancy.md`
 - `design/project-management/core-requirements.md`
-- `design/project-management/core-requirements.md`
 
 Then:
 

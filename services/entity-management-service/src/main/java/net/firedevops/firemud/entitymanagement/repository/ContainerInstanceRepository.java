@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public interface ContainerInstanceRepository extends JpaRepository<ContainerInstance, Long> {
@@ -44,4 +45,7 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
 
   @EntityGraph(attributePaths = {"character", "item", "itemInstance"})
   Optional<ContainerInstance> findByItemInstance_Id(Long itemInstanceId);
+
+  @Transactional
+  long deleteByTenantIdAndGameInstanceId(Long tenantId, String gameInstanceId);
 }

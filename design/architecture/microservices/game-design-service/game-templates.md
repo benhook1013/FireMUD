@@ -162,6 +162,19 @@ Required ordering:
 
 No service may create persistent instance rows before this preflight sequence completes successfully. Partial provisioning before attestation/reference validation is not an allowed first-slice behavior.
 
+Required deterministic failure vocabulary for the first implementation slice:
+
+- `TEMPLATE_REFERENCE_PHASE_NOT_ENFORCED` when `GetTemplateReferencePhase` is not `ENFORCED`.
+- `INVALID_TEMPLATE_CONFIGURATION` when normalized references do not converge to one canonical base `versionId` or otherwise fail launch validation.
+- `SCRIPT_PATCH_OVERRIDE_CONFLICT` when a caller tries to override a template-pinned `scriptPatchVersion`.
+- `SCRIPT_PATCH_NOT_READY` when the resolved or requested patch is not tenant-`READY` for the same `baseVersionId`.
+- `RELEASE_BUNDLE_NOT_FOUND` when `GetPublishedReleaseBundle` is absent for the resolved version.
+- `RELEASE_ATTESTATION_MISMATCH` when the attested bundle does not match the resolved descriptor values.
+- `VERSION_STATE_EPOCH_STALE` when launch resolution and activation preflight no longer bind to the same frozen version-state epoch.
+- `LAUNCH_REMAP_REQUIRED` when replacement-instance cutover needs an approved `remapSetId` and one is not supplied or not valid.
+
+These are application-level launch-preflight outcomes, not transport failures. Retries for the same `controlPlaneRequestId` must return the same deterministic business result until callers intentionally start a new launch attempt with a new `controlPlaneRequestId`.
+
 Illustrative control-plane schema:
 
 - Request: `ResolveLaunchDescriptorRequest { tenantId, gameTemplateId, controlPlaneRequestId, requestedRuntimeFlags?, requestedScriptPatchVersion?, sourceVersionId?, targetVersionId? }`
@@ -173,6 +186,8 @@ The exact transport schema may evolve, but every implementation must preserve th
 - response fields are the immutable resolved values consumed by launch-time workflows;
 - `releaseBundleRef` (or equivalent attestation identity) must let downstream workflows prove they are using the same published release attestation that supplied `generationConfigRevision`.
 - A request with the same `(tenantId, gameTemplateId, controlPlaneRequestId)` and the same input fields must return the same descriptor values; a request with a different `controlPlaneRequestId` is a new launch attempt and may resolve against newer valid state.
+- Idempotent retries that previously produced a deterministic business failure must return the same failure code and resolved context (where applicable) rather than re-evaluating against newer publish, patch, or template state.
+- If callers change any semantically relevant input field while reusing the same `controlPlaneRequestId`, the request must fail deterministically as an idempotency-key misuse rather than silently creating a second descriptor record.
 
 Normative examples:
 

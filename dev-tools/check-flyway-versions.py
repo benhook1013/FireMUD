@@ -42,7 +42,12 @@ def discover_migration_files(repo_root: Path) -> list[MigrationFile]:
         return []
 
     discovered: list[MigrationFile] = []
-    for path in services_dir.rglob("V*__*.sql"):
+    try:
+        candidates = services_dir.rglob("V*__*.sql")
+    except FileNotFoundError:
+        return []
+
+    for path in candidates:
         if not path.is_file():
             continue
         rel_path = path.relative_to(repo_root).as_posix()

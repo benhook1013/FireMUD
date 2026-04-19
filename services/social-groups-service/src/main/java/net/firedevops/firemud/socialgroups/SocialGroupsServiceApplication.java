@@ -1,14 +1,13 @@
 package net.firedevops.firemud.socialgroups;
 
 import net.firedevops.firemud.common.saga.persistence.EnableSagaEntityScan;
-import net.firedevops.firemud.socialgroups.config.ChatProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 @SpringBootApplication
 @EnableSagaEntityScan
-@EnableConfigurationProperties(ChatProperties.class)
+@ConfigurationPropertiesScan
 public class SocialGroupsServiceApplication {
   public static void main(String[] args) {
     SpringApplication.run(SocialGroupsServiceApplication.class, args);

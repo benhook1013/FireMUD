@@ -14,6 +14,29 @@ service GameDesignService {
   rpc PublishScriptPatchVersion(PublishScriptPatchVersionRequest)
       returns (PublishScriptPatchVersionResponse);
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
+  rpc GetDesignControlPlaneDigest(GetDesignControlPlaneDigestRequest)
+      returns (GetDesignControlPlaneDigestResponse);
+  rpc GetPublishedReleaseBundle(GetPublishedReleaseBundleRequest)
+      returns (GetPublishedReleaseBundleResponse);
+  rpc GetVersionState(GetVersionStateRequest) returns (GetVersionStateResponse);
+  rpc CompareAndSetVersionState(CompareAndSetVersionStateRequest)
+      returns (CompareAndSetVersionStateResponse);
+  rpc ResolveLaunchDescriptor(ResolveLaunchDescriptorRequest)
+      returns (ResolveLaunchDescriptorResponse);
+  rpc GetVersionAssetArtifactState(GetVersionAssetArtifactStateRequest)
+      returns (GetVersionAssetArtifactStateResponse);
+  rpc TombstoneVersionAssets(TombstoneVersionAssetsRequest)
+      returns (TombstoneVersionAssetsResponse);
+  rpc CanDeleteVersionAssets(CanDeleteVersionAssetsRequest)
+      returns (CanDeleteVersionAssetsResponse);
+  rpc BeginPurgeVersionAssets(BeginPurgeVersionAssetsRequest)
+      returns (BeginPurgeVersionAssetsResponse);
+  rpc FinalizePurgeVersionAssets(FinalizePurgeVersionAssetsRequest)
+      returns (FinalizePurgeVersionAssetsResponse);
+  rpc GetVersionAssetPurgeStatus(GetVersionAssetPurgeStatusRequest)
+      returns (GetVersionAssetPurgeStatusResponse);
+  rpc RepairPublishedVersionAssets(RepairPublishedVersionAssetsRequest)
+      returns (RepairPublishedVersionAssetsResponse);
   rpc GetScopedSettingsOverrides(GetScopedSettingsOverridesRequest)
       returns (GetScopedSettingsOverridesResponse);
   rpc PutSettingsDomainOverride(PutSettingsDomainOverrideRequest)
@@ -64,12 +87,265 @@ message ListVersionsResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
+message GetDesignControlPlaneDigestRequest {
+  string tenant_id = 1;
+  oneof scope {
+    int64 version_id = 2;
+    string script_patch_version = 3;
+  }
+}
+
+message GetDesignControlPlaneDigestResponse {
+  DesignControlPlaneDigest digest = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetPublishedReleaseBundleRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+}
+
+message GetPublishedReleaseBundleResponse {
+  PublishedReleaseBundle bundle = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetVersionStateRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+}
+
+message GetVersionStateResponse {
+  VersionStateSnapshot version_state = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message CompareAndSetVersionStateRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  int64 expected_version_state_epoch = 3;
+  VersionLifecycleState new_state = 4;
+  string reason = 5;
+}
+
+message CompareAndSetVersionStateResponse {
+  VersionStateSnapshot version_state = 1;
+  bool updated = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message ResolveLaunchDescriptorRequest {
+  string tenant_id = 1;
+  int64 game_template_id = 2;
+  string control_plane_request_id = 3;
+  optional string requested_script_patch_version = 4;
+  optional int64 source_version_id = 5;
+  optional int64 target_version_id = 6;
+  optional string requested_runtime_flags_json = 7;
+}
+
+message ResolveLaunchDescriptorResponse {
+  LaunchDescriptor launch_descriptor = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetVersionAssetArtifactStateRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+}
+
+message GetVersionAssetArtifactStateResponse {
+  VersionAssetArtifactState artifact_state = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message TombstoneVersionAssetsRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  int64 expected_artifact_state_epoch = 3;
+  string tombstone_workflow_id = 4;
+}
+
+message TombstoneVersionAssetsResponse {
+  VersionAssetArtifactState artifact_state = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message CanDeleteVersionAssetsRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+}
+
+message CanDeleteVersionAssetsResponse {
+  VersionAssetDeletionEligibility eligibility = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message BeginPurgeVersionAssetsRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  int64 expected_artifact_state_epoch = 3;
+}
+
+message BeginPurgeVersionAssetsResponse {
+  VersionAssetArtifactState artifact_state = 1;
+  VersionAssetPurgeWorkflowStatus purge_status = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message FinalizePurgeVersionAssetsRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  string purge_workflow_id = 3;
+  int64 expected_artifact_state_epoch = 4;
+}
+
+message FinalizePurgeVersionAssetsResponse {
+  VersionAssetArtifactState artifact_state = 1;
+  VersionAssetPurgeWorkflowStatus purge_status = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message GetVersionAssetPurgeStatusRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  string purge_workflow_id = 3;
+}
+
+message GetVersionAssetPurgeStatusResponse {
+  VersionAssetArtifactState artifact_state = 1;
+  VersionAssetPurgeWorkflowStatus purge_status = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message RepairPublishedVersionAssetsRequest {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  int64 expected_artifact_state_epoch = 3;
+  string repair_workflow_id = 4;
+}
+
+message RepairPublishedVersionAssetsResponse {
+  VersionAssetArtifactState artifact_state = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
 message Version {
   int64 id = 1;
   int32 version_number = 2;
   string script_patch_version = 3;
   bool is_script_only = 4;
   string notes = 5;
+}
+
+message PublishedReleaseBundle {
+  int64 id = 1;
+  int64 version_id = 2;
+  int32 version_number = 3;
+  string attestation_schema_version = 4;
+  string publish_workflow_id = 5;
+  string manifest_hash = 6;
+  repeated string required_manifest_asset_keys = 7;
+  bool is_script_only = 8;
+  string script_patch_version = 9;
+  string published_at = 10;
+  repeated ParticipantDigest participant_digests = 11;
+  string generation_config_revision = 12;
+}
+
+message LaunchDescriptor {
+  string launch_descriptor_id = 1;
+  string tenant_id = 2;
+  int64 game_template_id = 3;
+  string control_plane_request_id = 4;
+  int64 version_id = 5;
+  string script_patch_version = 6;
+  string runtime_flags_json = 7;
+  string generation_config_revision = 8;
+  int64 version_state_epoch = 9;
+  int64 release_bundle_id = 10;
+  string published_release_bundle_ref = 11;
+}
+
+message DesignControlPlaneDigest {
+  string tenant_id = 1;
+  string scope_value = 2;
+  string applied_commit_id = 3;
+  string content_digest = 4;
+  int32 digest_schema_version = 5;
+}
+
+message VersionStateSnapshot {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  VersionLifecycleState version_state = 3;
+  int64 version_state_epoch = 4;
+  string updated_at = 5;
+}
+
+message ParticipantDigest {
+  string participant_key = 1;
+  string scope_value = 2;
+  string applied_commit_id = 3;
+  string content_digest = 4;
+  int32 digest_schema_version = 5;
+}
+
+enum VersionLifecycleState {
+  VERSION_LIFECYCLE_STATE_UNSPECIFIED = 0;
+  VERSION_LIFECYCLE_STATE_DRAFT = 1;
+  VERSION_LIFECYCLE_STATE_PUBLISHED = 2;
+  VERSION_LIFECYCLE_STATE_ACTIVE = 3;
+  VERSION_LIFECYCLE_STATE_FAILED = 4;
+  VERSION_LIFECYCLE_STATE_RETIRED = 5;
+}
+
+enum ArtifactState {
+  ARTIFACT_STATE_UNSPECIFIED = 0;
+  ARTIFACT_STATE_STAGED = 1;
+  ARTIFACT_STATE_EXPORTED_UNATTESTED = 2;
+  ARTIFACT_STATE_PUBLISHED = 3;
+  ARTIFACT_STATE_FAILED = 4;
+  ARTIFACT_STATE_TOMBSTONED = 5;
+  ARTIFACT_STATE_PURGE_IN_PROGRESS = 6;
+  ARTIFACT_STATE_PURGE_FAILED = 7;
+  ARTIFACT_STATE_PURGED = 8;
+}
+
+message VersionAssetArtifactState {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  ArtifactState artifact_state = 3;
+  int64 state_epoch = 4;
+  string manifest_hash = 5;
+  string last_workflow_id = 6;
+  string last_error_code = 7;
+  string last_error_message = 8;
+  string updated_at = 9;
+  repeated string exported_manifest_asset_keys = 10;
+}
+
+message VersionAssetDeletionEligibility {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  bool deletable = 3;
+  ArtifactState current_artifact_state = 4;
+  int64 current_state_epoch = 5;
+  string failure_code = 6;
+  string failure_message = 7;
+}
+
+message VersionAssetPurgeWorkflowStatus {
+  string tenant_id = 1;
+  int64 version_id = 2;
+  string purge_workflow_id = 3;
+  string workflow_status = 4;
+  int64 started_from_state_epoch = 5;
+  string requested_at = 6;
+  string updated_at = 7;
+  string completed_at = 8;
+  string last_error_code = 9;
+  string last_error_message = 10;
 }
 
 message PingRequest {}

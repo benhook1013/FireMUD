@@ -4,6 +4,7 @@ import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.CurrencyBalance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.CurrencyBalanceRepository;
 import net.firedevops.firemud.accountservice.service.VirtualCurrencyService;
 import org.springframework.stereotype.Service;
@@ -12,11 +13,15 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class VirtualCurrencyServiceImpl implements VirtualCurrencyService {
   private final AccountRepository accountRepository;
+  private final AccountTenantMembershipRepository accountTenantMembershipRepository;
   private final CurrencyBalanceRepository balanceRepository;
 
   public VirtualCurrencyServiceImpl(
-      AccountRepository accountRepository, CurrencyBalanceRepository balanceRepository) {
+      AccountRepository accountRepository,
+      AccountTenantMembershipRepository accountTenantMembershipRepository,
+      CurrencyBalanceRepository balanceRepository) {
     this.accountRepository = accountRepository;
+    this.accountTenantMembershipRepository = accountTenantMembershipRepository;
     this.balanceRepository = balanceRepository;
   }
 
@@ -32,11 +37,7 @@ public class VirtualCurrencyServiceImpl implements VirtualCurrencyService {
             .findByTenantIdAndAccountIdAndCurrencyCode(tenantId, accountId, currencyCode)
             .orElseGet(
                 () -> {
-                  Account account =
-                      accountRepository
-                          .findById(accountId)
-                          .filter(a -> a.getTenantId().equals(tenantId))
-                          .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+                  Account account = requireAccountMembership(tenantId, accountId);
                   CurrencyBalance cb = new CurrencyBalance();
                   cb.setAccount(account);
                   cb.setCurrencyCode(currencyCode);
@@ -76,5 +77,14 @@ public class VirtualCurrencyServiceImpl implements VirtualCurrencyService {
         .findByTenantIdAndAccountIdAndCurrencyCode(tenantId, accountId, currencyCode)
         .map(CurrencyBalance::getBalance)
         .orElse(0L);
+  }
+
+  private Account requireAccountMembership(Long tenantId, Long accountId) {
+    if (!accountTenantMembershipRepository.existsByAccountIdAndTenantId(accountId, tenantId)) {
+      throw new IllegalArgumentException("Account not found");
+    }
+    return accountRepository
+        .findById(accountId)
+        .orElseThrow(() -> new IllegalArgumentException("Account not found"));
   }
 }

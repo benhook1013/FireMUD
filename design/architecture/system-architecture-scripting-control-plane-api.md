@@ -79,6 +79,57 @@ Compact publication-to-runtime sequence:
 
 The API shapes below are described in gRPC-style terms but may be exposed via REST in operator-only deployments; the **fields and semantics are the contract**.
 
+### Game Design: Design-Time Publication Visibility
+
+These read surfaces expose immutable publication truth from Game Design. They are intentionally separate from tenant readiness and instance activation reads so operators and services do not collapse publication, readiness, and activation into one state machine.
+
+#### `GetPublishedScriptPatchVersion`
+
+Inputs:
+
+- `tenantId`
+- `scriptPatchVersion`
+
+Outputs:
+
+- `tenantId`, `scriptPatchVersion`
+- `designStatus` (`PUBLISHED`, `PUBLISH_FAILED_DESIGN`, `SUPERSEDED_DESIGN`)
+- `baseVersionId`
+- `abilitySchemaDigest`
+- `publishedAt` (nullable; required when `designStatus=PUBLISHED`)
+- `supersededByScriptPatchVersion` (nullable; required when `designStatus=SUPERSEDED_DESIGN`)
+- `statusReason` (optional; required for deterministic design-time failures)
+
+Contract rules:
+
+- `designStatus=PUBLISHED` means Game Design accepted and recorded the immutable script-patch artifact for the referenced `baseVersionId`; it does not imply tenant runtime readiness.
+- Runtime readiness remains the responsibility of Automation & Scripting via `GetScriptPatchStatus`; callers must not infer `READY` from Game Design publication alone.
+- If Game Design rejects the publish attempt (`PUBLISH_FAILED_DESIGN`), Automation & Scripting must not create or expose a tenant lifecycle row for that patch version.
+
+#### `GetPublishedPluginVersion`
+
+Inputs:
+
+- `tenantId`
+- `pluginId`
+- `pluginVersionId`
+
+Outputs:
+
+- `tenantId`, `pluginId`, `pluginVersionId`
+- `designStatus` (`UPLOADED`, `SIGNATURE_VERIFIED`, `VALIDATION_FAILED_DESIGN`, `PUBLISHED`, `REVOKED_DESIGN`)
+- `baseVersionId`
+- `abilitySchemaDigest`
+- `signerKeyId`
+- `publishedAt` (nullable; required when `designStatus=PUBLISHED`)
+- `statusReason` (optional; required for deterministic design-time failures or revocation)
+
+Contract rules:
+
+- `designStatus=PUBLISHED` means the immutable plugin bundle is signed, validated, and eligible for runtime activation. It does not imply that any instance has activated it.
+- Runtime activation and drain/disable state remain the responsibility of Automation & Scripting via `GetPluginStatus`; callers must not infer `ENABLED` or `DISABLED` from Game Design publication state.
+- A plugin version that is not `PUBLISHED` must be rejected by runtime activation APIs with deterministic application errors rather than being partially loaded and then downgraded later.
+
 ### Game Session: Patch Pinning
 
 #### `GetPinnedScriptPatchVersion`
@@ -160,6 +211,10 @@ Outputs:
 - `supersededByScriptPatchVersion` (nullable; required when `status=SUPERSEDED`)
 - `lastChangedAt`
 
+Boundary rule:
+
+- This API reports tenant runtime readiness only. Operator UIs that need to explain "published but not ready" must join this read with `GetPublishedScriptPatchVersion` instead of inventing a fused status enum.
+
 #### `ListScriptPatchStatuses`
 
 Inputs:
@@ -229,6 +284,10 @@ Outputs:
 - `pluginState` (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`)
 - `statusReason` (optional; required for security/policy-driven disablement such as `signer_revoked`)
 - `lastChangedAt`
+
+Boundary rule:
+
+- This API reports runtime state for one `(tenantId, gameInstanceId, pluginId)` only. It must not be overloaded to synthesize design-time publication status or signer-verification history from Game Design.
 
 #### `SetPluginActiveVersion`
 

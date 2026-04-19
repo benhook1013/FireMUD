@@ -1,0 +1,373 @@
+preview:
+  prNumber: 0
+  namespace: dev
+  releaseName: dev
+  hostname: dev.preview.firedevops.net
+  telnetPort: 32016
+  seedOnFirstDeploy: true
+  maxConcurrentEnforced: false
+
+previewStack:
+  enabled: true
+  defaultImageTag: develop-deadbeef
+  imagePullSecrets:
+    - ghcr-preview-pull
+  ingress:
+    enabled: true
+    className: traefik
+    clusterIssuer: letsencrypt-prod
+    tlsSecretName: dev-preview-firedevops-net-tls
+
+  seed:
+    enabled: true
+    image: postgres:16
+
+  grpcTls:
+    createSecret: false
+    secretName: firemud-grpc-tls
+    clientCrt: ""
+    clientKey: ""
+    caCrt: ""
+
+  postgres:
+    image: postgres:16
+    database: firemud
+
+  redis:
+    image: redis:7.4.3
+
+  minio:
+    image: minio/minio:RELEASE.2024-05-10T01-41-38Z
+    accessKey: minio
+    secretKey: minio123
+
+  persistence:
+    postgres:
+      size: 5Gi
+      storageClassName: local-path
+    minio:
+      size: 5Gi
+      storageClassName: local-path
+    redisCoord:
+      size: 1Gi
+      storageClassName: local-path
+    redisCache:
+      size: 1Gi
+      storageClassName: local-path
+
+  sharedConfig:
+    FIREMUD_POSTGRES_HOST: postgres
+    FIREMUD_POSTGRES_PORT: "5432"
+    FIREMUD_POSTGRES_DB: firemud
+    FIREMUD_REDIS_HOST: redis-cache
+    FIREMUD_REDIS_PORT: "6379"
+    FIREMUD_REDIS_COORD_HOST: redis-coord
+    FIREMUD_REDIS_COORD_PORT: "6379"
+    FIREMUD_REDIS_CACHE_HOST: redis-cache
+    FIREMUD_REDIS_CACHE_PORT: "6379"
+    OTEL_ENDPOINT: http://otel-collector:4317
+    FLUENT_ELASTICSEARCH_HOST: elasticsearch
+    FLUENT_ELASTICSEARCH_PORT: "9200"
+    FIREMUD_GRPC_PLAINTEXT: "false"
+    ASSET_STORE_ENDPOINT: http://minio:9000
+    ASSET_STORE_BUCKET: firemud-assets
+    ASSET_STORE_REGION: ap-southeast-2
+    ASSET_STORE_ACCESS_KEY: minio
+    ASSET_STORE_SECRET_KEY: minio123
+    FIREMUD_SERVICES_GAME_LOGIC_SERVICE: game-logic-service:6565
+    FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE: logging-admin-service:6565
+
+  sharedSecret:
+    FIREMUD_POSTGRES_USER: firemud
+    FIREMUD_POSTGRES_PASSWORD: firemud
+    FIREMUD_AUTH_JWT_SECRET: changeit-changeit-changeit-changeit
+
+  resources:
+    app:
+      requests:
+        cpu: "50m"
+        memory: "256Mi"
+      limits:
+        cpu: "750m"
+        memory: "512Mi"
+
+  seedSql: |
+    INSERT INTO game_design_service.game (id, tenant_id, name, description)
+    VALUES (1, '1', 'Dev Demo Game', 'Dev-demo bootstrap seed game.')
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      name = EXCLUDED.name,
+      description = EXCLUDED.description;
+
+    INSERT INTO game_design_service.version (
+      id,
+      tenant_id,
+      version_number,
+      version_state,
+      version_state_epoch,
+      notes
+    )
+    VALUES (1, '1', 1, 'PUBLISHED', 1, 'Dev-demo seed version')
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      version_number = EXCLUDED.version_number,
+      version_state = EXCLUDED.version_state,
+      version_state_epoch = EXCLUDED.version_state_epoch,
+      notes = EXCLUDED.notes;
+
+    INSERT INTO game_design_service.game_templates (
+      id,
+      tenant_id,
+      name,
+      description,
+      config,
+      default_version_id,
+      default_runtime_flags_json,
+      template_reference_phase
+    )
+    VALUES (
+      1,
+      '1',
+      'Dev Demo Template',
+      'Dev-demo bootstrap seed template.',
+      '{}'::jsonb,
+      1,
+      '{}',
+      'ENFORCED'
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      name = EXCLUDED.name,
+      description = EXCLUDED.description,
+      config = EXCLUDED.config,
+      default_version_id = EXCLUDED.default_version_id,
+      default_runtime_flags_json = EXCLUDED.default_runtime_flags_json,
+      template_reference_phase = EXCLUDED.template_reference_phase;
+
+    INSERT INTO game_design_service.published_release_bundle (
+      id,
+      tenant_id,
+      version_id,
+      version_number,
+      attestation_schema_version,
+      publish_workflow_id,
+      manifest_hash,
+      generation_config_revision,
+      required_manifest_asset_keys_json,
+      participant_digests_json,
+      script_only
+    )
+    VALUES (
+      1,
+      '1',
+      1,
+      1,
+      'v1',
+      'dev-demo-seed',
+      'dev-demo-seed-manifest',
+      'genrev:dev-demo-seed',
+      '[]',
+      '[]',
+      FALSE
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      version_id = EXCLUDED.version_id,
+      version_number = EXCLUDED.version_number,
+      attestation_schema_version = EXCLUDED.attestation_schema_version,
+      publish_workflow_id = EXCLUDED.publish_workflow_id,
+      manifest_hash = EXCLUDED.manifest_hash,
+      generation_config_revision = EXCLUDED.generation_config_revision,
+      required_manifest_asset_keys_json = EXCLUDED.required_manifest_asset_keys_json,
+      participant_digests_json = EXCLUDED.participant_digests_json,
+      script_only = EXCLUDED.script_only;
+
+    INSERT INTO world_management_service.region (id, name, tenant_id, shard_id)
+    VALUES (201, 'Preview Coast', 1, 0)
+    ON CONFLICT (id) DO UPDATE SET
+      name = EXCLUDED.name,
+      tenant_id = EXCLUDED.tenant_id,
+      shard_id = EXCLUDED.shard_id;
+
+    INSERT INTO world_management_service.zone (id, region_id, name, tenant_id)
+    VALUES (301, 201, 'Lantern District', 1)
+    ON CONFLICT (id) DO UPDATE SET
+      region_id = EXCLUDED.region_id,
+      name = EXCLUDED.name,
+      tenant_id = EXCLUDED.tenant_id;
+
+    INSERT INTO world_management_service.room (id, zone_id, name, description, tenant_id)
+    VALUES
+      (1021, 301, 'Cinder Court', 'Bronze lanterns sway above a wind-scuffed courtyard where every footprint seems to point deeper into the preview build.', 1),
+      (1022, 301, 'North Arcade', 'A narrow arcade of red stone carries the echo of distant voices and the smell of rain coming off the coast.', 1)
+    ON CONFLICT (id) DO UPDATE SET
+      zone_id = EXCLUDED.zone_id,
+      name = EXCLUDED.name,
+      description = EXCLUDED.description,
+      tenant_id = EXCLUDED.tenant_id;
+
+    INSERT INTO world_management_service.room_exit (id, tenant_id, from_room_id, to_room_id, cost, direction)
+    VALUES
+      (4001, 1, 1021, 1022, 1, 'NORTH'),
+      (4002, 1, 1022, 1021, 1, 'SOUTH')
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      from_room_id = EXCLUDED.from_room_id,
+      to_room_id = EXCLUDED.to_room_id,
+      cost = EXCLUDED.cost,
+      direction = EXCLUDED.direction;
+
+  services:
+    - name: account-service
+      schema: account_service
+      image:
+        repository: ghcr.io/benhook1013/account-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: automation-scripting-service
+      schema: automation_scripting_service
+      image:
+        repository: ghcr.io/benhook1013/automation-scripting-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: entity-management-service
+      schema: entity_management_service
+      image:
+        repository: ghcr.io/benhook1013/entity-management-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: game-design-service
+      schema: game_design_service
+      image:
+        repository: ghcr.io/benhook1013/game-design-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: game-logic-service
+      schema: game_logic_service
+      image:
+        repository: ghcr.io/benhook1013/game-logic-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: game-session-service
+      schema: game_session_service
+      image:
+        repository: ghcr.io/benhook1013/game-session-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: logging-admin-service
+      schema: logging_admin_service
+      image:
+        repository: ghcr.io/benhook1013/logging-admin-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: social-groups-service
+      schema: social_groups_service
+      image:
+        repository: ghcr.io/benhook1013/social-groups-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: spring-cloud-gateway
+      schema: gateway
+      image:
+        repository: ghcr.io/benhook1013/spring-cloud-gateway
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      extraEnv:
+        FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_ALLOW_INSECURE_HEADERS_FROM_TRUSTED_CIDRS: "true"
+        FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_INSECURE_TRUSTED_CIDRS_0: 10.42.0.0/16
+      ports:
+        - port: 80
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: tcp-proxy-service
+      schema: tcp_proxy_service
+      image:
+        repository: ghcr.io/benhook1013/tcp-proxy-service
+      serviceType: NodePort
+      springProfile: false
+      envFromShared: false
+      mountGrpcTls: true
+      healthPort: 8080
+      extraEnv:
+        GATEWAY_WS_URL: ws://spring-cloud-gateway/ws/game
+        TCP_PROXY_GATEWAY_BASE_URL: http://spring-cloud-gateway
+        FIREMUD_GAMEPLAY_DEFAULT_TENANT_ID: "1"
+        FIREMUD_GAMEPLAY_DEFAULT_WORLD_ID: "demo"
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 2323
+          targetPort: 2323
+          nodePort: 32016
+    - name: world-management-service
+      schema: world_management_service
+      image:
+        repository: ghcr.io/benhook1013/world-management-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565

@@ -92,6 +92,96 @@ previewStack:
         memory: "512Mi"
 
   seedSql: |
+    INSERT INTO game_design_service.game (id, tenant_id, name, description)
+    VALUES (1, '1', 'Preview Demo Game', 'Hosted preview bootstrap seed game.')
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      name = EXCLUDED.name,
+      description = EXCLUDED.description;
+
+    INSERT INTO game_design_service.version (
+      id,
+      tenant_id,
+      version_number,
+      version_state,
+      version_state_epoch,
+      notes
+    )
+    VALUES (1, '1', 1, 'PUBLISHED', 1, 'Hosted preview seed version')
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      version_number = EXCLUDED.version_number,
+      version_state = EXCLUDED.version_state,
+      version_state_epoch = EXCLUDED.version_state_epoch,
+      notes = EXCLUDED.notes;
+
+    INSERT INTO game_design_service.game_templates (
+      id,
+      tenant_id,
+      name,
+      description,
+      config,
+      default_version_id,
+      default_runtime_flags_json,
+      template_reference_phase
+    )
+    VALUES (
+      1,
+      '1',
+      'Preview Demo Template',
+      'Hosted preview bootstrap seed template.',
+      '{}'::jsonb,
+      1,
+      '{}',
+      'ENFORCED'
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      name = EXCLUDED.name,
+      description = EXCLUDED.description,
+      config = EXCLUDED.config,
+      default_version_id = EXCLUDED.default_version_id,
+      default_runtime_flags_json = EXCLUDED.default_runtime_flags_json,
+      template_reference_phase = EXCLUDED.template_reference_phase;
+
+    INSERT INTO game_design_service.published_release_bundle (
+      id,
+      tenant_id,
+      version_id,
+      version_number,
+      attestation_schema_version,
+      publish_workflow_id,
+      manifest_hash,
+      generation_config_revision,
+      required_manifest_asset_keys_json,
+      participant_digests_json,
+      script_only
+    )
+    VALUES (
+      1,
+      '1',
+      1,
+      1,
+      'v1',
+      'preview-seed',
+      'preview-seed-manifest',
+      'genrev:preview-seed',
+      '[]',
+      '[]',
+      FALSE
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      version_id = EXCLUDED.version_id,
+      version_number = EXCLUDED.version_number,
+      attestation_schema_version = EXCLUDED.attestation_schema_version,
+      publish_workflow_id = EXCLUDED.publish_workflow_id,
+      manifest_hash = EXCLUDED.manifest_hash,
+      generation_config_revision = EXCLUDED.generation_config_revision,
+      required_manifest_asset_keys_json = EXCLUDED.required_manifest_asset_keys_json,
+      participant_digests_json = EXCLUDED.participant_digests_json,
+      script_only = EXCLUDED.script_only;
+
     INSERT INTO world_management_service.region (id, name, tenant_id, shard_id)
     VALUES (201, 'Preview Coast', 1, 0)
     ON CONFLICT (id) DO UPDATE SET

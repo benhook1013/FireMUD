@@ -38,6 +38,9 @@ public class ItemStack {
   @Column(name = "compatibility_fingerprint", nullable = false, length = 255)
   private String compatibilityFingerprint;
 
+  @Column(name = "stack_family_key", length = 128)
+  private String stackFamilyKey;
+
   @Column(name = "quantity", nullable = false)
   private int quantity;
 

@@ -193,4 +193,46 @@ class HelpCommandHandlerTest {
     assertEquals("HELP_UNKNOWN_TOPIC", result.commandResult().errorCode());
     assertTrue(result.outputs().get(0).text().contains("Unknown help topic: banana"));
   }
+
+  @Test
+  void helpIndexIncludesConfiguredAuthoredTopics() {
+    HelpCommandHandler authoredHelpHandler = new HelpCommandHandler(authoredCatalog());
+
+    TextCommandInterpretationResult result =
+        authoredHelpHandler.handle(new TextCommand(TextCommandType.HELP, List.of(), "HELP"));
+
+    assertTrue(result.commandResult().accepted());
+    assertTrue(result.outputs().get(0).text().contains("Authored topics:"));
+    assertTrue(result.outputs().get(0).text().contains("HELP SALUTE"));
+  }
+
+  @Test
+  void helpTopicResolvesConfiguredAuthoredAction() {
+    HelpCommandHandler authoredHelpHandler = new HelpCommandHandler(authoredCatalog());
+
+    TextCommandInterpretationResult result =
+        authoredHelpHandler.handle(
+            new TextCommand(TextCommandType.HELP, List.of("salute"), "HELP salute"));
+
+    assertTrue(result.commandResult().accepted());
+    assertTrue(result.outputs().get(0).text().contains("SALUTE"));
+    assertTrue(result.outputs().get(0).text().contains("Offer a formal greeting."));
+    assertTrue(
+        result.outputs().get(0).text().contains("Use this to greet nearby nobles or officers."));
+    assertTrue(result.outputs().get(0).text().contains("Aliases: HAIL"));
+  }
+
+  private ConfiguredAuthoredActionCatalog authoredCatalog() {
+    net.firedevops.firemud.gamesession.config.AuthoredActionProperties properties =
+        new net.firedevops.firemud.gamesession.config.AuthoredActionProperties();
+    net.firedevops.firemud.gamesession.config.AuthoredActionProperties.Action action =
+        new net.firedevops.firemud.gamesession.config.AuthoredActionProperties.Action();
+    action.setActionId("wave-salute");
+    action.setCommandId("wave-salute");
+    action.setAliases(List.of("salute", "hail"));
+    action.setHelpSummary("Offer a formal greeting.");
+    action.setHelpDetails("Use this to greet nearby nobles or officers.");
+    properties.setActions(List.of(action));
+    return new ConfiguredAuthoredActionCatalog(properties);
+  }
 }

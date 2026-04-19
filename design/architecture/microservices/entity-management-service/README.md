@@ -19,6 +19,11 @@ Inventory and equipment mutations are also intended to be auditable through a ca
 
 Character ownership is tenant-scoped, but Entity Management must support both tenant-shared and instance-local playable state depending on the resolved realm policy. In practice this means a character may remain owned by the same `{accountId, tenantId}` while some associated gameplay state, such as copied fork-local progression, seeded/sample-state inventory, or fresh standalone realm-local records, is isolated to a specific `gameInstanceId`.
 
+Character discovery/creation contract consequence:
+
+- For a resolved `{tenantId, gameInstanceId}` target, Entity Management must surface one realm-local roster plus explicit creation policy to admission/discovery callers.
+- It must not require callers to infer whether fresh creation is allowed by comparing isolated-state rows against the tenant's shared roster.
+
 ### Responsibilities
 
 - Persist characters, NPCs, and items with optimistic locking

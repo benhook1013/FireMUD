@@ -16,11 +16,14 @@ import net.firedevops.firemud.gamelogic.logic.event.EventDispatcher;
 import net.firedevops.firemud.gamelogic.logic.script.NoOpScriptingHook;
 import net.firedevops.firemud.gamelogic.logic.service.CommandServiceImpl;
 import net.firedevops.firemud.gamelogic.service.CommunicationAggregationService;
+import net.firedevops.firemud.gamelogic.service.GameLogicDraftDesignDigestService;
 import net.firedevops.firemud.gamelogic.service.LookAggregationService;
 import net.firedevops.firemud.gamelogic.service.MoveAggregationService;
 import net.firedevops.firemud.gamelogic.service.PingService;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
+import net.firedevops.firemud.gamelogic.v1.GetDraftDesignDigestRequest;
+import net.firedevops.firemud.gamelogic.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveRequest;
@@ -31,6 +34,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class GameLogicGrpcServiceTest {
+  private GameLogicDraftDesignDigestService mockDigestService() {
+    return Mockito.mock(GameLogicDraftDesignDigestService.class);
+  }
+
   @Test
   void pingEndpointReturnsPong() {
     PingService pingService = new PingServiceImpl();
@@ -41,6 +48,7 @@ class GameLogicGrpcServiceTest {
     CommunicationAggregationService communicationAggregationService =
         Mockito.mock(CommunicationAggregationService.class);
     MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
     MoveResult moveResult = MoveResult.newBuilder().setSuccess(true).build();
     Mockito.when(moveAggregationService.resolve(any())).thenReturn(moveResult);
     GameLogicGrpcService service =
@@ -50,6 +58,7 @@ class GameLogicGrpcServiceTest {
             lookAggregationService,
             communicationAggregationService,
             moveAggregationService,
+            digestService,
             new SimpleMeterRegistry());
 
     AtomicReference<PingResponse> holder = new AtomicReference<>();
@@ -83,6 +92,7 @@ class GameLogicGrpcServiceTest {
     CommunicationAggregationService communicationAggregationService =
         Mockito.mock(CommunicationAggregationService.class);
     MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
     MoveResult moveResult = MoveResult.newBuilder().setSuccess(true).build();
     Mockito.when(moveAggregationService.resolve(any())).thenReturn(moveResult);
     GameLogicGrpcService service =
@@ -92,6 +102,7 @@ class GameLogicGrpcServiceTest {
             lookAggregationService,
             communicationAggregationService,
             moveAggregationService,
+            digestService,
             new SimpleMeterRegistry());
 
     AtomicReference<ExecuteCommandResponse> holder = new AtomicReference<>();
@@ -127,6 +138,7 @@ class GameLogicGrpcServiceTest {
     CommunicationAggregationService communicationAggregationService =
         Mockito.mock(CommunicationAggregationService.class);
     MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
     MoveResult moveResult = MoveResult.newBuilder().setSuccess(true).build();
     Mockito.when(moveAggregationService.resolve(any())).thenReturn(moveResult);
     GameLogicGrpcService service =
@@ -136,6 +148,7 @@ class GameLogicGrpcServiceTest {
             lookAggregationService,
             communicationAggregationService,
             moveAggregationService,
+            digestService,
             new SimpleMeterRegistry());
 
     AtomicReference<MoveResult> holder = new AtomicReference<>();
@@ -161,6 +174,53 @@ class GameLogicGrpcServiceTest {
   }
 
   @Test
+  void getDraftDesignDigestReturnsVersionScopedDigest() {
+    PingService pingService = new PingServiceImpl();
+    var dispatcher = new EventDispatcher();
+    var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
+    var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
+    LookAggregationService lookAggregationService = Mockito.mock(LookAggregationService.class);
+    CommunicationAggregationService communicationAggregationService =
+        Mockito.mock(CommunicationAggregationService.class);
+    MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
+    Mockito.when(digestService.getDraftDesignDigest("1", "7"))
+        .thenReturn(
+            new GameLogicDraftDesignDigestService.GameLogicDraftDesignDigest(
+                "1", "7", "version:7", "digest-logic", 1));
+    GameLogicGrpcService service =
+        new GameLogicGrpcService(
+            pingService,
+            commandService,
+            lookAggregationService,
+            communicationAggregationService,
+            moveAggregationService,
+            digestService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    service.getDraftDesignDigest(
+        GetDraftDesignDigestRequest.newBuilder().setTenantId("1").setVersionId("7").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetDraftDesignDigestResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("7", ref.get().getScopeValue());
+    assertEquals("version:7", ref.get().getAppliedCommitId());
+  }
+
+  @Test
   void resolveLookReturnsErrorDetailInsteadOfTransportError() {
     PingService pingService = new PingServiceImpl();
     var dispatcher = new EventDispatcher();
@@ -170,6 +230,7 @@ class GameLogicGrpcServiceTest {
     CommunicationAggregationService communicationAggregationService =
         Mockito.mock(CommunicationAggregationService.class);
     MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
     MoveResult moveResult = MoveResult.newBuilder().setSuccess(true).build();
     Mockito.when(moveAggregationService.resolve(any())).thenReturn(moveResult);
     Mockito.when(lookAggregationService.resolve(any()))
@@ -181,6 +242,7 @@ class GameLogicGrpcServiceTest {
             lookAggregationService,
             communicationAggregationService,
             moveAggregationService,
+            digestService,
             new SimpleMeterRegistry());
 
     AtomicReference<LookResult> holder = new AtomicReference<>();

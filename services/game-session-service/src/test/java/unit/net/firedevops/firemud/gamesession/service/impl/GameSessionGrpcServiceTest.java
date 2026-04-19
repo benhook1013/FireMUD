@@ -10,7 +10,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -20,13 +22,18 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.v1.GetAdmissionPointerRequest;
+import net.firedevops.firemud.gamesession.v1.GetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.GetTickStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetTickStatusResponse;
+import net.firedevops.firemud.gamesession.v1.ListGameplayRealmsRequest;
+import net.firedevops.firemud.gamesession.v1.ListGameplayRealmsResponse;
 import net.firedevops.firemud.gamesession.v1.PauseTicksRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksResponse;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
@@ -121,11 +128,16 @@ class GameSessionGrpcServiceTest {
                     7L,
                     true,
                     9L,
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
                     99L,
                     "Ben",
                     net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState
                         .EXPLICIT_AFK,
                     Instant.parse("2026-04-11T06:15:30Z"),
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
                     AccountPresenceVisibilityPolicy.FRIENDS_ONLY)));
     GameSessionGrpcService service =
         new GameSessionGrpcService(
@@ -164,10 +176,101 @@ class GameSessionGrpcServiceTest {
     assertEquals(1, ref.get().getPresencesCount());
     assertEquals("7", ref.get().getPresences(0).getAccountId());
     assertEquals(true, ref.get().getPresences(0).getOnline());
+    assertEquals("demo", ref.get().getPresences(0).getWorldSlug());
+    assertEquals("Demo World", ref.get().getPresences(0).getWorldDisplayName());
+    assertEquals("production", ref.get().getPresences(0).getRealmSlug());
+    assertEquals("Live Realm", ref.get().getPresences(0).getRealmDisplayName());
     assertEquals("Ben", ref.get().getPresences(0).getCharacterName());
     assertEquals(
         Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
         ref.get().getPresences(0).getLastSeenAtMs());
+    assertEquals(
+        net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
+            .ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS,
+        ref.get().getPresences(0).getRecentDisposition());
+  }
+
+  @Test
+  void gameplayCatalogRpcReturnsCanonicalRealmData() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameplayCatalogProperties properties = new GameplayCatalogProperties();
+    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
+    world.setSlug("demo");
+    world.setDisplayName("Demo World");
+    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+    realm.setSlug("production");
+    realm.setDisplayName("Live Realm");
+    realm.setTenantId(7L);
+    realm.setGameInstanceId(44L);
+    realm.setPointerVersion(17L);
+    realm.setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
+    realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.COPIED_ONLY);
+    world.setRealms(List.of(realm));
+    properties.setWorlds(List.of(world));
+    GameSessionGrpcService service =
+        new GameSessionGrpcService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            new GameplayWorldCatalog(properties),
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<ListGameplayRealmsResponse> realmsRef = new AtomicReference<>();
+    service.listGameplayRealms(
+        ListGameplayRealmsRequest.newBuilder().setWorldSlug("demo").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListGameplayRealmsResponse value) {
+            realmsRef.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals(1, realmsRef.get().getRealmsCount());
+    assertEquals("production", realmsRef.get().getRealms(0).getRealmSlug());
+    assertEquals("ISOLATED", realmsRef.get().getRealms(0).getStateScope());
+
+    AtomicReference<GetAdmissionPointerResponse> pointerRef = new AtomicReference<>();
+    service.getAdmissionPointer(
+        GetAdmissionPointerRequest.newBuilder()
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetAdmissionPointerResponse value) {
+            pointerRef.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("44", pointerRef.get().getAdmissionPointer().getGameInstanceId());
+    assertEquals(17L, pointerRef.get().getAdmissionPointer().getPointerVersion());
   }
 
   @Test
@@ -187,7 +290,9 @@ class GameSessionGrpcServiceTest {
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
                 Mockito.eq(false)))
-        .thenReturn(new GameInstanceDto(1L, 1L, "v1", null, 42L, "RUNNING"));
+        .thenReturn(
+            new GameInstanceDto(
+                1L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
     GameSessionGrpcService service =
         new GameSessionGrpcService(
             pingService,
@@ -203,8 +308,8 @@ class GameSessionGrpcServiceTest {
     service.startSession(
         StartSessionRequest.newBuilder()
             .setTenantId("1")
-            .setRuntimeVersion("v1")
-            .setScriptPatchVersion("")
+            .setGameTemplateId("7")
+            .setControlPlaneRequestId("cp-1")
             .setClientIp("127.0.0.1")
             .setOwnerAccountId("42")
             .build(),
@@ -230,7 +335,8 @@ class GameSessionGrpcServiceTest {
             Mockito.argThat(
                 request ->
                     request.tenantId().equals(1L)
-                        && request.runtimeVersion().equals("v1")
+                        && request.gameTemplateId().equals(7L)
+                        && request.controlPlaneRequestId().equals("cp-1")
                         && request.ownerAccountId().equals(42L)),
             Mockito.eq(false));
   }
@@ -328,7 +434,9 @@ class GameSessionGrpcServiceTest {
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
                 Mockito.eq(false)))
-        .thenReturn(new GameInstanceDto(1L, 1L, "v1", null, 42L, "RUNNING"));
+        .thenReturn(
+            new GameInstanceDto(
+                1L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
         new GameSessionGrpcService(
@@ -345,7 +453,8 @@ class GameSessionGrpcServiceTest {
     service.startSession(
         StartSessionRequest.newBuilder()
             .setTenantId("1")
-            .setRuntimeVersion("v1")
+            .setGameTemplateId("7")
+            .setControlPlaneRequestId("cp-1")
             .setOwnerAccountId("42")
             .build(),
         new StreamObserver<StartSessionResponse>() {
@@ -384,7 +493,9 @@ class GameSessionGrpcServiceTest {
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
                 Mockito.eq(false)))
-        .thenReturn(new GameInstanceDto(1L, 1L, "v1", null, 42L, "RUNNING"));
+        .thenReturn(
+            new GameInstanceDto(
+                1L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
     GameSessionGrpcService service =
         new GameSessionGrpcService(
             pingService,
@@ -400,8 +511,8 @@ class GameSessionGrpcServiceTest {
     service.startSession(
         StartSessionRequest.newBuilder()
             .setTenantId("1")
-            .setRuntimeVersion("v1")
-            .setScriptPatchVersion("")
+            .setGameTemplateId("7")
+            .setControlPlaneRequestId("cp-1")
             .setClientIp("1.2.3.4")
             .setOwnerAccountId("42")
             .build(),
@@ -460,7 +571,8 @@ class GameSessionGrpcServiceTest {
     service.startSession(
         StartSessionRequest.newBuilder()
             .setTenantId("1")
-            .setRuntimeVersion("v1")
+            .setGameTemplateId("7")
+            .setControlPlaneRequestId("cp-1")
             .setClientIp("1.2.3.4")
             .setOwnerAccountId("42")
             .build(),
@@ -512,7 +624,9 @@ class GameSessionGrpcServiceTest {
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
                 Mockito.eq(false)))
-        .thenReturn(new GameInstanceDto(88L, 1L, "v1", null, 42L, "RUNNING"));
+        .thenReturn(
+            new GameInstanceDto(
+                88L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("42", List.of(), Map.of("1", List.of("admin")));
     GameSessionGrpcService service =
@@ -530,7 +644,8 @@ class GameSessionGrpcServiceTest {
     service.startSession(
         StartSessionRequest.newBuilder()
             .setTenantId("1")
-            .setRuntimeVersion("v1")
+            .setGameTemplateId("7")
+            .setControlPlaneRequestId("cp-1")
             .setClientIp("1.2.3.4")
             .setOwnerAccountId("42")
             .build(),
@@ -580,7 +695,9 @@ class GameSessionGrpcServiceTest {
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
                 Mockito.eq(false)))
-        .thenReturn(new GameInstanceDto(88L, 1L, "v1", null, 42L, "RUNNING"));
+        .thenReturn(
+            new GameInstanceDto(
+                88L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
     Mockito.doThrow(new IllegalStateException("Failed to stop old session"))
         .when(gameInstanceService)
         .stopSession(77L);
@@ -601,7 +718,8 @@ class GameSessionGrpcServiceTest {
     service.startSession(
         StartSessionRequest.newBuilder()
             .setTenantId("1")
-            .setRuntimeVersion("v1")
+            .setGameTemplateId("7")
+            .setControlPlaneRequestId("cp-1")
             .setClientIp("1.2.3.4")
             .setOwnerAccountId("42")
             .build(),
@@ -650,7 +768,9 @@ class GameSessionGrpcServiceTest {
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
                 Mockito.eq(false)))
-        .thenReturn(new GameInstanceDto(88L, 1L, "v1", null, 42L, "RUNNING"));
+        .thenReturn(
+            new GameInstanceDto(
+                88L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("42", List.of(), Map.of("1", List.of("admin")));
     GameSessionGrpcService service =
@@ -668,7 +788,8 @@ class GameSessionGrpcServiceTest {
     service.startSession(
         StartSessionRequest.newBuilder()
             .setTenantId("1")
-            .setRuntimeVersion("v1")
+            .setGameTemplateId("7")
+            .setControlPlaneRequestId("cp-1")
             .setClientIp("1.2.3.4")
             .setOwnerAccountId("42")
             .build(),
@@ -724,7 +845,8 @@ class GameSessionGrpcServiceTest {
     service.startSession(
         StartSessionRequest.newBuilder()
             .setTenantId("1")
-            .setRuntimeVersion("v1")
+            .setGameTemplateId("7")
+            .setControlPlaneRequestId("cp-1")
             .setOwnerAccountId("42")
             .build(),
         new StreamObserver<StartSessionResponse>() {
@@ -1149,7 +1271,8 @@ class GameSessionGrpcServiceTest {
     service.startSession(
         StartSessionRequest.newBuilder()
             .setTenantId("1")
-            .setRuntimeVersion("v1")
+            .setGameTemplateId("7")
+            .setControlPlaneRequestId("cp-1")
             .setOwnerAccountId("42")
             .build(),
         new StreamObserver<StartSessionResponse>() {
@@ -1201,7 +1324,8 @@ class GameSessionGrpcServiceTest {
     service.startSession(
         StartSessionRequest.newBuilder()
             .setTenantId("1")
-            .setRuntimeVersion("v1")
+            .setGameTemplateId("7")
+            .setControlPlaneRequestId("cp-1")
             .setOwnerAccountId("42")
             .build(),
         new StreamObserver<StartSessionResponse>() {

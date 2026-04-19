@@ -15,11 +15,11 @@ For REST endpoints, the authoritative request/response schema source is [openapi
 - `PublishPluginVersion` – runs design-time validation for an uploaded plugin bundle version and transitions it into immutable publication history when validation succeeds.
 - `GetPluginVersionStatus` / `ListPluginVersionStatuses` – authoritative design-time read APIs for plugin publication lifecycle, signer verification status, and validation outcomes.
 - `ListVersions` – enumerates published versions for selection when creating a game instance.
-- `GetVersionState` / `CompareAndSetVersionState` – authoritative control-plane version lifecycle reads and CAS transitions.
+- `GetVersionState` / `CompareAndSetVersionState` – authoritative control-plane version lifecycle reads and CAS transitions. These APIs are now live in the proto/service path and are the canonical owner for `versionStateEpoch`.
 - `GetDesignControlPlaneDigest` – digest surface for publish gating over normalized metadata.
 - `GetTemplateReferencePhase` – returns the persisted normalized-reference enforcement phase (`BACKFILLING`, `VALIDATED`, `ENFORCED`) used by instance-creation and retirement workflows.
 - `GetPublishedReleaseBundle` – authoritative read surface for immutable release attestation used by activation, cutover preflight, and repair workflows.
-- `ResolveLaunchDescriptor` – resolves template metadata and control-plane inputs into one immutable launch descriptor for a game-instance creation attempt. The request must include `controlPlaneRequestId`, and repeated calls for the same launch attempt must return the same descriptor values without re-resolving to newer attestation or patch state.
+- `ResolveLaunchDescriptor` – resolves template metadata and control-plane inputs into one immutable launch descriptor for a game-instance creation attempt. The request must include `controlPlaneRequestId`, and repeated calls for the same launch attempt must return the same descriptor values without re-resolving to newer attestation or patch state. The resolved descriptor now carries the real version-state CAS epoch rather than a derived release-bundle surrogate.
 - `CanDeleteVersionAssets` – deletion-eligibility oracle for version-scoped asset prefixes.
 - `BeginPurgeVersionAssets` – CAS-guarded purge start that atomically re-checks deletion eligibility and transitions `version_asset_artifact` into purge-in-progress state.
 - `FinalizePurgeVersionAssets` – CAS-guarded purge completion that transitions purge-in-progress artifacts to `PURGED` after byte-deletion confirmation.

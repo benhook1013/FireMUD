@@ -10,12 +10,15 @@ import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.gamelogic.logic.dto.CommandResult;
 import net.firedevops.firemud.gamelogic.logic.service.CommandService;
 import net.firedevops.firemud.gamelogic.service.CommunicationAggregationService;
+import net.firedevops.firemud.gamelogic.service.GameLogicDraftDesignDigestService;
 import net.firedevops.firemud.gamelogic.service.LookAggregationService;
 import net.firedevops.firemud.gamelogic.service.MoveAggregationService;
 import net.firedevops.firemud.gamelogic.service.PingService;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
+import net.firedevops.firemud.gamelogic.v1.GetDraftDesignDigestRequest;
+import net.firedevops.firemud.gamelogic.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveRequest;
@@ -38,6 +41,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   private final LookAggregationService lookAggregationService;
   private final CommunicationAggregationService communicationAggregationService;
   private final MoveAggregationService moveAggregationService;
+  private final GameLogicDraftDesignDigestService gameLogicDraftDesignDigestService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -50,13 +54,68 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       LookAggregationService lookAggregationService,
       CommunicationAggregationService communicationAggregationService,
       MoveAggregationService moveAggregationService,
+      GameLogicDraftDesignDigestService gameLogicDraftDesignDigestService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.commandService = commandService;
     this.lookAggregationService = lookAggregationService;
     this.communicationAggregationService = communicationAggregationService;
     this.moveAggregationService = moveAggregationService;
+    this.gameLogicDraftDesignDigestService = gameLogicDraftDesignDigestService;
     this.meterRegistry = meterRegistry;
+  }
+
+  @Override
+  @Timed(value = "gamelogicGrpc.getDraftDesignDigest")
+  public void getDraftDesignDigest(
+      GetDraftDesignDigestRequest request,
+      StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
+    try {
+      if (request.getScopeCase() != GetDraftDesignDigestRequest.ScopeCase.VERSION_ID) {
+        responseObserver.onNext(
+            GetDraftDesignDigestResponse.newBuilder()
+                .setError(
+                    GrpcAppErrors.error(
+                        meterRegistry,
+                        logger,
+                        "GetDraftDesignDigest",
+                        "UNSUPPORTED_SCOPE",
+                        "game logic supports version_id scope only"))
+                .build());
+        responseObserver.onCompleted();
+        return;
+      }
+      var digest =
+          gameLogicDraftDesignDigestService.getDraftDesignDigest(
+              request.getTenantId(), request.getVersionId());
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setTenantId(digest.tenantId())
+              .setScopeValue(digest.scopeValue())
+              .setAppliedCommitId(digest.appliedCommitId())
+              .setContentDigest(digest.contentDigest())
+              .setDigestSchemaVersion(digest.digestSchemaVersion())
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "GetDraftDesignDigest", ex))
+              .build());
+      responseObserver.onCompleted();
+    }
   }
 
   @Override

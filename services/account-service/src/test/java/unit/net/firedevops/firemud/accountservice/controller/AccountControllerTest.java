@@ -9,12 +9,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
-import net.firedevops.firemud.accountservice.config.AuthConfig;
-import net.firedevops.firemud.accountservice.config.WebConfig;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
-import net.firedevops.firemud.accountservice.security.JwtAuthInterceptor;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
+import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
@@ -30,11 +29,15 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(AccountController.class)
-@Import({AuthConfig.class, WebConfig.class, JwtAuthInterceptor.class})
+@Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
 @TestPropertySource(
     properties = {
       "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000"
+      "firemud.auth.jwt-expiration-ms=3600000",
+      "firemud.auth.http.enabled=true",
+      "firemud.auth.http.role-requirement=PRIVILEGED",
+      "firemud.auth.http.public-path-patterns[0]=/accounts",
+      "firemud.auth.http.public-path-patterns[1]=/accounts/"
     })
 class AccountControllerTest {
 
@@ -53,7 +56,7 @@ class AccountControllerTest {
   void createAccountReturnsDto() throws Exception {
     CreateAccountRequest request =
         new CreateAccountRequest(7L, "demo", "demo@example.com", "password");
-    AccountDto response = new AccountDto(1L, 7L, "demo", "demo@example.com", "player", true);
+    AccountDto response = new AccountDto(1L, "demo", "demo@example.com", "player", true);
     when(accountService.createAccount(request)).thenReturn(response);
 
     mockMvc
@@ -63,7 +66,6 @@ class AccountControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.tenantId").value(7))
         .andExpect(jsonPath("$.data.username").value("demo"));
   }
 

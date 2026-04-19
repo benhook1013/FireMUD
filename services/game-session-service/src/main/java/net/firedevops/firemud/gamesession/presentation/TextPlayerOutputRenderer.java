@@ -57,6 +57,18 @@ public class TextPlayerOutputRenderer {
         if (output.payload() instanceof WorldsViewOutput worldsView) {
           yield renderWorldsView(worldsView);
         }
+        if (output.payload() instanceof RealmBrowseViewOutput realmsView) {
+          yield renderRealmsView(realmsView);
+        }
+        if (output.payload() instanceof CharacterBrowseViewOutput charactersView) {
+          yield renderCharactersView(charactersView);
+        }
+        if (output.payload() instanceof WhoViewOutput whoView) {
+          yield renderWhoView(whoView);
+        }
+        if (output.payload() instanceof FriendPresenceViewOutput friendsView) {
+          yield renderFriendsView(friendsView);
+        }
         throw new IllegalArgumentException(
             "Unsupported view payload: " + output.payload().getClass().getName());
       }
@@ -276,6 +288,123 @@ public class TextPlayerOutputRenderer {
     return output.worlds().stream()
         .map(world -> world.ordinal() + ") " + world.displayName() + " (" + world.slug() + ")")
         .collect(Collectors.joining("\n"));
+  }
+
+  private String renderRealmsView(RealmBrowseViewOutput output) {
+    return output.realms().stream()
+        .map(
+            realm ->
+                realm.ordinal()
+                    + ") "
+                    + realm.displayName()
+                    + " ("
+                    + realm.realmSlug()
+                    + ") ["
+                    + realm.stateScope().toLowerCase(java.util.Locale.ROOT)
+                    + ", "
+                    + realm.characterCreationPolicy().toLowerCase(java.util.Locale.ROOT)
+                    + "]")
+        .collect(Collectors.joining("\n"));
+  }
+
+  private String renderCharactersView(CharacterBrowseViewOutput output) {
+    if (output.characters().isEmpty()) {
+      return "No characters available for "
+          + output.worldSlug()
+          + " ("
+          + output.realmSlug()
+          + "). ["
+          + output.stateScope().toLowerCase(java.util.Locale.ROOT)
+          + ", "
+          + output.characterCreationPolicy().toLowerCase(java.util.Locale.ROOT)
+          + "]";
+    }
+    String roster =
+        output.characters().stream()
+            .map(
+                character ->
+                    character.ordinal()
+                        + ") "
+                        + character.characterName()
+                        + " [lvl "
+                        + character.level()
+                        + "]")
+            .collect(Collectors.joining("\n"));
+    return roster
+        + "\n\n"
+        + "Realm state: "
+        + output.stateScope().toLowerCase(java.util.Locale.ROOT)
+        + ", creation: "
+        + output.characterCreationPolicy().toLowerCase(java.util.Locale.ROOT);
+  }
+
+  private String renderWhoView(WhoViewOutput output) {
+    return "Gods ["
+        + output.gods().size()
+        + "]: "
+        + renderWhoEntries(output.gods())
+        + "\nPlayers ["
+        + output.players().size()
+        + "]: "
+        + renderWhoEntries(output.players());
+  }
+
+  private String renderWhoEntries(List<WhoViewOutput.Entry> entries) {
+    return entries.stream()
+        .map(
+            entry ->
+                switch (entry.activityState()) {
+                  case "AUTO_AFK" -> entry.characterName() + " (idle)";
+                  case "EXPLICIT_AFK" -> entry.characterName() + " (AFK)";
+                  default -> entry.characterName();
+                })
+        .collect(Collectors.joining(", "));
+  }
+
+  private String renderFriendsView(FriendPresenceViewOutput output) {
+    if (output.friends().isEmpty()) {
+      return "Friends [0]: no linked friends.";
+    }
+    return output.friends().stream()
+        .map(
+            entry ->
+                entry.ordinal() + ") " + entry.displayName() + " - " + renderFriendStatus(entry))
+        .collect(Collectors.joining("\n"));
+  }
+
+  private String renderFriendStatus(FriendPresenceViewOutput.Entry entry) {
+    if (entry.online()) {
+      StringBuilder line = new StringBuilder("online");
+      if (StringUtils.hasText(entry.worldDisplayName())) {
+        line.append(" in ").append(entry.worldDisplayName());
+        if (StringUtils.hasText(entry.realmDisplayName())) {
+          line.append(" / ").append(entry.realmDisplayName());
+        }
+      }
+      if (StringUtils.hasText(entry.characterName())
+          && !entry.characterName().equals(entry.displayName())) {
+        line.append(" as ").append(entry.characterName());
+      }
+      if (StringUtils.hasText(entry.activityState())) {
+        switch (entry.activityState()) {
+          case "AUTO_AFK" -> line.append(" (idle)");
+          case "EXPLICIT_AFK" -> line.append(" (AFK)");
+          default -> {}
+        }
+      }
+      return line.toString();
+    }
+    if (entry.lastSeenAtEpochMs() != null) {
+      String qualifier =
+          switch (entry.recentDisposition()) {
+            case "LOGOUT" -> "logged out";
+            case "TAKEOVER" -> "replaced session";
+            case "TRANSPORT_LOSS" -> "connection lost";
+            default -> "last seen";
+          };
+      return qualifier + " " + java.time.Instant.ofEpochMilli(entry.lastSeenAtEpochMs());
+    }
+    return "offline";
   }
 
   private String renderInventoryView(
