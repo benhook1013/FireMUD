@@ -90,21 +90,11 @@ class GameDesignGrpcServiceAuthTest {
                 null,
                 java.time.LocalDateTime.parse("2026-04-14T12:00:00")));
     Mockito.when(
-            launchDescriptorService.resolveLaunchDescriptor("1", 9L, "cp-1", null, null, null, null))
+            launchDescriptorService.resolveLaunchDescriptor(
+                "1", 9L, "cp-1", null, null, null, null))
         .thenReturn(
             new ResolvedLaunchDescriptorDto(
-                "ld-1",
-                "1",
-                9L,
-                "cp-1",
-                7L,
-                null,
-                "{}",
-                "genrev-1",
-                11L,
-                11L,
-                "prb:1:7:11",
-                null));
+                "ld-1", "1", 9L, "cp-1", 7L, null, "{}", "genrev-1", 11L, 11L, "prb:1:7:11", null));
 
     GameDesignGrpcService service =
         new GameDesignGrpcService(
