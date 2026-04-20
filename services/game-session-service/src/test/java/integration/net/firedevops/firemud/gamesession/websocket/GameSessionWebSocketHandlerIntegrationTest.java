@@ -1374,7 +1374,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     "connectRequestId", "connect-req-2",
                     "gatewayRequestId", "gateway-req-2")));
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(4);
     CountDownLatch loginAck = new CountDownLatch(1);
     AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
 
@@ -1393,7 +1392,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 if (isStructuredCommand(message.getPayload(), "LOGIN")) {
                   loginAck.countDown();
                 }
-                latch.countDown();
               }
             },
             headers,
@@ -1402,7 +1400,27 @@ class GameSessionWebSocketHandlerIntegrationTest {
     WebSocketSession session = future.get(5, TimeUnit.SECONDS);
     assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
     sessionRef.get().sendMessage(new TextMessage("PLAY demo"));
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    await()
+        .atMost(5, TimeUnit.SECONDS)
+        .untilAsserted(
+            () -> {
+              assertThat(payloads).anyMatch(payload -> isStructuredCommand(payload, "PLAY"));
+              assertThat(payloads)
+                  .anyMatch(
+                      payload ->
+                          "transcript_chunk".equals(json(payload).path("eventType").asText())
+                              && payload.contains("Recent combat line"));
+              assertThat(payloads)
+                  .anyMatch(
+                      payload ->
+                          "player_output".equals(json(payload).path("eventType").asText())
+                              && containsKind(json(payload), "VIEW"));
+              assertThat(payloads)
+                  .anyMatch(
+                      payload ->
+                          "player_output".equals(json(payload).path("eventType").asText())
+                              && containsKind(json(payload), "PROMPT"));
+            });
     session.close();
 
     assertThat(isStructuredCommand(payloads.get(0), "LOGIN")).isTrue();
