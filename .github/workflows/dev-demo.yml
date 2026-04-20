@@ -282,6 +282,7 @@ jobs:
           game_template_id = 1
           email = "demo@example.com"
           password = "swordfish"
+          control_plane_request_id = f"dev-demo-smoke-bootstrap-{int(time.time())}"
 
           def readiness_ok(url):
             try:
@@ -311,6 +312,36 @@ jobs:
                 return response.status, response.read().decode("utf-8", errors="ignore")
             except urllib.error.HTTPError as exc:
               return exc.code, exc.read().decode("utf-8", errors="ignore")
+            except urllib.error.URLError as exc:
+              return 503, str(exc)
+
+          def bootstrap_session(account_id, timeout_seconds=120):
+            deadline = time.time() + timeout_seconds
+            attempt = 1
+            last_status = None
+            last_body = None
+            while time.time() < deadline:
+              status, session_body = post_json(
+                "http://game-session-service:8080/sessions",
+                {
+                  "tenantId": tenant_id,
+                  "gameTemplateId": game_template_id,
+                  "controlPlaneRequestId": control_plane_request_id,
+                  "ownerAccountId": account_id,
+                },
+              )
+              print(f"Session bootstrap attempt {attempt} returned {status}: {session_body}")
+              if status < 400:
+                return status, session_body
+              last_status = status
+              last_body = session_body
+              if status < 500:
+                break
+              attempt += 1
+              time.sleep(2)
+            raise SystemExit(
+              f"Dev-demo smoke session bootstrap failed with status {last_status}: {last_body}"
+            )
 
           wait_for_ready("account-service", "http://account-service:8080/actuator/health/readiness")
           wait_for_ready("entity-management-service", "http://entity-management-service:8080/actuator/health/readiness")
@@ -336,18 +367,8 @@ jobs:
           if not account_id:
             raise SystemExit(f"Dev-demo smoke account response did not include account id: {account_body}")
 
-          status, session_body = post_json(
-            "http://game-session-service:8080/sessions",
-            {
-              "tenantId": tenant_id,
-              "gameTemplateId": game_template_id,
-              "controlPlaneRequestId": "dev-demo-smoke-bootstrap",
-              "ownerAccountId": account_id,
-            },
-          )
+          status, session_body = bootstrap_session(account_id)
           print(session_body)
-          if status >= 400:
-            raise SystemExit(f"Dev-demo smoke session bootstrap failed with status {status}: {session_body}")
           PY
           BOOTSTRAP_POD_LOG=/tmp/dev-demo-bootstrap-pod.log
           trap 'kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true; kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true' EXIT
