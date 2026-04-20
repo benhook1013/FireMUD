@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS account_realm_access_grant (
     id BIGSERIAL PRIMARY KEY,
-    account_id BIGINT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     tenant_id BIGINT NOT NULL,
     world_slug VARCHAR(120) NOT NULL,
     realm_slug VARCHAR(120) NOT NULL,

@@ -16,7 +16,7 @@ CREATE INDEX idx_version_template_remap_set_version_pair
     ON version_template_remap_set(tenant_id, source_version_id, target_version_id, status);
 
 ALTER TABLE launch_descriptor
-    ADD COLUMN remap_set_id VARCHAR(64);
+    ADD COLUMN IF NOT EXISTS remap_set_id VARCHAR(64);
 
 CREATE TABLE version_template_remap_entry (
     id BIGSERIAL PRIMARY KEY,
