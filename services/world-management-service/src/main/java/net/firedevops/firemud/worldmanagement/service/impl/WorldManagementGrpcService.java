@@ -18,6 +18,7 @@ import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import net.firedevops.firemud.worldmanagement.service.WorldInstanceActivationService;
+import net.firedevops.firemud.worldmanagement.service.WorldUpgradeValidationService;
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceRequest;
@@ -38,6 +39,9 @@ import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.UpgradeValidationResult;
+import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsRequest;
+import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
@@ -61,6 +65,7 @@ public class WorldManagementGrpcService
   private final RoomService roomService;
   private final WorldInstanceActivationService worldInstanceActivationService;
   private final WorldDraftDesignDigestService worldDraftDesignDigestService;
+  private final WorldUpgradeValidationService worldUpgradeValidationService;
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper;
@@ -299,6 +304,54 @@ public class WorldManagementGrpcService
               .build());
       responseObserver.onCompleted();
     }
+  }
+
+  @Override
+  @Timed(value = "worldGrpc.validateWorldUpgradeMappings")
+  public void validateWorldUpgradeMappings(
+      ValidateWorldUpgradeMappingsRequest request,
+      StreamObserver<ValidateWorldUpgradeMappingsResponse> responseObserver) {
+    ValidateWorldUpgradeMappingsResponse.Builder builder =
+        ValidateWorldUpgradeMappingsResponse.newBuilder();
+    try {
+      var validation =
+          worldUpgradeValidationService.validateWorldUpgradeMappings(
+              Long.parseLong(request.getTenantId()),
+              Long.parseLong(request.getSourceGameInstanceId()),
+              Long.parseLong(request.getTargetVersionId()),
+              request.getRemapSetId().isBlank() ? null : request.getRemapSetId());
+      builder
+          .addAllStateClassesChecked(validation.stateClassesChecked())
+          .addAllCheckedFamilies(validation.checkedFamilies())
+          .setHasS2Rows(validation.hasS2Rows())
+          .setResult(toUpgradeValidationResult(validation.result()))
+          .setRemapSetRequired(validation.remapSetRequired())
+          .addAllReasons(validation.reasons());
+      if (validation.remapSetId() != null) {
+        builder.setRemapSetId(validation.remapSetId());
+      }
+    } catch (NumberFormatException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ValidateWorldUpgradeMappings",
+              "INVALID_ARGUMENT",
+              "invalid id"));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ValidateWorldUpgradeMappings",
+              errorCodeFor(ex),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "ValidateWorldUpgradeMappings", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
   }
 
   @Override
@@ -589,6 +642,16 @@ public class WorldManagementGrpcService
 
   private String errorCodeFor(IllegalArgumentException ex) {
     return "Room not found".equals(ex.getMessage()) ? "NOT_FOUND" : "INVALID_ARGUMENT";
+  }
+
+  private UpgradeValidationResult toUpgradeValidationResult(String result) {
+    return switch (result) {
+      case "COMPATIBLE" -> UpgradeValidationResult.UPGRADE_VALIDATION_RESULT_COMPATIBLE;
+      case "REQUIRES_MAPPING" -> UpgradeValidationResult.UPGRADE_VALIDATION_RESULT_REQUIRES_MAPPING;
+      case "INCOMPATIBLE" -> UpgradeValidationResult.UPGRADE_VALIDATION_RESULT_INCOMPATIBLE;
+      case "UNAVAILABLE" -> UpgradeValidationResult.UPGRADE_VALIDATION_RESULT_UNAVAILABLE;
+      default -> UpgradeValidationResult.UPGRADE_VALIDATION_RESULT_UNSPECIFIED;
+    };
   }
 
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(

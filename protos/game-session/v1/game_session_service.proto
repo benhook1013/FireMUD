@@ -49,6 +49,8 @@ service GameSessionControlPlaneService {
 
   rpc PauseTicksForScope(PauseTicksForScopeRequest) returns (PauseTicksForScopeResponse);
   rpc ResumeTicksForScope(ResumeTicksForScopeRequest) returns (ResumeTicksForScopeResponse);
+  rpc ValidateInstanceCutoverCompatibility(ValidateInstanceCutoverCompatibilityRequest)
+      returns (ValidateInstanceCutoverCompatibilityResponse);
   rpc PurgeQueuedTickCommandsForScriptPatch(PurgeQueuedTickCommandsForScriptPatchRequest)
       returns (PurgeQueuedTickCommandsForScriptPatchResponse);
   rpc PurgeQueuedTickCommandsForPluginVersion(PurgeQueuedTickCommandsForPluginVersionRequest)
@@ -458,6 +460,38 @@ message ResumeTicksForScopeRequest {
 message ResumeTicksForScopeResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+enum CutoverCompatibilityResult {
+  CUTOVER_COMPATIBILITY_RESULT_UNSPECIFIED = 0;
+  CUTOVER_COMPATIBILITY_RESULT_COMPATIBLE = 1;
+  CUTOVER_COMPATIBILITY_RESULT_INCOMPATIBLE = 2;
+  CUTOVER_COMPATIBILITY_RESULT_UNAVAILABLE = 3;
+}
+
+message ValidateInstanceCutoverCompatibilityRequest {
+  string tenant_id = 1;
+  string source_game_instance_id = 2;
+  string target_version_id = 3;
+}
+
+message CutoverParticipantResult {
+  string participant = 1;
+  repeated string state_classes_checked = 2;
+  repeated string checked_families = 3;
+  bool has_s2_rows = 4;
+  CutoverCompatibilityResult result = 5;
+  repeated string reasons = 6;
+}
+
+message ValidateInstanceCutoverCompatibilityResponse {
+  CutoverCompatibilityResult result = 1;
+  repeated string reasons = 2;
+  repeated string checked_participants = 3;
+  int64 checked_at_ms = 4;
+  string remap_set_id = 5;
+  repeated CutoverParticipantResult participant_results = 6;
+  shared.v1.ErrorDetail error = 7;
 }
 
 message PurgeQueuedTickCommandsForScriptPatchRequest {

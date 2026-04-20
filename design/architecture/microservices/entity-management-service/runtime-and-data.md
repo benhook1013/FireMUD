@@ -68,6 +68,13 @@ Initial-slice rule:
 - If a row family is not explicitly documented as `S1` or `S2`, treat it as `S3` for cutover purposes.
 - Replacement-instance workflows must not infer template remaps from names, display text, or best-effort similarity; only approved `remapSetId` mappings may satisfy `S2` compatibility.
 
+Implementation notes:
+
+- The cutover-validation RPC now exists as `ValidateEntityUpgradeMappings(tenantId, sourceGameInstanceId, targetVersionId, remapSetId?)`.
+- The first live implementation slice is intentionally narrow and honest: it validates the currently persisted instance-scoped families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`) and reports them as `S3`.
+- That live first cut therefore returns `stateClassesChecked=["S3"]`, `hasS2Rows=false`, and `result=COMPATIBLE` for the current persistence slice.
+- The broader account-scoped `S1` and remap-sensitive `S2` families described above remain the target-state contract and still need follow-through implementation; the service does not currently pretend those checks are complete.
+
 Entity upgrade validation minimum contract:
 
 - The service must expose a cutover-validation API that accepts `tenantId`, `sourceGameInstanceId`, `targetVersionId`, and optional `remapSetId`.
@@ -83,7 +90,29 @@ Cutover fence contract:
 - `durableFenceToken` is an opaque server-issued value. Callers may persist and compare it for equality/identity, but they must not infer ordering, encode semantics, or generate successor tokens client-side unless a future API explicitly adds those guarantees.
 - If Entity Management cannot flush deferred durable state for the source instance, cutover validation must fail closed rather than validating stale database rows.
 
-Illustrative responses:
+Illustrative responses for the current live first slice:
+
+- Current first-cut response with only instance-scoped `S3` families:
+
+```json
+{
+  "tenantId": "t1",
+  "sourceGameInstanceId": "g-old",
+  "targetVersionId": "v2",
+  "checkedFamilies": [
+    "room_ground_inventory",
+    "item_instances",
+    "item_stacks",
+    "container_instances"
+  ],
+  "stateClassesChecked": ["S3"],
+  "hasS2Rows": false,
+  "result": "COMPATIBLE",
+  "remapSetRequired": false
+}
+```
+
+Target-state illustrative responses:
 
 - Durable rows present but no remap required:
 

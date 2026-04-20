@@ -20,6 +20,8 @@ import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsRequest;
+import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.springframework.stereotype.Component;
 
@@ -180,6 +182,19 @@ public final class WorldManagementClient
       builder.setReason(reason);
     }
     return callStub().terminateWorldInstance(builder.build());
+  }
+
+  public ValidateWorldUpgradeMappingsResponse validateWorldUpgradeMappings(
+      long tenantId, long sourceGameInstanceId, long targetVersionId, String remapSetId) {
+    ValidateWorldUpgradeMappingsRequest.Builder builder =
+        ValidateWorldUpgradeMappingsRequest.newBuilder()
+            .setTenantId(Long.toString(tenantId))
+            .setSourceGameInstanceId(Long.toString(sourceGameInstanceId))
+            .setTargetVersionId(Long.toString(targetVersionId));
+    if (remapSetId != null && !remapSetId.isBlank()) {
+      builder.setRemapSetId(remapSetId);
+    }
+    return callStub().validateWorldUpgradeMappings(builder.build());
   }
 
   private WorldManagementServiceGrpc.WorldManagementServiceBlockingStub callStub() {

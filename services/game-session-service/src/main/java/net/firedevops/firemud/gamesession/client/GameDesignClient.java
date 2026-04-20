@@ -55,13 +55,27 @@ public final class GameDesignClient
 
   public ResolveLaunchDescriptorResponse resolveLaunchDescriptor(
       long tenantId, long gameTemplateId, String controlPlaneRequestId) {
-    ResolveLaunchDescriptorRequest request =
+    return resolveLaunchDescriptor(tenantId, gameTemplateId, controlPlaneRequestId, null, null);
+  }
+
+  public ResolveLaunchDescriptorResponse resolveLaunchDescriptor(
+      long tenantId,
+      long gameTemplateId,
+      String controlPlaneRequestId,
+      Long sourceVersionId,
+      Long targetVersionId) {
+    ResolveLaunchDescriptorRequest.Builder request =
         ResolveLaunchDescriptorRequest.newBuilder()
             .setTenantId(Long.toString(tenantId))
             .setGameTemplateId(gameTemplateId)
-            .setControlPlaneRequestId(controlPlaneRequestId)
-            .build();
-    return callStub().resolveLaunchDescriptor(request);
+            .setControlPlaneRequestId(controlPlaneRequestId);
+    if (sourceVersionId != null) {
+      request.setSourceVersionId(sourceVersionId);
+    }
+    if (targetVersionId != null) {
+      request.setTargetVersionId(targetVersionId);
+    }
+    return callStub().resolveLaunchDescriptor(request.build());
   }
 
   public GetPublishedReleaseBundleResponse getPublishedReleaseBundle(

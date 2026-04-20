@@ -41,6 +41,8 @@ import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
+import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsRequest;
+import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -132,6 +134,19 @@ public final class EntityManagementClient
           ex);
       return Optional.empty();
     }
+  }
+
+  public ValidateEntityUpgradeMappingsResponse validateEntityUpgradeMappings(
+      long tenantId, long sourceGameInstanceId, long targetVersionId, String remapSetId) {
+    ValidateEntityUpgradeMappingsRequest.Builder request =
+        ValidateEntityUpgradeMappingsRequest.newBuilder()
+            .setTenantId(Long.toString(tenantId))
+            .setSourceGameInstanceId(Long.toString(sourceGameInstanceId))
+            .setTargetVersionId(Long.toString(targetVersionId));
+    if (StringUtils.hasText(remapSetId)) {
+      request.setRemapSetId(remapSetId);
+    }
+    return callStub().validateEntityUpgradeMappings(request.build());
   }
 
   public ListCharactersByAccountResponse listCharactersByAccount(

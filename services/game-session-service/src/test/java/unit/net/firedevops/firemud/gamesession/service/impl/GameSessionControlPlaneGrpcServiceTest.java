@@ -22,6 +22,7 @@ import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusReposito
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.InstanceCutoverCompatibilityService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
@@ -37,6 +38,8 @@ import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityRequest;
+import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -177,6 +180,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(GameplayCommandRepository.class),
             Mockito.mock(RuntimeRegionStatusRepository.class),
             authorityService,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -227,6 +231,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(GameplayCommandRepository.class),
             Mockito.mock(RuntimeRegionStatusRepository.class),
             authorityService,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -267,6 +272,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(GameplayCommandRepository.class),
             Mockito.mock(RuntimeRegionStatusRepository.class),
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -329,6 +335,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(GameplayCommandRepository.class),
             Mockito.mock(RuntimeRegionStatusRepository.class),
             authorityService,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -378,6 +385,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             commandRepository,
             Mockito.mock(RuntimeRegionStatusRepository.class),
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -421,6 +429,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(GameplayCommandRepository.class),
             repository,
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -442,6 +451,67 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("tb-9", responseRef.get().getOwnership().getLastCommittedTickBatchId());
   }
 
+  @Test
+  void validateInstanceCutoverCompatibilityReturnsCompatibilityReportForAdminCaller() {
+    InstanceCutoverCompatibilityService compatibilityService =
+        Mockito.mock(InstanceCutoverCompatibilityService.class);
+    Mockito.when(compatibilityService.validateInstanceCutoverCompatibility(1L, 7L, 9L))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.dto.InstanceCutoverCompatibilityDto(
+                "COMPATIBLE",
+                List.of(),
+                List.of("GAME_DESIGN", "WORLD", "ENTITY"),
+                Instant.parse("2026-04-20T10:00:00Z"),
+                "remap-1",
+                List.of(
+                    new net.firedevops.firemud.gamesession.dto.CutoverParticipantCompatibilityDto(
+                        "WORLD",
+                        List.of("S3"),
+                        List.of("world_instance"),
+                        false,
+                        "COMPATIBLE",
+                        List.of()),
+                    new net.firedevops.firemud.gamesession.dto.CutoverParticipantCompatibilityDto(
+                        "ENTITY",
+                        List.of("S3"),
+                        List.of("room_ground_inventory"),
+                        false,
+                        "COMPATIBLE",
+                        List.of()))));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            compatibilityService,
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ValidateInstanceCutoverCompatibilityResponse> responseRef =
+        new AtomicReference<>();
+    service.validateInstanceCutoverCompatibility(
+        ValidateInstanceCutoverCompatibilityRequest.newBuilder()
+            .setTenantId("1")
+            .setSourceGameInstanceId("7")
+            .setTargetVersionId("9")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ValidateInstanceCutoverCompatibilityResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(
+        net.firedevops.firemud.gamesession.v1.CutoverCompatibilityResult
+            .CUTOVER_COMPATIBILITY_RESULT_COMPATIBLE,
+        responseRef.get().getResult());
+    assertEquals("remap-1", responseRef.get().getRemapSetId());
+    assertEquals(2, responseRef.get().getParticipantResultsCount());
+  }
+
   private static GameSessionControlPlaneGrpcService newService(GameInstanceRepository repository) {
     return newService(repository, new SimpleMeterRegistry());
   }
@@ -453,6 +523,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(GameplayCommandRepository.class),
         Mockito.mock(RuntimeRegionStatusRepository.class),
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+        Mockito.mock(InstanceCutoverCompatibilityService.class),
         Mockito.mock(TickService.class),
         meterRegistry);
   }

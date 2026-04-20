@@ -16,6 +16,7 @@ import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
+import net.firedevops.firemud.entitymanagement.service.EntityUpgradeValidationService;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
@@ -63,6 +64,9 @@ import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityRequest;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse;
+import net.firedevops.firemud.entitymanagement.v1.UpgradeValidationResult;
+import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsRequest;
+import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import org.slf4j.Logger;
@@ -106,6 +110,7 @@ public class EntityManagementGrpcService
   private final RoomEntityService roomEntityService;
   private final RuntimeInstanceCleanupService runtimeInstanceCleanupService;
   private final EntityMutationEffectReplayService entityMutationEffectReplayService;
+  private final EntityUpgradeValidationService entityUpgradeValidationService;
 
   EntityManagementGrpcService(
       PingService pingService,
@@ -117,6 +122,7 @@ public class EntityManagementGrpcService
       RoomEntityService roomEntityService,
       RuntimeInstanceCleanupService runtimeInstanceCleanupService,
       EntityMutationEffectReplayService entityMutationEffectReplayService,
+      EntityUpgradeValidationService entityUpgradeValidationService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
@@ -128,6 +134,7 @@ public class EntityManagementGrpcService
     this.roomEntityService = roomEntityService;
     this.runtimeInstanceCleanupService = runtimeInstanceCleanupService;
     this.entityMutationEffectReplayService = entityMutationEffectReplayService;
+    this.entityUpgradeValidationService = entityUpgradeValidationService;
     this.gameplaySessionAttestationService = gameplaySessionAttestationService;
     this.meterRegistry = meterRegistry;
   }
@@ -142,6 +149,7 @@ public class EntityManagementGrpcService
       ContainerService containerService,
       RoomEntityService roomEntityService,
       EntityMutationEffectReplayService entityMutationEffectReplayService,
+      EntityUpgradeValidationService entityUpgradeValidationService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
       MeterRegistry meterRegistry) {
     this(
@@ -156,6 +164,7 @@ public class EntityManagementGrpcService
             new net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto(
                 0L, 0L, 0L, 0L),
         entityMutationEffectReplayService,
+        entityUpgradeValidationService,
         gameplaySessionAttestationService,
         meterRegistry);
   }
@@ -236,6 +245,66 @@ public class EntityManagementGrpcService
               .setError(GrpcAppErrors.internal(meterRegistry, logger, "Ping", ex))
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.validateEntityUpgradeMappings")
+  public void validateEntityUpgradeMappings(
+      ValidateEntityUpgradeMappingsRequest request,
+      StreamObserver<ValidateEntityUpgradeMappingsResponse> responseObserver) {
+    try {
+      var validation =
+          entityUpgradeValidationService.validateEntityUpgradeMappings(
+              Long.parseLong(request.getTenantId()),
+              Long.parseLong(request.getSourceGameInstanceId()),
+              Long.parseLong(request.getTargetVersionId()),
+              request.getRemapSetId().isBlank() ? null : request.getRemapSetId());
+      ValidateEntityUpgradeMappingsResponse.Builder builder =
+          ValidateEntityUpgradeMappingsResponse.newBuilder()
+              .addAllStateClassesChecked(validation.stateClassesChecked())
+              .addAllCheckedFamilies(validation.checkedFamilies())
+              .setHasS2Rows(validation.hasS2Rows())
+              .setResult(toUpgradeValidationResult(validation.result()))
+              .setRemapSetRequired(validation.remapSetRequired())
+              .addAllReasons(validation.reasons());
+      if (validation.remapSetId() != null) {
+        builder.setRemapSetId(validation.remapSetId());
+      }
+      responseObserver.onNext(builder.build());
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      responseObserver.onNext(
+          ValidateEntityUpgradeMappingsResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ValidateEntityUpgradeMappings",
+                      "INVALID_ARGUMENT",
+                      "invalid id"))
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          ValidateEntityUpgradeMappingsResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ValidateEntityUpgradeMappings",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onNext(
+          ValidateEntityUpgradeMappingsResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.internal(
+                      meterRegistry, logger, "ValidateEntityUpgradeMappings", ex))
+              .build());
       responseObserver.onCompleted();
     }
   }
@@ -1417,6 +1486,16 @@ public class EntityManagementGrpcService
 
   private String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
+  }
+
+  private UpgradeValidationResult toUpgradeValidationResult(String result) {
+    return switch (result) {
+      case "COMPATIBLE" -> UpgradeValidationResult.UPGRADE_VALIDATION_RESULT_COMPATIBLE;
+      case "REQUIRES_MAPPING" -> UpgradeValidationResult.UPGRADE_VALIDATION_RESULT_REQUIRES_MAPPING;
+      case "INCOMPATIBLE" -> UpgradeValidationResult.UPGRADE_VALIDATION_RESULT_INCOMPATIBLE;
+      case "UNAVAILABLE" -> UpgradeValidationResult.UPGRADE_VALIDATION_RESULT_UNAVAILABLE;
+      default -> UpgradeValidationResult.UPGRADE_VALIDATION_RESULT_UNSPECIFIED;
+    };
   }
 
   private Character toProto(CharacterDto dto) {

@@ -60,4 +60,6 @@ public interface ItemStackRepository extends JpaRepository<ItemStack, Long> {
 
   @Transactional
   long deleteByTenantIdAndGameInstanceId(Long tenantId, String gameInstanceId);
+
+  long countByTenantIdAndGameInstanceId(Long tenantId, String gameInstanceId);
 }

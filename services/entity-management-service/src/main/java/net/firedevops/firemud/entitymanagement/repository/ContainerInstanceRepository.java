@@ -48,4 +48,6 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
 
   @Transactional
   long deleteByTenantIdAndGameInstanceId(Long tenantId, String gameInstanceId);
+
+  long countByTenantIdAndGameInstanceId(Long tenantId, String gameInstanceId);
 }

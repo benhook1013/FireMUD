@@ -14,6 +14,7 @@ import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
+import net.firedevops.firemud.entitymanagement.service.EntityUpgradeValidationService;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
@@ -45,6 +46,8 @@ import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
+import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsRequest;
+import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import org.junit.jupiter.api.Test;
@@ -92,6 +95,7 @@ class EntityManagementGrpcServiceTest {
         containerService,
         roomEntityService,
         effectReplayService(),
+        Mockito.mock(EntityUpgradeValidationService.class),
         attestationService(),
         meterRegistry);
   }
@@ -116,6 +120,7 @@ class EntityManagementGrpcServiceTest {
         containerService,
         roomEntityService,
         effectReplayService(),
+        Mockito.mock(EntityUpgradeValidationService.class),
         attestationService(),
         meterRegistry);
   }
@@ -141,6 +146,7 @@ class EntityManagementGrpcServiceTest {
         containerService,
         roomEntityService,
         effectReplayService(),
+        Mockito.mock(EntityUpgradeValidationService.class),
         attestationService(),
         meterRegistry);
   }
@@ -172,6 +178,7 @@ class EntityManagementGrpcServiceTest {
             containerService,
             roomEntityService,
             effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
             attestationService(),
             meterRegistry);
 
@@ -235,6 +242,74 @@ class EntityManagementGrpcServiceTest {
         });
 
     assertEquals("pong", ref.get().getMessage());
+  }
+
+  @Test
+  void validateEntityUpgradeMappingsReturnsCompatibilityPayload() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityUpgradeValidationService validationService =
+        Mockito.mock(EntityUpgradeValidationService.class);
+    var meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    Mockito.when(validationService.validateEntityUpgradeMappings(1L, 55L, 11L, "remap-1"))
+        .thenReturn(
+            new net.firedevops.firemud.entitymanagement.dto.EntityUpgradeValidationResultDto(
+                List.of("S3"),
+                List.of("room_ground_inventory", "item_instances"),
+                false,
+                "COMPATIBLE",
+                false,
+                List.of(),
+                "remap-1"));
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            digestService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService(),
+            validationService,
+            attestationService(),
+            meterRegistry);
+
+    AtomicReference<ValidateEntityUpgradeMappingsResponse> ref = new AtomicReference<>();
+    service.validateEntityUpgradeMappings(
+        ValidateEntityUpgradeMappingsRequest.newBuilder()
+            .setTenantId("1")
+            .setSourceGameInstanceId("55")
+            .setTargetVersionId("11")
+            .setRemapSetId("remap-1")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ValidateEntityUpgradeMappingsResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals(
+        net.firedevops.firemud.entitymanagement.v1.UpgradeValidationResult
+            .UPGRADE_VALIDATION_RESULT_COMPATIBLE,
+        ref.get().getResult());
+    assertEquals("remap-1", ref.get().getRemapSetId());
+    assertEquals(2, ref.get().getCheckedFamiliesCount());
   }
 
   @Test
@@ -658,6 +733,7 @@ class EntityManagementGrpcServiceTest {
             containerService,
             roomEntityService,
             effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
             attestationService(),
             meterRegistry);
 

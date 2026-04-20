@@ -28,6 +28,8 @@ service EntityManagementService {
   rpc ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse);
   rpc CleanupRuntimeInstance(CleanupRuntimeInstanceRequest) returns (CleanupRuntimeInstanceResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
+  rpc ValidateEntityUpgradeMappings(ValidateEntityUpgradeMappingsRequest)
+      returns (ValidateEntityUpgradeMappingsResponse);
 }
 
 message CreateCharacterRequest {
@@ -362,6 +364,32 @@ message GetDraftDesignDigestResponse {
   string content_digest = 4;
   int32 digest_schema_version = 5;
   shared.v1.ErrorDetail error = 6;
+}
+
+enum UpgradeValidationResult {
+  UPGRADE_VALIDATION_RESULT_UNSPECIFIED = 0;
+  UPGRADE_VALIDATION_RESULT_COMPATIBLE = 1;
+  UPGRADE_VALIDATION_RESULT_REQUIRES_MAPPING = 2;
+  UPGRADE_VALIDATION_RESULT_INCOMPATIBLE = 3;
+  UPGRADE_VALIDATION_RESULT_UNAVAILABLE = 4;
+}
+
+message ValidateEntityUpgradeMappingsRequest {
+  string tenant_id = 1;
+  string source_game_instance_id = 2;
+  string target_version_id = 3;
+  string remap_set_id = 4;
+}
+
+message ValidateEntityUpgradeMappingsResponse {
+  repeated string state_classes_checked = 1;
+  repeated string checked_families = 2;
+  bool has_s2_rows = 3;
+  UpgradeValidationResult result = 4;
+  bool remap_set_required = 5;
+  repeated string reasons = 6;
+  string remap_set_id = 7;
+  shared.v1.ErrorDetail error = 8;
 }
 
 message PingRequest {}

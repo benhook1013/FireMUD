@@ -64,4 +64,6 @@ public interface ItemInstanceRepository extends JpaRepository<ItemInstance, Long
 
   @Transactional
   long deleteByTenantIdAndGameInstanceId(Long tenantId, String gameInstanceId);
+
+  long countByTenantIdAndGameInstanceId(Long tenantId, String gameInstanceId);
 }

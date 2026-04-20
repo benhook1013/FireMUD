@@ -19,4 +19,6 @@ public interface RoomGroundInventoryRepository
 
   @Transactional
   long deleteByIdTenantIdAndIdGameInstanceId(Long tenantId, String gameInstanceId);
+
+  long countByIdTenantIdAndIdGameInstanceId(Long tenantId, String gameInstanceId);
 }

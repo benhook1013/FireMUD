@@ -23,6 +23,8 @@ service WorldManagementService {
   rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
   rpc GetRoomSnapshot(GetRoomSnapshotRequest) returns (GetRoomSnapshotResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
+  rpc ValidateWorldUpgradeMappings(ValidateWorldUpgradeMappingsRequest)
+      returns (ValidateWorldUpgradeMappingsResponse);
   rpc ListRoomOccupants(ListRoomOccupantsRequest) returns (ListRoomOccupantsResponse);
   rpc ApplyRoomAmbientStatePatch(ApplyRoomAmbientStatePatchRequest) returns (ApplyRoomAmbientStatePatchResponse);
 }
@@ -254,6 +256,32 @@ message GetDraftDesignDigestResponse {
   string content_digest = 4;
   int32 digest_schema_version = 5;
   shared.v1.ErrorDetail error = 6;
+}
+
+enum UpgradeValidationResult {
+  UPGRADE_VALIDATION_RESULT_UNSPECIFIED = 0;
+  UPGRADE_VALIDATION_RESULT_COMPATIBLE = 1;
+  UPGRADE_VALIDATION_RESULT_REQUIRES_MAPPING = 2;
+  UPGRADE_VALIDATION_RESULT_INCOMPATIBLE = 3;
+  UPGRADE_VALIDATION_RESULT_UNAVAILABLE = 4;
+}
+
+message ValidateWorldUpgradeMappingsRequest {
+  string tenant_id = 1;
+  string source_game_instance_id = 2;
+  string target_version_id = 3;
+  string remap_set_id = 4;
+}
+
+message ValidateWorldUpgradeMappingsResponse {
+  repeated string state_classes_checked = 1;
+  repeated string checked_families = 2;
+  bool has_s2_rows = 3;
+  UpgradeValidationResult result = 4;
+  bool remap_set_required = 5;
+  repeated string reasons = 6;
+  string remap_set_id = 7;
+  shared.v1.ErrorDetail error = 8;
 }
 
 message PingRequest {}

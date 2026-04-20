@@ -69,6 +69,13 @@ Digest input manifest rules live in [`runtime-and-data.md`](./runtime-and-data.m
 - Response enumerates the checked world-owned row families, the template identifiers referenced by each family, whether each family is `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`, and whether the supplied `remapSetId` satisfied all required mappings.
 - If the service currently has no `S2` row families for a tenant/version pair, it must report that explicitly rather than implying compatibility from an empty response.
 
+Current live first slice:
+
+- The RPC now exists and returns the canonical cutover-validation payload shape.
+- The implementation currently proves the source `world_instance` exists for `(tenantId, sourceGameInstanceId)` and reports the initial World-owned `S3` families only.
+- World therefore currently returns `stateClassesChecked=["S3"]`, `checkedFamilies=["world_instance", "region_instance", "zone_instance", "room_instance", "world_event"]`, `hasS2Rows=false`, `result=COMPATIBLE`, and `remapSetRequired=false`.
+- Later World-owned durable metadata families can widen this contract to real `S2` checks without changing the owning RPC surface.
+
 Illustrative responses:
 
 ```json
@@ -76,7 +83,14 @@ Illustrative responses:
   "tenantId": "t1",
   "sourceGameInstanceId": "g-old",
   "targetVersionId": "v2",
-  "checkedFamilies": [],
+  "stateClassesChecked": ["S3"],
+  "checkedFamilies": [
+    "world_instance",
+    "region_instance",
+    "zone_instance",
+    "room_instance",
+    "world_event"
+  ],
   "hasS2Rows": false,
   "result": "COMPATIBLE",
   "remapSetRequired": false

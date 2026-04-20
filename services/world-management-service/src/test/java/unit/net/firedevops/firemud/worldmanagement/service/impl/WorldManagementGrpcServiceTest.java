@@ -18,6 +18,7 @@ import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import net.firedevops.firemud.worldmanagement.service.WorldInstanceActivationService;
+import net.firedevops.firemud.worldmanagement.service.WorldUpgradeValidationService;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
@@ -26,6 +27,8 @@ import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsRequest;
+import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import tools.jackson.databind.ObjectMapper;
@@ -45,6 +48,7 @@ class WorldManagementGrpcServiceTest {
         roomService,
         activationService,
         digestService,
+        Mockito.mock(WorldUpgradeValidationService.class),
         attestationService,
         meterRegistry,
         new ObjectMapper());
@@ -64,6 +68,7 @@ class WorldManagementGrpcServiceTest {
         roomService,
         activationService,
         digestService,
+        Mockito.mock(WorldUpgradeValidationService.class),
         attestationService,
         meterRegistry,
         new ObjectMapper());
@@ -87,6 +92,7 @@ class WorldManagementGrpcServiceTest {
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
             digestService,
+            Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
             new ObjectMapper());
@@ -145,6 +151,7 @@ class WorldManagementGrpcServiceTest {
             roomService,
             activationService,
             digestService,
+            Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
             new ObjectMapper());
@@ -179,6 +186,66 @@ class WorldManagementGrpcServiceTest {
 
     assertEquals("55", ref.get().getWorldInstance().getGameInstanceId());
     assertEquals(1L, ref.get().getWorldInstance().getLifecycleEpoch());
+  }
+
+  @Test
+  void validateWorldUpgradeMappingsReturnsCompatibilityPayload() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    WorldUpgradeValidationService validationService =
+        Mockito.mock(WorldUpgradeValidationService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    Mockito.when(validationService.validateWorldUpgradeMappings(1L, 55L, 11L, "remap-1"))
+        .thenReturn(
+            new net.firedevops.firemud.worldmanagement.dto.WorldUpgradeValidationResultDto(
+                List.of("S3"),
+                List.of("world_instance", "room_instance"),
+                false,
+                "COMPATIBLE",
+                false,
+                List.of(),
+                "remap-1"));
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            pingService,
+            roomService,
+            Mockito.mock(WorldInstanceActivationService.class),
+            digestService,
+            validationService,
+            Mockito.mock(GameplaySessionAttestationService.class),
+            meterRegistry,
+            new ObjectMapper());
+
+    AtomicReference<ValidateWorldUpgradeMappingsResponse> ref = new AtomicReference<>();
+    service.validateWorldUpgradeMappings(
+        ValidateWorldUpgradeMappingsRequest.newBuilder()
+            .setTenantId("1")
+            .setSourceGameInstanceId("55")
+            .setTargetVersionId("11")
+            .setRemapSetId("remap-1")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ValidateWorldUpgradeMappingsResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals(
+        net.firedevops.firemud.worldmanagement.v1.UpgradeValidationResult
+            .UPGRADE_VALIDATION_RESULT_COMPATIBLE,
+        ref.get().getResult());
+    assertEquals("remap-1", ref.get().getRemapSetId());
+    assertEquals(2, ref.get().getCheckedFamiliesCount());
   }
 
   @Test
@@ -426,6 +493,7 @@ class WorldManagementGrpcServiceTest {
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
             digestService,
+            Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
             new ObjectMapper());

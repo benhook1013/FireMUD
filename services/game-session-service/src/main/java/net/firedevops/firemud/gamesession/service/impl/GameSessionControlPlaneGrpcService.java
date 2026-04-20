@@ -18,8 +18,11 @@ import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatc
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
+import net.firedevops.firemud.gamesession.service.InstanceCutoverCompatibilityService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
+import net.firedevops.firemud.gamesession.v1.CutoverCompatibilityResult;
+import net.firedevops.firemud.gamesession.v1.CutoverParticipantResult;
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GameplayCommandStatus;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
@@ -43,6 +46,8 @@ import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityRequest;
+import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,6 +63,7 @@ public final class GameSessionControlPlaneGrpcService
   private final GameplayCommandRepository gameplayCommandRepository;
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
+  private final InstanceCutoverCompatibilityService instanceCutoverCompatibilityService;
   private final TickService tickService;
   private final MeterRegistry meterRegistry;
 
@@ -69,12 +75,14 @@ public final class GameSessionControlPlaneGrpcService
       GameplayCommandRepository gameplayCommandRepository,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
       TickService tickService,
       MeterRegistry meterRegistry) {
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
+    this.instanceCutoverCompatibilityService = instanceCutoverCompatibilityService;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
   }
@@ -507,6 +515,56 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.validateInstanceCutoverCompatibility")
+  public void validateInstanceCutoverCompatibility(
+      ValidateInstanceCutoverCompatibilityRequest request,
+      StreamObserver<ValidateInstanceCutoverCompatibilityResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      var validation =
+          instanceCutoverCompatibilityService.validateInstanceCutoverCompatibility(
+              parseTenantId(request.getTenantId()),
+              parseGameInstanceId(request.getSourceGameInstanceId()),
+              parseGameInstanceId(request.getTargetVersionId()));
+      ValidateInstanceCutoverCompatibilityResponse.Builder response =
+          ValidateInstanceCutoverCompatibilityResponse.newBuilder()
+              .setResult(toCutoverCompatibilityResult(validation.result()))
+              .addAllReasons(validation.reasons())
+              .addAllCheckedParticipants(validation.checkedParticipants())
+              .setCheckedAtMs(validation.checkedAt().toEpochMilli())
+              .addAllParticipantResults(
+                  validation.participantResults().stream().map(this::toParticipantResult).toList());
+      if (validation.remapSetId() != null) {
+        response.setRemapSetId(validation.remapSetId());
+      }
+      responseObserver.onNext(response.build());
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      ValidateInstanceCutoverCompatibilityResponse response =
+          ValidateInstanceCutoverCompatibilityResponse.newBuilder()
+              .setError(authorizationError("ValidateInstanceCutoverCompatibility", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ValidateInstanceCutoverCompatibilityResponse response =
+          ValidateInstanceCutoverCompatibilityResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("ValidateInstanceCutoverCompatibility failed", ex);
+      ValidateInstanceCutoverCompatibilityResponse response =
+          ValidateInstanceCutoverCompatibilityResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
   private AdmissionPointerControlPlaneEntry toEntry(GameplayAdmissionPointerAuditEntry entry) {
     return AdmissionPointerControlPlaneEntry.newBuilder()
         .setWorldSlug(entry.worldSlug())
@@ -542,6 +600,27 @@ public final class GameSessionControlPlaneGrpcService
                 : status.getLastCommittedTickBatchId())
         .setUpdatedAtMs(status.getUpdatedAt() == null ? 0L : status.getUpdatedAt().toEpochMilli())
         .build();
+  }
+
+  private CutoverParticipantResult toParticipantResult(
+      net.firedevops.firemud.gamesession.dto.CutoverParticipantCompatibilityDto result) {
+    return CutoverParticipantResult.newBuilder()
+        .setParticipant(result.participant())
+        .addAllStateClassesChecked(result.stateClassesChecked())
+        .addAllCheckedFamilies(result.checkedFamilies())
+        .setHasS2Rows(result.hasS2Rows())
+        .setResult(toCutoverCompatibilityResult(result.result()))
+        .addAllReasons(result.reasons())
+        .build();
+  }
+
+  private CutoverCompatibilityResult toCutoverCompatibilityResult(String result) {
+    return switch (result) {
+      case "COMPATIBLE" -> CutoverCompatibilityResult.CUTOVER_COMPATIBILITY_RESULT_COMPATIBLE;
+      case "INCOMPATIBLE" -> CutoverCompatibilityResult.CUTOVER_COMPATIBILITY_RESULT_INCOMPATIBLE;
+      case "UNAVAILABLE" -> CutoverCompatibilityResult.CUTOVER_COMPATIBILITY_RESULT_UNAVAILABLE;
+      default -> CutoverCompatibilityResult.CUTOVER_COMPATIBILITY_RESULT_UNSPECIFIED;
+    };
   }
 
   private GameplayCommandStatus toStatus(GameplayCommand command) {

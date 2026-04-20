@@ -331,6 +331,7 @@ Required cutover workflow additions:
   - `ApproveTemplateRemapSet(remapSetId, reason)`
   - `GetTemplateRemapSet(remapSetId)`
 - The first launch-resolution substrate is now live on this model: `ResolveLaunchDescriptor` freezes the approved `remapSetId` for cross-version replacement launches, and runtime `game_instance` / `world_instance` rows persist that frozen id as launch proof.
+- The first cutover-preflight substrate is now live too: Game Session exposes `ValidateInstanceCutoverCompatibility`, resolves the target launch descriptor to freeze the approved `remapSetId`, checks target version-state / published-release-bundle proof through Game Design, and gathers World / Entity participant attestations before admission-pointer swap can proceed.
 - `PrepareVersionUpgrade` and `ValidateInstanceCutoverCompatibility` must reference a concrete `remapSetId` whenever cutover depends on remapped S2 state. Ad hoc inferred remaps are not allowed.
 - If any surviving runtime row references missing or incompatible target-version templates and no approved remap exists, cutover fails closed before admission-pointer swap.
 - S3 state is discarded with the source instance through standard termination workflows. No component may silently copy room-ground containers, room ambient state, or instance topology to the target `gameInstanceId`.
@@ -352,9 +353,10 @@ Initial-slice row-family references used by preflight:
 
 These names are the canonical initial-slice preflight vocabulary until service implementation docs replace them with exact schema table names.
 
-Initial-slice note:
+Initial-slice notes:
 
-- In the first implementation slice, World Management declares no mandatory `S2` row families. Cutover preflight should therefore expect World to report `hasS2Rows=false` unless later world-bound durable metadata is introduced explicitly.
+- In the first live implementation slice, World Management declares no mandatory `S2` row families. `ValidateWorldUpgradeMappings` therefore reports `stateClassesChecked=["S3"]`, `hasS2Rows=false`, and `result=COMPATIBLE` after proving the source world instance exists.
+- In the first live Entity Management implementation slice, the validation surface is also honest about current persisted runtime families: it checks the current instance-scoped row families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`) as `S3`, reports `hasS2Rows=false`, and does not yet claim the later account-scoped `S1` / remap-sensitive `S2` families as implemented.
 
 The `ValidateInstanceCutoverCompatibility` contract below is the orchestration surface for these rules; it must report which state classes were checked, which owning domains attested compatibility, and whether any remap set was required.
 
@@ -391,7 +393,7 @@ For non-script content, there is no cross-version reuse of instance data. A give
 
 Replacement-instance cutover requires an explicit compatibility preflight before admission-pointer swap:
 
-- Game Session Service is the authoritative owner of cutover preflight orchestration and exposes `ValidateInstanceCutoverCompatibility(tenantId, sourceGameInstanceId, targetVersionId)`.
+- Game Session Service is the authoritative owner of cutover preflight orchestration and now exposes `ValidateInstanceCutoverCompatibility(tenantId, sourceGameInstanceId, targetVersionId)`.
 - The API must return deterministic payload fields at minimum: `{result: COMPATIBLE|INCOMPATIBLE|UNAVAILABLE, reasons[], checkedParticipants[], checkedAt}`.
 - `UNAVAILABLE` (for participant outage or stale dependency state) is fail-closed for cutover.
 - Minimum required checks:
@@ -401,6 +403,11 @@ Replacement-instance cutover requires an explicit compatibility preflight before
   - World/runtime bootstrap compatibility passes (required region/room templates, persistent world-bound metadata mappings, generation config revision resolution, required script patch readiness when pinned).
   - No unresolved `OUT_OF_SYNC` digest state for required publish participants.
   - The target `published_release_bundle` attestation returned by `GetPublishedReleaseBundle` exists and matches the digests, `manifestHash`, and `generationConfigRevision` used during preflight.
+- Current live first slice:
+  - Game Session resolves the replacement launch descriptor first, freezing any approved `remapSetId`.
+  - Game Session then fails closed if target Game Design version-state or published-release-bundle proof is missing/invalid.
+  - Game Session gathers World and Entity participant attestations into one canonical response.
+  - World and Entity currently report the honest first-cut `S3` row-family view described above; richer `S1` / `S2` cutover semantics remain follow-on work, not silently implemented.
 - Pointer swap is forbidden until this preflight reports `COMPATIBLE`; no best-effort fallback defaults are allowed at cutover time.
 
 Illustrative compatibility responses:
