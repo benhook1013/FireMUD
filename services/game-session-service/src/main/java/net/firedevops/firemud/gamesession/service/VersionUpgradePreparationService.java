@@ -7,4 +7,11 @@ public interface VersionUpgradePreparationService {
       long tenantId, long sourceGameInstanceId, long targetVersionId, String controlPlaneRequestId);
 
   PreparedVersionUpgradeDto getPreparedVersionUpgrade(long tenantId, String preparationId);
+
+  PreparedVersionUpgradeDto markPreparedVersionUpgradeExecuted(
+      long tenantId,
+      String preparationId,
+      long targetGameInstanceId,
+      long executedPointerVersion,
+      String executionControlPlaneRequestId);
 }

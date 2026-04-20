@@ -222,7 +222,11 @@ class GameSessionControlPlaneGrpcServiceTest {
                 List.of(),
                 List.of("WORLD", "ENTITY"),
                 Instant.parse("2026-04-16T00:00:00Z"),
-                List.of()));
+                List.of(),
+                null,
+                null,
+                null,
+                null));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
@@ -387,7 +391,11 @@ class GameSessionControlPlaneGrpcServiceTest {
                 List.of(),
                 List.of("WORLD", "ENTITY"),
                 Instant.parse("2026-04-16T00:00:00Z"),
-                List.of()));
+                List.of(),
+                null,
+                null,
+                null,
+                null));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
@@ -493,7 +501,11 @@ class GameSessionControlPlaneGrpcServiceTest {
                 List.of(),
                 List.of("WORLD", "ENTITY"),
                 Instant.parse("2026-04-16T00:00:00Z"),
-                List.of()));
+                List.of(),
+                null,
+                null,
+                null,
+                null));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
@@ -528,6 +540,8 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals(3L, responseRef.get().getPointer().getPointerVersion());
     assertEquals("pvu-1", responseRef.get().getPointer().getPreparedVersionUpgradeId());
+    Mockito.verify(versionUpgradePreparationService)
+        .markPreparedVersionUpgradeExecuted(1L, "pvu-1", 7L, 3L, "req-1");
     Mockito.verify(authorityService)
         .upsertPointer(
             Mockito.argThat(
@@ -815,7 +829,11 @@ class GameSessionControlPlaneGrpcServiceTest {
                 List.of(),
                 List.of("GAME_DESIGN", "WORLD", "ENTITY"),
                 Instant.parse("2026-04-20T10:05:00Z"),
-                List.of()));
+                List.of(),
+                null,
+                null,
+                null,
+                null));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
@@ -868,7 +886,11 @@ class GameSessionControlPlaneGrpcServiceTest {
                 List.of(),
                 List.of("GAME_DESIGN", "WORLD", "ENTITY"),
                 Instant.parse("2026-04-20T10:05:00Z"),
-                List.of()));
+                List.of(),
+                55L,
+                4L,
+                Instant.parse("2026-04-20T10:06:00Z"),
+                "cutover-req-1"));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
@@ -896,6 +918,8 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("pvu-1", responseRef.get().getPreparation().getPreparationId());
     assertEquals("pvu-req-1", responseRef.get().getPreparation().getControlPlaneRequestId());
+    assertEquals("55", responseRef.get().getPreparation().getExecutedTargetGameInstanceId());
+    assertEquals(4L, responseRef.get().getPreparation().getExecutedPointerVersion());
   }
 
   private static GameSessionControlPlaneGrpcService newService(GameInstanceRepository repository) {

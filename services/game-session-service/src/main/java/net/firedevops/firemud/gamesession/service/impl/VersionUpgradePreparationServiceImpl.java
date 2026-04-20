@@ -87,6 +87,44 @@ public class VersionUpgradePreparationServiceImpl implements VersionUpgradePrepa
     return toDto(prepared);
   }
 
+  @Override
+  @Transactional
+  public PreparedVersionUpgradeDto markPreparedVersionUpgradeExecuted(
+      long tenantId,
+      String preparationId,
+      long targetGameInstanceId,
+      long executedPointerVersion,
+      String executionControlPlaneRequestId) {
+    if (preparationId == null || preparationId.isBlank()) {
+      throw new IllegalArgumentException("preparation_id is required");
+    }
+    if (executionControlPlaneRequestId == null || executionControlPlaneRequestId.isBlank()) {
+      throw new IllegalArgumentException("execution_control_plane_request_id is required");
+    }
+    PreparedVersionUpgrade prepared =
+        preparedVersionUpgradeRepository
+            .findByPreparationId(preparationId)
+            .orElseThrow(() -> new IllegalArgumentException("Prepared version upgrade not found"));
+    if (!Long.valueOf(tenantId).equals(prepared.getTenantId())) {
+      throw new IllegalArgumentException("Prepared version upgrade not found");
+    }
+    if (prepared.getExecutedAt() != null) {
+      if (!Long.valueOf(targetGameInstanceId).equals(prepared.getExecutedTargetGameInstanceId())
+          || !Long.valueOf(executedPointerVersion).equals(prepared.getExecutedPointerVersion())
+          || !executionControlPlaneRequestId.equals(prepared.getExecutionControlPlaneRequestId())) {
+        throw new IllegalArgumentException(
+            "prepared version upgrade already recorded for a different cutover execution");
+      }
+      return toDto(prepared);
+    }
+    prepared.setExecutedTargetGameInstanceId(targetGameInstanceId);
+    prepared.setExecutedPointerVersion(executedPointerVersion);
+    prepared.setExecutedAt(java.time.Instant.now());
+    prepared.setExecutionControlPlaneRequestId(executionControlPlaneRequestId);
+    preparedVersionUpgradeRepository.save(prepared);
+    return toDto(prepared);
+  }
+
   private String toJson(Object value) {
     try {
       return objectMapper.writeValueAsString(value);
@@ -115,7 +153,11 @@ public class VersionUpgradePreparationServiceImpl implements VersionUpgradePrepa
             new TypeReference<
                 List<
                     net.firedevops.firemud.gamesession.dto
-                        .CutoverParticipantCompatibilityDto>>() {}));
+                        .CutoverParticipantCompatibilityDto>>() {}),
+        prepared.getExecutedTargetGameInstanceId(),
+        prepared.getExecutedPointerVersion(),
+        prepared.getExecutedAt(),
+        prepared.getExecutionControlPlaneRequestId());
   }
 
   private <T> T fromJson(String json, TypeReference<T> typeReference) {

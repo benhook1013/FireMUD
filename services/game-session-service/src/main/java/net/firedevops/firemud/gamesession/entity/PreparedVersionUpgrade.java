@@ -55,4 +55,16 @@ public class PreparedVersionUpgrade {
 
   @Column(name = "checked_at", nullable = false)
   private Instant checkedAt;
+
+  @Column(name = "executed_target_game_instance_id")
+  private Long executedTargetGameInstanceId;
+
+  @Column(name = "executed_pointer_version")
+  private Long executedPointerVersion;
+
+  @Column(name = "executed_at")
+  private Instant executedAt;
+
+  @Column(name = "execution_control_plane_request_id", length = 128)
+  private String executionControlPlaneRequestId;
 }

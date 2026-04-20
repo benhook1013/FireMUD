@@ -434,6 +434,12 @@ public final class GameSessionControlPlaneGrpcService
               .findFirst()
               .map(this::toEntry)
               .orElseThrow(() -> new IllegalStateException("Admission pointer audit missing"));
+      versionUpgradePreparationService.markPreparedVersionUpgradeExecuted(
+          tenantId,
+          request.getPreparedVersionUpgradeId(),
+          targetGameInstanceId,
+          entry.getPointerVersion(),
+          request.getControlPlaneRequestId());
       ExecutePreparedVersionCutoverResponse response =
           ExecutePreparedVersionCutoverResponse.newBuilder().setPointer(entry).build();
       responseObserver.onNext(response);
@@ -930,6 +936,19 @@ public final class GameSessionControlPlaneGrpcService
                 preparation.participantResults().stream().map(this::toParticipantResult).toList());
     if (preparation.remapSetId() != null) {
       builder.setRemapSetId(preparation.remapSetId());
+    }
+    if (preparation.executedTargetGameInstanceId() != null) {
+      builder.setExecutedTargetGameInstanceId(
+          Long.toString(preparation.executedTargetGameInstanceId()));
+    }
+    if (preparation.executedPointerVersion() != null) {
+      builder.setExecutedPointerVersion(preparation.executedPointerVersion());
+    }
+    if (preparation.executedAt() != null) {
+      builder.setExecutedAtMs(preparation.executedAt().toEpochMilli());
+    }
+    if (preparation.executionControlPlaneRequestId() != null) {
+      builder.setExecutionControlPlaneRequestId(preparation.executionControlPlaneRequestId());
     }
     return builder.build();
   }

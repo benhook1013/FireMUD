@@ -16,4 +16,8 @@ public record PreparedVersionUpgradeDto(
     List<String> reasons,
     List<String> checkedParticipants,
     Instant checkedAt,
-    List<CutoverParticipantCompatibilityDto> participantResults) {}
+    List<CutoverParticipantCompatibilityDto> participantResults,
+    Long executedTargetGameInstanceId,
+    Long executedPointerVersion,
+    Instant executedAt,
+    String executionControlPlaneRequestId) {}

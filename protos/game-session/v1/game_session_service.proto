@@ -539,6 +539,10 @@ message PreparedVersionUpgrade {
   int64 checked_at_ms = 11;
   repeated CutoverParticipantResult participant_results = 12;
   string control_plane_request_id = 13;
+  string executed_target_game_instance_id = 14;
+  int64 executed_pointer_version = 15;
+  int64 executed_at_ms = 16;
+  string execution_control_plane_request_id = 17;
 }
 
 message PrepareVersionUpgradeResponse {
