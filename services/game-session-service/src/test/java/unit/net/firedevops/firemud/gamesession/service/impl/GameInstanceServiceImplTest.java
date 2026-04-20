@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -83,18 +85,19 @@ class GameInstanceServiceImplTest {
   void startSessionFailsWhenWorldPreparationFails() {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-6", 42L);
     when(worldManagementClient.prepareWorldInstance(
-            any(Long.class),
-            any(Long.class),
-            any(Long.class),
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
             any(),
             any(),
-            any(Long.class),
-            any(),
-            any(),
-            any(),
-            any(Long.class),
-            any(),
-            any(Long.class)))
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
                 .setError(
@@ -109,7 +112,7 @@ class GameInstanceServiceImplTest {
     verify(stateService, never()).saveState(any());
     assertEquals(0, store.size());
     verify(worldManagementClient, never())
-        .failPreparedWorldInstance(any(Long.class), any(Long.class), any(Long.class), any());
+        .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
   }
 
   @Test
@@ -126,7 +129,7 @@ class GameInstanceServiceImplTest {
     verify(stateService).deleteState(2L, 7L);
     verify(worldManagementClient).getWorldInstanceLifecycle(2L, 7L);
     verify(worldManagementClient)
-        .terminateWorldInstance(any(Long.class), any(Long.class), any(Long.class), any(), any());
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), any(), any());
     assertEquals("STOPPED", store.get(7L).getStatus());
     assertEquals("RUNNING", store.get(dto.id()).getStatus());
   }
@@ -150,7 +153,7 @@ class GameInstanceServiceImplTest {
     verify(stateService).deleteState(1L, 10L);
     verify(worldManagementClient).getWorldInstanceLifecycle(1L, 10L);
     verify(worldManagementClient)
-        .terminateWorldInstance(any(Long.class), any(Long.class), any(Long.class), any(), any());
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), any(), any());
     assertEquals("STOPPED", dto.status());
     assertEquals("STOPPED", store.get(10L).getStatus());
   }
@@ -180,8 +183,7 @@ class GameInstanceServiceImplTest {
     assertEquals(1, store.size());
     assertEquals("RUNNING", store.get(7L).getStatus());
     verify(stateService, never()).deleteState(2L, 7L);
-    verify(worldManagementClient, never())
-        .getWorldInstanceLifecycle(any(Long.class), any(Long.class));
+    verify(worldManagementClient, never()).getWorldInstanceLifecycle(anyLong(), anyLong());
   }
 
   @Test
@@ -191,7 +193,7 @@ class GameInstanceServiceImplTest {
     when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
         .thenReturn(Optional.of(existing));
     when(worldManagementClient.terminateWorldInstance(
-            any(Long.class), any(Long.class), any(Long.class), any(), any()))
+            anyLong(), anyLong(), anyLong(), any(), any()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse.newBuilder()
                 .setError(
@@ -217,8 +219,7 @@ class GameInstanceServiceImplTest {
     assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
 
     verify(stateService).deleteState(1L, 10L);
-    verify(worldManagementClient, never())
-        .getWorldInstanceLifecycle(any(Long.class), any(Long.class));
+    verify(worldManagementClient, never()).getWorldInstanceLifecycle(anyLong(), anyLong());
     verify(stateService).saveState(any(GameInstanceDto.class));
     assertEquals("RUNNING", store.get(10L).getStatus());
   }
@@ -227,7 +228,7 @@ class GameInstanceServiceImplTest {
   void stopSessionLeavesStoppingRowWhenWorldTerminationFails() {
     persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
     when(worldManagementClient.terminateWorldInstance(
-            any(Long.class), any(Long.class), any(Long.class), any(), any()))
+            anyLong(), anyLong(), anyLong(), any(), any()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse.newBuilder()
                 .setError(
@@ -399,18 +400,19 @@ class GameInstanceServiceImplTest {
 
   private void configureWorldActivation() {
     when(worldManagementClient.prepareWorldInstance(
-            any(Long.class),
-            any(Long.class),
-            any(Long.class),
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
             any(),
             any(),
-            any(Long.class),
-            any(),
-            any(),
-            any(),
-            any(Long.class),
-            any(),
-            any(Long.class)))
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
                 .setWorldInstance(
@@ -432,8 +434,7 @@ class GameInstanceServiceImplTest {
                                 .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
                         .build())
                 .build());
-    when(worldManagementClient.activatePreparedWorldInstance(
-            any(Long.class), any(Long.class), any(Long.class)))
+    when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
                 .newBuilder()
@@ -456,8 +457,7 @@ class GameInstanceServiceImplTest {
                                 .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
                         .build())
                 .build());
-    when(worldManagementClient.failPreparedWorldInstance(
-            any(Long.class), any(Long.class), any(Long.class), any()))
+    when(worldManagementClient.failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse.newBuilder()
                 .setWorldInstance(
@@ -471,7 +471,7 @@ class GameInstanceServiceImplTest {
                                 .WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION)
                         .build())
                 .build());
-    when(worldManagementClient.getWorldInstanceLifecycle(any(Long.class), any(Long.class)))
+    when(worldManagementClient.getWorldInstanceLifecycle(anyLong(), anyLong()))
         .thenAnswer(
             invocation ->
                 net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse
@@ -489,7 +489,7 @@ class GameInstanceServiceImplTest {
                             .build())
                     .build());
     when(worldManagementClient.terminateWorldInstance(
-            any(Long.class), any(Long.class), any(Long.class), any(), any()))
+            anyLong(), anyLong(), anyLong(), anyString(), anyString()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse.newBuilder()
                 .setWorldInstance(

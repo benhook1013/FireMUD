@@ -15,8 +15,38 @@ public record GameInstanceDto(
     Long releaseBundleId,
     Long versionStateEpoch,
     String generationConfigRevision,
+    String remapSetId,
     @NotNull Long ownerAccountId,
     @NotNull @Size(max = 20) String status)
     implements Serializable {
   private static final long serialVersionUID = 1L;
+
+  public GameInstanceDto(
+      Long id,
+      @NotNull Long tenantId,
+      @NotNull @Size(max = 100) String runtimeVersion,
+      String scriptPatchVersion,
+      Long gameTemplateId,
+      String launchDescriptorId,
+      Long versionId,
+      Long releaseBundleId,
+      Long versionStateEpoch,
+      String generationConfigRevision,
+      @NotNull Long ownerAccountId,
+      @NotNull @Size(max = 20) String status) {
+    this(
+        id,
+        tenantId,
+        runtimeVersion,
+        scriptPatchVersion,
+        gameTemplateId,
+        launchDescriptorId,
+        versionId,
+        releaseBundleId,
+        versionStateEpoch,
+        generationConfigRevision,
+        null,
+        ownerAccountId,
+        status);
+  }
 }

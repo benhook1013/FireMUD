@@ -53,6 +53,9 @@ public class LaunchDescriptor {
   @Column(nullable = false, length = 128)
   private String publishedReleaseBundleRef;
 
+  @Column(length = 64)
+  private String remapSetId;
+
   @Column(nullable = false)
   private LocalDateTime createdAt = LocalDateTime.now();
 }

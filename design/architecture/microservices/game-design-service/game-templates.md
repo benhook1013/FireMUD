@@ -91,6 +91,7 @@ Normalized reference storage is only safe if it is operationally enforced:
   - Fail fast if `GetTemplateReferencePhase` is not `ENFORCED` for the target scope.
   - Fail fast if the target version does not have a valid `published_release_bundle` attestation proving the digests, `manifestHash`, and `generationConfigRevision` used for launch.
   - If the launch path depends on cross-version durable-state remaps, fail fast unless an approved `remapSetId` exists for the source/target version pair and all required owning domains attest it as usable.
+  - Game Design now persists this control-plane state explicitly and returns the frozen `remapSetId` on the resolved launch descriptor rather than requiring downstream services to infer or rediscover remap identity.
 
 > **Note**
 
@@ -171,7 +172,7 @@ Required deterministic failure vocabulary for the first implementation slice:
 - `RELEASE_BUNDLE_NOT_FOUND` when `GetPublishedReleaseBundle` is absent for the resolved version.
 - `RELEASE_ATTESTATION_MISMATCH` when the attested bundle does not match the resolved descriptor values.
 - `VERSION_STATE_EPOCH_STALE` when launch resolution and activation preflight no longer bind to the same frozen version-state epoch.
-- `LAUNCH_REMAP_REQUIRED` when replacement-instance cutover needs an approved `remapSetId` and one is not supplied or not valid.
+- `LAUNCH_REMAP_REQUIRED` when replacement-instance cutover needs an approved `remapSetId` and no unique approved remap set exists for the source/target version pair.
 
 These are application-level launch-preflight outcomes, not transport failures. Retries for the same `controlPlaneRequestId` must return the same deterministic business result until callers intentionally start a new launch attempt with a new `controlPlaneRequestId`.
 

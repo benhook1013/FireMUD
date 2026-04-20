@@ -49,6 +49,7 @@ message WorldInstanceLifecycleSnapshot {
   int64 version_state_epoch = 10;
   int64 lifecycle_epoch = 11;
   WorldInstanceLifecycleStatus status = 12;
+  string remap_set_id = 13;
 }
 
 message PrepareWorldInstanceRequest {
@@ -64,6 +65,7 @@ message PrepareWorldInstanceRequest {
   string release_bundle_id = 10;
   string published_release_bundle_ref = 11;
   int64 version_state_epoch = 12;
+  string remap_set_id = 13;
 }
 
 message PrepareWorldInstanceResponse {

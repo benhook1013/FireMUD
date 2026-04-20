@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
+import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideRequest;
@@ -36,6 +37,8 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
   private final VersionService versionService = Mockito.mock(VersionService.class);
   private final LaunchDescriptorService launchDescriptorService =
       Mockito.mock(LaunchDescriptorService.class);
+  private final TemplateRemapSetService templateRemapSetService =
+      Mockito.mock(TemplateRemapSetService.class);
   private final VersionAssetArtifactService versionAssetArtifactService =
       Mockito.mock(VersionAssetArtifactService.class);
   private final SettingsAuthorityService settingsAuthorityService =
@@ -52,6 +55,7 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
             revisionService,
             versionService,
             launchDescriptorService,
+            templateRemapSetService,
             versionAssetArtifactService,
             settingsAuthorityService,
             new SimpleMeterRegistry());

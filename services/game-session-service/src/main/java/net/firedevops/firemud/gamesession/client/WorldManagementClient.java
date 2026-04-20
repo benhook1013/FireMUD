@@ -78,6 +78,36 @@ public final class WorldManagementClient
       long releaseBundleId,
       String publishedReleaseBundleRef,
       long versionStateEpoch) {
+    return prepareWorldInstance(
+        tenantId,
+        gameInstanceId,
+        gameTemplateId,
+        controlPlaneRequestId,
+        launchDescriptorId,
+        versionId,
+        scriptPatchVersion,
+        runtimeFlagsJson,
+        generationConfigRevision,
+        releaseBundleId,
+        publishedReleaseBundleRef,
+        versionStateEpoch,
+        null);
+  }
+
+  public PrepareWorldInstanceResponse prepareWorldInstance(
+      long tenantId,
+      long gameInstanceId,
+      long gameTemplateId,
+      String controlPlaneRequestId,
+      String launchDescriptorId,
+      long versionId,
+      String scriptPatchVersion,
+      String runtimeFlagsJson,
+      String generationConfigRevision,
+      long releaseBundleId,
+      String publishedReleaseBundleRef,
+      long versionStateEpoch,
+      String remapSetId) {
     PrepareWorldInstanceRequest.Builder builder =
         PrepareWorldInstanceRequest.newBuilder()
             .setTenantId(Long.toString(tenantId))
@@ -93,6 +123,9 @@ public final class WorldManagementClient
             .setVersionStateEpoch(versionStateEpoch);
     if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
       builder.setScriptPatchVersion(scriptPatchVersion);
+    }
+    if (remapSetId != null && !remapSetId.isBlank()) {
+      builder.setRemapSetId(remapSetId);
     }
     return callStub().prepareWorldInstance(builder.build());
   }

@@ -226,6 +226,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setReleaseBundleId(resolvedLaunchDescriptor.releaseBundleId());
     instance.setVersionStateEpoch(resolvedLaunchDescriptor.versionStateEpoch());
     instance.setGenerationConfigRevision(resolvedLaunchDescriptor.generationConfigRevision());
+    instance.setRemapSetId(resolvedLaunchDescriptor.remapSetId());
     instance.setOwnerAccountId(request.ownerAccountId());
     instance.setStatus(STATUS_STARTING);
     return new StartSessionStage(snapshot(repository.save(instance)), existingRunningState);
@@ -409,6 +410,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         instance.getReleaseBundleId(),
         instance.getVersionStateEpoch(),
         instance.getGenerationConfigRevision(),
+        instance.getRemapSetId(),
         instance.getOwnerAccountId(),
         instance.getStatus());
   }
@@ -423,6 +425,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setReleaseBundleId(snapshot.releaseBundleId());
     instance.setVersionStateEpoch(snapshot.versionStateEpoch());
     instance.setGenerationConfigRevision(snapshot.generationConfigRevision());
+    instance.setRemapSetId(snapshot.remapSetId());
     instance.setOwnerAccountId(snapshot.ownerAccountId());
     instance.setTenantId(snapshot.tenantId());
     repository.save(instance);
@@ -440,6 +443,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         snapshot.releaseBundleId(),
         snapshot.versionStateEpoch(),
         snapshot.generationConfigRevision(),
+        snapshot.remapSetId(),
         snapshot.ownerAccountId(),
         status);
   }
@@ -503,7 +507,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         descriptor.getGenerationConfigRevision(),
         descriptor.getVersionStateEpoch(),
         descriptor.getReleaseBundleId(),
-        descriptor.getPublishedReleaseBundleRef());
+        descriptor.getPublishedReleaseBundleRef(),
+        descriptor.getRemapSetId().isBlank() ? null : descriptor.getRemapSetId());
   }
 
   private void validatePublishedAssetProof(
@@ -551,7 +556,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             resolvedLaunchDescriptor.generationConfigRevision(),
             resolvedLaunchDescriptor.releaseBundleId(),
             resolvedLaunchDescriptor.publishedReleaseBundleRef(),
-            resolvedLaunchDescriptor.versionStateEpoch());
+            resolvedLaunchDescriptor.versionStateEpoch(),
+            resolvedLaunchDescriptor.remapSetId());
     if (response.hasError()) {
       throw new IllegalArgumentException(
           response.getError().getCode() + ": " + response.getError().getMessage());

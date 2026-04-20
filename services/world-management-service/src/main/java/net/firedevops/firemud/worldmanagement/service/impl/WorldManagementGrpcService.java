@@ -86,7 +86,8 @@ public class WorldManagementGrpcService
                   request.getGenerationConfigRevision(),
                   Long.parseLong(request.getReleaseBundleId()),
                   request.getPublishedReleaseBundleRef(),
-                  request.getVersionStateEpoch()));
+                  request.getVersionStateEpoch(),
+                  request.getRemapSetId().isBlank() ? null : request.getRemapSetId()));
       builder.setWorldInstance(toProto(snapshot));
     } catch (NumberFormatException ex) {
       builder.setError(
@@ -502,6 +503,7 @@ public class WorldManagementGrpcService
         .setVersionStateEpoch(snapshot.versionStateEpoch())
         .setLifecycleEpoch(snapshot.lifecycleEpoch())
         .setStatus(toProtoStatus(snapshot.status()))
+        .setRemapSetId(snapshot.remapSetId() == null ? "" : snapshot.remapSetId())
         .build();
   }
 

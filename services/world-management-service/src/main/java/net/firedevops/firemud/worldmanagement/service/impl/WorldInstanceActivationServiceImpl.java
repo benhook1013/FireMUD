@@ -166,6 +166,7 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
     worldInstance.setReleaseBundleId(request.releaseBundleId());
     worldInstance.setPublishedReleaseBundleRef(request.publishedReleaseBundleRef());
     worldInstance.setVersionStateEpoch(request.versionStateEpoch());
+    worldInstance.setRemapSetId(normalizeBlank(request.remapSetId()));
     worldInstance.setLifecycleEpoch(1L);
     worldInstance.setStatus(STATUS_PREPARING);
     worldInstance.setCreatedAt(Instant.now());
@@ -222,7 +223,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
             worldInstance.getGenerationConfigRevision(),
             worldInstance.getReleaseBundleId(),
             worldInstance.getPublishedReleaseBundleRef(),
-            worldInstance.getVersionStateEpoch()));
+            worldInstance.getVersionStateEpoch(),
+            worldInstance.getRemapSetId()));
     worldInstance.setStatus(STATUS_ACTIVE);
     worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
     worldInstance.setFailureReason(null);
@@ -500,7 +502,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
         && existing.getGenerationConfigRevision().equals(request.generationConfigRevision())
         && existing.getReleaseBundleId().equals(request.releaseBundleId())
         && existing.getPublishedReleaseBundleRef().equals(request.publishedReleaseBundleRef())
-        && existing.getVersionStateEpoch().equals(request.versionStateEpoch());
+        && existing.getVersionStateEpoch().equals(request.versionStateEpoch())
+        && equalsNullable(existing.getRemapSetId(), normalizeBlank(request.remapSetId()));
   }
 
   private WorldInstanceLifecycleSnapshotDto snapshot(WorldInstance worldInstance) {
@@ -516,7 +519,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
         worldInstance.getPublishedReleaseBundleRef(),
         worldInstance.getVersionStateEpoch(),
         worldInstance.getLifecycleEpoch(),
-        worldInstance.getStatus());
+        worldInstance.getStatus(),
+        worldInstance.getRemapSetId());
   }
 
   private boolean equalsNullable(String left, String right) {

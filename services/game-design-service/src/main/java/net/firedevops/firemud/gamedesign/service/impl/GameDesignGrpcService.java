@@ -12,14 +12,19 @@ import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
+import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
+import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
+import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
+import net.firedevops.firemud.gamedesign.v1.ApproveTemplateRemapSetRequest;
+import net.firedevops.firemud.gamedesign.v1.ApproveTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.ArtifactState;
 import net.firedevops.firemud.gamedesign.v1.BeginPurgeVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.BeginPurgeVersionAssetsResponse;
@@ -27,6 +32,8 @@ import net.firedevops.firemud.gamedesign.v1.CanDeleteVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.CanDeleteVersionAssetsResponse;
 import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateResponse;
+import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetRequest;
+import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideRequest;
 import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideResponse;
 import net.firedevops.firemud.gamedesign.v1.FinalizePurgeVersionAssetsRequest;
@@ -38,6 +45,8 @@ import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesRequest;
 import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesResponse;
+import net.firedevops.firemud.gamedesign.v1.GetTemplateRemapSetRequest;
+import net.firedevops.firemud.gamedesign.v1.GetTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetPurgeStatusRequest;
@@ -60,6 +69,9 @@ import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionResponse;
+import net.firedevops.firemud.gamedesign.v1.TemplateRemapEntry;
+import net.firedevops.firemud.gamedesign.v1.TemplateRemapSet;
+import net.firedevops.firemud.gamedesign.v1.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
@@ -75,6 +87,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   private final RevisionService revisionService;
   private final VersionService versionService;
   private final LaunchDescriptorService launchDescriptorService;
+  private final TemplateRemapSetService templateRemapSetService;
   private final VersionAssetArtifactService versionAssetArtifactService;
   private final SettingsAuthorityService settingsAuthorityService;
 
@@ -459,6 +472,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               .setVersionStateEpoch(descriptor.versionStateEpoch())
               .setReleaseBundleId(descriptor.releaseBundleId())
               .setPublishedReleaseBundleRef(descriptor.publishedReleaseBundleRef())
+              .setRemapSetId(descriptor.remapSetId() == null ? "" : descriptor.remapSetId())
               .build());
     } catch (AdminAuthorizationException ex) {
       builder.setError(
@@ -487,6 +501,112 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     } catch (Exception ex) {
       builder.setError(
           GrpcAppErrors.internal(meterRegistry, logger, "ResolveLaunchDescriptor", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.createTemplateRemapSet")
+  public void createTemplateRemapSet(
+      CreateTemplateRemapSetRequest request,
+      StreamObserver<CreateTemplateRemapSetResponse> responseObserver) {
+    CreateTemplateRemapSetResponse.Builder builder = CreateTemplateRemapSetResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      builder.setRemapSet(
+          toProto(
+              templateRemapSetService.createTemplateRemapSet(
+                  request.getTenantId(),
+                  request.getSourceVersionId(),
+                  request.getTargetVersionId(),
+                  request.getCreatedReason(),
+                  request.getRemapEntriesList().stream().map(this::toDto).toList())));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "CreateTemplateRemapSet",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "CreateTemplateRemapSet",
+              remapSetErrorCode(ex.getMessage()),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "CreateTemplateRemapSet", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.approveTemplateRemapSet")
+  public void approveTemplateRemapSet(
+      ApproveTemplateRemapSetRequest request,
+      StreamObserver<ApproveTemplateRemapSetResponse> responseObserver) {
+    ApproveTemplateRemapSetResponse.Builder builder = ApproveTemplateRemapSetResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      builder.setRemapSet(
+          toProto(
+              templateRemapSetService.approveTemplateRemapSet(
+                  request.getTenantId(), request.getRemapSetId(), request.getApprovalReason())));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ApproveTemplateRemapSet",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ApproveTemplateRemapSet",
+              remapSetErrorCode(ex.getMessage()),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "ApproveTemplateRemapSet", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.getTemplateRemapSet")
+  public void getTemplateRemapSet(
+      GetTemplateRemapSetRequest request,
+      StreamObserver<GetTemplateRemapSetResponse> responseObserver) {
+    GetTemplateRemapSetResponse.Builder builder = GetTemplateRemapSetResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      builder.setRemapSet(
+          toProto(
+              templateRemapSetService.getTemplateRemapSet(
+                  request.getTenantId(), request.getRemapSetId())));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "GetTemplateRemapSet", "PERMISSION_DENIED", ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetTemplateRemapSet",
+              remapSetErrorCode(ex.getMessage()),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "GetTemplateRemapSet", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
@@ -994,6 +1114,47 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         .build();
   }
 
+  private TemplateRemapSet toProto(TemplateRemapSetDto remapSet) {
+    TemplateRemapSet.Builder builder =
+        TemplateRemapSet.newBuilder()
+            .setRemapSetId(remapSet.remapSetId())
+            .setTenantId(remapSet.tenantId())
+            .setSourceVersionId(remapSet.sourceVersionId())
+            .setTargetVersionId(remapSet.targetVersionId())
+            .setStatus(toProtoRemapStatus(remapSet.status()))
+            .setCreatedReason(remapSet.createdReason())
+            .setApprovalReason(remapSet.approvalReason() == null ? "" : remapSet.approvalReason())
+            .setCreatedAt(remapSet.createdAt().toString())
+            .setApprovedAt(remapSet.approvedAt() == null ? "" : remapSet.approvedAt().toString());
+    remapSet.remapEntries().forEach(entry -> builder.addRemapEntries(toProto(entry)));
+    return builder.build();
+  }
+
+  private TemplateRemapEntry toProto(TemplateRemapEntryDto entry) {
+    return TemplateRemapEntry.newBuilder()
+        .setMappingDomain(entry.mappingDomain())
+        .setMappingType(entry.mappingType())
+        .setSourceTemplateKey(entry.sourceTemplateKey())
+        .setTargetTemplateKey(entry.targetTemplateKey())
+        .build();
+  }
+
+  private TemplateRemapEntryDto toDto(TemplateRemapEntry entry) {
+    return new TemplateRemapEntryDto(
+        entry.getMappingDomain(),
+        entry.getMappingType(),
+        entry.getSourceTemplateKey(),
+        entry.getTargetTemplateKey());
+  }
+
+  private TemplateRemapSetStatus toProtoRemapStatus(
+      net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus status) {
+    return switch (status) {
+      case DRAFT -> TemplateRemapSetStatus.TEMPLATE_REMAP_SET_STATUS_DRAFT;
+      case APPROVED -> TemplateRemapSetStatus.TEMPLATE_REMAP_SET_STATUS_APPROVED;
+    };
+  }
+
   private String launchDescriptorErrorCode(String message, boolean allowSchemaUnsupported) {
     if (message == null || message.isBlank()) {
       return "INVALID_ARGUMENT";
@@ -1015,6 +1176,16 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       if (message.startsWith(prefix)) {
         return prefix;
       }
+    }
+    return "INVALID_ARGUMENT";
+  }
+
+  private String remapSetErrorCode(String message) {
+    if (message == null || message.isBlank()) {
+      return "INVALID_ARGUMENT";
+    }
+    if (message.startsWith("NOT_FOUND:")) {
+      return "NOT_FOUND";
     }
     return "INVALID_ARGUMENT";
   }

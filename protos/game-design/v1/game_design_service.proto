@@ -23,6 +23,12 @@ service GameDesignService {
       returns (CompareAndSetVersionStateResponse);
   rpc ResolveLaunchDescriptor(ResolveLaunchDescriptorRequest)
       returns (ResolveLaunchDescriptorResponse);
+  rpc CreateTemplateRemapSet(CreateTemplateRemapSetRequest)
+      returns (CreateTemplateRemapSetResponse);
+  rpc ApproveTemplateRemapSet(ApproveTemplateRemapSetRequest)
+      returns (ApproveTemplateRemapSetResponse);
+  rpc GetTemplateRemapSet(GetTemplateRemapSetRequest)
+      returns (GetTemplateRemapSetResponse);
   rpc GetVersionAssetArtifactState(GetVersionAssetArtifactStateRequest)
       returns (GetVersionAssetArtifactStateResponse);
   rpc TombstoneVersionAssets(TombstoneVersionAssetsRequest)
@@ -149,6 +155,40 @@ message ResolveLaunchDescriptorResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
+message CreateTemplateRemapSetRequest {
+  string tenant_id = 1;
+  int64 source_version_id = 2;
+  int64 target_version_id = 3;
+  string created_reason = 4;
+  repeated TemplateRemapEntry remap_entries = 5;
+}
+
+message CreateTemplateRemapSetResponse {
+  TemplateRemapSet remap_set = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ApproveTemplateRemapSetRequest {
+  string tenant_id = 1;
+  string remap_set_id = 2;
+  string approval_reason = 3;
+}
+
+message ApproveTemplateRemapSetResponse {
+  TemplateRemapSet remap_set = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetTemplateRemapSetRequest {
+  string tenant_id = 1;
+  string remap_set_id = 2;
+}
+
+message GetTemplateRemapSetResponse {
+  TemplateRemapSet remap_set = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
 message GetVersionAssetArtifactStateRequest {
   string tenant_id = 1;
   int64 version_id = 2;
@@ -265,6 +305,33 @@ message LaunchDescriptor {
   int64 version_state_epoch = 9;
   int64 release_bundle_id = 10;
   string published_release_bundle_ref = 11;
+  string remap_set_id = 12;
+}
+
+message TemplateRemapSet {
+  string remap_set_id = 1;
+  string tenant_id = 2;
+  int64 source_version_id = 3;
+  int64 target_version_id = 4;
+  TemplateRemapSetStatus status = 5;
+  string created_reason = 6;
+  string approval_reason = 7;
+  string created_at = 8;
+  string approved_at = 9;
+  repeated TemplateRemapEntry remap_entries = 10;
+}
+
+message TemplateRemapEntry {
+  string mapping_domain = 1;
+  string mapping_type = 2;
+  string source_template_key = 3;
+  string target_template_key = 4;
+}
+
+enum TemplateRemapSetStatus {
+  TEMPLATE_REMAP_SET_STATUS_UNSPECIFIED = 0;
+  TEMPLATE_REMAP_SET_STATUS_DRAFT = 1;
+  TEMPLATE_REMAP_SET_STATUS_APPROVED = 2;
 }
 
 message DesignControlPlaneDigest {

@@ -330,6 +330,7 @@ Required cutover workflow additions:
   - `CreateTemplateRemapSet(sourceVersionId, targetVersionId, mappings...)`
   - `ApproveTemplateRemapSet(remapSetId, reason)`
   - `GetTemplateRemapSet(remapSetId)`
+- The first launch-resolution substrate is now live on this model: `ResolveLaunchDescriptor` freezes the approved `remapSetId` for cross-version replacement launches, and runtime `game_instance` / `world_instance` rows persist that frozen id as launch proof.
 - `PrepareVersionUpgrade` and `ValidateInstanceCutoverCompatibility` must reference a concrete `remapSetId` whenever cutover depends on remapped S2 state. Ad hoc inferred remaps are not allowed.
 - If any surviving runtime row references missing or incompatible target-version templates and no approved remap exists, cutover fails closed before admission-pointer swap.
 - S3 state is discarded with the source instance through standard termination workflows. No component may silently copy room-ground containers, room ambient state, or instance topology to the target `gameInstanceId`.

@@ -12,4 +12,34 @@ public record PreparedWorldInstanceRequest(
     String generationConfigRevision,
     long releaseBundleId,
     String publishedReleaseBundleRef,
-    long versionStateEpoch) {}
+    long versionStateEpoch,
+    String remapSetId) {
+  public PreparedWorldInstanceRequest(
+      long tenantId,
+      long gameInstanceId,
+      long gameTemplateId,
+      String controlPlaneRequestId,
+      String launchDescriptorId,
+      long versionId,
+      String scriptPatchVersion,
+      String runtimeFlagsJson,
+      String generationConfigRevision,
+      long releaseBundleId,
+      String publishedReleaseBundleRef,
+      long versionStateEpoch) {
+    this(
+        tenantId,
+        gameInstanceId,
+        gameTemplateId,
+        controlPlaneRequestId,
+        launchDescriptorId,
+        versionId,
+        scriptPatchVersion,
+        runtimeFlagsJson,
+        generationConfigRevision,
+        releaseBundleId,
+        publishedReleaseBundleRef,
+        versionStateEpoch,
+        null);
+  }
+}

@@ -12,18 +12,28 @@ import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
+import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
+import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
+import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
+import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
+import net.firedevops.firemud.gamedesign.v1.ApproveTemplateRemapSetRequest;
+import net.firedevops.firemud.gamedesign.v1.ApproveTemplateRemapSetResponse;
+import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetRequest;
+import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetTemplateRemapSetRequest;
+import net.firedevops.firemud.gamedesign.v1.GetTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
@@ -42,6 +52,8 @@ class GameDesignGrpcServiceTest {
   private final VersionService versionService = Mockito.mock(VersionService.class);
   private final LaunchDescriptorService launchDescriptorService =
       Mockito.mock(LaunchDescriptorService.class);
+  private final TemplateRemapSetService templateRemapSetService =
+      Mockito.mock(TemplateRemapSetService.class);
   private final VersionAssetArtifactService versionAssetArtifactService =
       Mockito.mock(VersionAssetArtifactService.class);
   private final SettingsAuthorityService settingsAuthorityService =
@@ -52,6 +64,7 @@ class GameDesignGrpcServiceTest {
           revisionService,
           versionService,
           launchDescriptorService,
+          templateRemapSetService,
           versionAssetArtifactService,
           settingsAuthorityService,
           new SimpleMeterRegistry());
@@ -130,7 +143,8 @@ class GameDesignGrpcServiceTest {
                 "genrev-1",
                 11L,
                 11L,
-                "prb:tenant-1:7:11"));
+                "prb:tenant-1:7:11",
+                ""));
 
     AtomicReference<ResolveLaunchDescriptorResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -230,6 +244,88 @@ class GameDesignGrpcServiceTest {
     }
 
     assertEquals("LAUNCH_REMAP_REQUIRED", ref.get().getError().getCode());
+  }
+
+  @Test
+  void createTemplateRemapSetReturnsCreatedSet() {
+    Mockito.when(
+            templateRemapSetService.createTemplateRemapSet(
+                Mockito.eq("tenant-1"),
+                Mockito.eq(7L),
+                Mockito.eq(8L),
+                Mockito.eq("cutover prep"),
+                Mockito.anyList()))
+        .thenReturn(sampleRemapSetDto(TemplateRemapSetStatus.DRAFT, null, null));
+
+    AtomicReference<CreateTemplateRemapSetResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.createTemplateRemapSet(
+          CreateTemplateRemapSetRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setSourceVersionId(7L)
+              .setTargetVersionId(8L)
+              .setCreatedReason("cutover prep")
+              .addRemapEntries(
+                  net.firedevops.firemud.gamedesign.v1.TemplateRemapEntry.newBuilder()
+                      .setMappingDomain("ENTITY")
+                      .setMappingType("CLASS_ASSIGNMENT")
+                      .setSourceTemplateKey("class:warrior")
+                      .setTargetTemplateKey("class:guardian")
+                      .build())
+              .build(),
+          new GenericObserver<>(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals("remap-1", ref.get().getRemapSet().getRemapSetId());
+    assertEquals(1, ref.get().getRemapSet().getRemapEntriesCount());
+  }
+
+  @Test
+  void approveTemplateRemapSetReturnsApprovedSet() {
+    Mockito.when(
+            templateRemapSetService.approveTemplateRemapSet(
+                "tenant-1", "remap-1", "validated for cutover"))
+        .thenReturn(
+            sampleRemapSetDto(
+                TemplateRemapSetStatus.APPROVED,
+                "validated for cutover",
+                LocalDateTime.parse("2026-04-20T10:15:00")));
+
+    AtomicReference<ApproveTemplateRemapSetResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.approveTemplateRemapSet(
+          ApproveTemplateRemapSetRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setRemapSetId("remap-1")
+              .setApprovalReason("validated for cutover")
+              .build(),
+          new GenericObserver<>(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals(
+        net.firedevops.firemud.gamedesign.v1.TemplateRemapSetStatus
+            .TEMPLATE_REMAP_SET_STATUS_APPROVED,
+        ref.get().getRemapSet().getStatus());
+  }
+
+  @Test
+  void getTemplateRemapSetReturnsNotFound() {
+    Mockito.when(templateRemapSetService.getTemplateRemapSet("tenant-1", "remap-missing"))
+        .thenThrow(new IllegalArgumentException("NOT_FOUND: template remap set not found"));
+
+    AtomicReference<GetTemplateRemapSetResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getTemplateRemapSet(
+          GetTemplateRemapSetRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setRemapSetId("remap-missing")
+              .build(),
+          new GenericObserver<>(ref));
+    }
+
+    assertEquals("NOT_FOUND", ref.get().getError().getCode());
   }
 
   @Test
@@ -395,19 +491,44 @@ class GameDesignGrpcServiceTest {
 
   private static StreamObserver<GetPublishedReleaseBundleResponse> observerFor(
       AtomicReference<GetPublishedReleaseBundleResponse> ref) {
-    return new StreamObserver<>() {
-      @Override
-      public void onNext(GetPublishedReleaseBundleResponse value) {
-        ref.set(value);
-      }
+    return new GenericObserver<>(ref);
+  }
 
-      @Override
-      public void onError(Throwable t) {
-        throw new AssertionError(t);
-      }
+  private TemplateRemapSetDto sampleRemapSetDto(
+      TemplateRemapSetStatus status, String approvalReason, LocalDateTime approvedAt) {
+    return new TemplateRemapSetDto(
+        "remap-1",
+        "tenant-1",
+        7L,
+        8L,
+        status,
+        "cutover prep",
+        approvalReason,
+        LocalDateTime.parse("2026-04-20T10:00:00"),
+        approvedAt,
+        List.of(
+            new TemplateRemapEntryDto(
+                "ENTITY", "CLASS_ASSIGNMENT", "class:warrior", "class:guardian")));
+  }
 
-      @Override
-      public void onCompleted() {}
-    };
+  private static final class GenericObserver<T> implements StreamObserver<T> {
+    private final AtomicReference<T> ref;
+
+    private GenericObserver(AtomicReference<T> ref) {
+      this.ref = ref;
+    }
+
+    @Override
+    public void onNext(T value) {
+      ref.set(value);
+    }
+
+    @Override
+    public void onError(Throwable t) {
+      throw new AssertionError(t);
+    }
+
+    @Override
+    public void onCompleted() {}
   }
 }

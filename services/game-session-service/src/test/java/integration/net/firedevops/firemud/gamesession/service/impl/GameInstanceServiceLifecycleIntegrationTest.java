@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
@@ -237,18 +239,19 @@ class GameInstanceServiceLifecycleIntegrationTest {
                         .build())
                 .build());
     when(worldManagementClient.prepareWorldInstance(
-            any(Long.class),
-            any(Long.class),
-            any(Long.class),
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
             any(),
             any(),
-            any(Long.class),
-            any(),
-            any(),
-            any(),
-            any(Long.class),
-            any(),
-            any(Long.class)))
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
                 .setWorldInstance(
@@ -270,8 +273,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                                 .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
                         .build())
                 .build());
-    when(worldManagementClient.activatePreparedWorldInstance(
-            any(Long.class), any(Long.class), any(Long.class)))
+    when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
                 .newBuilder()
@@ -286,8 +288,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                                 .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
                         .build())
                 .build());
-    when(worldManagementClient.failPreparedWorldInstance(
-            any(Long.class), any(Long.class), any(Long.class), any()))
+    when(worldManagementClient.failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse.newBuilder()
                 .setWorldInstance(
@@ -301,7 +302,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                                 .WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION)
                         .build())
                 .build());
-    when(worldManagementClient.getWorldInstanceLifecycle(any(Long.class), any(Long.class)))
+    when(worldManagementClient.getWorldInstanceLifecycle(anyLong(), anyLong()))
         .thenAnswer(
             invocation ->
                 net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse
@@ -319,7 +320,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                             .build())
                     .build());
     when(worldManagementClient.terminateWorldInstance(
-            any(Long.class), any(Long.class), any(Long.class), any(), any()))
+            anyLong(), anyLong(), anyLong(), anyString(), anyString()))
         .thenAnswer(
             invocation ->
                 net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse
@@ -447,7 +448,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
     assertThat(repository.findById(existingId).orElseThrow().getStatus()).isEqualTo("STOPPED");
     verify(worldManagementClient).getWorldInstanceLifecycle(42L, existingId);
     verify(worldManagementClient)
-        .terminateWorldInstance(any(Long.class), eq(existingId), any(Long.class), any(), any());
+        .terminateWorldInstance(anyLong(), eq(existingId), anyLong(), any(), any());
   }
 
   @TestConfiguration

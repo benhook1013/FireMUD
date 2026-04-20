@@ -144,7 +144,8 @@ class GameSessionApplicationIntegrationTest {
             "genrev-11",
             77L,
             "prb:42:11:77",
-            77L))
+            77L,
+            null))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
                 .setWorldInstance(
