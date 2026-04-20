@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.service.PingService;
@@ -15,11 +17,24 @@ import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestRequest
 import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.automationscripting.v1.PingRequest;
 import net.firedevops.firemud.automationscripting.v1.PingResponse;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class AutomationScriptingGrpcServiceTest {
+  @BeforeEach
+  void setSessionContext() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+  }
+
+  @AfterEach
+  void clearSessionContext() {
+    SessionContext.clear();
+  }
+
   @Test
   void getDraftDesignDigestSupportsVersionScope() {
     PingService pingService = Mockito.mock(PingService.class);

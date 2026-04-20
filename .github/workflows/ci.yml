@@ -292,7 +292,7 @@ jobs:
           cache-read-only: false
 
       - name: 🧪 Check gRPC Transport Configuration
-        run: ./gradlew checkGrpcTransportConfig
+        run: ./gradlew checkGrpcTransportConfig checkGrpcPublicMethods
 
   workflow-lint:
     name: GitHub Workflow Lint

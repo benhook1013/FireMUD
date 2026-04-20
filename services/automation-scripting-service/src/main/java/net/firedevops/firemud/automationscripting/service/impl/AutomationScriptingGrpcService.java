@@ -33,6 +33,9 @@ import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptRequest;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.AdminAuthorizationException;
+import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
@@ -96,20 +99,27 @@ public class AutomationScriptingGrpcService
   public void triggerScriptEvent(
       TriggerScriptEventRequest request,
       StreamObserver<TriggerScriptEventResponse> responseObserver) {
-    TriggerScriptEventResponse response =
+    TriggerScriptEventResponse.Builder response =
         TriggerScriptEventResponse.newBuilder()
             .setAdmitted(false)
-            .setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_UNSPECIFIED)
-            .setAdmissionReason("not_implemented")
-            .setError(
-                GrpcAppErrors.error(
-                    meterRegistry,
-                    logger,
-                    "TriggerScriptEvent",
-                    "NOT_IMPLEMENTED",
-                    "TriggerScriptEvent is not implemented yet"))
-            .build();
-    responseObserver.onNext(response);
+            .setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_UNSPECIFIED);
+    try {
+      requireAdminRole();
+      response
+          .setAdmissionReason("not_implemented")
+          .setError(
+              GrpcAppErrors.error(
+                  meterRegistry,
+                  logger,
+                  "TriggerScriptEvent",
+                  "NOT_IMPLEMENTED",
+                  "TriggerScriptEvent is not implemented yet"));
+    } catch (AdminAuthorizationException ex) {
+      response
+          .setAdmissionReason("permission_denied")
+          .setError(authorizationError("TriggerScriptEvent", ex));
+    }
+    responseObserver.onNext(response.build());
     responseObserver.onCompleted();
   }
 
@@ -118,6 +128,7 @@ public class AutomationScriptingGrpcService
   public void createFormation(
       CreateFormationRequest request, StreamObserver<CreateFormationResponse> responseObserver) {
     try {
+      requireAdminRole();
       Long id =
           formationService.createFormation(
               Long.parseLong(request.getTenantId()),
@@ -141,6 +152,13 @@ public class AutomationScriptingGrpcService
               .build();
       responseObserver.onNext(resp);
       responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      CreateFormationResponse resp =
+          CreateFormationResponse.newBuilder()
+              .setError(authorizationError("CreateFormation", ex))
+              .build();
+      responseObserver.onNext(resp);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       CreateFormationResponse resp =
           CreateFormationResponse.newBuilder()
@@ -157,6 +175,7 @@ public class AutomationScriptingGrpcService
       AddFormationMemberRequest request,
       StreamObserver<AddFormationMemberResponse> responseObserver) {
     try {
+      requireAdminRole();
       formationService.addMember(
           Long.parseLong(request.getTenantId()),
           Long.parseLong(request.getFormationId()),
@@ -179,6 +198,14 @@ public class AutomationScriptingGrpcService
               .build();
       responseObserver.onNext(resp);
       responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      AddFormationMemberResponse resp =
+          AddFormationMemberResponse.newBuilder()
+              .setSuccess(false)
+              .setError(authorizationError("AddFormationMember", ex))
+              .build();
+      responseObserver.onNext(resp);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       AddFormationMemberResponse resp =
           AddFormationMemberResponse.newBuilder()
@@ -196,6 +223,7 @@ public class AutomationScriptingGrpcService
       ListFormationMembersRequest request,
       StreamObserver<ListFormationMembersResponse> responseObserver) {
     try {
+      requireAdminRole();
       List<Long> members =
           formationService.getMembers(
               Long.parseLong(request.getTenantId()), Long.parseLong(request.getFormationId()));
@@ -218,6 +246,13 @@ public class AutomationScriptingGrpcService
               .build();
       responseObserver.onNext(resp);
       responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      ListFormationMembersResponse resp =
+          ListFormationMembersResponse.newBuilder()
+              .setError(authorizationError("ListFormationMembers", ex))
+              .build();
+      responseObserver.onNext(resp);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       ListFormationMembersResponse resp =
           ListFormationMembersResponse.newBuilder()
@@ -233,6 +268,7 @@ public class AutomationScriptingGrpcService
   public void updateScript(
       UpdateScriptRequest request, StreamObserver<UpdateScriptResponse> responseObserver) {
     try {
+      requireAdminRole();
       ScriptDefinitionDto dto =
           new ScriptDefinitionDto(
               null,
@@ -254,6 +290,14 @@ public class AutomationScriptingGrpcService
               .build();
       responseObserver.onNext(resp);
       responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      UpdateScriptResponse resp =
+          UpdateScriptResponse.newBuilder()
+              .setSuccess(false)
+              .setError(authorizationError("UpdateScript", ex))
+              .build();
+      responseObserver.onNext(resp);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       UpdateScriptResponse resp =
           UpdateScriptResponse.newBuilder()
@@ -271,6 +315,7 @@ public class AutomationScriptingGrpcService
       GetDraftDesignDigestRequest request,
       StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
     try {
+      requireAdminRole();
       var digest =
           request.getScopeCase() == GetDraftDesignDigestRequest.ScopeCase.VERSION_ID
               ? scriptDesignDigestService.getDraftDesignDigestForVersion(
@@ -298,6 +343,12 @@ public class AutomationScriptingGrpcService
                       ex.getMessage()))
               .build());
       responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(authorizationError("GetDraftDesignDigest", ex))
+              .build());
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()
@@ -311,10 +362,15 @@ public class AutomationScriptingGrpcService
   @Timed(value = "automationGrpc.getScriptStatus")
   public void getScriptStatus(
       GetScriptStatusRequest request, StreamObserver<GetScriptStatusResponse> responseObserver) {
-    // Placeholder implementation; scripts execute asynchronously
-    GetScriptStatusResponse resp =
-        GetScriptStatusResponse.newBuilder().setQueued(false).setRunning(false).build();
-    responseObserver.onNext(resp);
+    GetScriptStatusResponse.Builder response = GetScriptStatusResponse.newBuilder();
+    try {
+      requireAdminRole();
+      // Placeholder implementation; scripts execute asynchronously
+      response.setQueued(false).setRunning(false);
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError("GetScriptStatus", ex));
+    }
+    responseObserver.onNext(response.build());
     responseObserver.onCompleted();
   }
 
@@ -323,11 +379,26 @@ public class AutomationScriptingGrpcService
   public void notifyScriptVersionUpdate(
       NotifyScriptVersionUpdateRequest request,
       StreamObserver<NotifyScriptVersionUpdateResponse> responseObserver) {
-    scriptVersionService.notifyUpdate(
-        request.getTenantId(), request.getScriptPatchVersion(), request.getAffectedScriptsList());
-    NotifyScriptVersionUpdateResponse resp =
-        NotifyScriptVersionUpdateResponse.newBuilder().setSuccess(true).build();
-    responseObserver.onNext(resp);
+    NotifyScriptVersionUpdateResponse.Builder response =
+        NotifyScriptVersionUpdateResponse.newBuilder();
+    try {
+      requireAdminRole();
+      scriptVersionService.notifyUpdate(
+          request.getTenantId(), request.getScriptPatchVersion(), request.getAffectedScriptsList());
+      response.setSuccess(true);
+    } catch (AdminAuthorizationException ex) {
+      response.setSuccess(false).setError(authorizationError("NotifyScriptVersionUpdate", ex));
+    }
+    responseObserver.onNext(response.build());
     responseObserver.onCompleted();
+  }
+
+  private void requireAdminRole() {
+    AdminRoleGuard.requireAdminRole();
+  }
+
+  private ErrorDetail authorizationError(String operation, AdminAuthorizationException ex) {
+    return GrpcAppErrors.error(
+        meterRegistry, logger, operation, "PERMISSION_DENIED", ex.getMessage());
   }
 }

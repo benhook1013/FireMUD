@@ -9,6 +9,8 @@ import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusRequest
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
+import net.firedevops.firemud.common.security.AdminAuthorizationException;
+import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
@@ -29,11 +31,14 @@ public final class AutomationScriptingControlPlaneGrpcService
   public void getScriptPatchStatus(
       GetScriptPatchStatusRequest request,
       StreamObserver<GetScriptPatchStatusResponse> responseObserver) {
-    GetScriptPatchStatusResponse response =
-        GetScriptPatchStatusResponse.newBuilder()
-            .setError(notImplemented("GetScriptPatchStatus"))
-            .build();
-    responseObserver.onNext(response);
+    GetScriptPatchStatusResponse.Builder response = GetScriptPatchStatusResponse.newBuilder();
+    try {
+      requireAdminRole();
+      response.setError(notImplemented("GetScriptPatchStatus"));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
     responseObserver.onCompleted();
   }
 
@@ -42,11 +47,14 @@ public final class AutomationScriptingControlPlaneGrpcService
   public void listScriptPatchStatuses(
       ListScriptPatchStatusesRequest request,
       StreamObserver<ListScriptPatchStatusesResponse> responseObserver) {
-    ListScriptPatchStatusesResponse response =
-        ListScriptPatchStatusesResponse.newBuilder()
-            .setError(notImplemented("ListScriptPatchStatuses"))
-            .build();
-    responseObserver.onNext(response);
+    ListScriptPatchStatusesResponse.Builder response = ListScriptPatchStatusesResponse.newBuilder();
+    try {
+      requireAdminRole();
+      response.setError(notImplemented("ListScriptPatchStatuses"));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
     responseObserver.onCompleted();
   }
 
@@ -55,11 +63,26 @@ public final class AutomationScriptingControlPlaneGrpcService
   public void cancelPendingWorkItemsForPatch(
       CancelPendingWorkItemsForPatchRequest request,
       StreamObserver<CancelPendingWorkItemsForPatchResponse> responseObserver) {
-    CancelPendingWorkItemsForPatchResponse response =
-        CancelPendingWorkItemsForPatchResponse.newBuilder()
-            .setError(notImplemented("CancelPendingWorkItemsForPatch"))
-            .build();
-    responseObserver.onNext(response);
+    CancelPendingWorkItemsForPatchResponse.Builder response =
+        CancelPendingWorkItemsForPatchResponse.newBuilder();
+    try {
+      requireAdminRole();
+      response.setError(notImplemented("CancelPendingWorkItemsForPatch"));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
     responseObserver.onCompleted();
+  }
+
+  private static void requireAdminRole() {
+    AdminRoleGuard.requireAdminRole();
+  }
+
+  private static ErrorDetail authorizationError(AdminAuthorizationException ex) {
+    return ErrorDetail.newBuilder()
+        .setCode("PERMISSION_DENIED")
+        .setMessage(ex.getMessage())
+        .build();
   }
 }
