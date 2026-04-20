@@ -118,8 +118,11 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     String resolvedScriptPatchVersion =
         resolveScriptPatchVersion(template, requestedScriptPatchVersion, version);
     String resolvedRuntimeFlagsJson = resolveRuntimeFlagsJson(template, requestedRuntimeFlagsJson);
-    var bundle =
-        publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, resolvedVersionId);
+    if (sourceVersionId != null && !sourceVersionId.equals(resolvedVersionId)) {
+      throw new IllegalArgumentException(
+          "LAUNCH_REMAP_REQUIRED: replacement-instance launch requires an approved remapSetId");
+    }
+    var bundle = requirePublishedReleaseBundle(tenantId, resolvedVersionId);
     PublishedReleaseBundleContract.requireSupportedSchemaForLaunch(bundle);
     LaunchDescriptor descriptor = new LaunchDescriptor();
     descriptor.setLaunchDescriptorId("ld-" + UUID.randomUUID());
@@ -180,6 +183,16 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
           "INVALID_TEMPLATE_CONFIGURATION: template-owned runtime flags cannot be overridden");
     }
     return requested;
+  }
+
+  private net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto
+      requirePublishedReleaseBundle(String tenantId, long resolvedVersionId) {
+    try {
+      return publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, resolvedVersionId);
+    } catch (PublishedReleaseBundleNotFoundException ex) {
+      throw new IllegalArgumentException(
+          "RELEASE_BUNDLE_NOT_FOUND: no published release bundle for the resolved version");
+    }
   }
 
   private ResolvedLaunchDescriptorDto toDto(LaunchDescriptor descriptor) {

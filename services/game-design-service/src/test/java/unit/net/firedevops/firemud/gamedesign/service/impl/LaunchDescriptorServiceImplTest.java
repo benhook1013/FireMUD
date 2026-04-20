@@ -165,4 +165,72 @@ class LaunchDescriptorServiceImplTest {
             .startsWith(
                 "SCHEMA_VERSION_UNSUPPORTED: unsupported published release bundle attestation schema"));
   }
+
+  @Test
+  void resolveLaunchDescriptorReportsMissingReleaseBundleDeterministically() {
+    GameTemplateLaunchConfigView template =
+        org.mockito.Mockito.mock(GameTemplateLaunchConfigView.class);
+    when(template.getId()).thenReturn(9L);
+    when(template.getTenantId()).thenReturn("tenant-1");
+    when(template.getDefaultVersionId()).thenReturn(7L);
+    when(template.getDefaultScriptPatchVersion()).thenReturn(null);
+    when(template.getDefaultRuntimeFlagsJson()).thenReturn("{}");
+    when(template.getTemplateReferencePhase()).thenReturn(TemplateReferencePhase.ENFORCED);
+    when(gameTemplateRepository.findLaunchConfigByTenantIdAndId("tenant-1", 9L))
+        .thenReturn(Optional.of(template));
+    when(launchDescriptorRepository.findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
+            "tenant-1", 9L, "cp-2"))
+        .thenReturn(Optional.empty());
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionNumber(8);
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    version.setVersionStateEpoch(17L);
+    when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenThrow(new PublishedReleaseBundleNotFoundException("tenant-1", 7L));
+
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.resolveLaunchDescriptor("tenant-1", 9L, "cp-2", null, null, null, null));
+
+    assertEquals(
+        "RELEASE_BUNDLE_NOT_FOUND: no published release bundle for the resolved version",
+        thrown.getMessage());
+  }
+
+  @Test
+  void resolveLaunchDescriptorRequiresRemapForCrossVersionReplacementLaunch() {
+    GameTemplateLaunchConfigView template =
+        org.mockito.Mockito.mock(GameTemplateLaunchConfigView.class);
+    when(template.getId()).thenReturn(9L);
+    when(template.getTenantId()).thenReturn("tenant-1");
+    when(template.getDefaultVersionId()).thenReturn(7L);
+    when(template.getDefaultScriptPatchVersion()).thenReturn(null);
+    when(template.getDefaultRuntimeFlagsJson()).thenReturn("{}");
+    when(template.getTemplateReferencePhase()).thenReturn(TemplateReferencePhase.ENFORCED);
+    when(gameTemplateRepository.findLaunchConfigByTenantIdAndId("tenant-1", 9L))
+        .thenReturn(Optional.of(template));
+    when(launchDescriptorRepository.findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
+            "tenant-1", 9L, "cp-3"))
+        .thenReturn(Optional.empty());
+    Version version = new Version();
+    version.setId(8L);
+    version.setTenantId("tenant-1");
+    version.setVersionNumber(9);
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    version.setVersionStateEpoch(18L);
+    when(versionRepository.findById(8L)).thenReturn(Optional.of(version));
+
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.resolveLaunchDescriptor("tenant-1", 9L, "cp-3", null, 7L, 8L, null));
+
+    assertEquals(
+        "LAUNCH_REMAP_REQUIRED: replacement-instance launch requires an approved remapSetId",
+        thrown.getMessage());
+  }
 }

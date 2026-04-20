@@ -12,6 +12,8 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
@@ -80,5 +82,15 @@ public class GameDesignClient
             .setVersionId(versionId)
             .build();
     return stub().getVersionState(request);
+  }
+
+  public GetVersionAssetArtifactStateResponse getVersionAssetArtifactState(
+      long tenantId, long versionId) {
+    GetVersionAssetArtifactStateRequest request =
+        GetVersionAssetArtifactStateRequest.newBuilder()
+            .setTenantId(String.valueOf(tenantId))
+            .setVersionId(versionId)
+            .build();
+    return stub().getVersionAssetArtifactState(request);
   }
 }

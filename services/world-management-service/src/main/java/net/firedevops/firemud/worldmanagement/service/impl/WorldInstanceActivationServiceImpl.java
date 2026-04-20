@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -363,6 +364,7 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
     }
     var bundle = bundleResponse.getBundle();
     if (bundle.getId() != request.releaseBundleId()
+        || bundle.getVersionId() != request.versionId()
         || !bundle.getGenerationConfigRevision().equals(request.generationConfigRevision())) {
       throw new IllegalArgumentException(
           "RELEASE_ATTESTATION_MISMATCH: world activation request does not match the published release bundle");
@@ -371,6 +373,26 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
         .equals(request.publishedReleaseBundleRef())) {
       throw new IllegalArgumentException(
           "RELEASE_ATTESTATION_MISMATCH: published release bundle ref mismatch");
+    }
+    var artifactStateResponse =
+        gameDesignClient.getVersionAssetArtifactState(request.tenantId(), request.versionId());
+    if (artifactStateResponse.hasError()) {
+      throw new IllegalArgumentException(
+          artifactStateResponse.getError().getCode()
+              + ": "
+              + artifactStateResponse.getError().getMessage());
+    }
+    var artifactState = artifactStateResponse.getArtifactState();
+    if (artifactState.getArtifactState()
+            != net.firedevops.firemud.gamedesign.v1.ArtifactState.ARTIFACT_STATE_PUBLISHED
+        || !artifactState.getManifestHash().equals(bundle.getManifestHash())) {
+      throw new IllegalArgumentException(
+          "RELEASE_ATTESTATION_MISMATCH: published asset artifact state does not match the published release bundle");
+    }
+    var exportedKeys = new HashSet<>(artifactState.getExportedManifestAssetKeysList());
+    if (!exportedKeys.containsAll(bundle.getRequiredManifestAssetKeysList())) {
+      throw new IllegalArgumentException(
+          "RELEASE_ATTESTATION_MISMATCH: published asset artifact state is missing required manifest asset keys");
     }
     var versionStateResponse =
         gameDesignClient.getVersionState(request.tenantId(), request.versionId());

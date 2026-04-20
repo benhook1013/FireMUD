@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.HashSet;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
@@ -465,10 +466,14 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     }
     var bundle = bundleResponse.getBundle();
     if (bundle.getId() != descriptor.getReleaseBundleId()
-        || !bundle.getGenerationConfigRevision().equals(descriptor.getGenerationConfigRevision())) {
+        || bundle.getVersionId() != descriptor.getVersionId()
+        || !bundle.getGenerationConfigRevision().equals(descriptor.getGenerationConfigRevision())
+        || !releaseBundleRef(request.tenantId(), descriptor.getVersionId(), bundle.getId())
+            .equals(descriptor.getPublishedReleaseBundleRef())) {
       throw new IllegalArgumentException(
           "RELEASE_ATTESTATION_MISMATCH: resolved launch descriptor does not match the published release bundle");
     }
+    validatePublishedAssetProof(request.tenantId(), descriptor.getVersionId(), bundle);
     var versionStateResponse =
         gameDesignClient.getVersionState(request.tenantId(), descriptor.getVersionId());
     if (versionStateResponse.hasError()) {
@@ -499,6 +504,31 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         descriptor.getVersionStateEpoch(),
         descriptor.getReleaseBundleId(),
         descriptor.getPublishedReleaseBundleRef());
+  }
+
+  private void validatePublishedAssetProof(
+      long tenantId,
+      long versionId,
+      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle) {
+    var artifactStateResponse = gameDesignClient.getVersionAssetArtifactState(tenantId, versionId);
+    if (artifactStateResponse.hasError()) {
+      throw new IllegalArgumentException(
+          artifactStateResponse.getError().getCode()
+              + ": "
+              + artifactStateResponse.getError().getMessage());
+    }
+    var artifactState = artifactStateResponse.getArtifactState();
+    if (artifactState.getArtifactState()
+            != net.firedevops.firemud.gamedesign.v1.ArtifactState.ARTIFACT_STATE_PUBLISHED
+        || !artifactState.getManifestHash().equals(bundle.getManifestHash())) {
+      throw new IllegalArgumentException(
+          "RELEASE_ATTESTATION_MISMATCH: published asset artifact state does not match the release bundle");
+    }
+    var exportedKeys = new HashSet<>(artifactState.getExportedManifestAssetKeysList());
+    if (!exportedKeys.containsAll(bundle.getRequiredManifestAssetKeysList())) {
+      throw new IllegalArgumentException(
+          "RELEASE_ATTESTATION_MISMATCH: published asset artifact state is missing required manifest asset keys");
+    }
   }
 
   private PreparedWorldInstance prepareWorldInstance(
@@ -618,6 +648,10 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   @FunctionalInterface
   private interface TransactionSupplier<T> {
     T get();
+  }
+
+  private String releaseBundleRef(long tenantId, long versionId, long releaseBundleId) {
+    return "prb:" + tenantId + ":" + versionId + ":" + releaseBundleId;
   }
 
   private record StartSessionStage(

@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
@@ -322,7 +323,8 @@ class GameInstanceServiceImplTest {
                             .setGenerationConfigRevision("genrev-11")
                             .setVersionStateEpoch(77L)
                             .setReleaseBundleId(77L)
-                            .setPublishedReleaseBundleRef("prb:tenant:11:77")
+                            .setPublishedReleaseBundleRef(
+                                "prb:" + invocation.getArgument(0, Long.class) + ":11:77")
                             .build())
                     .build());
     when(gameDesignClient.getPublishedReleaseBundle(any(Long.class), any(Long.class)))
@@ -332,7 +334,24 @@ class GameInstanceServiceImplTest {
                     net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
                         .setId(77L)
                         .setVersionId(11L)
+                        .setManifestHash("manifest-11")
+                        .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
+    when(gameDesignClient.getVersionAssetArtifactState(any(Long.class), any(Long.class)))
+        .thenReturn(
+            GetVersionAssetArtifactStateResponse.newBuilder()
+                .setArtifactState(
+                    net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+                        .setTenantId("1")
+                        .setVersionId(11L)
+                        .setArtifactState(
+                            net.firedevops.firemud.gamedesign.v1.ArtifactState
+                                .ARTIFACT_STATE_PUBLISHED)
+                        .setStateEpoch(2L)
+                        .setManifestHash("manifest-11")
+                        .addExportedManifestAssetKeys("manifest.json")
                         .build())
                 .build());
     when(gameDesignClient.getVersionState(any(Long.class), any(Long.class)))
@@ -349,6 +368,33 @@ class GameInstanceServiceImplTest {
                         .setUpdatedAt("2026-04-15T10:00:00")
                         .build())
                 .build());
+  }
+
+  @Test
+  void startSessionFailsWhenPublishedAssetProofDoesNotMatchReleaseBundle() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-proof", 42L);
+    when(gameDesignClient.getVersionAssetArtifactState(any(Long.class), any(Long.class)))
+        .thenReturn(
+            GetVersionAssetArtifactStateResponse.newBuilder()
+                .setArtifactState(
+                    net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+                        .setTenantId("1")
+                        .setVersionId(11L)
+                        .setArtifactState(
+                            net.firedevops.firemud.gamedesign.v1.ArtifactState
+                                .ARTIFACT_STATE_PUBLISHED)
+                        .setStateEpoch(2L)
+                        .setManifestHash("different-manifest")
+                        .addExportedManifestAssetKeys("manifest.json")
+                        .build())
+                .build());
+
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+
+    assertEquals(
+        "RELEASE_ATTESTATION_MISMATCH: published asset artifact state does not match the release bundle",
+        error.getMessage());
   }
 
   private void configureWorldActivation() {
@@ -378,7 +424,7 @@ class GameInstanceServiceImplTest {
                         .setVersionId("11")
                         .setReleaseBundleId("77")
                         .setGenerationConfigRevision("genrev-11")
-                        .setPublishedReleaseBundleRef("prb:tenant:11:77")
+                        .setPublishedReleaseBundleRef("prb:1:11:77")
                         .setVersionStateEpoch(77L)
                         .setLifecycleEpoch(1L)
                         .setStatus(
@@ -402,7 +448,7 @@ class GameInstanceServiceImplTest {
                         .setVersionId("11")
                         .setReleaseBundleId("77")
                         .setGenerationConfigRevision("genrev-11")
-                        .setPublishedReleaseBundleRef("prb:tenant:11:77")
+                        .setPublishedReleaseBundleRef("prb:1:11:77")
                         .setVersionStateEpoch(77L)
                         .setLifecycleEpoch(2L)
                         .setStatus(

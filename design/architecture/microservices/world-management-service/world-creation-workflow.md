@@ -35,6 +35,14 @@ Activation requests must carry both:
 
 These fields are sourced from the resolved launch descriptor and must remain immutable across retries of the same launch attempt. World Management must not re-read mutable template JSON, tenant defaults, or "latest READY patch" state during activation.
 
+Before `PREPARING` or `ACTIVE` world state is accepted, World Management must also re-read the authoritative Game Design proof surfaces for the resolved `(tenantId, versionId)`:
+
+- `GetPublishedReleaseBundle` must still return the same bundle identity, `generationConfigRevision`, and release-bundle ref.
+- `GetVersionAssetArtifactState` must prove `artifactState=PUBLISHED`, the same attested `manifestHash`, and presence of every attested `requiredManifestAssetKeys[]`.
+- `GetVersionState` must still report the same activation-eligible lifecycle state and the same `expectedVersionStateEpoch`.
+
+If any of those proofs drift, activation fails closed with application-level attestation/version-state mismatch outcomes rather than proceeding on stale descriptor state.
+
 The same `(tenantId, gameTemplateId, controlPlaneRequestId)` launch attempt must therefore replay against the same descriptor values on every retry, and a fresh launch attempt requires a new `controlPlaneRequestId` if it is allowed to resolve against newer valid published state.
 
 It never mutates template rows for Published versions; any structural changes to the world layout must occur through design-time workflows on Draft versions before publishing a new `versionId`. More broadly, world creation is allowed to invoke procedural generators only in **runtime/instance** mode as described in [Procedural Generation](../../system-architecture-procedural-generation.md); any attempt to write template rows from this Saga, even for non-Published versions, must be rejected by World Management validation. All template edits must flow through Game Design Service design-time APIs.

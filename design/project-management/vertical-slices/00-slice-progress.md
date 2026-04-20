@@ -15,7 +15,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 2. [08.2 Published Asset Manifest and Purge Lifecycle](./08.2-task-list-published-asset-manifest-and-purge-lifecycle-vertical-slice.md)
    Remaining: keep the now-live artifact-state proof, exact exported-key proof, exact-bytes repair, and tombstone/purge workflow substrate moving toward broader normalized deletion/reference-table truth and richer derived-artifact coverage.
 3. [08.3 Launch Descriptor and Activation Preflight](./08.3-task-list-launch-descriptor-and-activation-preflight-vertical-slice.md)
-   Remaining: extend the now-live launch-descriptor, version-state, and World Management activation lifecycle into broader cutover/retirement consumers and later instance-scoped runtime world-state families.
+   Remaining: extend the now-live launch-descriptor, typed missing-attestation/remap-required outcomes, asset-proof preflight, and World Management activation lifecycle into broader cutover/retirement consumers, the later approved-remap model, and later instance-scoped runtime world-state families.
 4. [09.1 Realm Catalog and Admission-Pointer Routing](./09.1-task-list-realm-catalog-and-admission-pointer-routing-vertical-slice.md)
    Remaining: keep broader reconnect/cutover consumers on the now-live persisted Game Session admission-pointer authority now that operator-facing cutover/audit tooling and first-party stale-pointer proof are in place.
 5. [09.3 Realm-Scoped Character and Playable State Policy](./09.3-task-list-realm-scoped-character-and-playable-state-policy-vertical-slice.md)
@@ -36,7 +36,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 These are already partly real in code and should continue after the immediate runtime fixes.
 
 1. [08 Game Design Publishing and Runtime Activation](./08-task-list-game-design-publishing-and-runtime-activation-vertical-slice.md)
-   Remaining: the family now has real publish-attestation, asset lifecycle, launch-descriptor, version-state, and activation substrate; the next honest work is more digest coverage, broader purge/deletion truth, later cutover consumers, and later runtime world-state families.
+   Remaining: the family now has real publish-attestation, asset lifecycle, typed launch-preflight outcomes, asset-proof validation, version-state, and activation substrate; the next honest work is more digest coverage, broader purge/deletion truth, later cutover consumers, the approved-remap model, and later runtime world-state families.
 2. [09 Multi-Tenancy, Realm Routing, and Runtime Boundaries](./09-task-list-multi-tenancy-realm-routing-and-runtime-boundaries-vertical-slice.md)
    Remaining: the family now has canonical routing, public-production membership creation, bootstrap/connect-token alignment, and scope-aware roster policy; the next honest work is broader admission-pointer consumers plus progression/resources/loadout follow-through.
 3. [02.13.8 Built-In Command Registry and Dispatch Rollout](./02.13.8-task-list-built-in-command-registry-and-dispatch-rollout-vertical-slice.md)

@@ -161,6 +161,78 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void resolveLaunchDescriptorSurfacesTypedReleaseBundleNotFoundError() {
+    Mockito.when(
+            launchDescriptorService.resolveLaunchDescriptor(
+                "tenant-1", 9L, "cp-2", null, null, null, null))
+        .thenThrow(
+            new IllegalArgumentException(
+                "RELEASE_BUNDLE_NOT_FOUND: no published release bundle for the resolved version"));
+
+    AtomicReference<ResolveLaunchDescriptorResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.resolveLaunchDescriptor(
+          ResolveLaunchDescriptorRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setGameTemplateId(9L)
+              .setControlPlaneRequestId("cp-2")
+              .build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(ResolveLaunchDescriptorResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+              throw new AssertionError(t);
+            }
+
+            @Override
+            public void onCompleted() {}
+          });
+    }
+
+    assertEquals("RELEASE_BUNDLE_NOT_FOUND", ref.get().getError().getCode());
+  }
+
+  @Test
+  void resolveLaunchDescriptorSurfacesTypedRemapRequiredError() {
+    Mockito.when(
+            launchDescriptorService.resolveLaunchDescriptor(
+                "tenant-1", 9L, "cp-3", null, null, null, null))
+        .thenThrow(
+            new IllegalArgumentException(
+                "LAUNCH_REMAP_REQUIRED: replacement-instance launch requires an approved remapSetId"));
+
+    AtomicReference<ResolveLaunchDescriptorResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.resolveLaunchDescriptor(
+          ResolveLaunchDescriptorRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setGameTemplateId(9L)
+              .setControlPlaneRequestId("cp-3")
+              .build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(ResolveLaunchDescriptorResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+              throw new AssertionError(t);
+            }
+
+            @Override
+            public void onCompleted() {}
+          });
+    }
+
+    assertEquals("LAUNCH_REMAP_REQUIRED", ref.get().getError().getCode());
+  }
+
+  @Test
   void getVersionStateReturnsCanonicalStateSnapshot() {
     Mockito.when(versionService.getVersionState("tenant-1", 7L))
         .thenReturn(

@@ -161,7 +161,24 @@ class GameInstanceServiceLifecycleIntegrationTest {
                     net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
                         .setId(77L)
                         .setVersionId(11L)
+                        .setManifestHash("manifest-11")
+                        .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
+    when(gameDesignClient.getVersionAssetArtifactState(42L, 11L))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse.newBuilder()
+                .setArtifactState(
+                    net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+                        .setTenantId("42")
+                        .setVersionId(11L)
+                        .setArtifactState(
+                            net.firedevops.firemud.gamedesign.v1.ArtifactState
+                                .ARTIFACT_STATE_PUBLISHED)
+                        .setStateEpoch(2L)
+                        .setManifestHash("manifest-11")
+                        .addExportedManifestAssetKeys("manifest.json")
                         .build())
                 .build());
     when(gameDesignClient.getVersionState(42L, 11L))
@@ -185,7 +202,24 @@ class GameInstanceServiceLifecycleIntegrationTest {
                     net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
                         .setId(78L)
                         .setVersionId(12L)
+                        .setManifestHash("manifest-12")
+                        .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-12")
+                        .build())
+                .build());
+    when(gameDesignClient.getVersionAssetArtifactState(42L, 12L))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse.newBuilder()
+                .setArtifactState(
+                    net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+                        .setTenantId("42")
+                        .setVersionId(12L)
+                        .setArtifactState(
+                            net.firedevops.firemud.gamedesign.v1.ArtifactState
+                                .ARTIFACT_STATE_PUBLISHED)
+                        .setStateEpoch(3L)
+                        .setManifestHash("manifest-12")
+                        .addExportedManifestAssetKeys("manifest.json")
                         .build())
                 .build());
     when(gameDesignClient.getVersionState(42L, 12L))

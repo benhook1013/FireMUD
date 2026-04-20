@@ -11,6 +11,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
@@ -82,7 +83,24 @@ class WorldInstanceActivationServiceImplTest {
                     PublishedReleaseBundle.newBuilder()
                         .setId(77L)
                         .setVersionId(11L)
+                        .setManifestHash("manifest-11")
+                        .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
+    when(gameDesignClient.getVersionAssetArtifactState(42L, 11L))
+        .thenReturn(
+            GetVersionAssetArtifactStateResponse.newBuilder()
+                .setArtifactState(
+                    net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+                        .setTenantId("42")
+                        .setVersionId(11L)
+                        .setArtifactState(
+                            net.firedevops.firemud.gamedesign.v1.ArtifactState
+                                .ARTIFACT_STATE_PUBLISHED)
+                        .setStateEpoch(3L)
+                        .setManifestHash("manifest-11")
+                        .addExportedManifestAssetKeys("manifest.json")
                         .build())
                 .build());
     when(gameDesignClient.getVersionState(42L, 11L))
@@ -245,6 +263,49 @@ class WorldInstanceActivationServiceImplTest {
 
     assertEquals(
         "RELEASE_ATTESTATION_MISMATCH: world activation request does not match the published release bundle",
+        error.getMessage());
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsMissingRequiredManifestAssetKeyProof() {
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.empty());
+    when(gameDesignClient.getVersionAssetArtifactState(42L, 11L))
+        .thenReturn(
+            GetVersionAssetArtifactStateResponse.newBuilder()
+                .setArtifactState(
+                    net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+                        .setTenantId("42")
+                        .setVersionId(11L)
+                        .setArtifactState(
+                            net.firedevops.firemud.gamedesign.v1.ArtifactState
+                                .ARTIFACT_STATE_PUBLISHED)
+                        .setStateEpoch(3L)
+                        .setManifestHash("manifest-11")
+                        .build())
+                .build());
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.prepareWorldInstance(
+                    new PreparedWorldInstanceRequest(
+                        42L,
+                        101L,
+                        7L,
+                        "cp-1",
+                        "ld-1",
+                        11L,
+                        null,
+                        "{}",
+                        "genrev-11",
+                        77L,
+                        "prb:42:11:77",
+                        77L)));
+
+    assertEquals(
+        "RELEASE_ATTESTATION_MISMATCH: published asset artifact state is missing required manifest asset keys",
         error.getMessage());
   }
 

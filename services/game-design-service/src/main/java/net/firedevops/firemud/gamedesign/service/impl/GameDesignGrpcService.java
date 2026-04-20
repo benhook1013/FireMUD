@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
@@ -473,9 +474,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               meterRegistry,
               logger,
               "ResolveLaunchDescriptor",
-              ex.getMessage().startsWith(PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED)
-                  ? PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED
-                  : "INVALID_ARGUMENT",
+              launchDescriptorErrorCode(ex.getMessage(), true),
               ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
@@ -483,7 +482,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               meterRegistry,
               logger,
               "ResolveLaunchDescriptor",
-              "INVALID_ARGUMENT",
+              launchDescriptorErrorCode(ex.getMessage(), false),
               ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(
@@ -993,5 +992,30 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         .setLastErrorCode(workflow.lastErrorCode() == null ? "" : workflow.lastErrorCode())
         .setLastErrorMessage(workflow.lastErrorMessage() == null ? "" : workflow.lastErrorMessage())
         .build();
+  }
+
+  private String launchDescriptorErrorCode(String message, boolean allowSchemaUnsupported) {
+    if (message == null || message.isBlank()) {
+      return "INVALID_ARGUMENT";
+    }
+    if (allowSchemaUnsupported
+        && message.startsWith(PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED)) {
+      return PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED;
+    }
+    for (String prefix :
+        List.of(
+            "TEMPLATE_REFERENCE_PHASE_NOT_ENFORCED",
+            "INVALID_TEMPLATE_CONFIGURATION",
+            "SCRIPT_PATCH_OVERRIDE_CONFLICT",
+            "SCRIPT_PATCH_NOT_READY",
+            "RELEASE_BUNDLE_NOT_FOUND",
+            "RELEASE_ATTESTATION_MISMATCH",
+            "VERSION_STATE_EPOCH_STALE",
+            "LAUNCH_REMAP_REQUIRED")) {
+      if (message.startsWith(prefix)) {
+        return prefix;
+      }
+    }
+    return "INVALID_ARGUMENT";
   }
 }
