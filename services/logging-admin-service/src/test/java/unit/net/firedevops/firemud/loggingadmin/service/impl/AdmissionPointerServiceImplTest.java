@@ -94,7 +94,8 @@ class AdmissionPointerServiceImplTest {
                 "ALLOW_NEW",
                 "cutover",
                 "req-1",
-                3L));
+                3L,
+                "pvu-1"));
 
     assertEquals(4L, result.pointerVersion());
     verify(gameSessionControlPlaneClient)
@@ -102,7 +103,8 @@ class AdmissionPointerServiceImplTest {
             org.mockito.ArgumentMatchers.argThat(
                 request ->
                     request.getActorPrincipal().equals("42")
-                        && request.getExpectedPointerVersion() == 3L));
+                        && request.getExpectedPointerVersion() == 3L
+                        && request.getPreparedVersionUpgradeId().equals("pvu-1")));
   }
 
   @Test
@@ -136,7 +138,8 @@ class AdmissionPointerServiceImplTest {
                         "ALLOW_NEW",
                         "cutover",
                         "req-1",
-                        3L)));
+                        3L,
+                        "pvu-1")));
 
     assertEquals(409, ex.getStatusCode().value());
   }

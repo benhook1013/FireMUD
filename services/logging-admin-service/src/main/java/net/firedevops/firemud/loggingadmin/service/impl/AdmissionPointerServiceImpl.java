@@ -81,6 +81,10 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
     if (request.expectedPointerVersion() != null) {
       builder.setExpectedPointerVersion(request.expectedPointerVersion());
     }
+    if (request.preparedVersionUpgradeId() != null
+        && !request.preparedVersionUpgradeId().isBlank()) {
+      builder.setPreparedVersionUpgradeId(request.preparedVersionUpgradeId());
+    }
     SetAdmissionPointerResponse response =
         gameSessionControlPlaneClient.setAdmissionPointer(builder.build());
     requireNoError(response.getError());
@@ -125,6 +129,7 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
           case "INVALID_ARGUMENT" -> HttpStatus.BAD_REQUEST;
           case "PERMISSION_DENIED" -> HttpStatus.FORBIDDEN;
           case "POINTER_VERSION_MISMATCH" -> HttpStatus.CONFLICT;
+          case "CUTOVER_PREPARATION_INVALID" -> HttpStatus.CONFLICT;
           default -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
     throw new ResponseStatusException(status, error.getMessage());

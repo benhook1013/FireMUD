@@ -384,6 +384,7 @@ message SetAdmissionPointerRequest {
   string reason = 12;
   string control_plane_request_id = 13;
   optional int64 expected_pointer_version = 14;
+  string prepared_version_upgrade_id = 15;
 }
 
 message SetAdmissionPointerResponse {

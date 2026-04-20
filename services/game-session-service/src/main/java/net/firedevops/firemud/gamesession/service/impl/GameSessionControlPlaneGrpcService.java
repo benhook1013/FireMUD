@@ -8,6 +8,7 @@ import java.time.Instant;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
@@ -301,14 +302,17 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<SetAdmissionPointerResponse> responseObserver) {
     try {
       requireAdminRole();
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      validatePreparedUpgradeForPointerChange(request, tenantId, gameInstanceId);
       gameplayAdmissionPointerAuthorityService.upsertPointer(
           new GameplayAdmissionPointerMutation(
               request.getWorldSlug(),
               request.getWorldDisplayName(),
               request.getRealmSlug(),
               request.getRealmDisplayName(),
-              parseTenantId(request.getTenantId()),
-              parseGameInstanceId(request.getGameInstanceId()),
+              tenantId,
+              gameInstanceId,
               request.getVisible(),
               request.getRequiresCharacterSelection(),
               request.getStateScope(),
@@ -339,6 +343,15 @@ public final class GameSessionControlPlaneGrpcService
       SetAdmissionPointerResponse response =
           SetAdmissionPointerResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (CutoverPreparationValidationException ex) {
+      SetAdmissionPointerResponse response =
+          SetAdmissionPointerResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, "CUTOVER_PREPARATION_INVALID", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -675,6 +688,66 @@ public final class GameSessionControlPlaneGrpcService
         .setControlPlaneRequestId(entry.controlPlaneRequestId())
         .setOccurredAtMs(entry.occurredAt().toEpochMilli())
         .build();
+  }
+
+  private void validatePreparedUpgradeForPointerChange(
+      SetAdmissionPointerRequest request, long tenantId, long targetGameInstanceId) {
+    GameInstance targetInstance = getInstanceOrThrow(targetGameInstanceId);
+    if (!Long.valueOf(tenantId).equals(targetInstance.getTenantId())) {
+      throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+    }
+    var currentPointer =
+        gameplayAdmissionPointerAuthorityService.findPointer(
+            request.getWorldSlug(), request.getRealmSlug());
+    if (currentPointer.isEmpty()
+        || currentPointer.get().gameInstanceId() == targetGameInstanceId
+        || currentPointer.get().tenantId() != tenantId) {
+      return;
+    }
+    if (request.getPreparedVersionUpgradeId().isBlank()) {
+      throw new CutoverPreparationValidationException(
+          "prepared_version_upgrade_id is required when changing admission pointer target");
+    }
+    PreparedVersionUpgradeDto preparation =
+        versionUpgradePreparationService.getPreparedVersionUpgrade(
+            tenantId, request.getPreparedVersionUpgradeId());
+    if (!"COMPATIBLE".equals(preparation.result())) {
+      throw new CutoverPreparationValidationException(
+          "prepared_version_upgrade_id must reference a COMPATIBLE preparation");
+    }
+    if (!Long.valueOf(currentPointer.get().gameInstanceId())
+        .equals(preparation.sourceGameInstanceId())) {
+      throw new CutoverPreparationValidationException(
+          "prepared_version_upgrade_id does not match the current admission-pointer source instance");
+    }
+    if (!Long.valueOf(targetGameInstanceId).equals(targetInstance.getId())) {
+      throw new CutoverPreparationValidationException(
+          "prepared_version_upgrade_id target does not match game_instance_id");
+    }
+    if (!Long.valueOf(preparation.targetVersionId()).equals(targetInstance.getVersionId())) {
+      throw new CutoverPreparationValidationException(
+          "prepared_version_upgrade_id targetVersionId does not match target instance version");
+    }
+    if (!normalizeBlank(preparation.targetLaunchDescriptorId())
+        .equals(normalizeBlank(targetInstance.getLaunchDescriptorId()))) {
+      throw new CutoverPreparationValidationException(
+          "prepared_version_upgrade_id targetLaunchDescriptorId does not match target instance");
+    }
+    if (!normalizeBlank(preparation.remapSetId())
+        .equals(normalizeBlank(targetInstance.getRemapSetId()))) {
+      throw new CutoverPreparationValidationException(
+          "prepared_version_upgrade_id remapSetId does not match target instance");
+    }
+  }
+
+  private String normalizeBlank(String value) {
+    return value == null || value.isBlank() ? "" : value;
+  }
+
+  private static final class CutoverPreparationValidationException extends RuntimeException {
+    private CutoverPreparationValidationException(String message) {
+      super(message);
+    }
   }
 
   private RuntimeOwnershipStatus toStatus(RuntimeRegionStatus status) {

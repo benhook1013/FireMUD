@@ -527,9 +527,10 @@ Version cutover contract for a player-addressable realm:
 
 1. Prepare the replacement instance as non-admissible (`PREPARING`/draining-safe) and run world creation to completion.
 2. Run compatibility preflight for source instance -> target version and fail closed on mismatch.
-3. Perform one atomic realm-route swap so the selected realm resolves to exactly one admissible `gameInstanceId` at any instant.
-4. Keep the old instance non-admissible and drain/terminate it through the standard `InstanceTermination` workflow.
-5. If swap fails, keep the previously routed instance as the sole admissible target for that realm and retry; do not open dual admission for the same realm.
+3. Persist a durable `PrepareVersionUpgrade` artifact for that cutover attempt and use it as the proof input to the realm-route swap.
+4. Perform one atomic realm-route swap so the selected realm resolves to exactly one admissible `gameInstanceId` at any instant.
+5. Keep the old instance non-admissible and drain/terminate it through the standard `InstanceTermination` workflow.
+6. If swap fails, keep the previously routed instance as the sole admissible target for that realm and retry; do not open dual admission for the same realm.
 
 Realm-routing contract (required):
 
@@ -546,6 +547,7 @@ Realm-routing contract (required):
 - Routing updates use compare-and-set semantics on `pointerVersion`; failed CAS must not admit or expose dual-admissible state for the same realm.
 - Ownership: Game Session Service is the sole writer and system of record for gameplay realm-routing state; other services consume via API/read models and must not write routing state directly.
 - API surface: Game Session exposes control-plane APIs for reading/updating realm-routing state. All launch, cutover, rollback, and fork lifecycle workflows must use these APIs rather than direct table writes.
+- A pointer swap to a different `gameInstanceId` is a cutover operation, not a generic edit. It must reference one durable `prepared_version_upgrade` record, and Game Session must reject the swap unless that preparation is still `COMPATIBLE` and matches both the current source pointer target and the replacement instance's frozen launch proof (`versionId`, `launchDescriptorId`, `remapSetId`).
 - If routing state for a selected realm is unavailable or ambiguous, admission fails closed with `ADMISSION_POINTER_UNAVAILABLE` (or protocol-mapped equivalent) until reconciled.
 - One realm may be marked as the default production realm. Additional realms, including playtest forks, are valid first-class player-addressable realms when they are intentionally exposed through the authenticated discovery contract.
 

@@ -15,7 +15,7 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 - `POST /admin/tick-remediation/resume` – operator-facing resume request that audits intent and then calls the Game Session control-plane resume surface for the selected scope.
 - `GET /admin/admission-pointers` – list the caller-visible gameplay admission pointers exposed by Game Session control-plane.
 - `GET /admin/admission-pointers/{worldSlug}/{realmSlug}/audit` – read the append-only cutover audit history for one gameplay realm pointer.
-- `POST /admin/admission-pointers` – operator-facing cutover mutation that forwards to Game Session compare-and-set admission-pointer control plane and derives the actor from the authenticated session rather than trusting caller-supplied actor identity.
+- `POST /admin/admission-pointers` – operator-facing cutover mutation that forwards to Game Session compare-and-set admission-pointer control plane, derives the actor from the authenticated session rather than trusting caller-supplied actor identity, and now requires `preparedVersionUpgradeId` whenever the pointer is moved to a different `gameInstanceId`.
 
 ```bash
 curl http://localhost:8080/ping

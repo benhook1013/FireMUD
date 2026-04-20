@@ -93,7 +93,8 @@ class AdmissionPointerControllerTest {
             "ALLOW_NEW",
             "cutover",
             "req-1",
-            3L);
+            3L,
+            null);
     String token =
         jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
