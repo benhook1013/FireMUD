@@ -320,7 +320,8 @@ public final class GameSessionControlPlaneGrpcService
               request.getActorPrincipal(),
               request.getReason(),
               request.getControlPlaneRequestId(),
-              request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null));
+              request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null,
+              normalizeBlank(request.getPreparedVersionUpgradeId())));
       AdmissionPointerControlPlaneEntry entry =
           gameplayAdmissionPointerAuthorityService
               .listPointerAudit(request.getWorldSlug(), request.getRealmSlug())
@@ -671,23 +672,27 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private AdmissionPointerControlPlaneEntry toEntry(GameplayAdmissionPointerAuditEntry entry) {
-    return AdmissionPointerControlPlaneEntry.newBuilder()
-        .setWorldSlug(entry.worldSlug())
-        .setWorldDisplayName(entry.worldDisplayName())
-        .setRealmSlug(entry.realmSlug())
-        .setRealmDisplayName(entry.realmDisplayName())
-        .setTenantId(Long.toString(entry.tenantId()))
-        .setGameInstanceId(Long.toString(entry.gameInstanceId()))
-        .setPointerVersion(entry.pointerVersion())
-        .setVisible(entry.visible())
-        .setRequiresCharacterSelection(entry.requiresCharacterSelection())
-        .setStateScope(entry.stateScope())
-        .setCharacterCreationPolicy(entry.characterCreationPolicy())
-        .setActorPrincipal(entry.actorPrincipal())
-        .setReason(entry.reason())
-        .setControlPlaneRequestId(entry.controlPlaneRequestId())
-        .setOccurredAtMs(entry.occurredAt().toEpochMilli())
-        .build();
+    AdmissionPointerControlPlaneEntry.Builder builder =
+        AdmissionPointerControlPlaneEntry.newBuilder()
+            .setWorldSlug(entry.worldSlug())
+            .setWorldDisplayName(entry.worldDisplayName())
+            .setRealmSlug(entry.realmSlug())
+            .setRealmDisplayName(entry.realmDisplayName())
+            .setTenantId(Long.toString(entry.tenantId()))
+            .setGameInstanceId(Long.toString(entry.gameInstanceId()))
+            .setPointerVersion(entry.pointerVersion())
+            .setVisible(entry.visible())
+            .setRequiresCharacterSelection(entry.requiresCharacterSelection())
+            .setStateScope(entry.stateScope())
+            .setCharacterCreationPolicy(entry.characterCreationPolicy())
+            .setActorPrincipal(entry.actorPrincipal())
+            .setReason(entry.reason())
+            .setControlPlaneRequestId(entry.controlPlaneRequestId())
+            .setOccurredAtMs(entry.occurredAt().toEpochMilli());
+    if (!normalizeBlank(entry.preparedVersionUpgradeId()).isEmpty()) {
+      builder.setPreparedVersionUpgradeId(entry.preparedVersionUpgradeId());
+    }
+    return builder.build();
   }
 
   private void validatePreparedUpgradeForPointerChange(

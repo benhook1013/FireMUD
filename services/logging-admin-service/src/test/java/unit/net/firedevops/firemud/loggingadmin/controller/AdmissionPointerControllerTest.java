@@ -66,6 +66,7 @@ class AdmissionPointerControllerTest {
                     "42",
                     "cutover",
                     "req-1",
+                    "pvu-1",
                     Instant.parse("2026-04-18T00:00:00Z"))));
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
 
@@ -127,6 +128,7 @@ class AdmissionPointerControllerTest {
                     "42",
                     "cutover",
                     "req-1",
+                    "pvu-1",
                     Instant.parse("2026-04-18T00:00:00Z"))));
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
 

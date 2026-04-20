@@ -105,6 +105,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     event.setActorPrincipal(mutation.actorPrincipal());
     event.setReason(mutation.reason());
     event.setControlPlaneRequestId(mutation.controlPlaneRequestId());
+    event.setPreparedVersionUpgradeId(mutation.preparedVersionUpgradeId());
     event.setOccurredAt(now);
     eventRepository.save(event);
 
@@ -135,6 +136,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
                     event.getActorPrincipal(),
                     event.getReason(),
                     event.getControlPlaneRequestId(),
+                    event.getPreparedVersionUpgradeId(),
                     event.getOccurredAt()))
         .toList();
   }

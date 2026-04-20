@@ -298,6 +298,7 @@ message AdmissionPointerControlPlaneEntry {
   string reason = 13;
   string control_plane_request_id = 14;
   int64 occurred_at_ms = 15;
+  string prepared_version_upgrade_id = 16;
 }
 
 message ListAdmissionPointersRequest {}

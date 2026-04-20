@@ -56,6 +56,7 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
                 "system/bootstrap",
                 "Initial gameplay catalog bootstrap",
                 "bootstrap:" + world.getSlug() + ":" + realm.getSlug(),
+                null,
                 null));
       }
     }

@@ -20,3 +20,6 @@ CREATE INDEX idx_prepared_version_upgrade_source_instance
 
 CREATE UNIQUE INDEX uq_prepared_version_upgrade_request
     ON prepared_version_upgrade(tenant_id, control_plane_request_id);
+
+ALTER TABLE gameplay_admission_pointer_event
+    ADD COLUMN prepared_version_upgrade_id VARCHAR(64);

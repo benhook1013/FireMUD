@@ -161,6 +161,7 @@ class AdmissionPointerServiceImplTest {
         .setActorPrincipal("tester")
         .setReason("cutover")
         .setControlPlaneRequestId("req-1")
+        .setPreparedVersionUpgradeId("pvu-1")
         .setOccurredAtMs(1_744_672_000_000L)
         .build();
   }

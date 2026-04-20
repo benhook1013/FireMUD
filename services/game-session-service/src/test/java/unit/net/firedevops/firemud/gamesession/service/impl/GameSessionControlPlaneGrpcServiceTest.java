@@ -201,6 +201,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                     "tester",
                     "cutover",
                     "req-1",
+                    "pvu-1",
                     Instant.parse("2026-04-15T00:00:00Z"))));
     VersionUpgradePreparationService versionUpgradePreparationService =
         Mockito.mock(VersionUpgradePreparationService.class);
@@ -260,9 +261,13 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("demo", responseRef.get().getPointer().getWorldSlug());
     assertEquals(3L, responseRef.get().getPointer().getPointerVersion());
+    assertEquals("pvu-1", responseRef.get().getPointer().getPreparedVersionUpgradeId());
     Mockito.verify(authorityService)
         .upsertPointer(
-            Mockito.argThat(mutation -> Objects.equals(mutation.expectedPointerVersion(), 2L)));
+            Mockito.argThat(
+                mutation ->
+                    Objects.equals(mutation.expectedPointerVersion(), 2L)
+                        && Objects.equals(mutation.preparedVersionUpgradeId(), "pvu-1")));
   }
 
   @Test
@@ -471,6 +476,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                     "tester",
                     "cutover",
                     "req-1",
+                    "pvu-1",
                     Instant.parse("2026-04-15T00:00:00Z")),
                 new GameplayAdmissionPointerAuditEntry(
                     "demo",
@@ -487,6 +493,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                     "tester",
                     "previous",
                     "req-0",
+                    null,
                     Instant.parse("2026-04-14T00:00:00Z"))));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =

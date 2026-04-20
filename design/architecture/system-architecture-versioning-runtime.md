@@ -548,6 +548,7 @@ Realm-routing contract (required):
 - Ownership: Game Session Service is the sole writer and system of record for gameplay realm-routing state; other services consume via API/read models and must not write routing state directly.
 - API surface: Game Session exposes control-plane APIs for reading/updating realm-routing state. All launch, cutover, rollback, and fork lifecycle workflows must use these APIs rather than direct table writes.
 - A pointer swap to a different `gameInstanceId` is a cutover operation, not a generic edit. It must reference one durable `prepared_version_upgrade` record, and Game Session must reject the swap unless that preparation is still `COMPATIBLE` and matches both the current source pointer target and the replacement instance's frozen launch proof (`versionId`, `launchDescriptorId`, `remapSetId`).
+- Pointer-audit history must preserve that same preparation identity. A successful cutover write records the `preparedVersionUpgradeId` on the resulting admission-pointer audit event so operators can prove which durable preparation authorized a given swap.
 - If routing state for a selected realm is unavailable or ambiguous, admission fails closed with `ADMISSION_POINTER_UNAVAILABLE` (or protocol-mapped equivalent) until reconciled.
 - One realm may be marked as the default production realm. Additional realms, including playtest forks, are valid first-class player-addressable realms when they are intentionally exposed through the authenticated discovery contract.
 

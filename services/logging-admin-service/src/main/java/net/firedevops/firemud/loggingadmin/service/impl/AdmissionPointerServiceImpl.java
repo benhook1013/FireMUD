@@ -117,6 +117,7 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         entry.getActorPrincipal(),
         entry.getReason(),
         entry.getControlPlaneRequestId(),
+        entry.getPreparedVersionUpgradeId().isBlank() ? null : entry.getPreparedVersionUpgradeId(),
         entry.getOccurredAtMs() <= 0 ? null : Instant.ofEpochMilli(entry.getOccurredAtMs()));
   }
 
