@@ -76,9 +76,23 @@ jobs:
                 javaRelevantPrefixes.some((prefix) => file.startsWith(prefix))
             );
 
-            const matrix = [{ language: "javascript-typescript" }];
+            const jsRelevantPrefixes = ["web-client/"];
+            const jsRelevantFiles = new Set([
+              ".github/workflows/codeql.yml",
+            ]);
+
+            const runJavascript = files.some(
+              (file) =>
+                jsRelevantFiles.has(file) ||
+                jsRelevantPrefixes.some((prefix) => file.startsWith(prefix))
+            );
+
+            const matrix = [];
             if (runJava) {
-              matrix.unshift({ language: "java" });
+              matrix.push({ language: "java" });
+            }
+            if (runJavascript) {
+              matrix.push({ language: "javascript-typescript" });
             }
 
             core.setOutput("matrix", JSON.stringify(matrix));
@@ -117,7 +131,7 @@ jobs:
 
       - name: ⚙️ Build project for CodeQL
         if: matrix.language == 'java'
-        run: ./gradlew clean codeqlClasses --rerun-tasks
+        run: ./gradlew codeqlClasses --rerun-tasks
 
       - name: 📊 Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
