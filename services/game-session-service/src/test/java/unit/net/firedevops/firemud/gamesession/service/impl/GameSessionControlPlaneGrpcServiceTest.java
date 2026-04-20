@@ -552,6 +552,111 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void executePreparedVersionCutoverIsIdempotentAfterSameRequestAlreadyMovedPointer() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authorityService.findPointer("demo", "production"))
+        .thenReturn(
+            Optional.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    3L,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+    Mockito.when(authorityService.listPointerAudit("demo", "production"))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerAuditEntry(
+                    "demo",
+                    "production",
+                    "Demo World",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    3L,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    "tester",
+                    "cutover",
+                    "req-1",
+                    "pvu-1",
+                    Instant.parse("2026-04-16T00:00:00Z"))));
+    VersionUpgradePreparationService versionUpgradePreparationService =
+        Mockito.mock(VersionUpgradePreparationService.class);
+    Mockito.when(versionUpgradePreparationService.getPreparedVersionUpgrade(1L, "pvu-1"))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto(
+                "pvu-1",
+                "prep-req-1",
+                1L,
+                5L,
+                7L,
+                9L,
+                "ld-9",
+                "remap-1",
+                "COMPATIBLE",
+                List.of(),
+                List.of("WORLD", "ENTITY"),
+                Instant.parse("2026-04-16T00:00:00Z"),
+                List.of(),
+                7L,
+                3L,
+                Instant.parse("2026-04-16T00:00:01Z"),
+                "req-1"));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            authorityService,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            versionUpgradePreparationService,
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ExecutePreparedVersionCutoverResponse> responseRef = new AtomicReference<>();
+    service.executePreparedVersionCutover(
+        ExecutePreparedVersionCutoverRequest.newBuilder()
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setTenantId("1")
+            .setTargetGameInstanceId("7")
+            .setPreparedVersionUpgradeId("pvu-1")
+            .setActorPrincipal("tester")
+            .setReason("cutover")
+            .setControlPlaneRequestId("req-1")
+            .setExpectedPointerVersion(2L)
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ExecutePreparedVersionCutoverResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(3L, responseRef.get().getPointer().getPointerVersion());
+    assertEquals("pvu-1", responseRef.get().getPointer().getPreparedVersionUpgradeId());
+    Mockito.verify(authorityService, Mockito.never()).upsertPointer(Mockito.any());
+    Mockito.verify(versionUpgradePreparationService, Mockito.never())
+        .markPreparedVersionUpgradeExecuted(
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString());
+  }
+
+  @Test
   void listAdmissionPointersRequiresAdminCaller() {
     SessionContext.setContext("1", List.of("player"), Map.of());
     GameSessionControlPlaneGrpcService service =

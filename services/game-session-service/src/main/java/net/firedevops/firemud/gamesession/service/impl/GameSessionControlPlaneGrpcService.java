@@ -400,8 +400,19 @@ public final class GameSessionControlPlaneGrpcService
         throw new IllegalArgumentException("tenant_id does not own admission pointer");
       }
       if (currentPointer.gameInstanceId() == targetGameInstanceId) {
-        throw new IllegalArgumentException(
-            "target_game_instance_id must differ from the current admission pointer target");
+        AdmissionPointerControlPlaneEntry idempotentEntry =
+            currentExecutedCutoverEntryIfSameRequest(
+                request.getWorldSlug(),
+                request.getRealmSlug(),
+                tenantId,
+                targetGameInstanceId,
+                request.getPreparedVersionUpgradeId(),
+                request.getControlPlaneRequestId());
+        ExecutePreparedVersionCutoverResponse response =
+            ExecutePreparedVersionCutoverResponse.newBuilder().setPointer(idempotentEntry).build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+        return;
       }
       validatePreparedUpgradeForPointerChange(
           request.getWorldSlug(),
@@ -870,6 +881,34 @@ public final class GameSessionControlPlaneGrpcService
       throw new CutoverPreparationValidationException(
           "prepared_version_upgrade_id remapSetId does not match target instance");
     }
+  }
+
+  private AdmissionPointerControlPlaneEntry currentExecutedCutoverEntryIfSameRequest(
+      String worldSlug,
+      String realmSlug,
+      long tenantId,
+      long targetGameInstanceId,
+      String preparedVersionUpgradeId,
+      String controlPlaneRequestId) {
+    PreparedVersionUpgradeDto preparation =
+        versionUpgradePreparationService.getPreparedVersionUpgrade(
+            tenantId, preparedVersionUpgradeId);
+    if (!Long.valueOf(targetGameInstanceId).equals(preparation.executedTargetGameInstanceId())
+        || !controlPlaneRequestId.equals(preparation.executionControlPlaneRequestId())) {
+      throw new IllegalArgumentException(
+          "target_game_instance_id must differ from the current admission pointer target");
+    }
+    AdmissionPointerControlPlaneEntry entry =
+        gameplayAdmissionPointerAuthorityService.listPointerAudit(worldSlug, realmSlug).stream()
+            .findFirst()
+            .map(this::toEntry)
+            .orElseThrow(() -> new IllegalStateException("Admission pointer audit missing"));
+    if (preparation.executedPointerVersion() != null
+        && entry.getPointerVersion() != preparation.executedPointerVersion()) {
+      throw new CutoverPreparationValidationException(
+          "prepared_version_upgrade_id execution state does not match current admission pointer");
+    }
+    return entry;
   }
 
   private String normalizeBlank(String value) {
