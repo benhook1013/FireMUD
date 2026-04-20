@@ -318,6 +318,58 @@ class TickServiceImplTest {
   }
 
   @Test
+  void processTickRequeuesDrainedEffectsWhenFenceIsStaleBeforeApplication() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    net.firedevops.firemud.gamesession.entity.TickBatch drainedBatch =
+        new net.firedevops.firemud.gamesession.entity.TickBatch();
+    drainedBatch.setTickBatchId("tb-drained");
+    drainedBatch.setTenantId(1L);
+    drainedBatch.setGameInstanceId(2L);
+    drainedBatch.setRegionEpoch(1L);
+    drainedBatch.setExecutorFence("fence-a");
+    drainedBatch.setStatus("DRAINED");
+    drainedBatch.setCommandCount(1);
+    drainedBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    drainedBatch.setCompletedAt(Instant.parse("2026-04-19T00:00:01Z"));
+    net.firedevops.firemud.gamesession.entity.TickEffect drainedEffect =
+        new net.firedevops.firemud.gamesession.entity.TickEffect();
+    drainedEffect.setEffectId("tfx-drained");
+    drainedEffect.setTickBatchId("tb-drained");
+    drainedEffect.setCommandId("cmd-1");
+    drainedEffect.setEffectKey("command:cmd-1");
+    drainedEffect.setEffectType("GAMEPLAY_COMMAND");
+    drainedEffect.setTargetAggregate("game-instance:2");
+    drainedEffect.setStatus("DRAINED");
+    drainedEffect.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
+    command.setTenantId(1L);
+    command.setGameInstanceId(2L);
+    command.setSessionId(77L);
+    command.setCommandName("MOVE");
+    command.setCommandText("north");
+    command.setSanitizedCommandText("north");
+    command.setRequiresSoloTick(false);
+    when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            1L, 2L, "DRAINED"))
+        .thenReturn(List.of(drainedBatch));
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-drained", "DRAINED"))
+        .thenReturn(List.of(drainedEffect));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(command));
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(runtimeOwnership(1L, 2L, 2L, "fence-b", false)));
+
+    service.processTick(1L, 2L);
+
+    verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-1|north");
+    org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", drainedBatch.getStatus());
+    org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", drainedEffect.getStatus());
+    org.junit.jupiter.api.Assertions.assertEquals("RETRY_QUEUED", command.getExecutionOutcome());
+    verify(durableGameplayCommandExecutionService, never()).execute(any(), any());
+  }
+
+  @Test
   void processTickUpdatesLastCommittedBatchOnDurableOwnershipRow() {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);

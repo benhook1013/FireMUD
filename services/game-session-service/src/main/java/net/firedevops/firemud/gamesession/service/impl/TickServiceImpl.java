@@ -516,7 +516,12 @@ public class TickServiceImpl implements TickService {
         tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
             tenantId, gameInstanceId, "DRAINED");
     for (TickBatch batch : drainedBatches) {
-      requireCurrentOwnership(batch, false);
+      try {
+        requireCurrentOwnership(batch, false);
+      } catch (StaleOwnershipException ex) {
+        abandonStaleDrainedBatch(batch, ex.getMessage());
+        continue;
+      }
       List<TickEffect> drainedEffects =
           tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
               batch.getTickBatchId(), "DRAINED");
@@ -534,6 +539,58 @@ public class TickServiceImpl implements TickService {
         batch.setStatus("APPLIED");
         tickBatchRepository.save(batch);
       }
+    }
+  }
+
+  private void abandonStaleDrainedBatch(TickBatch batch, String failureMessage) {
+    List<TickEffect> drainedEffects =
+        tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
+            batch.getTickBatchId(), "DRAINED");
+    List<GameplayCommand> commands = loadCommandsForEffects(drainedEffects);
+    requeueCommands(batch.getTenantId(), batch.getGameInstanceId(), commands);
+    Instant now = Instant.now();
+    for (TickEffect effect : drainedEffects) {
+      effect.setStatus("ABANDONED");
+      effect.setCompletedAt(now);
+      effect.setFailureCode("STALE_EXECUTOR_FENCE");
+      effect.setFailureMessage(truncate(failureMessage, 500));
+    }
+    if (!drainedEffects.isEmpty()) {
+      tickEffectRepository.saveAll(drainedEffects);
+    }
+    for (GameplayCommand command : commands) {
+      command.setExecutionOutcome("RETRY_QUEUED");
+      command.setGameplayResult("PENDING");
+      command.setCompletedAt(null);
+      command.setLastAttemptAt(now);
+      command.setFailureCode("STALE_EXECUTOR_FENCE");
+      command.setFailureMessage(truncate(failureMessage, 500));
+    }
+    if (!commands.isEmpty()) {
+      gameplayCommandRepository.saveAll(commands);
+    }
+    batch.setStatus("ABANDONED");
+    batch.setCompletedAt(now);
+    batch.setFailureCode("STALE_EXECUTOR_FENCE");
+    batch.setFailureMessage(truncate(failureMessage, 500));
+    tickBatchRepository.save(batch);
+    logger.warn(
+        "Abandoned stale drained tick batch tickBatchId={} tenantId={} gameInstanceId={} requeuedCommands={}",
+        batch.getTickBatchId(),
+        batch.getTenantId(),
+        batch.getGameInstanceId(),
+        commands.size());
+  }
+
+  private void requeueCommands(Long tenantId, Long gameInstanceId, List<GameplayCommand> commands) {
+    for (int index = commands.size() - 1; index >= 0; index--) {
+      GameplayCommand command = commands.get(index);
+      redisTemplate
+          .opsForList()
+          .leftPush(
+              queueKey(tenantId, gameInstanceId),
+              queuePayload(
+                  command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText()));
     }
   }
 
@@ -677,6 +734,19 @@ public class TickServiceImpl implements TickService {
     List<String> commandIds =
         entries.stream()
             .map(QueuedCommandEnvelope::commandId)
+            .filter(commandId -> commandId != null && !commandId.isBlank())
+            .distinct()
+            .toList();
+    if (commandIds.isEmpty()) {
+      return List.of();
+    }
+    return gameplayCommandRepository.findByCommandIdIn(commandIds);
+  }
+
+  private List<GameplayCommand> loadCommandsForEffects(List<TickEffect> effects) {
+    List<String> commandIds =
+        effects.stream()
+            .map(TickEffect::getCommandId)
             .filter(commandId -> commandId != null && !commandId.isBlank())
             .distinct()
             .toList();
