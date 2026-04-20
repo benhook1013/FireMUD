@@ -22,5 +22,7 @@ public interface RoomInstanceExitRepository extends JpaRepository<RoomInstanceEx
       @Param("gameInstanceId") Long gameInstanceId,
       @Param("roomInstanceId") Long roomInstanceId);
 
+  long countByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
+
   void deleteByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
 }

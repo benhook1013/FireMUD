@@ -11,6 +11,8 @@ import org.springframework.stereotype.Repository;
 public interface WorldEventRepository extends JpaRepository<WorldEvent, Long> {
   List<WorldEvent> findByProcessedFalseAndExecuteAtBefore(LocalDateTime time);
 
+  long countByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
+
   void deleteByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
 
   @Query(

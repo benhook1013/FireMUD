@@ -357,7 +357,7 @@ These names are the canonical initial-slice preflight vocabulary until service i
 
 Initial-slice notes:
 
-- In the first live implementation slice, World Management declares no mandatory `S2` row families. `ValidateWorldUpgradeMappings` therefore reports `stateClassesChecked=["S3"]`, `hasS2Rows=false`, and `result=COMPATIBLE` after proving the source world instance exists.
+- In the first live implementation slice, World Management declares no mandatory `S2` row families. `ValidateWorldUpgradeMappings` therefore still reports `stateClassesChecked=["S3"]` and `hasS2Rows=false`, but it now proves more than one row exists: the source world must be in a cutover-eligible lifecycle state and still have retained `region_instance`, `zone_instance`, and `room_instance` topology before it reports `COMPATIBLE`.
 - In the first live Entity Management implementation slice, the validation surface is also honest about current persisted runtime families: it checks the current instance-scoped row families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`) as `S3`, reports `hasS2Rows=false`, and does not yet claim the later account-scoped `S1` / remap-sensitive `S2` families as implemented.
 
 The `ValidateInstanceCutoverCompatibility` contract below is the orchestration surface for these rules; it must report which state classes were checked, which owning domains attested compatibility, and whether any remap set was required.

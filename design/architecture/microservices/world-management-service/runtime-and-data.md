@@ -113,6 +113,7 @@ Initial-slice rule:
 - Unless a world-owned row family is explicitly documented as `S2`, treat it as `S3` and discard it during replacement-instance cutover.
 - World Management must not silently copy room ambient state, occupancy, scheduled world events, or generated instance topology into the target instance.
 - No World-owned initial-slice table is classified as mandatory `S2`.
+- The live first validation cut is still honest about that boundary, but it now does more than existence-check one row: replacement-instance preflight requires the source `world_instance` to be in a cutover-eligible lifecycle state and to retain `region_instance`, `zone_instance`, and `room_instance` topology before World Management returns `COMPATIBLE`.
 
 ## Digest Input Manifest
 

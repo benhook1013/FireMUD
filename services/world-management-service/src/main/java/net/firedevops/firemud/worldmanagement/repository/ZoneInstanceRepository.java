@@ -8,5 +8,7 @@ public interface ZoneInstanceRepository extends JpaRepository<ZoneInstance, Long
   Optional<ZoneInstance> findByTenantIdAndGameInstanceIdAndZoneInstanceId(
       Long tenantId, Long gameInstanceId, Long zoneInstanceId);
 
+  long countByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
+
   void deleteByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
 }

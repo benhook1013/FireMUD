@@ -72,8 +72,8 @@ Digest input manifest rules live in [`runtime-and-data.md`](./runtime-and-data.m
 Current live first slice:
 
 - The RPC now exists and returns the canonical cutover-validation payload shape.
-- The implementation currently proves the source `world_instance` exists for `(tenantId, sourceGameInstanceId)` and reports the initial World-owned `S3` families only.
-- World therefore currently returns `stateClassesChecked=["S3"]`, `checkedFamilies=["world_instance", "region_instance", "zone_instance", "room_instance", "world_event"]`, `hasS2Rows=false`, `result=COMPATIBLE`, and `remapSetRequired=false`.
+- The implementation currently proves the source `world_instance` exists for `(tenantId, sourceGameInstanceId)`, requires a cutover-eligible world lifecycle state, and verifies retained instance topology rows for `region_instance`, `zone_instance`, and `room_instance` while still reporting the initial World-owned `S3` families only.
+- World therefore currently returns `stateClassesChecked=["S3"]`, `checkedFamilies=["world_instance", "region_instance", "zone_instance", "room_instance", "room_instance_exit", "world_event"]`, `hasS2Rows=false`, and `remapSetRequired=false`; it returns `INCOMPATIBLE` when the source world lifecycle or retained topology is not cutover-eligible.
 - Later World-owned durable metadata families can widen this contract to real `S2` checks without changing the owning RPC surface.
 
 Illustrative responses:
