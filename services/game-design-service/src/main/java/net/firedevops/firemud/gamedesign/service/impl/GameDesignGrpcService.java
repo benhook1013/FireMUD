@@ -327,6 +327,20 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               "GetPublishedReleaseBundle",
               "PERMISSION_DENIED",
               ex.getMessage()));
+    } catch (PublishedReleaseBundleNotFoundException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "GetPublishedReleaseBundle", "NOT_FOUND", ex.getMessage()));
+    } catch (IllegalStateException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetPublishedReleaseBundle",
+              ex.getMessage().startsWith(PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED)
+                  ? PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED
+                  : "INVALID_ARGUMENT",
+              ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -452,6 +466,16 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               logger,
               "ResolveLaunchDescriptor",
               "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalStateException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ResolveLaunchDescriptor",
+              ex.getMessage().startsWith(PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED)
+                  ? PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED
+                  : "INVALID_ARGUMENT",
               ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(

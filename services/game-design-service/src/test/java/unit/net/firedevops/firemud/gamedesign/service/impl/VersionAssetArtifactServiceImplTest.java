@@ -110,6 +110,51 @@ class VersionAssetArtifactServiceImplTest {
   }
 
   @Test
+  void repairFailsClosedWhenAttestedAssetKeysDrift() {
+    VersionAssetArtifact artifact = new VersionAssetArtifact();
+    artifact.setTenantId("tenant-1");
+    artifact.setVersionId(7L);
+    artifact.setArtifactState(VersionAssetArtifactState.PUBLISHED);
+    artifact.setStateEpoch(3L);
+    artifact.setManifestHash("attested");
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(artifact));
+    when(repository.save(any(VersionAssetArtifact.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionNumber(8);
+    version.setVersionState(VersionLifecycleState.RETIRED);
+    when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenReturn(
+            new PublishedReleaseBundleDto(
+                1L,
+                "tenant-1",
+                7L,
+                8,
+                "v1",
+                "workflow-1",
+                "attested",
+                List.of("logo.png", "manifest.json"),
+                List.of(),
+                "genrev-1",
+                false,
+                null,
+                LocalDateTime.now()));
+    when(assetExportService.exportAssets("tenant-1", 8))
+        .thenReturn(new ExportedAssetManifest("attested", List.of("manifest.json")));
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class,
+            () -> service.repairPublishedVersionAssets("tenant-1", 7L, 3L, "repair-1"));
+
+    assertEquals("REPAIR_ATTESTED_ASSET_KEY_MISMATCH", thrown.getMessage());
+  }
+
+  @Test
   void beginAndFinalizePurgeUsesExactExportedKeyProof() {
     VersionAssetArtifact artifact = new VersionAssetArtifact();
     artifact.setTenantId("tenant-1");

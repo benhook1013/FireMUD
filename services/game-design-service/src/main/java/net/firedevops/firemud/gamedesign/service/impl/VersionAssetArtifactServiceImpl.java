@@ -303,13 +303,15 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
             .filter(found -> found.getTenantId().equals(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("version not found"));
     var exported = assetExportService.exportAssets(tenantId, version.getVersionNumber());
-    if (!Objects.equals(bundle.manifestHash(), exported.manifestHash())) {
+    try {
+      PublishedReleaseBundleContract.requireExactRepairMatch(bundle, exported);
+    } catch (IllegalStateException ex) {
       artifact.setLastWorkflowId(repairWorkflowId);
-      artifact.setLastErrorCode("REPAIR_ATTESTATION_MISMATCH");
-      artifact.setLastErrorMessage("repair could not reproduce the attested manifest hash");
+      artifact.setLastErrorCode(ex.getMessage().split(":", 2)[0]);
+      artifact.setLastErrorMessage(ex.getMessage().split(":", 2)[1].trim());
       artifact.setUpdatedAt(LocalDateTime.now());
       repository.save(artifact);
-      throw new IllegalStateException("REPAIR_ATTESTATION_MISMATCH");
+      throw new IllegalStateException(artifact.getLastErrorCode());
     }
     artifact.setStateEpoch(artifact.getStateEpoch() + 1);
     artifact.setManifestHash(exported.manifestHash());

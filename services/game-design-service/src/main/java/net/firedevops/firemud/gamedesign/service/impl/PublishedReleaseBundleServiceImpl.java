@@ -15,7 +15,6 @@ import tools.jackson.databind.ObjectMapper;
 
 @Service
 public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundleService {
-  private static final String ATTESTATION_SCHEMA_VERSION = "v1";
 
   private final PublishedReleaseBundleRepository repository;
   private final ObjectMapper objectMapper;
@@ -47,7 +46,8 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     entity.setTenantId(version.tenantId());
     entity.setVersionId(version.id());
     entity.setVersionNumber(version.versionNumber());
-    entity.setAttestationSchemaVersion(ATTESTATION_SCHEMA_VERSION);
+    entity.setAttestationSchemaVersion(
+        PublishedReleaseBundleContract.SUPPORTED_ATTESTATION_SCHEMA_VERSION);
     entity.setPublishWorkflowId(publishWorkflowId);
     entity.setManifestHash(exportedManifest.manifestHash());
     entity.setGenerationConfigRevision(generationConfigRevision);
@@ -65,7 +65,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     return repository
         .findByTenantIdAndVersionId(tenantId, versionId)
         .map(this::toDto)
-        .orElseThrow(() -> new IllegalArgumentException("published release bundle not found"));
+        .orElseThrow(() -> new PublishedReleaseBundleNotFoundException(tenantId, versionId));
   }
 
   private PublishedReleaseBundleDto toDto(PublishedReleaseBundle entity) {

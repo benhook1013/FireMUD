@@ -96,6 +96,24 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void getPublishedReleaseBundleReturnsNotFoundWhenAttestationIsAbsent() {
+    Mockito.when(versionService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenThrow(new PublishedReleaseBundleNotFoundException("tenant-1", 7L));
+
+    AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getPublishedReleaseBundle(
+          GetPublishedReleaseBundleRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("NOT_FOUND", ref.get().getError().getCode());
+  }
+
+  @Test
   void resolveLaunchDescriptorReturnsDeterministicDescriptor() {
     Mockito.when(
             launchDescriptorService.resolveLaunchDescriptor(

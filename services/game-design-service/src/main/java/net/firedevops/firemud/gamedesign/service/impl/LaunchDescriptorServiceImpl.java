@@ -120,6 +120,7 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     String resolvedRuntimeFlagsJson = resolveRuntimeFlagsJson(template, requestedRuntimeFlagsJson);
     var bundle =
         publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, resolvedVersionId);
+    PublishedReleaseBundleContract.requireSupportedSchemaForLaunch(bundle);
     LaunchDescriptor descriptor = new LaunchDescriptor();
     descriptor.setLaunchDescriptorId("ld-" + UUID.randomUUID());
     descriptor.setTenantId(tenantId);
