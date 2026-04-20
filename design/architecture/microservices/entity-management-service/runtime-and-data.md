@@ -71,9 +71,9 @@ Initial-slice rule:
 Implementation notes:
 
 - The cutover-validation RPC now exists as `ValidateEntityUpgradeMappings(tenantId, sourceGameInstanceId, targetVersionId, remapSetId?)`.
-- The first live implementation slice is intentionally narrow and honest: it validates the currently persisted instance-scoped families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`) and reports them as `S3`.
-- That live first cut therefore returns `stateClassesChecked=["S3"]`, `hasS2Rows=false`, and `result=COMPATIBLE` for the current persistence slice.
-- The broader account-scoped `S1` and remap-sensitive `S2` families described above remain the target-state contract and still need follow-through implementation; the service does not currently pretend those checks are complete.
+- The first live implementation slice is intentionally narrow and honest: it enumerates tenant-surviving families (`character`, `inventory`, `character_equipment`, `character_friend`) plus the currently persisted instance-scoped families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`).
+- If the tenant has no survivor rows, the current first cut returns `result=COMPATIBLE` and `hasS2Rows=false` for replacement-instance cutover because only discardable instance-scoped `S3` state is present.
+- If any survivor rows exist, the current first cut returns `result=INCOMPATIBLE` with `ENTITY_SURVIVOR_STATE_UNSUPPORTED` rather than pretending account-scoped `S1` or remap-sensitive `S2` validation is complete. Inventory and equipment rows are reported as remap-sensitive until explicit target-version template validation and approved-remap checks exist.
 
 Entity upgrade validation minimum contract:
 

@@ -15,6 +15,8 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
 import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
+import net.firedevops.firemud.loggingadmin.dto.PrepareVersionUpgradeRequest;
+import net.firedevops.firemud.loggingadmin.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
 import net.firedevops.firemud.loggingadmin.service.AdmissionPointerService;
 import net.firedevops.firemud.test.WithFiremudJwtTestProperties;
@@ -156,5 +158,66 @@ class AdmissionPointerControllerTest {
                 .content(objectMapper.writeValueAsString(request))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void prepareVersionUpgradeReturnsPreparation() throws Exception {
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    when(admissionPointerService.prepareVersionUpgrade(
+            new PrepareVersionUpgradeRequest(2L, 7L, 9L, "req-prepare")))
+        .thenReturn(preparedUpgrade());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            post("/admin/admission-pointers/version-upgrades")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new PrepareVersionUpgradeRequest(2L, 7L, 9L, "req-prepare")))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.preparationId").value("pvu-1"))
+        .andExpect(jsonPath("$.data.executedTargetGameInstanceId").value(55));
+  }
+
+  @Test
+  void getPreparedVersionUpgradeRejectsCrossTenantScopedAdmin() throws Exception {
+    String token =
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+
+    mockMvc
+        .perform(
+            get("/admin/admission-pointers/version-upgrades/2/pvu-1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
+  }
+
+  private PreparedVersionUpgradeDto preparedUpgrade() {
+    return new PreparedVersionUpgradeDto(
+        "pvu-1",
+        2L,
+        7L,
+        6L,
+        9L,
+        77L,
+        "remap-1",
+        "COMPATIBLE",
+        List.of("checked"),
+        List.of("entity"),
+        Instant.parse("2026-04-18T00:00:00Z"),
+        List.of(
+            new PreparedVersionUpgradeDto.CutoverParticipantResultDto(
+                "entity",
+                "COMPATIBLE",
+                List.of(),
+                List.of("S3"),
+                List.of("room_ground_inventory"),
+                false)),
+        "req-prepare",
+        55L,
+        4L,
+        Instant.parse("2026-04-18T00:00:01Z"),
+        "req-cutover");
   }
 }

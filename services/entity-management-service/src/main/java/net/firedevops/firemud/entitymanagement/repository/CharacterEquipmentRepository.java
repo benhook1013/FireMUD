@@ -15,4 +15,6 @@ public interface CharacterEquipmentRepository
   @EntityGraph(attributePaths = {"item", "character"})
   Page<CharacterEquipmentEntry> findByIdCharacterIdAndCharacterTenantId(
       Long characterId, Long tenantId, Pageable pageable);
+
+  long countByCharacterTenantId(Long tenantId);
 }

@@ -10,13 +10,20 @@ import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
+import net.firedevops.firemud.gamesession.v1.CutoverCompatibilityResult;
+import net.firedevops.firemud.gamesession.v1.CutoverParticipantResult;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
+import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
+import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
+import net.firedevops.firemud.gamesession.v1.PreparedVersionUpgrade;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
 import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
+import net.firedevops.firemud.loggingadmin.dto.PrepareVersionUpgradeRequest;
+import net.firedevops.firemud.loggingadmin.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.AfterEach;
@@ -170,6 +177,44 @@ class AdmissionPointerServiceImplTest {
                         && request.getExpectedPointerVersion() == 3L));
   }
 
+  @Test
+  void prepareVersionUpgradeReturnsDurablePreparation() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.prepareVersionUpgrade(any()))
+        .thenReturn(
+            PrepareVersionUpgradeResponse.newBuilder()
+                .setPreparation(preparedUpgrade("pvu-1", 2L))
+                .build());
+
+    PreparedVersionUpgradeDto result =
+        service.prepareVersionUpgrade(new PrepareVersionUpgradeRequest(2L, 7L, 9L, "req-prepare"));
+
+    assertEquals("pvu-1", result.preparationId());
+    assertEquals(2L, result.tenantId());
+    assertEquals("COMPATIBLE", result.result());
+    verify(gameSessionControlPlaneClient)
+        .prepareVersionUpgrade(
+            org.mockito.ArgumentMatchers.argThat(
+                request ->
+                    request.getTenantId().equals("2")
+                        && request.getSourceGameInstanceId().equals("7")
+                        && request.getTargetVersionId().equals("9")
+                        && request.getControlPlaneRequestId().equals("req-prepare")));
+  }
+
+  @Test
+  void getPreparedVersionUpgradeRequiresAccessibleTenant() {
+    SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
+    when(gameSessionControlPlaneClient.getPreparedVersionUpgrade(any()))
+        .thenReturn(
+            GetPreparedVersionUpgradeResponse.newBuilder()
+                .setPreparation(preparedUpgrade("pvu-1", 8L))
+                .build());
+
+    assertThrows(
+        ResponseStatusException.class, () -> service.getPreparedVersionUpgrade(8L, "pvu-1"));
+  }
+
   private AdmissionPointerControlPlaneEntry pointerEntry(
       String worldSlug, String realmSlug, long tenantId, long gameInstanceId, long pointerVersion) {
     return AdmissionPointerControlPlaneEntry.newBuilder()
@@ -189,6 +234,34 @@ class AdmissionPointerServiceImplTest {
         .setControlPlaneRequestId("req-1")
         .setPreparedVersionUpgradeId("pvu-1")
         .setOccurredAtMs(1_744_672_000_000L)
+        .build();
+  }
+
+  private PreparedVersionUpgrade preparedUpgrade(String preparationId, long tenantId) {
+    return PreparedVersionUpgrade.newBuilder()
+        .setPreparationId(preparationId)
+        .setTenantId(Long.toString(tenantId))
+        .setSourceGameInstanceId("7")
+        .setSourceVersionId("6")
+        .setTargetVersionId("9")
+        .setTargetLaunchDescriptorId("77")
+        .setRemapSetId("remap-1")
+        .setResult(CutoverCompatibilityResult.CUTOVER_COMPATIBILITY_RESULT_COMPATIBLE)
+        .addReasons("checked")
+        .addCheckedParticipants("entity")
+        .setCheckedAtMs(1_774_672_000_000L)
+        .addParticipantResults(
+            CutoverParticipantResult.newBuilder()
+                .setParticipant("entity")
+                .setResult(CutoverCompatibilityResult.CUTOVER_COMPATIBILITY_RESULT_COMPATIBLE)
+                .addStateClassesChecked("S3")
+                .addCheckedFamilies("room_ground_inventory")
+                .build())
+        .setControlPlaneRequestId("req-prepare")
+        .setExecutedTargetGameInstanceId("55")
+        .setExecutedPointerVersion(4L)
+        .setExecutedAtMs(1_774_672_001_000L)
+        .setExecutionControlPlaneRequestId("req-cutover")
         .build();
   }
 }

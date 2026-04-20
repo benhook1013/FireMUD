@@ -8,12 +8,17 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
+import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
+import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
+import net.firedevops.firemud.gamesession.v1.PreparedVersionUpgrade;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
 import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
+import net.firedevops.firemud.loggingadmin.dto.PrepareVersionUpgradeRequest;
+import net.firedevops.firemud.loggingadmin.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
 import net.firedevops.firemud.loggingadmin.service.AdmissionPointerService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -134,6 +139,41 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
     return toDto(response.getPointer());
   }
 
+  @Override
+  @Timed(value = "loggingadmin.admissionPointer.prepareVersionUpgrade")
+  public PreparedVersionUpgradeDto prepareVersionUpgrade(PrepareVersionUpgradeRequest request) {
+    net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest grpcRequest =
+        net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest.newBuilder()
+            .setTenantId(Long.toString(request.tenantId()))
+            .setSourceGameInstanceId(Long.toString(request.sourceGameInstanceId()))
+            .setTargetVersionId(Long.toString(request.targetVersionId()))
+            .setControlPlaneRequestId(request.controlPlaneRequestId())
+            .build();
+    PrepareVersionUpgradeResponse response =
+        gameSessionControlPlaneClient.prepareVersionUpgrade(grpcRequest);
+    requireNoError(response.getError());
+    return toDto(response.getPreparation());
+  }
+
+  @Override
+  @Timed(value = "loggingadmin.admissionPointer.getPreparedVersionUpgrade")
+  public PreparedVersionUpgradeDto getPreparedVersionUpgrade(long tenantId, String preparationId) {
+    net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest grpcRequest =
+        net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest.newBuilder()
+            .setTenantId(Long.toString(tenantId))
+            .setPreparationId(preparationId)
+            .build();
+    GetPreparedVersionUpgradeResponse response =
+        gameSessionControlPlaneClient.getPreparedVersionUpgrade(grpcRequest);
+    requireNoError(response.getError());
+    PreparedVersionUpgrade preparation = response.getPreparation();
+    if (preparation.getPreparationId().isBlank()) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Prepared version upgrade not found");
+    }
+    SessionContext.requireTenantAccess(parseLong(preparation.getTenantId(), "tenant_id"));
+    return toDto(preparation);
+  }
+
   private boolean hasTenantAccess(AdmissionPointerControlPlaneEntry entry) {
     return SessionContext.hasTenantAccess(parseLong(entry.getTenantId(), "tenant_id"));
   }
@@ -158,6 +198,52 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         entry.getOccurredAtMs() <= 0 ? null : Instant.ofEpochMilli(entry.getOccurredAtMs()));
   }
 
+  private PreparedVersionUpgradeDto toDto(PreparedVersionUpgrade preparation) {
+    return new PreparedVersionUpgradeDto(
+        preparation.getPreparationId(),
+        parseLong(preparation.getTenantId(), "tenant_id"),
+        parseLong(preparation.getSourceGameInstanceId(), "source_game_instance_id"),
+        parseLong(preparation.getSourceVersionId(), "source_version_id"),
+        parseLong(preparation.getTargetVersionId(), "target_version_id"),
+        parseLong(preparation.getTargetLaunchDescriptorId(), "target_launch_descriptor_id"),
+        preparation.getRemapSetId().isBlank() ? null : preparation.getRemapSetId(),
+        toCutoverResultName(preparation.getResult().name()),
+        preparation.getReasonsList(),
+        preparation.getCheckedParticipantsList(),
+        preparation.getCheckedAtMs() <= 0
+            ? null
+            : Instant.ofEpochMilli(preparation.getCheckedAtMs()),
+        preparation.getParticipantResultsList().stream()
+            .map(
+                participant ->
+                    new PreparedVersionUpgradeDto.CutoverParticipantResultDto(
+                        participant.getParticipant(),
+                        toCutoverResultName(participant.getResult().name()),
+                        participant.getReasonsList(),
+                        participant.getStateClassesCheckedList(),
+                        participant.getCheckedFamiliesList(),
+                        participant.getHasS2Rows()))
+            .toList(),
+        preparation.getControlPlaneRequestId(),
+        preparation.getExecutedTargetGameInstanceId().isBlank()
+            ? null
+            : parseLong(
+                preparation.getExecutedTargetGameInstanceId(), "executed_target_game_instance_id"),
+        preparation.getExecutedPointerVersion() <= 0
+            ? null
+            : preparation.getExecutedPointerVersion(),
+        preparation.getExecutedAtMs() <= 0
+            ? null
+            : Instant.ofEpochMilli(preparation.getExecutedAtMs()),
+        preparation.getExecutionControlPlaneRequestId().isBlank()
+            ? null
+            : preparation.getExecutionControlPlaneRequestId());
+  }
+
+  private String toCutoverResultName(String protoName) {
+    return protoName.replaceFirst("^CUTOVER_COMPATIBILITY_RESULT_", "");
+  }
+
   private void requireNoError(ErrorDetail error) {
     if (error == null || error.getCode().isBlank()) {
       return;
@@ -168,6 +254,7 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
           case "PERMISSION_DENIED" -> HttpStatus.FORBIDDEN;
           case "POINTER_VERSION_MISMATCH" -> HttpStatus.CONFLICT;
           case "CUTOVER_PREPARATION_INVALID" -> HttpStatus.CONFLICT;
+          case "NOT_FOUND" -> HttpStatus.NOT_FOUND;
           default -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
     throw new ResponseStatusException(status, error.getMessage());
