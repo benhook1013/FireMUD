@@ -6,7 +6,7 @@ This document explains how distributed traces are collected and visualized acros
 
 ## OpenTelemetry Collector
 
-All services emit spans using the [OpenTelemetry](https://opentelemetry.io/) SDK. A dedicated **OpenTelemetry Collector** runs inside the Kubernetes cluster to receive OTLP traffic and forward it to storage backends. A sample manifest is provided at `k8s/monitoring/otel-collector.yaml`.
+All services emit spans using the OpenTelemetry SDK. A dedicated **OpenTelemetry Collector** runs inside the Kubernetes cluster to receive OTLP traffic and forward it to storage backends. A sample manifest is provided at `k8s/monitoring/otel-collector.yaml`.
 
 - Deploy using the official [`opentelemetry-collector`](https://github.com/open-telemetry/opentelemetry-helm-charts) Helm chart or apply the sample manifest for local demos.
 - The collector runs as the `otel-collector` service inside the cluster so other pods can reach it via `http://otel-collector:4317`.

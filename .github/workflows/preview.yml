@@ -148,6 +148,39 @@ jobs:
           preview_max_active=${PREVIEW_MAX_ACTIVE:-1}
           EOF
 
+      - name: Clear previous preview summary comments
+        if: ${{ steps.eligibility.outputs.eligible == 'true' }}
+        uses: actions/github-script@v9
+        env:
+          PREVIEW_PR_NUMBER: ${{ steps.derive.outputs.pr_number }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PREVIEW_PR_NUMBER);
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.info("No PR number available for preview summary cleanup.");
+              return;
+            }
+
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: prNumber,
+            });
+
+            const previewComments = comments.filter((comment) =>
+              comment.body.startsWith("### Preview Summary")
+            );
+
+            for (const comment of previewComments) {
+              await github.rest.issues.deleteComment({
+                ...context.repo,
+                comment_id: comment.id,
+              });
+            }
+
+            core.info(
+              `Deleted ${previewComments.length} previous preview summary comment(s) for PR #${prNumber}.`
+            );
+
   preview-deploy:
     name: Deploy Preview Release
     runs-on:
@@ -610,9 +643,19 @@ jobs:
               issue_number: prNumber,
             });
 
-            const existing = comments.find((comment) =>
+            const previewComments = comments.filter((comment) =>
               comment.body.startsWith("### Preview Summary")
             );
+            const existing = previewComments[0];
+
+            if (previewComments.length > 1) {
+              for (const comment of previewComments.slice(1)) {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
 
             if (existing) {
               await github.rest.issues.updateComment({
@@ -716,9 +759,19 @@ jobs:
               issue_number: prNumber,
             });
 
-            const existing = comments.find((comment) =>
+            const previewComments = comments.filter((comment) =>
               comment.body.startsWith("### Preview Summary")
             );
+            const existing = previewComments[0];
+
+            if (previewComments.length > 1) {
+              for (const comment of previewComments.slice(1)) {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
 
             if (existing) {
               await github.rest.issues.updateComment({
