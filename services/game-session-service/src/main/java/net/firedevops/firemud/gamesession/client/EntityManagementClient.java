@@ -330,6 +330,11 @@ public final class EntityManagementClient
 
   public WearEquipmentItemResponse wearEquipment(
       SessionContext context, String itemId, String itemInstanceId) {
+    return wearEquipment(context, itemId, itemInstanceId, null);
+  }
+
+  public WearEquipmentItemResponse wearEquipment(
+      SessionContext context, String itemId, String itemInstanceId, String effectId) {
     String tenantId = Long.toString(context.tenantId());
     String characterId = Long.toString(context.characterId());
     WearEquipmentItemRequest.Builder request =
@@ -342,6 +347,9 @@ public final class EntityManagementClient
                     context, Long.toString(context.gameInstanceId()), context.roomInstanceId()));
     if (StringUtils.hasText(itemInstanceId)) {
       request.setItemInstanceId(itemInstanceId);
+    }
+    if (StringUtils.hasText(effectId)) {
+      request.setEffectId(effectId);
     }
     try {
       return callStub().wearEquipment(request.build());
@@ -376,19 +384,26 @@ public final class EntityManagementClient
   }
 
   public RemoveEquipmentResponse removeEquipment(SessionContext context, String slot) {
+    return removeEquipment(context, slot, null);
+  }
+
+  public RemoveEquipmentResponse removeEquipment(
+      SessionContext context, String slot, String effectId) {
     String tenantId = Long.toString(context.tenantId());
     String characterId = Long.toString(context.characterId());
-    RemoveEquipmentRequest request =
+    RemoveEquipmentRequest.Builder request =
         RemoveEquipmentRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
             .setSlot(slot)
             .setSessionAttestation(
                 sessionAttestation(
-                    context, Long.toString(context.gameInstanceId()), context.roomInstanceId()))
-            .build();
+                    context, Long.toString(context.gameInstanceId()), context.roomInstanceId()));
+    if (StringUtils.hasText(effectId)) {
+      request.setEffectId(effectId);
+    }
     try {
-      return callStub().removeEquipment(request);
+      return callStub().removeEquipment(request.build());
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
@@ -396,7 +411,7 @@ public final class EntityManagementClient
             ex);
         try {
           initClient();
-          return callStub().removeEquipment(request);
+          return callStub().removeEquipment(request.build());
         } catch (Exception retryEx) {
           logger.warn(
               "Failed to retry Entity Management equipment remove after channel reload", retryEx);
@@ -422,6 +437,18 @@ public final class EntityManagementClient
       String itemInstanceId,
       String stackFamilyKey,
       int quantity) {
+    return putItemIntoContainer(
+        context, containerInstanceId, itemId, itemInstanceId, stackFamilyKey, quantity, null);
+  }
+
+  public PutItemIntoContainerResponse putItemIntoContainer(
+      SessionContext context,
+      String containerInstanceId,
+      String itemId,
+      String itemInstanceId,
+      String stackFamilyKey,
+      int quantity,
+      String effectId) {
     String tenantId = Long.toString(context.tenantId());
     String characterId = Long.toString(context.characterId());
     PutItemIntoContainerRequest.Builder request =
@@ -439,6 +466,9 @@ public final class EntityManagementClient
     }
     if (stackFamilyKey != null && !stackFamilyKey.isBlank()) {
       request.setStackFamilyKey(stackFamilyKey);
+    }
+    if (StringUtils.hasText(effectId)) {
+      request.setEffectId(effectId);
     }
     try {
       return callStub().putItemIntoContainer(request.build());
@@ -485,6 +515,18 @@ public final class EntityManagementClient
       String itemInstanceId,
       String stackFamilyKey,
       int quantity) {
+    return takeItemFromContainer(
+        context, containerInstanceId, itemId, itemInstanceId, stackFamilyKey, quantity, null);
+  }
+
+  public TakeItemFromContainerResponse takeItemFromContainer(
+      SessionContext context,
+      String containerInstanceId,
+      String itemId,
+      String itemInstanceId,
+      String stackFamilyKey,
+      int quantity,
+      String effectId) {
     String tenantId = Long.toString(context.tenantId());
     String characterId = Long.toString(context.characterId());
     TakeItemFromContainerRequest.Builder request =
@@ -502,6 +544,9 @@ public final class EntityManagementClient
     }
     if (stackFamilyKey != null && !stackFamilyKey.isBlank()) {
       request.setStackFamilyKey(stackFamilyKey);
+    }
+    if (StringUtils.hasText(effectId)) {
+      request.setEffectId(effectId);
     }
     try {
       return callStub().takeItemFromContainer(request.build());
@@ -591,6 +636,26 @@ public final class EntityManagementClient
       String containerInstanceId,
       String stackFamilyKey,
       int quantity) {
+    return pickupItemFromRoom(
+        context,
+        roomInstanceId,
+        itemId,
+        itemInstanceId,
+        containerInstanceId,
+        stackFamilyKey,
+        quantity,
+        null);
+  }
+
+  public PickupItemFromRoomResponse pickupItemFromRoom(
+      SessionContext context,
+      String roomInstanceId,
+      String itemId,
+      String itemInstanceId,
+      String containerInstanceId,
+      String stackFamilyKey,
+      int quantity,
+      String effectId) {
     String tenantId = Long.toString(context.tenantId());
     String characterId = Long.toString(context.characterId());
     String gameInstanceId = Long.toString(context.gameInstanceId());
@@ -611,6 +676,9 @@ public final class EntityManagementClient
     }
     if (StringUtils.hasText(stackFamilyKey)) {
       request.setStackFamilyKey(stackFamilyKey);
+    }
+    if (StringUtils.hasText(effectId)) {
+      request.setEffectId(effectId);
     }
     try {
       return callStub().pickupItemFromRoom(request.build());
@@ -669,6 +737,26 @@ public final class EntityManagementClient
       String containerInstanceId,
       String stackFamilyKey,
       int quantity) {
+    return dropItemToRoom(
+        context,
+        roomInstanceId,
+        itemId,
+        itemInstanceId,
+        containerInstanceId,
+        stackFamilyKey,
+        quantity,
+        null);
+  }
+
+  public DropItemToRoomResponse dropItemToRoom(
+      SessionContext context,
+      String roomInstanceId,
+      String itemId,
+      String itemInstanceId,
+      String containerInstanceId,
+      String stackFamilyKey,
+      int quantity,
+      String effectId) {
     String tenantId = Long.toString(context.tenantId());
     String characterId = Long.toString(context.characterId());
     String gameInstanceId = Long.toString(context.gameInstanceId());
@@ -689,6 +777,9 @@ public final class EntityManagementClient
     }
     if (StringUtils.hasText(stackFamilyKey)) {
       request.setStackFamilyKey(stackFamilyKey);
+    }
+    if (StringUtils.hasText(effectId)) {
+      request.setEffectId(effectId);
     }
     try {
       return callStub().dropItemToRoom(request.build());

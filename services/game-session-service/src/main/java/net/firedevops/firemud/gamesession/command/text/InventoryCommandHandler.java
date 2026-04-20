@@ -29,13 +29,18 @@ public class InventoryCommandHandler {
 
   @Timed(value = "gamesession.command.inventory")
   public InventoryCommandHandlingResult handle(SessionContext context, TextCommand command) {
+    return handle(context, command, null);
+  }
+
+  public InventoryCommandHandlingResult handle(
+      SessionContext context, TextCommand command, String effectId) {
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
     return switch (command.type()) {
       case INVENTORY -> describeInventorySurface(context, command);
-      case GET -> mutateItem(context, command, true);
-      case DROP -> mutateItem(context, command, false);
+      case GET -> mutateItem(context, command, true, effectId);
+      case DROP -> mutateItem(context, command, false, effectId);
       default ->
           new InventoryCommandHandlingResult(
               CommandEnqueueResult.failure("INVALID_COMMAND", "Unsupported inventory command"),
@@ -151,7 +156,7 @@ public class InventoryCommandHandler {
   }
 
   private InventoryCommandHandlingResult mutateItem(
-      SessionContext context, TextCommand command, boolean pickup) {
+      SessionContext context, TextCommand command, boolean pickup, String effectId) {
     String verb = pickup ? "GET" : "DROP";
     if (command.itemReferencePayload().isEmpty()) {
       return new InventoryCommandHandlingResult(
@@ -195,14 +200,24 @@ public class InventoryCommandHandler {
               "Explicit item refs require quantity 1 for GET");
         }
         var response =
-            entityManagementClient.pickupItemFromRoom(
-                context,
-                context.roomInstanceId(),
-                item.itemId(),
-                item.explicitInstanceReference() ? item.itemInstanceId() : null,
-                item.containerInstanceId(),
-                item.stackFamilyKey(),
-                itemReference.quantity());
+            StringUtils.hasText(effectId)
+                ? entityManagementClient.pickupItemFromRoom(
+                    context,
+                    context.roomInstanceId(),
+                    item.itemId(),
+                    item.explicitInstanceReference() ? item.itemInstanceId() : null,
+                    item.containerInstanceId(),
+                    item.stackFamilyKey(),
+                    itemReference.quantity(),
+                    effectId)
+                : entityManagementClient.pickupItemFromRoom(
+                    context,
+                    context.roomInstanceId(),
+                    item.itemId(),
+                    item.explicitInstanceReference() ? item.itemInstanceId() : null,
+                    item.containerInstanceId(),
+                    item.stackFamilyKey(),
+                    itemReference.quantity());
         if (response.hasError()) {
           return inventoryMutationFailure(
               errorCode(response.getError().getCode()),
@@ -242,14 +257,24 @@ public class InventoryCommandHandler {
             "Explicit item refs require quantity 1 for DROP");
       }
       var response =
-          entityManagementClient.dropItemToRoom(
-              context,
-              context.roomInstanceId(),
-              item.itemId(),
-              item.explicitInstanceReference() ? item.itemInstanceId() : null,
-              item.containerInstanceId(),
-              item.stackFamilyKey(),
-              itemReference.quantity());
+          StringUtils.hasText(effectId)
+              ? entityManagementClient.dropItemToRoom(
+                  context,
+                  context.roomInstanceId(),
+                  item.itemId(),
+                  item.explicitInstanceReference() ? item.itemInstanceId() : null,
+                  item.containerInstanceId(),
+                  item.stackFamilyKey(),
+                  itemReference.quantity(),
+                  effectId)
+              : entityManagementClient.dropItemToRoom(
+                  context,
+                  context.roomInstanceId(),
+                  item.itemId(),
+                  item.explicitInstanceReference() ? item.itemInstanceId() : null,
+                  item.containerInstanceId(),
+                  item.stackFamilyKey(),
+                  itemReference.quantity());
       if (response.hasError()) {
         return inventoryMutationFailure(
             errorCode(response.getError().getCode()),

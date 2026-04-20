@@ -1,0 +1,179 @@
+package net.firedevops.firemud.gamesession.service.impl;
+
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.micrometer.core.instrument.MeterRegistry;
+import java.util.List;
+import java.util.Optional;
+import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.MoveCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.PreparedMoveCommandResult;
+import net.firedevops.firemud.gamesession.command.text.TextCommand;
+import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
+import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
+import net.firedevops.firemud.gamesession.command.text.TextCommandType;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
+import net.firedevops.firemud.gamesession.entity.TickEffect;
+import net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService;
+import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService;
+import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyResult;
+import net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryService;
+import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.service.SessionContextService;
+import org.springframework.stereotype.Service;
+
+@Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected service collaborators are framework-managed and retained internally")
+public final class DefaultDurableGameplayCommandExecutionService
+    implements DurableGameplayCommandExecutionService {
+  private final MeterRegistry meterRegistry;
+  private final TextCommandParser textCommandParser;
+  private final SessionContextService sessionContextService;
+  private final MoveCommandHandler moveCommandHandler;
+  private final ItemCommandHandler itemCommandHandler;
+  private final MovementEffectIdempotencyService movementEffectIdempotencyService;
+  private final PlayerOutputDeliveryService playerOutputDeliveryService;
+
+  public DefaultDurableGameplayCommandExecutionService(
+      MeterRegistry meterRegistry,
+      TextCommandParser textCommandParser,
+      SessionContextService sessionContextService,
+      MoveCommandHandler moveCommandHandler,
+      ItemCommandHandler itemCommandHandler,
+      MovementEffectIdempotencyService movementEffectIdempotencyService,
+      PlayerOutputDeliveryService playerOutputDeliveryService) {
+    this.meterRegistry = meterRegistry;
+    this.textCommandParser = textCommandParser;
+    this.sessionContextService = sessionContextService;
+    this.moveCommandHandler = moveCommandHandler;
+    this.itemCommandHandler = itemCommandHandler;
+    this.movementEffectIdempotencyService = movementEffectIdempotencyService;
+    this.playerOutputDeliveryService = playerOutputDeliveryService;
+  }
+
+  @Override
+  public Optional<DurableGameplayCommandExecutionResult> execute(
+      TickEffect effect, GameplayCommand command) {
+    TextCommand parsed = textCommandParser.parse(command.getCommandText());
+    if (parsed.type() != TextCommandType.MOVE && !isDurableItemMutation(parsed.type())) {
+      return Optional.empty();
+    }
+    Optional<SessionContext> maybeContext =
+        sessionContextService.findBySessionId(command.getSessionId());
+    if (maybeContext.isEmpty()) {
+      return Optional.of(
+          recordResult(
+              command,
+              new DurableGameplayCommandExecutionResult(
+                  "REJECTED",
+                  "COMPLETED",
+                  "NOT_APPLIED",
+                  "SESSION_NOT_FOUND",
+                  "Session context no longer exists for command execution")));
+    }
+    SessionContext context = maybeContext.orElseThrow();
+    if (isDurableItemMutation(parsed.type())) {
+      return Optional.of(executeItemMutation(context, parsed, command, effect.getEffectId()));
+    }
+    PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, parsed);
+    if (!prepared.commandResult().accepted()) {
+      if (prepared.responseOutput() != null) {
+        playerOutputDeliveryService.deliver(context, List.of(prepared.responseOutput()), true);
+      }
+      return Optional.of(
+          recordResult(
+              command,
+              new DurableGameplayCommandExecutionResult(
+                  "REJECTED",
+                  "COMPLETED",
+                  "NOT_APPLIED",
+                  prepared.commandResult().errorCode(),
+                  prepared.commandResult().errorMessage())));
+    }
+    MoveEffectApplyResult applyResult =
+        movementEffectIdempotencyService.apply(
+            effect.getEffectId(), context, prepared.updatedContext().roomInstanceId());
+    return Optional.of(recordResult(command, resultForApply(applyResult, prepared)));
+  }
+
+  private DurableGameplayCommandExecutionResult executeItemMutation(
+      SessionContext context, TextCommand parsed, GameplayCommand command, String effectId) {
+    TextCommandInterpretationResult result = itemCommandHandler.handle(context, parsed, effectId);
+    if (!result.outputs().isEmpty()) {
+      playerOutputDeliveryService.deliver(context, result.outputs(), true);
+    }
+    if (result.commandResult().accepted()) {
+      return recordResult(
+          command,
+          new DurableGameplayCommandExecutionResult("APPLIED", "APPLIED", "APPLIED", null, null));
+    }
+    return recordResult(
+        command,
+        new DurableGameplayCommandExecutionResult(
+            "REJECTED",
+            "COMPLETED",
+            "NOT_APPLIED",
+            result.commandResult().errorCode(),
+            result.commandResult().errorMessage()));
+  }
+
+  private DurableGameplayCommandExecutionResult resultForApply(
+      MoveEffectApplyResult applyResult, PreparedMoveCommandResult prepared) {
+    return switch (applyResult.status()) {
+      case APPLIED -> {
+        deliverPreparedOutputs(applyResult.context(), prepared);
+        yield new DurableGameplayCommandExecutionResult(
+            "APPLIED", "APPLIED", "APPLIED", null, null);
+      }
+      case REPLAYED -> {
+        deliverPreparedOutputs(applyResult.context(), prepared);
+        yield new DurableGameplayCommandExecutionResult(
+            "REPLAY_NOOP", "APPLIED", "REPLAY_NOOP", null, null);
+      }
+      case CONFLICT ->
+          new DurableGameplayCommandExecutionResult(
+              "REJECTED",
+              "COMPLETED",
+              "NOT_APPLIED",
+              "STALE_SESSION_CONTEXT",
+              "Movement effect expected an older room snapshot than the current session context");
+      case NOT_FOUND ->
+          new DurableGameplayCommandExecutionResult(
+              "REJECTED",
+              "COMPLETED",
+              "NOT_APPLIED",
+              "SESSION_NOT_FOUND",
+              "Session context no longer exists for command execution");
+    };
+  }
+
+  private void deliverPreparedOutputs(SessionContext context, PreparedMoveCommandResult prepared) {
+    if (prepared.responseOutput() == null) {
+      return;
+    }
+    playerOutputDeliveryService.deliver(context, List.of(prepared.responseOutput()), true);
+  }
+
+  private boolean isDurableItemMutation(TextCommandType type) {
+    return switch (type) {
+      case GET, DROP, PUT, TAKE, WEAR, REMOVE -> true;
+      default -> false;
+    };
+  }
+
+  private DurableGameplayCommandExecutionResult recordResult(
+      GameplayCommand command, DurableGameplayCommandExecutionResult result) {
+    meterRegistry
+        .counter(
+            "gamesession.durable.effect.execution",
+            "command",
+            command.getCommandName(),
+            "effect_status",
+            result.effectStatus(),
+            "gameplay_result",
+            result.gameplayResult())
+        .increment();
+    return result;
+  }
+}

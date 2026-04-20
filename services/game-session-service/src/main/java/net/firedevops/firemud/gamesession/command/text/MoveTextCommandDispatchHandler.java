@@ -5,10 +5,12 @@ import org.springframework.stereotype.Component;
 
 @Component
 final class MoveTextCommandDispatchHandler implements TextCommandDispatchHandler {
-  private final MoveCommandHandler moveHandler;
+  private final net.firedevops.firemud.gamesession.service.CommandService commandService;
 
-  MoveTextCommandDispatchHandler(MoveCommandHandler moveHandler) {
-    this.moveHandler = moveHandler;
+  MoveTextCommandDispatchHandler(
+      net.firedevops.firemud.gamesession.service.CommandService commandService,
+      MoveCommandHandler moveHandler) {
+    this.commandService = commandService;
   }
 
   @Override
@@ -18,10 +20,9 @@ final class MoveTextCommandDispatchHandler implements TextCommandDispatchHandler
 
   @Override
   public TextCommandInterpretationResult handle(TextCommandDispatchRequest request) {
-    MoveCommandHandlingResult moveResult =
-        moveHandler.handle(request.sessionContext().orElseThrow(), request.command());
-    List<net.firedevops.firemud.gamesession.presentation.PlayerOutput> outputs =
-        moveResult.responseOutput() == null ? List.of() : List.of(moveResult.responseOutput());
-    return new TextCommandInterpretationResult(moveResult.commandResult(), outputs);
+    net.firedevops.firemud.gamesession.dto.CommandEnqueueResult enqueueResult =
+        commandService.enqueue(
+            request.sessionId(), request.command().rawLine(), request.requiresSoloTick());
+    return new TextCommandInterpretationResult(enqueueResult, List.of());
   }
 }

@@ -23,7 +23,13 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 6. [02.1.6 Global Account and Tenant Authorization Convergence](./02.1.6-task-list-global-account-and-tenant-authorization-convergence-vertical-slice.md)
    Remaining: build on the now-live account-identity-first player bootstrap, canonical `tenantAdmin` shared-auth model, account-owned lifecycle enforcement, and non-public realm grant substrate by reconciling the remaining docs/runtime reads.
 7. [02.18.8 Tick Batch and Effect Ledger Hardening](./02.18.8-task-list-tick-batch-and-effect-ledger-hardening-vertical-slice.md)
-   Remaining: build on the now-live first durable batch/effect substrate by adding deeper execution truth beyond the current Redis stage/drain seam, then carry that identity into fencing and downstream idempotent mutation work.
+   Remaining: build on the now-live durable batch/effect substrate, stale-fence batch drain, and post-drain execution seam now serving movement plus first item/equipment/container mutations by broadening durable execution truth into later command families and domain guards.
+8. [02.18.9 Region Epoch, Fencing, and Runtime Ownership](./02.18.9-task-list-region-epoch-fencing-and-runtime-ownership-vertical-slice.md)
+   Remaining: the durable owner row, pause/resume epoch bumps, stale-fence batch rejection, last-committed-batch pointer, and bounded ownership-status query are now live at the current game-instance boundary; the next gap is carrying that model into true region ownership and later effect-application seams.
+9. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
+   Remaining: the first ledger-side `effectKey`, deterministic `effectId`, movement-backed replay/no-op seam, Entity Management item mutation response replay guard, and first apply/replay metrics are now live; the next gap is later domain guard consumers.
+10. [02.18.11 Migrate Live Gameplay Commands Onto the Durable Execution Path](./02.18.11-task-list-migrate-live-gameplay-commands-onto-durable-execution-path-vertical-slice.md)
+   Remaining: movement plus `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE` are now migrated durable command families with the first downstream Entity Management replay guard; the next gap is any later state-changing command family and its owning service guard.
 
 ### 2. Active architecture follow-through
 
@@ -73,25 +79,14 @@ These are not broad audit topics anymore; they are real future slices with known
 12. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
 13. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
 
-### 4. Discussion-gated follow-ups
-
-These are now explicitly tracked and should get a deliberate discussion pass before implementation starts.
-
-1. [02.18.9 Region Epoch, Fencing, and Runtime Ownership](./02.18.9-task-list-region-epoch-fencing-and-runtime-ownership-vertical-slice.md)
-   Suggested third heavy-substrate slice: land durable region ownership and stale-executor fencing once batch/effect identity exists.
-2. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
-   Suggested fourth heavy-substrate slice: make replay/no-op behavior concrete with durable `EffectId` handling and idempotent apply guards.
-3. [02.18.11 Migrate Live Gameplay Commands Onto the Durable Execution Path](./02.18.11-task-list-migrate-live-gameplay-commands-onto-durable-execution-path-vertical-slice.md)
-   Suggested migration slice after the earlier substrate exists: start with movement and other direct state-changing gameplay commands.
-
-### 5. Lower-priority platform/settings expansion
+### 4. Lower-priority platform/settings expansion
 
 These are still valid, but they are behind the current gameplay/runtime slices.
 
 1. [06.1 Inventory and Equipment Settings](./06.1-task-list-inventory-and-equipment-settings-vertical-slice.md)
 2. [02.9.1 Settings Presets and Operator Baselines](./02.9.1-task-list-settings-presets-and-operator-baselines-vertical-slice.md)
 
-### 6. Manual QA / operator-proof tails
+### 5. Manual QA / operator-proof tails
 
 These are not major design problems, but they are not fully closed.
 

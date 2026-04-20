@@ -117,9 +117,29 @@ Each running game instance has a pinned `scriptPatchVersion` alongside its `runt
 - Script-generated commands accepted from the Automation & Scripting Service must carry the originating `scriptPatchVersion`, `scriptId`, and `scriptEventId`.
 - On execution, Game Session enforces a version fence: if a queued command’s `scriptPatchVersion` does not match the instance’s currently pinned value, it must not be executed and the drop must be observable for operators.
 
-Control-plane operations that change the pinned patch are admin-only and idempotent. Their required request/response fields are specified in [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md), the associated event contracts are specified in [Scripting Control Plane Events](../../system-architecture-scripting-control-plane-events.md), and the Game Session API surface is represented in `protos/game-session/v1/game_session_service.proto` under `GameSessionControlPlaneService`.
+Control-plane operations that change the pinned patch are admin-only and idempotent. Their required request/response fields are specified in [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md), the associated event contracts are specified in [Scripting Control Plane Events](../../system-architecture-scripting-control-plane-events.md), and the Game Session API surface is represented in `protos/game-session/v1/game_session_service.proto` under `GameSessionControlPlaneService`. The same control-plane surface now also exposes bounded runtime durability inspection, including durable gameplay-command status and the current owner-of-record runtime ownership row for a `{tenantId, gameInstanceId}` queue boundary.
 
 For cross-service invariants, see [Scripting Contracts](../../system-architecture-scripting-contracts.md).
+
+## Durable Command and Effect Execution
+
+Game Session now has a real current-boundary durable gameplay execution seam instead of stopping at queue staging:
+
+- accepted gameplay commands persist a durable command ledger row with both a human-safe sanitized text projection and the canonical raw command payload used for later execution;
+- the tick runtime stages Redis queue work into durable `tick_batch` / `tick_effect` rows before drain commit;
+- after drain commit, Game Session resumes from any durable `DRAINED` effects for that queue boundary and executes the supported command families from the ledger itself rather than assuming Redis drain already implies terminal gameplay work.
+
+The first migrated command families are movement plus the first item/equipment/container mutation surface:
+
+- built-in movement input now enqueues durably instead of performing its authoritative room mutation directly in the dispatch handler;
+- movement execution reuses the shared move-planning logic to preserve player-visible semantics, but the authoritative room change now flows through one dedicated idempotent movement-apply seam keyed by `effectId`;
+- duplicate movement effect application converges to replay/no-op rather than a second room mutation;
+- player-visible movement output is delivered asynchronously through the same active-websocket plus screen-buffer-aware delivery path used for runtime recipient delivery;
+- item/equipment/container mutation commands, currently `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE`, enqueue durably from the player-facing command path and execute from the durable post-drain effect executor before their player-visible outputs are delivered;
+- Game Session passes the durable `tick_effect.effectId` to Entity Management for those item/equipment/container mutations so duplicate downstream delivery can replay the stored domain response instead of applying the mutation again;
+- read-only item views such as `INVENTORY`, `EQUIPMENT`, and `CONTAINER` remain direct view commands because they do not mutate authoritative gameplay state.
+
+Other command families still need to migrate onto this same durable seam. Pure view/meta commands may remain direct until there is a concrete reason to queue them, but state-changing gameplay families should not introduce new synchronous bypasses. The next durability gap is pushing the same effect-idempotent replay/no-op pattern through later domain mutation boundaries, not merely routing more commands through the Game Session ledger.
 
 ## Saga Participation
 

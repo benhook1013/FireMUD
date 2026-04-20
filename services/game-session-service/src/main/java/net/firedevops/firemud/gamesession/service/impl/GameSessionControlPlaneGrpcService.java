@@ -10,8 +10,10 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
+import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
+import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -24,6 +26,8 @@ import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
+import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
@@ -34,6 +38,7 @@ import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.RuntimeOwnershipStatus;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
@@ -51,6 +56,7 @@ public final class GameSessionControlPlaneGrpcService
 
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
+  private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final TickService tickService;
   private final MeterRegistry meterRegistry;
@@ -61,11 +67,13 @@ public final class GameSessionControlPlaneGrpcService
   public GameSessionControlPlaneGrpcService(
       GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       TickService tickService,
       MeterRegistry meterRegistry) {
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
+    this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
@@ -220,6 +228,48 @@ public final class GameSessionControlPlaneGrpcService
       logger.error("GetGameplayCommandStatus failed", ex);
       GetGameplayCommandStatusResponse response =
           GetGameplayCommandStatusResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getRuntimeOwnershipStatus")
+  public void getRuntimeOwnershipStatus(
+      GetRuntimeOwnershipStatusRequest request,
+      StreamObserver<GetRuntimeOwnershipStatusResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      RuntimeRegionStatus status =
+          runtimeRegionStatusRepository
+              .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
+              .orElseThrow(() -> new IllegalArgumentException("Runtime ownership not found"));
+      GetRuntimeOwnershipStatusResponse response =
+          GetRuntimeOwnershipStatusResponse.newBuilder().setOwnership(toStatus(status)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      GetRuntimeOwnershipStatusResponse response =
+          GetRuntimeOwnershipStatusResponse.newBuilder()
+              .setError(authorizationError("GetRuntimeOwnershipStatus", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      GetRuntimeOwnershipStatusResponse response =
+          GetRuntimeOwnershipStatusResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("GetRuntimeOwnershipStatus failed", ex);
+      GetRuntimeOwnershipStatusResponse response =
+          GetRuntimeOwnershipStatusResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build();
       responseObserver.onNext(response);
@@ -474,6 +524,23 @@ public final class GameSessionControlPlaneGrpcService
         .setReason(entry.reason())
         .setControlPlaneRequestId(entry.controlPlaneRequestId())
         .setOccurredAtMs(entry.occurredAt().toEpochMilli())
+        .build();
+  }
+
+  private RuntimeOwnershipStatus toStatus(RuntimeRegionStatus status) {
+    return RuntimeOwnershipStatus.newBuilder()
+        .setTenantId(Long.toString(status.getTenantId()))
+        .setGameInstanceId(Long.toString(status.getGameInstanceId()))
+        .setRegionEpoch(status.getRegionEpoch())
+        .setExecutorFence(status.getExecutorFence())
+        .setOwnerService(status.getOwnerService())
+        .setOwnerInstanceId(status.getOwnerInstanceId())
+        .setPaused(status.isPaused())
+        .setLastCommittedTickBatchId(
+            status.getLastCommittedTickBatchId() == null
+                ? ""
+                : status.getLastCommittedTickBatchId())
+        .setUpdatedAtMs(status.getUpdatedAt() == null ? 0L : status.getUpdatedAt().toEpochMilli())
         .build();
   }
 

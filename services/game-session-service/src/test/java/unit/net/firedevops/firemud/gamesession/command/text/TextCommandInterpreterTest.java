@@ -606,26 +606,25 @@ class TextCommandInterpreterTest {
   }
 
   @Test
-  void wearAfterPlayReturnsSuccessWithMutationNotice() {
+  void wearAfterPlayEnqueuesDurableMutation() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
-    when(entityManagementClient.listContainerContents(
-            Mockito.any(SessionContext.class), Mockito.eq("ITEM-009")))
-        .thenReturn(ListContainerContentsResponse.newBuilder().build());
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "WEAR Torch", false);
 
     assertTrue(interpretation.commandResult().accepted());
     assertEquals(
-        List.of(PlayerOutputKind.MESSAGE, PlayerOutputKind.PROMPT),
+        List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals(
-        "OK WEAR\nYou wear Torch.\n\ndemo> ", renderedResponse("WEAR Torch", interpretation));
+    assertEquals("demo> ", renderedResponse("WEAR Torch", interpretation));
+    verify(commandService).enqueue("1", "WEAR Torch", false);
+    verify(entityManagementClient, never())
+        .wearEquipment(Mockito.any(SessionContext.class), Mockito.anyString(), Mockito.anyString());
   }
 
   @Test
-  void removeAfterPlayReturnsSuccessWithMutationNotice() {
+  void removeAfterPlayEnqueuesDurableMutation() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
 
@@ -634,14 +633,16 @@ class TextCommandInterpreterTest {
 
     assertTrue(interpretation.commandResult().accepted());
     assertEquals(
-        List.of(PlayerOutputKind.MESSAGE, PlayerOutputKind.PROMPT),
+        List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals(
-        "OK REMOVE\nYou remove Torch.\n\ndemo> ", renderedResponse("REMOVE Torch", interpretation));
+    assertEquals("demo> ", renderedResponse("REMOVE Torch", interpretation));
+    verify(commandService).enqueue("1", "REMOVE Torch", false);
+    verify(entityManagementClient, never())
+        .removeEquipment(Mockito.any(SessionContext.class), Mockito.anyString());
   }
 
   @Test
-  void getAfterPlayReturnsSuccessWithMutationNotice() {
+  void getAfterPlayEnqueuesDurableMutation() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
 
@@ -649,31 +650,92 @@ class TextCommandInterpreterTest {
 
     assertTrue(interpretation.commandResult().accepted());
     assertEquals(
-        List.of(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals(
-        "OK GET\nYou pick up Torch.\nInventory:\n- Torch x2 (A small torch)\n\n" + "demo> ",
-        renderedResponse("GET Torch", interpretation));
+    assertEquals("demo> ", renderedResponse("GET Torch", interpretation));
+    verify(commandService).enqueue("1", "GET Torch", false);
+    verify(entityManagementClient, never())
+        .pickupItemFromRoom(
+            Mockito.any(SessionContext.class),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.nullable(String.class),
+            Mockito.nullable(String.class),
+            Mockito.nullable(String.class),
+            Mockito.anyInt());
   }
 
   @Test
-  void dropAfterPlayReturnsSuccessWithMutationNotice() {
+  void dropAfterPlayEnqueuesDurableMutation() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
-    when(entityManagementClient.listContainerContents(
-            Mockito.any(SessionContext.class), Mockito.eq("ITEM-009")))
-        .thenReturn(ListContainerContentsResponse.newBuilder().build());
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "DROP Torch", false);
 
     assertTrue(interpretation.commandResult().accepted());
     assertEquals(
-        List.of(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
+    assertEquals("demo> ", renderedResponse("DROP Torch", interpretation));
+    verify(commandService).enqueue("1", "DROP Torch", false);
+    verify(entityManagementClient, never())
+        .dropItemToRoom(
+            Mockito.any(SessionContext.class),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.nullable(String.class),
+            Mockito.nullable(String.class),
+            Mockito.nullable(String.class),
+            Mockito.anyInt());
+  }
+
+  @Test
+  void putAfterPlayEnqueuesDurableMutation() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "PUT Ration INTO Torch", false);
+
+    assertTrue(interpretation.commandResult().accepted());
     assertEquals(
-        "OK DROP\nYou drop Torch.\nInventory:\n- Torch x2 (A small torch)\n\n" + "demo> ",
-        renderedResponse("DROP Torch", interpretation));
+        List.of(PlayerOutputKind.PROMPT),
+        interpretation.outputs().stream().map(PlayerOutput::kind).toList());
+    assertEquals("demo> ", renderedResponse("PUT Ration INTO Torch", interpretation));
+    verify(commandService).enqueue("1", "PUT Ration INTO Torch", false);
+    verify(entityManagementClient, never())
+        .putItemIntoContainer(
+            Mockito.any(SessionContext.class),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.nullable(String.class),
+            Mockito.nullable(String.class),
+            Mockito.anyInt());
+  }
+
+  @Test
+  void takeAfterPlayEnqueuesDurableMutation() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "TAKE Ration FROM Torch", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertEquals(
+        List.of(PlayerOutputKind.PROMPT),
+        interpretation.outputs().stream().map(PlayerOutput::kind).toList());
+    assertEquals("demo> ", renderedResponse("TAKE Ration FROM Torch", interpretation));
+    verify(commandService).enqueue("1", "TAKE Ration FROM Torch", false);
+    verify(entityManagementClient, never())
+        .takeItemFromContainer(
+            Mockito.any(SessionContext.class),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.nullable(String.class),
+            Mockito.nullable(String.class),
+            Mockito.anyInt());
   }
 
   @Test
@@ -795,26 +857,16 @@ class TextCommandInterpreterTest {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
 
-    SessionContext played = sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
-    when(moveHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
-        .thenReturn(
-            new MoveCommandHandlingResult(
-                CommandEnqueueResult.success(),
-                PlayerOutput.view(
-                    new LookViewOutput(
-                        "R-205",
-                        "North Hall",
-                        "North Hall text",
-                        "Detailed north hall text",
-                        true,
-                        LookViewOutput.RefreshReason.MOVE_REFRESH,
-                        java.util.List.of(),
-                        java.util.List.of()))));
+    when(commandService.enqueue("1", "s", false))
+        .thenReturn(CommandEnqueueResult.success("cmd-77"));
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("1", "s", false);
 
     assertTrue(interpretation.commandResult().accepted());
-    verify(moveHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
+    assertEquals(
+        List.of(PlayerOutputKind.PROMPT),
+        interpretation.outputs().stream().map(PlayerOutput::kind).toList());
+    verify(commandService).enqueue("1", "s", false);
   }
 
   @Test
@@ -865,38 +917,17 @@ class TextCommandInterpreterTest {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
 
-    SessionContext played = sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
-    when(moveHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
-        .thenReturn(
-            new MoveCommandHandlingResult(
-                CommandEnqueueResult.success(),
-                PlayerOutput.view(
-                    new LookViewOutput(
-                        "R-205",
-                        "North Hall",
-                        "North Hall text",
-                        "Detailed north hall text",
-                        true,
-                        LookViewOutput.RefreshReason.MOVE_REFRESH,
-                        java.util.List.of(),
-                        java.util.List.of()))));
+    when(commandService.enqueue("1", "MOVE north", false))
+        .thenReturn(CommandEnqueueResult.success("cmd-move-1"));
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "MOVE north", false);
 
     assertTrue(interpretation.commandResult().accepted());
-    assertEquals(2, interpretation.outputs().size());
-    assertEquals(
-        net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.VIEW,
-        interpretation.outputs().get(0).kind());
-    assertEquals(
-        "North Hall text",
-        ((LookViewOutput) interpretation.outputs().get(0).payload()).shortDescription());
-    assertEquals(
-        net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.PROMPT,
-        interpretation.outputs().get(1).kind());
-    assertEquals("demo> ", interpretation.outputs().get(1).text());
-    verify(moveHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
+    assertEquals(1, interpretation.outputs().size());
+    assertEquals(PlayerOutputKind.PROMPT, interpretation.outputs().get(0).kind());
+    assertEquals("demo> ", interpretation.outputs().get(0).text());
+    verify(commandService).enqueue("1", "MOVE north", false);
   }
 
   private String renderedResponse(

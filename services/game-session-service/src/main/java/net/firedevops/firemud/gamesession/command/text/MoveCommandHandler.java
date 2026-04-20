@@ -36,6 +36,15 @@ public class MoveCommandHandler {
   private final MeterRegistry meterRegistry;
 
   public MoveCommandHandlingResult handle(SessionContext context, TextCommand command) {
+    PreparedMoveCommandResult prepared = prepare(context, command);
+    if (!prepared.success()) {
+      return new MoveCommandHandlingResult(prepared.commandResult(), prepared.responseOutput());
+    }
+    sessionContextService.save(prepared.updatedContext());
+    return new MoveCommandHandlingResult(prepared.commandResult(), prepared.responseOutput());
+  }
+
+  public PreparedMoveCommandResult prepare(SessionContext context, TextCommand command) {
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
@@ -44,7 +53,7 @@ public class MoveCommandHandler {
       meterRegistry.counter(INVOCATIONS_METRIC).increment();
       String direction = extractDirection(command);
       if (!StringUtils.hasText(direction)) {
-        return failure(
+        return failureResult(
             "INVALID_ARGUMENT",
             "MOVE command requires a direction",
             "error.move.direction-required",
@@ -73,7 +82,7 @@ public class MoveCommandHandler {
               response.hasError() && StringUtils.hasText(response.getError().getMessage())
                   ? response.getError().getMessage()
                   : "Move unavailable";
-          return failure(
+          return failureResult(
               code,
               errorMessage,
               moveErrorMessageKey(code),
@@ -85,7 +94,7 @@ public class MoveCommandHandler {
         }
 
         if (!response.hasDestinationLook()) {
-          return failure(
+          return failureResult(
               "MOVE_UNAVAILABLE",
               "Move destination unavailable",
               "error.move.destination-unavailable",
@@ -97,11 +106,11 @@ public class MoveCommandHandler {
         }
 
         SessionContext updatedContext = updatedContext(context, response);
-        sessionContextService.save(updatedContext);
         if (!settingsResolver.movement(updatedContext).postMoveLookEnabled()) {
-          return new MoveCommandHandlingResult(CommandEnqueueResult.success(), null);
+          return new PreparedMoveCommandResult(
+              CommandEnqueueResult.success(), null, updatedContext);
         }
-        return new MoveCommandHandlingResult(
+        return new PreparedMoveCommandResult(
             CommandEnqueueResult.success(),
             lookCommandHandler.toPlayerOutput(
                 updatedContext,
@@ -110,9 +119,10 @@ public class MoveCommandHandler {
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
                     .MOVE_REFRESH,
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .PREFER_BRIEF));
+                    .PREFER_BRIEF),
+            updatedContext);
       } catch (RuntimeException ex) {
-        return failure(
+        return failureResult(
             "MOVE_UNAVAILABLE",
             "Game Logic unavailable",
             "error.move.unavailable",
@@ -145,7 +155,7 @@ public class MoveCommandHandler {
         current.bootstrapGameInstanceId());
   }
 
-  private MoveCommandHandlingResult failure(
+  private PreparedMoveCommandResult failureResult(
       String errorCode,
       String message,
       String messageKey,
@@ -173,10 +183,11 @@ public class MoveCommandHandler {
           message,
           ex);
     }
-    return new MoveCommandHandlingResult(
+    return new PreparedMoveCommandResult(
         CommandEnqueueResult.failure(errorCode, message),
         net.firedevops.firemud.gamesession.presentation.PlayerOutput.error(
-            errorCode, message, messageKey, arguments));
+            errorCode, message, messageKey, arguments),
+        null);
   }
 
   private String moveErrorMessageKey(String errorCode) {

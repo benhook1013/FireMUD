@@ -24,14 +24,19 @@ public class ItemCommandHandler {
   }
 
   public TextCommandInterpretationResult handle(SessionContext context, TextCommand command) {
+    return handle(context, command, null);
+  }
+
+  public TextCommandInterpretationResult handle(
+      SessionContext context, TextCommand command, String effectId) {
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
     return switch (command.type()) {
       case INVENTORY, GET, DROP ->
-          toInterpretationResult(inventoryHandler.handle(context, command));
-      case EQUIPMENT, WEAR, REMOVE -> equipmentHandler.handle(context, command);
-      case CONTAINER, PUT, TAKE -> containerHandler.handle(context, command);
+          toInterpretationResult(inventoryHandler.handle(context, command, effectId));
+      case EQUIPMENT, WEAR, REMOVE -> equipmentHandler.handle(context, command, effectId);
+      case CONTAINER, PUT, TAKE -> containerHandler.handle(context, command, effectId);
       default ->
           new TextCommandInterpretationResult(
               CommandEnqueueResult.failure("INVALID_COMMAND", "Unsupported item command"));

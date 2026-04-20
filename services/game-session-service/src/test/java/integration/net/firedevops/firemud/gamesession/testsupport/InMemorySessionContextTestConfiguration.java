@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.testsupport;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -16,6 +17,13 @@ public class InMemorySessionContextTestConfiguration {
   @Primary
   SessionContextService sessionContextService() {
     return new InMemorySessionContextService();
+  }
+
+  @Bean
+  @Primary
+  MovementEffectIdempotencyService movementEffectIdempotencyService(
+      SessionContextService sessionContextService) {
+    return new InMemoryMovementEffectIdempotencyService(sessionContextService);
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {
@@ -89,6 +97,56 @@ public class InMemorySessionContextTestConfiguration {
 
     private boolean hasGameplayIdentity(SessionContext context) {
       return context.gameInstanceId() > 0 && context.characterId() > 0;
+    }
+  }
+
+  private static final class InMemoryMovementEffectIdempotencyService
+      implements MovementEffectIdempotencyService {
+    private final SessionContextService sessionContextService;
+    private final Map<String, SessionContext> appliedEffects = new ConcurrentHashMap<>();
+
+    private InMemoryMovementEffectIdempotencyService(SessionContextService sessionContextService) {
+      this.sessionContextService = sessionContextService;
+    }
+
+    @Override
+    public synchronized MoveEffectApplyResult apply(
+        String effectId, SessionContext expectedContext, String destinationRoomInstanceId) {
+      SessionContext current =
+          sessionContextService.findBySessionId(expectedContext.sessionId()).orElse(null);
+      if (current == null) {
+        return new MoveEffectApplyResult(MoveEffectApplyStatus.NOT_FOUND, null);
+      }
+      SessionContext replayed = appliedEffects.get(effectKey(expectedContext, effectId));
+      if (replayed != null) {
+        return new MoveEffectApplyResult(MoveEffectApplyStatus.REPLAYED, replayed);
+      }
+      if (current.gameInstanceId() != expectedContext.gameInstanceId()
+          || current.characterId() != expectedContext.characterId()
+          || !java.util.Objects.equals(
+              current.roomInstanceId(), expectedContext.roomInstanceId())) {
+        return new MoveEffectApplyResult(MoveEffectApplyStatus.CONFLICT, current);
+      }
+      SessionContext updated =
+          new SessionContext(
+              current.sessionId(),
+              current.tenantId(),
+              current.accountId(),
+              current.loginName(),
+              current.characterId(),
+              current.characterName(),
+              current.gameInstanceId(),
+              destinationRoomInstanceId,
+              current.jwt(),
+              current.localeTag(),
+              current.bootstrapGameInstanceId());
+      sessionContextService.save(updated);
+      appliedEffects.put(effectKey(expectedContext, effectId), updated);
+      return new MoveEffectApplyResult(MoveEffectApplyStatus.APPLIED, updated);
+    }
+
+    private String effectKey(SessionContext context, String effectId) {
+      return context.tenantId() + ":" + context.sessionId() + ":" + effectId;
     }
   }
 }

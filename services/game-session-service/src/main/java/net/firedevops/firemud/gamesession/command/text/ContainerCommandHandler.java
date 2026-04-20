@@ -34,13 +34,18 @@ public class ContainerCommandHandler {
 
   @Timed(value = "gamesession.command.container")
   public TextCommandInterpretationResult handle(SessionContext context, TextCommand command) {
+    return handle(context, command, null);
+  }
+
+  public TextCommandInterpretationResult handle(
+      SessionContext context, TextCommand command, String effectId) {
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
     return switch (command.type()) {
       case CONTAINER -> describeContainer(context, command);
-      case PUT -> putIntoContainer(context, command);
-      case TAKE -> takeFromContainer(context, command);
+      case PUT -> putIntoContainer(context, command, effectId);
+      case TAKE -> takeFromContainer(context, command, effectId);
       default ->
           new TextCommandInterpretationResult(
               CommandEnqueueResult.failure("INVALID_COMMAND", "Unsupported container command"),
@@ -83,7 +88,7 @@ public class ContainerCommandHandler {
   }
 
   private TextCommandInterpretationResult putIntoContainer(
-      SessionContext context, TextCommand command) {
+      SessionContext context, TextCommand command, String effectId) {
     if (command.containerTransferPayload().isEmpty()) {
       return invalidArgument("PUT <item> INTO <container>");
     }
@@ -121,19 +126,32 @@ public class ContainerCommandHandler {
         return containerInvalidArgument("Explicit item refs require quantity 1 for PUT");
       }
 
+      String selectedItemInstanceId =
+          ContainerIdentitySupport.matchesExplicitReference(inventoryItem, transfer.itemReference())
+                  && !isStackSelection(inventoryItem, transfer.itemReference())
+                  && !inventoryItem.getItemInstanceId().isBlank()
+              ? inventoryItem.getItemInstanceId()
+              : null;
+      String selectedStackFamilyKey = stackFamilyKey(inventoryItem, transfer.itemReference());
+      String containerInstanceId =
+          ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow());
       var response =
-          entityManagementClient.putItemIntoContainer(
-              context,
-              ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
-              inventoryItem.getItemId(),
-              ContainerIdentitySupport.matchesExplicitReference(
-                          inventoryItem, transfer.itemReference())
-                      && !isStackSelection(inventoryItem, transfer.itemReference())
-                      && !inventoryItem.getItemInstanceId().isBlank()
-                  ? inventoryItem.getItemInstanceId()
-                  : null,
-              stackFamilyKey(inventoryItem, transfer.itemReference()),
-              transfer.quantity());
+          StringUtils.hasText(effectId)
+              ? entityManagementClient.putItemIntoContainer(
+                  context,
+                  containerInstanceId,
+                  inventoryItem.getItemId(),
+                  selectedItemInstanceId,
+                  selectedStackFamilyKey,
+                  transfer.quantity(),
+                  effectId)
+              : entityManagementClient.putItemIntoContainer(
+                  context,
+                  containerInstanceId,
+                  inventoryItem.getItemId(),
+                  selectedItemInstanceId,
+                  selectedStackFamilyKey,
+                  transfer.quantity());
       if (response.hasError()) {
         return containerFailure(
             errorCode(response.getError().getCode()),
@@ -167,7 +185,7 @@ public class ContainerCommandHandler {
   }
 
   private TextCommandInterpretationResult takeFromContainer(
-      SessionContext context, TextCommand command) {
+      SessionContext context, TextCommand command, String effectId) {
     if (command.containerTransferPayload().isEmpty()) {
       return invalidArgument("TAKE <item> FROM <container>");
     }
@@ -215,19 +233,32 @@ public class ContainerCommandHandler {
         return containerInvalidArgument("Explicit item refs require quantity 1 for TAKE");
       }
 
+      String selectedItemInstanceId =
+          ContainerIdentitySupport.matchesExplicitReference(containerItem, transfer.itemReference())
+                  && !isStackSelection(containerItem, transfer.itemReference())
+                  && !containerItem.getItemInstanceId().isBlank()
+              ? containerItem.getItemInstanceId()
+              : null;
+      String selectedStackFamilyKey = stackFamilyKey(containerItem, transfer.itemReference());
+      String containerInstanceId =
+          ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow());
       var response =
-          entityManagementClient.takeItemFromContainer(
-              context,
-              ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
-              containerItem.getItemId(),
-              ContainerIdentitySupport.matchesExplicitReference(
-                          containerItem, transfer.itemReference())
-                      && !isStackSelection(containerItem, transfer.itemReference())
-                      && !containerItem.getItemInstanceId().isBlank()
-                  ? containerItem.getItemInstanceId()
-                  : null,
-              stackFamilyKey(containerItem, transfer.itemReference()),
-              transfer.quantity());
+          StringUtils.hasText(effectId)
+              ? entityManagementClient.takeItemFromContainer(
+                  context,
+                  containerInstanceId,
+                  containerItem.getItemId(),
+                  selectedItemInstanceId,
+                  selectedStackFamilyKey,
+                  transfer.quantity(),
+                  effectId)
+              : entityManagementClient.takeItemFromContainer(
+                  context,
+                  containerInstanceId,
+                  containerItem.getItemId(),
+                  selectedItemInstanceId,
+                  selectedStackFamilyKey,
+                  transfer.quantity());
       if (response.hasError()) {
         return containerFailure(
             errorCode(response.getError().getCode()),

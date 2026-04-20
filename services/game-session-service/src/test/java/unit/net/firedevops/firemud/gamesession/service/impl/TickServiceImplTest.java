@@ -13,6 +13,7 @@ import java.lang.reflect.Field;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +38,8 @@ class TickServiceImplTest {
   private net.firedevops.firemud.gamesession.repository.TickBatchRepository tickBatchRepository;
   private net.firedevops.firemud.gamesession.repository.TickEffectRepository tickEffectRepository;
   private SessionContextService sessionContextService;
+  private net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService
+      durableGameplayCommandExecutionService;
   private TickService service;
 
   @BeforeEach
@@ -68,6 +71,10 @@ class TickServiceImplTest {
     tickEffectRepository =
         mock(net.firedevops.firemud.gamesession.repository.TickEffectRepository.class);
     sessionContextService = mock(SessionContextService.class);
+    durableGameplayCommandExecutionService =
+        mock(
+            net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService
+                .class);
     service =
         new TickServiceImpl(
             redisTemplate,
@@ -79,7 +86,8 @@ class TickServiceImplTest {
             runtimeRegionStatusRepository,
             tickBatchRepository,
             tickEffectRepository,
-            sessionContextService);
+            sessionContextService,
+            durableGameplayCommandExecutionService);
     ((TickServiceImpl) service).init();
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
     instance.setTenantId(1L);
@@ -227,6 +235,29 @@ class TickServiceImplTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void processTickPersistsDeterministicEffectIdentity() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-1")));
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(runtimeOwnership(1L, 2L, 1L, "fence-a", false)));
+
+    service.processTick(1L, 2L);
+
+    ArgumentCaptor<List<net.firedevops.firemud.gamesession.entity.TickEffect>> effectsCaptor =
+        ArgumentCaptor.forClass(List.class);
+    verify(tickEffectRepository).saveAll(effectsCaptor.capture());
+    net.firedevops.firemud.gamesession.entity.TickEffect effect = effectsCaptor.getValue().get(0);
+    org.junit.jupiter.api.Assertions.assertEquals("command:cmd-1", effect.getEffectKey());
+    org.junit.jupiter.api.Assertions.assertTrue(effect.getEffectId().startsWith("tfx-"));
+    org.junit.jupiter.api.Assertions.assertEquals(64, effect.getEffectId().length());
+  }
+
+  @Test
   void processTickFinalizesExistingReplayBatchBeforeNewStage() {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
@@ -237,8 +268,12 @@ class TickServiceImplTest {
     existingBatch.setTickBatchId("tb-existing");
     existingBatch.setTenantId(1L);
     existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
     existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(runtimeOwnership(1L, 2L, 1L, "fence-a", false)));
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
         .thenReturn(java.util.Optional.of(existingBatch));
@@ -253,6 +288,65 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals("DRAINED", existingBatch.getStatus());
   }
 
+  @Test
+  void processTickRejectsStaleOwnershipBeforeDrainCommit() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-1")));
+    net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus initialStatus =
+        runtimeOwnership(1L, 2L, 1L, "fence-a", false);
+    net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus staleStatus =
+        runtimeOwnership(1L, 2L, 2L, "fence-b", true);
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(initialStatus), Optional.of(staleStatus));
+
+    service.processTick(1L, 2L);
+
+    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.TickBatch> batchCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.TickBatch.class);
+    verify(tickBatchRepository, org.mockito.Mockito.atLeastOnce()).save(batchCaptor.capture());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        batchCaptor.getAllValues().stream()
+            .anyMatch(
+                batch ->
+                    "ABANDONED".equals(batch.getStatus())
+                        && "STALE_EXECUTOR_FENCE".equals(batch.getFailureCode())));
+    verify(tickEffectRepository).saveAll(any());
+  }
+
+  @Test
+  void processTickUpdatesLastCommittedBatchOnDurableOwnershipRow() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-1")));
+    net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
+        runtimeOwnership(1L, 2L, 1L, "fence-a", false);
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(
+            Optional.of(currentStatus), Optional.of(currentStatus), Optional.of(currentStatus));
+
+    service.processTick(1L, 2L);
+
+    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus> statusCaptor =
+        ArgumentCaptor.forClass(
+            net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus.class);
+    verify(runtimeRegionStatusRepository, org.mockito.Mockito.atLeastOnce())
+        .save(statusCaptor.capture());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        statusCaptor.getAllValues().stream()
+            .anyMatch(
+                status ->
+                    "test-instance".equals(status.getOwnerInstanceId())
+                        && status.getLastCommittedTickBatchId() != null
+                        && !status.getLastCommittedTickBatchId().isBlank()));
+  }
+
   private static net.firedevops.firemud.gamesession.entity.GameplayCommand gameplayCommand(
       String commandId) {
     var command = new net.firedevops.firemud.gamesession.entity.GameplayCommand();
@@ -261,6 +355,20 @@ class TickServiceImplTest {
     command.setExecutionOutcome("STAGED");
     command.setGameplayResult("PENDING");
     return command;
+  }
+
+  private static net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus runtimeOwnership(
+      Long tenantId, Long gameInstanceId, long regionEpoch, String executorFence, boolean paused) {
+    var status = new net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus();
+    status.setTenantId(tenantId);
+    status.setGameInstanceId(gameInstanceId);
+    status.setRegionEpoch(regionEpoch);
+    status.setExecutorFence(executorFence);
+    status.setOwnerService("game-session-service");
+    status.setOwnerInstanceId("test-instance");
+    status.setPaused(paused);
+    status.setUpdatedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    return status;
   }
 
   @SuppressWarnings("unchecked")

@@ -117,6 +117,7 @@ public class CommandServiceImpl implements CommandService {
             command,
             requiresSoloTick);
         markStaged(gameplayCommand);
+        triggerImmediateTick(queueTarget.get());
         return CommandEnqueueResult.success(gameplayCommand.getCommandId());
       } catch (IllegalArgumentException ex) {
         markFailed(gameplayCommand, "INVALID_ARGUMENT", ex.getMessage());
@@ -147,6 +148,7 @@ public class CommandServiceImpl implements CommandService {
         .filter(id -> id > 0)
         .ifPresent(gameplayCommand::setCharacterId);
     gameplayCommand.setCommandName(commandName(command));
+    gameplayCommand.setCommandText(command);
     gameplayCommand.setSanitizedCommandText(GameSessionCommandLogSanitizer.sanitize(command));
     gameplayCommand.setRequiresSoloTick(requiresSoloTick);
     gameplayCommand.setExecutionOutcome("ACCEPTED");
@@ -196,6 +198,18 @@ public class CommandServiceImpl implements CommandService {
     int firstSpace = trimmed.indexOf(' ');
     String token = firstSpace < 0 ? trimmed : trimmed.substring(0, firstSpace);
     return token.toUpperCase(java.util.Locale.ROOT);
+  }
+
+  private void triggerImmediateTick(QueueTarget queueTarget) {
+    try {
+      tickService.processTick(queueTarget.tenantId(), queueTarget.queueTargetId());
+    } catch (RuntimeException ex) {
+      logger.warn(
+          "Immediate tick kick failed tenantId={} queueTargetId={}",
+          queueTarget.tenantId(),
+          queueTarget.queueTargetId(),
+          ex);
+    }
   }
 
   private Optional<SessionContext> resolveSessionContext(String sessionIdText) {

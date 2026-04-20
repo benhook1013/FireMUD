@@ -15,8 +15,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
+import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
+import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -25,6 +27,8 @@ import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
+import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
@@ -171,6 +175,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
             Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
             authorityService,
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
@@ -220,6 +225,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
             Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
             authorityService,
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
@@ -259,6 +265,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
             Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
@@ -320,6 +327,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
             Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
             authorityService,
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
@@ -368,6 +376,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
             commandRepository,
+            Mockito.mock(RuntimeRegionStatusRepository.class),
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
@@ -390,6 +399,49 @@ class GameSessionControlPlaneGrpcServiceTest {
         responseRef.get().getCommand().getStagedAtMs());
   }
 
+  @Test
+  void getRuntimeOwnershipStatusReturnsDurableOwnerRecordForAdminCaller() {
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setTenantId(1L);
+    status.setGameInstanceId(7L);
+    status.setRegionEpoch(3L);
+    status.setExecutorFence("fence-3");
+    status.setOwnerService("game-session-service");
+    status.setOwnerInstanceId("gs-1");
+    status.setPaused(false);
+    status.setLastCommittedTickBatchId("tb-9");
+    status.setUpdatedAt(Instant.parse("2026-04-20T00:00:00Z"));
+    RuntimeRegionStatusRepository repository = Mockito.mock(RuntimeRegionStatusRepository.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId(1L, 7L))
+        .thenReturn(Optional.of(status));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
+            repository,
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<GetRuntimeOwnershipStatusResponse> responseRef = new AtomicReference<>();
+    service.getRuntimeOwnershipStatus(
+        GetRuntimeOwnershipStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetRuntimeOwnershipStatusResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(3L, responseRef.get().getOwnership().getRegionEpoch());
+    assertEquals("fence-3", responseRef.get().getOwnership().getExecutorFence());
+    assertEquals("tb-9", responseRef.get().getOwnership().getLastCommittedTickBatchId());
+  }
+
   private static GameSessionControlPlaneGrpcService newService(GameInstanceRepository repository) {
     return newService(repository, new SimpleMeterRegistry());
   }
@@ -399,6 +451,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     return new GameSessionControlPlaneGrpcService(
         repository,
         Mockito.mock(GameplayCommandRepository.class),
+        Mockito.mock(RuntimeRegionStatusRepository.class),
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
         Mockito.mock(TickService.class),
         meterRegistry);

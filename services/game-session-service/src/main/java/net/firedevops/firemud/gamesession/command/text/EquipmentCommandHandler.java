@@ -30,13 +30,18 @@ public class EquipmentCommandHandler {
 
   @Timed(value = "gamesession.command.equipment")
   public TextCommandInterpretationResult handle(SessionContext context, TextCommand command) {
+    return handle(context, command, null);
+  }
+
+  public TextCommandInterpretationResult handle(
+      SessionContext context, TextCommand command, String effectId) {
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
     return switch (command.type()) {
       case EQUIPMENT -> describeEquipment(context);
-      case WEAR -> wear(context, command);
-      case REMOVE -> remove(context, command);
+      case WEAR -> wear(context, command, effectId);
+      case REMOVE -> remove(context, command, effectId);
       default ->
           new TextCommandInterpretationResult(
               CommandEnqueueResult.failure("INVALID_COMMAND", "Unsupported equipment command"),
@@ -63,7 +68,8 @@ public class EquipmentCommandHandler {
         List.of(PlayerOutput.view(new InventoryViewOutput("Equipment:", lines))));
   }
 
-  private TextCommandInterpretationResult wear(SessionContext context, TextCommand command) {
+  private TextCommandInterpretationResult wear(
+      SessionContext context, TextCommand command, String effectId) {
     if (command.itemReferencePayload().isEmpty()) {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure("INVALID_ARGUMENT", "WEAR command requires an item"),
@@ -90,8 +96,11 @@ public class EquipmentCommandHandler {
 
     InventoryItem carried = resolution.item().orElseThrow();
     WearEquipmentItemResponse response =
-        entityManagementClient.wearEquipment(
-            context, carried.getItemId(), carried.getItemInstanceId());
+        StringUtils.hasText(effectId)
+            ? entityManagementClient.wearEquipment(
+                context, carried.getItemId(), carried.getItemInstanceId(), effectId)
+            : entityManagementClient.wearEquipment(
+                context, carried.getItemId(), carried.getItemInstanceId());
     if (response.hasError()) {
       return equipmentFailure(response.getError().getCode(), response.getError().getMessage());
     }
@@ -101,7 +110,8 @@ public class EquipmentCommandHandler {
     return equipmentSuccess("You wear " + response.getEquipmentItem().getItemName() + ".");
   }
 
-  private TextCommandInterpretationResult remove(SessionContext context, TextCommand command) {
+  private TextCommandInterpretationResult remove(
+      SessionContext context, TextCommand command, String effectId) {
     if (command.itemReferencePayload().isEmpty()) {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure("INVALID_ARGUMENT", "REMOVE command requires an item"),
@@ -129,7 +139,9 @@ public class EquipmentCommandHandler {
     }
     EquipmentItem worn = resolved.orElseThrow();
     RemoveEquipmentResponse response =
-        entityManagementClient.removeEquipment(context, worn.getSlot());
+        StringUtils.hasText(effectId)
+            ? entityManagementClient.removeEquipment(context, worn.getSlot(), effectId)
+            : entityManagementClient.removeEquipment(context, worn.getSlot());
     if (response.hasError()) {
       return equipmentFailure(response.getError().getCode(), response.getError().getMessage());
     }

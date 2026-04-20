@@ -105,6 +105,7 @@ public class EntityManagementGrpcService
 
   private final RoomEntityService roomEntityService;
   private final RuntimeInstanceCleanupService runtimeInstanceCleanupService;
+  private final EntityMutationEffectReplayService entityMutationEffectReplayService;
 
   EntityManagementGrpcService(
       PingService pingService,
@@ -115,6 +116,7 @@ public class EntityManagementGrpcService
       ContainerService containerService,
       RoomEntityService roomEntityService,
       RuntimeInstanceCleanupService runtimeInstanceCleanupService,
+      EntityMutationEffectReplayService entityMutationEffectReplayService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
@@ -125,6 +127,7 @@ public class EntityManagementGrpcService
     this.containerService = containerService;
     this.roomEntityService = roomEntityService;
     this.runtimeInstanceCleanupService = runtimeInstanceCleanupService;
+    this.entityMutationEffectReplayService = entityMutationEffectReplayService;
     this.gameplaySessionAttestationService = gameplaySessionAttestationService;
     this.meterRegistry = meterRegistry;
   }
@@ -138,6 +141,7 @@ public class EntityManagementGrpcService
       InventoryService inventoryService,
       ContainerService containerService,
       RoomEntityService roomEntityService,
+      EntityMutationEffectReplayService entityMutationEffectReplayService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
       MeterRegistry meterRegistry) {
     this(
@@ -151,6 +155,7 @@ public class EntityManagementGrpcService
         (tenantId, gameInstanceId, terminationRequestId) ->
             new net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto(
                 0L, 0L, 0L, 0L),
+        entityMutationEffectReplayService,
         gameplaySessionAttestationService,
         meterRegistry);
   }
@@ -583,10 +588,19 @@ public class EntityManagementGrpcService
           request.getItemInstanceId().isBlank()
               ? null
               : Long.parseLong(request.getItemInstanceId());
-      CharacterEquipmentEntryDto dto =
-          equipmentService.wearItem(tenantId, characterId, itemId, itemInstanceId);
       WearEquipmentItemResponse response =
-          WearEquipmentItemResponse.newBuilder().setEquipmentItem(toProto(dto)).build();
+          entityMutationEffectReplayService.execute(
+              tenantId,
+              request.getEffectId(),
+              "WearEquipment",
+              () -> {
+                CharacterEquipmentEntryDto dto =
+                    equipmentService.wearItem(tenantId, characterId, itemId, itemInstanceId);
+                return WearEquipmentItemResponse.newBuilder()
+                    .setEquipmentItem(toProto(dto))
+                    .build();
+              },
+              WearEquipmentItemResponse::parseFrom);
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {
@@ -645,10 +659,17 @@ public class EntityManagementGrpcService
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
-      CharacterEquipmentEntryDto dto =
-          equipmentService.removeWornItem(tenantId, characterId, request.getSlot());
       RemoveEquipmentResponse response =
-          RemoveEquipmentResponse.newBuilder().setEquipmentItem(toProto(dto)).build();
+          entityMutationEffectReplayService.execute(
+              tenantId,
+              request.getEffectId(),
+              "RemoveEquipment",
+              () -> {
+                CharacterEquipmentEntryDto dto =
+                    equipmentService.removeWornItem(tenantId, characterId, request.getSlot());
+                return RemoveEquipmentResponse.newBuilder().setEquipmentItem(toProto(dto)).build();
+              },
+              RemoveEquipmentResponse::parseFrom);
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {
@@ -803,17 +824,26 @@ public class EntityManagementGrpcService
           request.getItemInstanceId().isBlank()
               ? null
               : Long.parseLong(request.getItemInstanceId());
-      var dto =
-          containerService.putItemIntoContainer(
-              tenantId,
-              characterId,
-              containerInstanceId,
-              itemId,
-              itemInstanceId,
-              blankToNull(request.getStackFamilyKey()),
-              request.getQuantity());
       PutItemIntoContainerResponse response =
-          PutItemIntoContainerResponse.newBuilder().setContainerItem(toProto(dto)).build();
+          entityMutationEffectReplayService.execute(
+              tenantId,
+              request.getEffectId(),
+              "PutItemIntoContainer",
+              () -> {
+                var dto =
+                    containerService.putItemIntoContainer(
+                        tenantId,
+                        characterId,
+                        containerInstanceId,
+                        itemId,
+                        itemInstanceId,
+                        blankToNull(request.getStackFamilyKey()),
+                        request.getQuantity());
+                return PutItemIntoContainerResponse.newBuilder()
+                    .setContainerItem(toProto(dto))
+                    .build();
+              },
+              PutItemIntoContainerResponse::parseFrom);
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {
@@ -889,17 +919,26 @@ public class EntityManagementGrpcService
           request.getItemInstanceId().isBlank()
               ? null
               : Long.parseLong(request.getItemInstanceId());
-      var dto =
-          containerService.takeItemFromContainer(
-              tenantId,
-              characterId,
-              containerInstanceId,
-              itemId,
-              itemInstanceId,
-              blankToNull(request.getStackFamilyKey()),
-              request.getQuantity());
       TakeItemFromContainerResponse response =
-          TakeItemFromContainerResponse.newBuilder().setInventoryItem(toProto(dto)).build();
+          entityMutationEffectReplayService.execute(
+              tenantId,
+              request.getEffectId(),
+              "TakeItemFromContainer",
+              () -> {
+                var dto =
+                    containerService.takeItemFromContainer(
+                        tenantId,
+                        characterId,
+                        containerInstanceId,
+                        itemId,
+                        itemInstanceId,
+                        blankToNull(request.getStackFamilyKey()),
+                        request.getQuantity());
+                return TakeItemFromContainerResponse.newBuilder()
+                    .setInventoryItem(toProto(dto))
+                    .build();
+              },
+              TakeItemFromContainerResponse::parseFrom);
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {
@@ -1057,21 +1096,30 @@ public class EntityManagementGrpcService
       long characterId = Long.parseLong(request.getCharacterId());
       long itemId = Long.parseLong(request.getItemId());
       int quantity = request.getQuantity();
-      var dto =
-          inventoryService.pickupItemFromRoom(
-              tenantId,
-              characterId,
-              request.getGameInstanceId(),
-              request.getRoomInstanceId(),
-              itemId,
-              request.getItemInstanceId().isBlank()
-                  ? null
-                  : Long.parseLong(request.getItemInstanceId()),
-              request.getContainerInstanceId(),
-              blankToNull(request.getStackFamilyKey()),
-              quantity);
       PickupItemFromRoomResponse response =
-          PickupItemFromRoomResponse.newBuilder().setInventoryItem(toProto(dto)).build();
+          entityMutationEffectReplayService.execute(
+              tenantId,
+              request.getEffectId(),
+              "PickupItemFromRoom",
+              () -> {
+                var dto =
+                    inventoryService.pickupItemFromRoom(
+                        tenantId,
+                        characterId,
+                        request.getGameInstanceId(),
+                        request.getRoomInstanceId(),
+                        itemId,
+                        request.getItemInstanceId().isBlank()
+                            ? null
+                            : Long.parseLong(request.getItemInstanceId()),
+                        request.getContainerInstanceId(),
+                        blankToNull(request.getStackFamilyKey()),
+                        quantity);
+                return PickupItemFromRoomResponse.newBuilder()
+                    .setInventoryItem(toProto(dto))
+                    .build();
+              },
+              PickupItemFromRoomResponse::parseFrom);
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {
@@ -1142,21 +1190,28 @@ public class EntityManagementGrpcService
       long characterId = Long.parseLong(request.getCharacterId());
       long itemId = Long.parseLong(request.getItemId());
       int quantity = request.getQuantity();
-      var dto =
-          inventoryService.dropItemToRoom(
-              tenantId,
-              characterId,
-              request.getGameInstanceId(),
-              request.getRoomInstanceId(),
-              itemId,
-              request.getItemInstanceId().isBlank()
-                  ? null
-                  : Long.parseLong(request.getItemInstanceId()),
-              request.getContainerInstanceId(),
-              blankToNull(request.getStackFamilyKey()),
-              quantity);
       DropItemToRoomResponse response =
-          DropItemToRoomResponse.newBuilder().setRoomGroundItem(toProto(dto)).build();
+          entityMutationEffectReplayService.execute(
+              tenantId,
+              request.getEffectId(),
+              "DropItemToRoom",
+              () -> {
+                var dto =
+                    inventoryService.dropItemToRoom(
+                        tenantId,
+                        characterId,
+                        request.getGameInstanceId(),
+                        request.getRoomInstanceId(),
+                        itemId,
+                        request.getItemInstanceId().isBlank()
+                            ? null
+                            : Long.parseLong(request.getItemInstanceId()),
+                        request.getContainerInstanceId(),
+                        blankToNull(request.getStackFamilyKey()),
+                        quantity);
+                return DropItemToRoomResponse.newBuilder().setRoomGroundItem(toProto(dto)).build();
+              },
+              DropItemToRoomResponse::parseFrom);
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {

@@ -1,0 +1,200 @@
+package net.firedevops.firemud.gamesession.service.impl;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.Optional;
+import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.MoveCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.PreparedMoveCommandResult;
+import net.firedevops.firemud.gamesession.command.text.TextCommand;
+import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
+import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
+import net.firedevops.firemud.gamesession.command.text.TextCommandType;
+import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
+import net.firedevops.firemud.gamesession.entity.TickEffect;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService.DurableGameplayCommandExecutionResult;
+import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService;
+import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyResult;
+import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyStatus;
+import net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryService;
+import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.service.SessionContextService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+
+class DefaultDurableGameplayCommandExecutionServiceTest {
+  private final TextCommandParser parser = Mockito.mock(TextCommandParser.class);
+  private final SessionContextService sessionContextService =
+      Mockito.mock(SessionContextService.class);
+  private final MoveCommandHandler moveCommandHandler = Mockito.mock(MoveCommandHandler.class);
+  private final ItemCommandHandler itemCommandHandler = Mockito.mock(ItemCommandHandler.class);
+  private final MovementEffectIdempotencyService movementEffectIdempotencyService =
+      Mockito.mock(MovementEffectIdempotencyService.class);
+  private final PlayerOutputDeliveryService playerOutputDeliveryService =
+      Mockito.mock(PlayerOutputDeliveryService.class);
+  private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+
+  private DefaultDurableGameplayCommandExecutionService service;
+
+  @BeforeEach
+  void setUp() {
+    service =
+        new DefaultDurableGameplayCommandExecutionService(
+            meterRegistry,
+            parser,
+            sessionContextService,
+            moveCommandHandler,
+            itemCommandHandler,
+            movementEffectIdempotencyService,
+            playerOutputDeliveryService);
+  }
+
+  @Test
+  void executeIgnoresNonDurableCommands() {
+    GameplayCommand command = gameplayCommand("LOOK", "LOOK");
+    when(parser.parse("LOOK"))
+        .thenReturn(new TextCommand(TextCommandType.LOOK, java.util.List.of(), "LOOK"));
+
+    Optional<DurableGameplayCommandExecutionResult> result =
+        service.execute(tickEffect("tfx-1", "cmd-1"), command);
+
+    assertThat(result).isEmpty();
+    verify(moveCommandHandler, never()).prepare(Mockito.any(), Mockito.any());
+  }
+
+  @Test
+  void executeReturnsReplayNoOpForIdempotentMoveReplay() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext moved =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-2", "jwt-token");
+    GameplayCommand command = gameplayCommand("MOVE", "north");
+    TickEffect effect = tickEffect("tfx-1", "cmd-1");
+    PlayerOutput output = PlayerOutput.message("You move north.");
+    when(parser.parse("north"))
+        .thenReturn(new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
+    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(moveCommandHandler.prepare(Mockito.eq(context), Mockito.any()))
+        .thenReturn(new PreparedMoveCommandResult(CommandEnqueueResult.success(), output, moved));
+    when(movementEffectIdempotencyService.apply("tfx-1", context, "R-2"))
+        .thenReturn(new MoveEffectApplyResult(MoveEffectApplyStatus.REPLAYED, moved));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("REPLAY_NOOP");
+    assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
+    assertThat(result.gameplayResult()).isEqualTo("REPLAY_NOOP");
+    assertThat(
+            meterRegistry
+                .get("gamesession.durable.effect.execution")
+                .tag("command", "MOVE")
+                .tag("effect_status", "REPLAY_NOOP")
+                .tag("gameplay_result", "REPLAY_NOOP")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+    verify(playerOutputDeliveryService).deliver(moved, java.util.List.of(output), true);
+  }
+
+  @Test
+  void executeAppliesDurableItemMutationAndDeliversOutput() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("GET", "GET torch");
+    TickEffect effect = tickEffect("tfx-2", "cmd-2");
+    TextCommand parsed =
+        new TextCommand(TextCommandType.GET, java.util.List.of("torch"), "GET torch");
+    PlayerOutput output = PlayerOutput.message("You pick up Torch.");
+    when(parser.parse("GET torch")).thenReturn(parsed);
+    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(itemCommandHandler.handle(context, parsed, "tfx-2"))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), java.util.List.of(output)));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("APPLIED");
+    assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
+    assertThat(result.gameplayResult()).isEqualTo("APPLIED");
+    assertThat(
+            meterRegistry
+                .get("gamesession.durable.effect.execution")
+                .tag("command", "GET")
+                .tag("effect_status", "APPLIED")
+                .tag("gameplay_result", "APPLIED")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+  }
+
+  @Test
+  void executeRejectsDurableItemMutationAndDeliversOutput() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("PUT", "PUT ration INTO torch");
+    TickEffect effect = tickEffect("tfx-3", "cmd-3");
+    TextCommand parsed =
+        new TextCommand(
+            TextCommandType.PUT,
+            java.util.List.of("ration", "INTO", "torch"),
+            "PUT ration INTO torch");
+    PlayerOutput output =
+        PlayerOutput.error(
+            "INVALID_ARGUMENT",
+            "No carried item matches \"ration\"",
+            "error.container.invalid-argument",
+            java.util.Map.of());
+    when(parser.parse("PUT ration INTO torch")).thenReturn(parsed);
+    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(itemCommandHandler.handle(context, parsed, "tfx-3"))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.failure(
+                    "INVALID_ARGUMENT", "No carried item matches \"ration\""),
+                java.util.List.of(output)));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("REJECTED");
+    assertThat(result.commandExecutionOutcome()).isEqualTo("COMPLETED");
+    assertThat(result.gameplayResult()).isEqualTo("NOT_APPLIED");
+    assertThat(result.failureCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.failureMessage()).isEqualTo("No carried item matches \"ration\"");
+    assertThat(
+            meterRegistry
+                .get("gamesession.durable.effect.execution")
+                .tag("command", "PUT")
+                .tag("effect_status", "REJECTED")
+                .tag("gameplay_result", "NOT_APPLIED")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+  }
+
+  private GameplayCommand gameplayCommand(String commandName, String commandText) {
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("cmd-1");
+    command.setSessionId(42L);
+    command.setCommandName(commandName);
+    command.setCommandText(commandText);
+    command.setSanitizedCommandText(commandText);
+    return command;
+  }
+
+  private TickEffect tickEffect(String effectId, String commandId) {
+    TickEffect effect = new TickEffect();
+    effect.setEffectId(effectId);
+    effect.setCommandId(commandId);
+    return effect;
+  }
+}

@@ -17,7 +17,12 @@ import lombok.Data;
     indexes = {
       @Index(name = "idx_tick_effect_effect_id", columnList = "effect_id", unique = true),
       @Index(name = "idx_tick_effect_tick_batch_id", columnList = "tick_batch_id"),
-      @Index(name = "idx_tick_effect_command_id", columnList = "command_id")
+      @Index(name = "idx_tick_effect_command_id", columnList = "command_id"),
+      @Index(name = "idx_tick_effect_effect_key", columnList = "effect_key"),
+      @Index(
+          name = "idx_tick_effect_batch_effect_key",
+          columnList = "tick_batch_id, effect_key",
+          unique = true)
     })
 public class TickEffect {
   @Id
@@ -32,6 +37,9 @@ public class TickEffect {
 
   @Column(name = "command_id", length = 64)
   private String commandId;
+
+  @Column(name = "effect_key", nullable = false, length = 160)
+  private String effectKey;
 
   @Column(name = "effect_type", nullable = false, length = 80)
   private String effectType;

@@ -33,6 +33,7 @@ import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.repository.TickBatchRepository;
 import net.firedevops.firemud.gamesession.repository.TickEffectRepository;
+import net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.TickService;
@@ -66,6 +67,7 @@ public class TickServiceImpl implements TickService {
   private final TickBatchRepository tickBatchRepository;
   private final TickEffectRepository tickEffectRepository;
   private final SessionContextService sessionContextService;
+  private final DurableGameplayCommandExecutionService durableGameplayCommandExecutionService;
 
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs;
@@ -105,6 +107,12 @@ public class TickServiceImpl implements TickService {
 
   private record QueuedCommandEnvelope(
       boolean requiresSoloTick, String commandId, String command) {}
+
+  private static final class StaleOwnershipException extends RuntimeException {
+    private StaleOwnershipException(String message) {
+      super(message);
+    }
+  }
 
   private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys, Object... args) {
     int attempts = 0;
@@ -233,6 +241,7 @@ public class TickServiceImpl implements TickService {
       TickBatch activeBatch = null;
       List<QueuedCommandEnvelope> activeBatchEntries = List.of();
       try {
+        executeDurableEffects(normalizedTenantId, normalizedQueueTargetId);
         Long pending =
             redisTemplate
                 .opsForList()
@@ -245,6 +254,7 @@ public class TickServiceImpl implements TickService {
           TickBatch replayBatch =
               resolveReplayBatch(
                   normalizedTenantId, normalizedQueueTargetId, replayEntries, ownership);
+          requireCurrentOwnership(replayBatch, false);
           logger.info("Replaying {} pending commands for {}", pending, normalizedQueueTargetId);
           tickTimer.record(
               () -> {
@@ -255,6 +265,7 @@ public class TickServiceImpl implements TickService {
                             List.of(pendingKey(normalizedTenantId, normalizedQueueTargetId))));
               });
           markBatchDrained(replayBatch, replayEntries);
+          executeDurableEffects(normalizedTenantId, normalizedQueueTargetId);
           awaitReplication();
         }
         Object headObj =
@@ -288,6 +299,9 @@ public class TickServiceImpl implements TickService {
                   ownership,
                   activeBatchEntries);
         }
+        if (activeBatch != null) {
+          requireCurrentOwnership(activeBatch, false);
+        }
         tickTimer.record(
             () -> {
               luaTimer.record(
@@ -298,6 +312,7 @@ public class TickServiceImpl implements TickService {
             });
         if (activeBatch != null) {
           markBatchDrained(activeBatch, activeBatchEntries);
+          executeDurableEffects(normalizedTenantId, normalizedQueueTargetId);
         }
         awaitReplication();
       } catch (Exception ex) {
@@ -313,7 +328,7 @@ public class TickServiceImpl implements TickService {
                         queueKey(normalizedTenantId, normalizedQueueTargetId))));
         requeuedActionCounter.increment();
         if (activeBatch != null) {
-          markBatchAbandoned(activeBatch, activeBatchEntries, "ROLLBACK_REQUEUED", ex.getMessage());
+          markBatchAbandoned(activeBatch, activeBatchEntries, failureCode(ex), ex.getMessage());
         }
         awaitReplication();
       } finally {
@@ -423,11 +438,14 @@ public class TickServiceImpl implements TickService {
       return;
     }
     List<TickEffect> effects = new ArrayList<>(entries.size());
-    for (QueuedCommandEnvelope entry : entries) {
+    for (int index = 0; index < entries.size(); index++) {
+      QueuedCommandEnvelope entry = entries.get(index);
+      String effectKey = effectKey(entry, index);
       TickEffect effect = new TickEffect();
-      effect.setEffectId("tfx-" + UUID.randomUUID());
+      effect.setEffectId(effectId(batch.getTickBatchId(), effectKey));
       effect.setTickBatchId(batch.getTickBatchId());
       effect.setCommandId(entry.commandId());
+      effect.setEffectKey(effectKey);
       effect.setEffectType("GAMEPLAY_COMMAND");
       effect.setTargetAggregate("game-instance:" + gameInstanceId);
       effect.setStatus("STAGED");
@@ -452,11 +470,16 @@ public class TickServiceImpl implements TickService {
 
   private void markBatchDrained(TickBatch batch, List<QueuedCommandEnvelope> entries) {
     Instant now = Instant.now();
+    RuntimeRegionStatus ownership =
+        requireCurrentOwnership(batch, false).orElseThrow(IllegalStateException::new);
     batch.setStatus("DRAINED");
     batch.setCompletedAt(now);
     tickBatchRepository.save(batch);
     updateEffectStatuses(batch.getTickBatchId(), "DRAINED", now, null, null);
     updateGameplayCommands(entries, "DRAINED", "PENDING", now, null, null, false);
+    ownership.setLastCommittedTickBatchId(batch.getTickBatchId());
+    ownership.setUpdatedAt(now);
+    runtimeRegionStatusRepository.save(ownership);
     logger.info(
         "Drained durable tick batch tickBatchId={} tenantId={} gameInstanceId={} commandCount={}",
         batch.getTickBatchId(),
@@ -486,6 +509,124 @@ public class TickServiceImpl implements TickService {
         batch.getGameInstanceId(),
         failureCode,
         truncate(failureMessage, 500));
+  }
+
+  private void executeDurableEffects(Long tenantId, Long gameInstanceId) {
+    List<TickBatch> drainedBatches =
+        tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            tenantId, gameInstanceId, "DRAINED");
+    for (TickBatch batch : drainedBatches) {
+      requireCurrentOwnership(batch, false);
+      List<TickEffect> drainedEffects =
+          tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
+              batch.getTickBatchId(), "DRAINED");
+      if (drainedEffects.isEmpty()) {
+        batch.setStatus("APPLIED");
+        tickBatchRepository.save(batch);
+        continue;
+      }
+      for (TickEffect effect : drainedEffects) {
+        executeDurableEffect(effect);
+      }
+      if (tickEffectRepository
+          .findByTickBatchIdAndStatusOrderByIdAsc(batch.getTickBatchId(), "DRAINED")
+          .isEmpty()) {
+        batch.setStatus("APPLIED");
+        tickBatchRepository.save(batch);
+      }
+    }
+  }
+
+  private void executeDurableEffect(TickEffect effect) {
+    if (effect.getCommandId() == null || effect.getCommandId().isBlank()) {
+      markEffectTerminal(
+          effect,
+          "REJECTED",
+          "COMPLETED",
+          "NOT_APPLIED",
+          "COMMAND_ID_REQUIRED",
+          "Durable effect execution requires a linked command id");
+      return;
+    }
+    GameplayCommand command =
+        gameplayCommandRepository.findByCommandId(effect.getCommandId()).orElse(null);
+    if (command == null) {
+      markEffectTerminal(
+          effect,
+          "REJECTED",
+          "COMPLETED",
+          "NOT_APPLIED",
+          "COMMAND_NOT_FOUND",
+          "Durable effect execution could not load the linked gameplay command");
+      return;
+    }
+    durableGameplayCommandExecutionService
+        .execute(effect, command)
+        .ifPresent(
+            result ->
+                markEffectTerminal(
+                    effect,
+                    result.effectStatus(),
+                    result.commandExecutionOutcome(),
+                    result.gameplayResult(),
+                    result.failureCode(),
+                    result.failureMessage()));
+  }
+
+  private void markEffectTerminal(
+      TickEffect effect,
+      String effectStatus,
+      String commandExecutionOutcome,
+      String gameplayResult,
+      String failureCode,
+      String failureMessage) {
+    Instant now = Instant.now();
+    effect.setStatus(effectStatus);
+    effect.setCompletedAt(now);
+    effect.setFailureCode(failureCode);
+    effect.setFailureMessage(truncate(failureMessage, 500));
+    tickEffectRepository.save(effect);
+    if (effect.getCommandId() == null || effect.getCommandId().isBlank()) {
+      return;
+    }
+    gameplayCommandRepository
+        .findByCommandId(effect.getCommandId())
+        .ifPresent(
+            command -> {
+              command.setExecutionOutcome(commandExecutionOutcome);
+              command.setGameplayResult(gameplayResult);
+              command.setCompletedAt(now);
+              command.setLastAttemptAt(now);
+              command.setFailureCode(failureCode);
+              command.setFailureMessage(truncate(failureMessage, 500));
+              gameplayCommandRepository.save(command);
+            });
+  }
+
+  private Optional<RuntimeRegionStatus> requireCurrentOwnership(
+      TickBatch batch, boolean allowPausedOwner) {
+    RuntimeRegionStatus status =
+        runtimeRegionStatusRepository
+            .findByTenantIdAndGameInstanceId(batch.getTenantId(), batch.getGameInstanceId())
+            .orElseThrow(
+                () ->
+                    new StaleOwnershipException(
+                        "Missing runtime ownership for tenantId=%d gameInstanceId=%d"
+                            .formatted(batch.getTenantId(), batch.getGameInstanceId())));
+    if (status.getRegionEpoch() != batch.getRegionEpoch()
+        || !status.getExecutorFence().equals(batch.getExecutorFence())
+        || (!allowPausedOwner && status.isPaused())) {
+      throw new StaleOwnershipException(
+          "Stale runtime ownership for tickBatchId=%s expected=(epoch=%d,fence=%s) actual=(epoch=%d,fence=%s,paused=%s)"
+              .formatted(
+                  batch.getTickBatchId(),
+                  batch.getRegionEpoch(),
+                  batch.getExecutorFence(),
+                  status.getRegionEpoch(),
+                  status.getExecutorFence(),
+                  status.isPaused()));
+    }
+    return Optional.of(status);
   }
 
   private void updateEffectStatuses(
@@ -550,6 +691,35 @@ public class TickServiceImpl implements TickService {
       return value;
     }
     return value.substring(0, maxLength);
+  }
+
+  private String failureCode(Exception ex) {
+    return ex instanceof StaleOwnershipException ? "STALE_EXECUTOR_FENCE" : "ROLLBACK_REQUEUED";
+  }
+
+  private String effectKey(QueuedCommandEnvelope entry, int index) {
+    if (entry.commandId() != null && !entry.commandId().isBlank()) {
+      return "command:" + entry.commandId();
+    }
+    return "command-text:" + shortHash(entry.command()) + ":slot:" + index;
+  }
+
+  private String effectId(String tickBatchId, String effectKey) {
+    return "tfx-" + shortHash(tickBatchId + "|" + effectKey);
+  }
+
+  private String shortHash(String value) {
+    try {
+      java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+      byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+      StringBuilder builder = new StringBuilder(bytes.length * 2);
+      for (byte current : bytes) {
+        builder.append(String.format("%02x", current));
+      }
+      return builder.substring(0, 60);
+    } catch (java.security.NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("SHA-256 not available", ex);
+    }
   }
 
   private OwnershipSnapshot observeOwnership(Long tenantId, Long gameInstanceId) {

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.eq;
@@ -563,7 +564,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       currentSession.close();
     }
 
-    assertThat(payloads).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
     assertThat(
             payloads.stream()
                 .filter(payload -> payload.startsWith("OK LOOK") && payload.endsWith("> ")))
@@ -952,47 +953,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketMoveReturnsDestinationLookAndUpdatesSessionContext() throws Exception {
-    LookResult destinationLook =
-        LookResult.newBuilder()
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("2045").build())
-            .setRoomName("North Hall")
-            .setShortDescription("A northern hall")
-            .setLongDescription("A northern hall used for movement verification.")
-            .build();
-    when(gameLogicClient.resolveMove(
-            argThat(ctx -> matchesContext(ctx, 22L, 42L, 123L, 1L, "1021")),
-            eq("1021"),
-            eq("north"),
-            eq("")))
-        .thenReturn(
-            net.firedevops.firemud.gamelogic.v1.MoveResult.newBuilder()
-                .setSuccess(true)
-                .setDestinationLook(destinationLook)
-                .build());
-    when(lookTextRenderer.toPlayerOutput(
-            eq(destinationLook),
-            eq(true),
-            eq(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .MOVE_REFRESH),
-            eq(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .PREFER_BRIEF)))
-        .thenReturn(
-            net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.from(
-                    destinationLook,
-                    true,
-                    net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                        .MOVE_REFRESH,
-                    net.firedevops.firemud.gamesession.presentation.LookViewOutput
-                        .BriefRenderingHint.PREFER_BRIEF)));
+  void websocketMoveEnqueuesDurableCommandAfterPlay() throws Exception {
+    when(commandService.enqueue(eq("42"), eq("north"), eq(false)))
+        .thenReturn(CommandEnqueueResult.success("cmd-move-1"));
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Game-Instance-Id", "42");
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(3);
     CountDownLatch playAck = new CountDownLatch(1);
     AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
 
@@ -1012,12 +979,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 if (message.getPayload().startsWith("OK PLAY")) {
                   playAck.countDown();
                 }
-                latch.countDown();
               }
 
               @Override
               public void handleTransportError(WebSocketSession session, Throwable exception) {
-                latch.countDown();
                 throw new RuntimeException(exception);
               }
             },
@@ -1027,32 +992,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
     WebSocketSession session = future.get(5, TimeUnit.SECONDS);
     assertThat(playAck.await(5, TimeUnit.SECONDS)).isTrue();
     sessionRef.get().sendMessage(new TextMessage("north"));
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    await()
+        .atMost(5, TimeUnit.SECONDS)
+        .untilAsserted(() -> verify(commandService).enqueue("42", "north", false));
     session.close();
 
-    assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(payloads).hasSizeGreaterThanOrEqualTo(2);
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
-    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOOK"));
-    assertThat(payloads).anyMatch(payload -> payload.contains("Room: North Hall"));
-    assertThat(payloads).anyMatch(payload -> payload.contains("A northern hall"));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 42L))
-        .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("2045"));
-
-    verify(gameLogicClient)
-        .resolveMove(
-            argThat(ctx -> matchesContext(ctx, 22L, 42L, 123L, 1L, "1021")),
-            eq("1021"),
-            eq("north"),
-            eq(""));
-    verify(lookCacheService)
-        .cache(
-            eq(22L),
-            eq(1L),
-            eq("2045"),
-            eq("Room: North Hall (ID: 2045)\nShort: A northern hall\nExits: \nEntities:"),
-            eq(
-                "OK LOOK\nRoom: North Hall (ID: 2045)\nShort: A northern hall\nExits: \nEntities:\n\n"));
+        .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("1021"));
   }
 
   @Test

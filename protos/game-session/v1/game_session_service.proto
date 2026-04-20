@@ -38,6 +38,8 @@ service GameSessionControlPlaneService {
       returns (ListAdmissionPointerAuditResponse);
   rpc GetGameplayCommandStatus(GetGameplayCommandStatusRequest)
       returns (GetGameplayCommandStatusResponse);
+  rpc GetRuntimeOwnershipStatus(GetRuntimeOwnershipStatusRequest)
+      returns (GetRuntimeOwnershipStatusResponse);
   rpc SetAdmissionPointer(SetAdmissionPointerRequest)
       returns (SetAdmissionPointerResponse);
   rpc SetPinnedScriptPatchVersion(SetPinnedScriptPatchVersionRequest)
@@ -337,6 +339,28 @@ message GameplayCommandStatus {
 
 message GetGameplayCommandStatusResponse {
   GameplayCommandStatus command = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetRuntimeOwnershipStatusRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+}
+
+message RuntimeOwnershipStatus {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  int64 region_epoch = 3;
+  string executor_fence = 4;
+  string owner_service = 5;
+  string owner_instance_id = 6;
+  bool paused = 7;
+  string last_committed_tick_batch_id = 8;
+  int64 updated_at_ms = 9;
+}
+
+message GetRuntimeOwnershipStatusResponse {
+  RuntimeOwnershipStatus ownership = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

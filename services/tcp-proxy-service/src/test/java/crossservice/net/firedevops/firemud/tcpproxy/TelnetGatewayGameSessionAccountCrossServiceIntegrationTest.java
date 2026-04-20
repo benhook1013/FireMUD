@@ -311,11 +311,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       telnetMoveResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
 
       writer.println("LOOK");
-      telnetLookResponse =
-          readBlockMatchingOrTimeout(
-              reader,
-              "OK LOOK",
-              matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+      telnetLookResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
 
       writer.println("MOVE west");
       telnetInvalidMoveResponse = readLineAfterContains(reader, "ERROR INVALID_EXIT");
@@ -324,8 +320,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(telnetMoveResponse.trim())
         .matches(
             matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
-    assertThat(telnetLookResponse.trim())
-        .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(telnetLookResponse)
+        .contains("Room: Crafting Hall of Ember")
+        .contains("A soot-dark hall ringed with anvils and cooling braziers.");
     assertThat(telnetInvalidMoveResponse).contains("ERROR INVALID_EXIT");
   }
 

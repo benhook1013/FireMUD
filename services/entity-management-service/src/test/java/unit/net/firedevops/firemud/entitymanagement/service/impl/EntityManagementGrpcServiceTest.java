@@ -56,6 +56,21 @@ class EntityManagementGrpcServiceTest {
     return Mockito.mock(GameplaySessionAttestationService.class);
   }
 
+  private EntityMutationEffectReplayService effectReplayService() {
+    EntityMutationEffectReplayService service =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    Mockito.when(
+            service.execute(
+                Mockito.anyLong(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(),
+                Mockito.any()))
+        .thenAnswer(
+            invocation -> ((java.util.function.Supplier<?>) invocation.getArgument(3)).get());
+    return service;
+  }
+
   private EntityManagementGrpcService newService(
       PingService pingService,
       CharacterService characterService,
@@ -76,6 +91,7 @@ class EntityManagementGrpcServiceTest {
         inventoryService,
         containerService,
         roomEntityService,
+        effectReplayService(),
         attestationService(),
         meterRegistry);
   }
@@ -99,6 +115,7 @@ class EntityManagementGrpcServiceTest {
         inventoryService,
         containerService,
         roomEntityService,
+        effectReplayService(),
         attestationService(),
         meterRegistry);
   }
@@ -123,6 +140,7 @@ class EntityManagementGrpcServiceTest {
         inventoryService,
         containerService,
         roomEntityService,
+        effectReplayService(),
         attestationService(),
         meterRegistry);
   }
@@ -153,6 +171,7 @@ class EntityManagementGrpcServiceTest {
             inventoryService,
             containerService,
             roomEntityService,
+            effectReplayService(),
             attestationService(),
             meterRegistry);
 
@@ -638,6 +657,7 @@ class EntityManagementGrpcServiceTest {
             inventoryService,
             containerService,
             roomEntityService,
+            effectReplayService(),
             attestationService(),
             meterRegistry);
 

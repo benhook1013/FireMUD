@@ -6,4 +6,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface TickEffectRepository extends JpaRepository<TickEffect, Long> {
   List<TickEffect> findByTickBatchId(String tickBatchId);
+
+  List<TickEffect> findByTickBatchIdAndStatusOrderByIdAsc(String tickBatchId, String status);
 }

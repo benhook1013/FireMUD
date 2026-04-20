@@ -22,6 +22,8 @@ curl http://localhost:8080/ping
 - `ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse)` – returns players, NPCs, and visible items present in a room, scoped by `RoomInstanceRef`.
 - `GetDraftDesignDigest` – returns publish-gating digest for Draft entity templates using typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. Entity Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}`. `appliedCommitId` means the highest Game Design commit whose full revision set has been durably applied to the target Draft entity scope. `contentDigest` must cover only version-scoped entity template/binding rows and must exclude live runtime entities and audit/history metadata.
 
+Gameplay mutation RPCs that change item, equipment, or container state accept an optional `effectId` supplied by Game Session durable effect execution. When present, Entity Management treats `{tenantId, effectId}` as the operation-level idempotency key and returns the stored applied response for duplicate delivery instead of applying the mutation again. Read-only query RPCs do not require an `effectId`.
+
 ```bash
 grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/Ping
 ```

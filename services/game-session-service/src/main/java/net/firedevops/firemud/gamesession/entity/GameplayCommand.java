@@ -40,6 +40,9 @@ public class GameplayCommand {
   @Column(name = "command_name", nullable = false, length = 80)
   private String commandName;
 
+  @Column(name = "command_text", nullable = false, length = 1000)
+  private String commandText;
+
   @Column(name = "sanitized_command_text", nullable = false, length = 1000)
   private String sanitizedCommandText;
 

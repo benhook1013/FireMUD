@@ -185,3 +185,9 @@ Entry format:
   - Context: executing the audit-derived account/tenant authorization slice exposed that `account-service` had broad `PRIVILEGED` HTTP auth on every non-public route, which meant account-owned surfaces like profile/export/delete could only ever be reached by admin-style callers and made the controller/service ownership checks mostly decorative
   - Observation: using one blanket privileged HTTP gate for a whole service hides the real distinction between authenticated user surfaces, tenant-scoped management surfaces, and true global/internal admin routes; it tends to push ownership semantics into ad hoc public-path exceptions instead of explicit policy at the actual endpoints
   - Expected pattern: shared HTTP auth should establish authenticated identity by default, while service code explicitly guards the few truly privileged routes and separately enforces current-account, tenant-scoped, or global-operator access as appropriate
+
+## 2026-04-20
+
+- Gradle repeatedly reported `configuration cache cannot be reused because an input to unknown location has changed` in WSL while file-system watching was active. Debug output showed Gradle considering WSL, Docker Desktop, and host-mounted paths; rerunning with `--no-watch-fs` reused the configuration cache cleanly. The better default for this repo is `org.gradle.vfs.watch=false` so configuration-cache noise does not hide real build invalidators.
+
+- Repo hygiene scripts should scan source roots, not the entire workspace. `checkFlywayVersions` used `services/**/V*__*.sql`, which raced with protobuf generation deleting/recreating `build/generated` directories during parallel `check`; the correct pattern is to scan `services/*/src/main/resources/db/migration/**` directly so generated output churn cannot break unrelated validation.

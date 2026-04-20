@@ -102,6 +102,7 @@ message WearEquipmentItemRequest {
   string item_id = 3;
   string item_instance_id = 4;
   string session_attestation = 5;
+  string effect_id = 6;
 }
 
 message WearEquipmentItemResponse {
@@ -114,6 +115,7 @@ message RemoveEquipmentRequest {
   string character_id = 2;
   string slot = 3;
   string session_attestation = 4;
+  string effect_id = 5;
 }
 
 message RemoveEquipmentResponse {
@@ -154,6 +156,7 @@ message PutItemIntoContainerRequest {
   string item_instance_id = 6;
   string stack_family_key = 7;
   string session_attestation = 8;
+  string effect_id = 9;
 }
 
 message PutItemIntoContainerResponse {
@@ -170,6 +173,7 @@ message TakeItemFromContainerRequest {
   string item_instance_id = 6;
   string stack_family_key = 7;
   string session_attestation = 8;
+  string effect_id = 9;
 }
 
 message TakeItemFromContainerResponse {
@@ -213,6 +217,7 @@ message PickupItemFromRoomRequest {
   string item_instance_id = 8;
   string stack_family_key = 9;
   string session_attestation = 10;
+  string effect_id = 11;
 }
 
 message PickupItemFromRoomResponse {
@@ -232,6 +237,7 @@ message DropItemToRoomRequest {
   string item_instance_id = 8;
   string stack_family_key = 9;
   string session_attestation = 10;
+  string effect_id = 11;
 }
 
 message DropItemToRoomResponse {
