@@ -1866,7 +1866,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "integration-test",
             "cutover-proof",
             "req-cutover-" + newGameInstanceId + "-" + expectedPointerVersion,
-            expectedPointerVersion));
+            expectedPointerVersion,
+            "integration-test-prep-" + newGameInstanceId));
   }
 
   private void resetAdmissionPointers() {
@@ -1887,6 +1888,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "integration-test",
             "reset-default-demo-pointer",
             "req-reset-demo",
+            null,
             null));
     gameplayAdmissionPointerAuthorityService.upsertPointer(
         new GameplayAdmissionPointerMutation(
@@ -1903,6 +1905,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "integration-test",
             "reset-default-sandbox-pointer",
             "req-reset-sandbox",
+            null,
             null));
   }
 
