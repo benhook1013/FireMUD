@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
@@ -296,7 +297,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     GetPublishedReleaseBundleResponse.Builder builder =
         GetPublishedReleaseBundleResponse.newBuilder();
     try {
-      AdminRoleGuard.requireAdminRole();
+      requireLaunchAttestationReadAccess();
       PublishedReleaseBundleDto bundle =
           versionService.getPublishedReleaseBundle(request.getTenantId(), request.getVersionId());
       builder.setBundle(
@@ -377,7 +378,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       GetVersionStateRequest request, StreamObserver<GetVersionStateResponse> responseObserver) {
     GetVersionStateResponse.Builder builder = GetVersionStateResponse.newBuilder();
     try {
-      AdminRoleGuard.requireAdminRole();
+      requireLaunchAttestationReadAccess();
       builder.setVersionState(
           toProtoVersionState(
               versionService.getVersionState(request.getTenantId(), request.getVersionId())));
@@ -444,7 +445,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       StreamObserver<ResolveLaunchDescriptorResponse> responseObserver) {
     ResolveLaunchDescriptorResponse.Builder builder = ResolveLaunchDescriptorResponse.newBuilder();
     try {
-      AdminRoleGuard.requireAdminRole();
+      requireLaunchAttestationReadAccess();
       var descriptor =
           launchDescriptorService.resolveLaunchDescriptor(
               request.getTenantId(),
@@ -660,7 +661,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     GetVersionAssetArtifactStateResponse.Builder builder =
         GetVersionAssetArtifactStateResponse.newBuilder();
     try {
-      AdminRoleGuard.requireAdminRole();
+      requireLaunchAttestationReadAccess();
       builder.setArtifactState(
           toProto(
               versionAssetArtifactService.getState(request.getTenantId(), request.getVersionId())));
@@ -1188,5 +1189,12 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       return "NOT_FOUND";
     }
     return "INVALID_ARGUMENT";
+  }
+
+  private void requireLaunchAttestationReadAccess() {
+    if (SessionContext.isInternalService()) {
+      return;
+    }
+    AdminRoleGuard.requireAdminRole();
   }
 }
