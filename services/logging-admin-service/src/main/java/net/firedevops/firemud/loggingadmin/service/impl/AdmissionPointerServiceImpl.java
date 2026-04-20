@@ -7,11 +7,13 @@ import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
+import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
+import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
 import net.firedevops.firemud.loggingadmin.service.AdmissionPointerService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -94,6 +96,41 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         request.realmSlug(),
         request.tenantId(),
         request.gameInstanceId());
+    return toDto(response.getPointer());
+  }
+
+  @Override
+  @Timed(value = "loggingadmin.admissionPointer.executePreparedCutover")
+  public AdmissionPointerDto executePreparedVersionCutover(
+      ExecutePreparedVersionCutoverRequest request) {
+    String actorPrincipal = resolveActorPrincipal();
+    String controlPlaneRequestId =
+        request.controlPlaneRequestId() == null || request.controlPlaneRequestId().isBlank()
+            ? UUID.randomUUID().toString()
+            : request.controlPlaneRequestId();
+    net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest.Builder builder =
+        net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest.newBuilder()
+            .setWorldSlug(request.worldSlug())
+            .setRealmSlug(request.realmSlug())
+            .setTenantId(Long.toString(request.tenantId()))
+            .setTargetGameInstanceId(Long.toString(request.targetGameInstanceId()))
+            .setPreparedVersionUpgradeId(request.preparedVersionUpgradeId())
+            .setActorPrincipal(actorPrincipal)
+            .setReason(request.reason() == null ? "" : request.reason())
+            .setControlPlaneRequestId(controlPlaneRequestId);
+    if (request.expectedPointerVersion() != null) {
+      builder.setExpectedPointerVersion(request.expectedPointerVersion());
+    }
+    ExecutePreparedVersionCutoverResponse response =
+        gameSessionControlPlaneClient.executePreparedVersionCutover(builder.build());
+    requireNoError(response.getError());
+    logger.info(
+        "Executed prepared version cutover {}:{} to tenant {} instance {} using preparation {}",
+        request.worldSlug(),
+        request.realmSlug(),
+        request.tenantId(),
+        request.targetGameInstanceId(),
+        request.preparedVersionUpgradeId());
     return toDto(response.getPointer());
   }
 

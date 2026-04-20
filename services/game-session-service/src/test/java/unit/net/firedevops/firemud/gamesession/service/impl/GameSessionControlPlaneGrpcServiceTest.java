@@ -26,6 +26,8 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapsh
 import net.firedevops.firemud.gamesession.service.InstanceCutoverCompatibilityService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
+import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
+import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
@@ -425,6 +427,114 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+  }
+
+  @Test
+  void executePreparedVersionCutoverSwapsPointerUsingPreparedProof() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance targetInstance = new GameInstance();
+    targetInstance.setId(7L);
+    targetInstance.setTenantId(1L);
+    targetInstance.setVersionId(9L);
+    targetInstance.setLaunchDescriptorId("ld-9");
+    targetInstance.setRemapSetId("remap-1");
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(targetInstance));
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authorityService.findPointer("demo", "production"))
+        .thenReturn(
+            Optional.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    1L,
+                    5L,
+                    2L,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+    Mockito.when(authorityService.listPointerAudit("demo", "production"))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerAuditEntry(
+                    "demo",
+                    "production",
+                    "Demo World",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    3L,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    "tester",
+                    "cutover",
+                    "req-1",
+                    "pvu-1",
+                    Instant.parse("2026-04-16T00:00:00Z"))));
+    VersionUpgradePreparationService versionUpgradePreparationService =
+        Mockito.mock(VersionUpgradePreparationService.class);
+    Mockito.when(versionUpgradePreparationService.getPreparedVersionUpgrade(1L, "pvu-1"))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto(
+                "pvu-1",
+                "prep-req-1",
+                1L,
+                5L,
+                7L,
+                9L,
+                "ld-9",
+                "remap-1",
+                "COMPATIBLE",
+                List.of(),
+                List.of("WORLD", "ENTITY"),
+                Instant.parse("2026-04-16T00:00:00Z"),
+                List.of()));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            gameInstanceRepository,
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            authorityService,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            versionUpgradePreparationService,
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ExecutePreparedVersionCutoverResponse> responseRef = new AtomicReference<>();
+    service.executePreparedVersionCutover(
+        ExecutePreparedVersionCutoverRequest.newBuilder()
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setTenantId("1")
+            .setTargetGameInstanceId("7")
+            .setPreparedVersionUpgradeId("pvu-1")
+            .setActorPrincipal("tester")
+            .setReason("cutover")
+            .setControlPlaneRequestId("req-1")
+            .setExpectedPointerVersion(2L)
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ExecutePreparedVersionCutoverResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(3L, responseRef.get().getPointer().getPointerVersion());
+    assertEquals("pvu-1", responseRef.get().getPointer().getPreparedVersionUpgradeId());
+    Mockito.verify(authorityService)
+        .upsertPointer(
+            Mockito.argThat(
+                mutation ->
+                    Objects.equals(mutation.preparedVersionUpgradeId(), "pvu-1")
+                        && Objects.equals(mutation.expectedPointerVersion(), 2L)
+                        && mutation.gameInstanceId() == 7L));
   }
 
   @Test

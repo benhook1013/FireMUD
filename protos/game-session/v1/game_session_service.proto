@@ -42,6 +42,8 @@ service GameSessionControlPlaneService {
       returns (GetRuntimeOwnershipStatusResponse);
   rpc SetAdmissionPointer(SetAdmissionPointerRequest)
       returns (SetAdmissionPointerResponse);
+  rpc ExecutePreparedVersionCutover(ExecutePreparedVersionCutoverRequest)
+      returns (ExecutePreparedVersionCutoverResponse);
   rpc SetPinnedScriptPatchVersion(SetPinnedScriptPatchVersionRequest)
       returns (SetPinnedScriptPatchVersionResponse);
   rpc RollbackScriptPatchVersion(RollbackScriptPatchVersionRequest)
@@ -389,6 +391,23 @@ message SetAdmissionPointerRequest {
 }
 
 message SetAdmissionPointerResponse {
+  AdmissionPointerControlPlaneEntry pointer = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ExecutePreparedVersionCutoverRequest {
+  string world_slug = 1;
+  string realm_slug = 2;
+  string tenant_id = 3;
+  string target_game_instance_id = 4;
+  string prepared_version_upgrade_id = 5;
+  string actor_principal = 6;
+  string reason = 7;
+  string control_plane_request_id = 8;
+  optional int64 expected_pointer_version = 9;
+}
+
+message ExecutePreparedVersionCutoverResponse {
   AdmissionPointerControlPlaneEntry pointer = 1;
   shared.v1.ErrorDetail error = 2;
 }

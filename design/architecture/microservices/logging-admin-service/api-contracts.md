@@ -16,6 +16,7 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 - `GET /admin/admission-pointers` – list the caller-visible gameplay admission pointers exposed by Game Session control-plane.
 - `GET /admin/admission-pointers/{worldSlug}/{realmSlug}/audit` – read the append-only cutover audit history for one gameplay realm pointer, including the `preparedVersionUpgradeId` when a pointer move consumed a durable cutover-preparation artifact.
 - `POST /admin/admission-pointers` – operator-facing cutover mutation that forwards to Game Session compare-and-set admission-pointer control plane, derives the actor from the authenticated session rather than trusting caller-supplied actor identity, and now requires `preparedVersionUpgradeId` whenever the pointer is moved to a different `gameInstanceId`.
+- `POST /admin/admission-pointers/cutover` – operator-facing canonical prepared-cutover operation that forwards one prepared-upgrade id, replacement instance id, and pointer CAS guard to Game Session so proof revalidation and pointer swap happen in one control-plane call.
 
 ```bash
 curl http://localhost:8080/ping

@@ -6,6 +6,7 @@ import java.util.List;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
+import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
 import net.firedevops.firemud.loggingadmin.service.AdmissionPointerService;
 import org.springframework.http.ResponseEntity;
@@ -49,5 +50,16 @@ public class AdmissionPointerController {
       @Valid @RequestBody SetAdmissionPointerRequest request) {
     SessionContext.requireTenantAccess(request.tenantId());
     return ResponseEntity.ok(ApiResponse.success(admissionPointerService.setPointer(request)));
+  }
+
+  @PostMapping("/cutover")
+  @Timed(
+      value = "executePreparedVersionCutover",
+      description = "Execute a prepared version cutover for one admission pointer")
+  public ResponseEntity<ApiResponse<AdmissionPointerDto>> executePreparedVersionCutover(
+      @Valid @RequestBody ExecutePreparedVersionCutoverRequest request) {
+    SessionContext.requireTenantAccess(request.tenantId());
+    return ResponseEntity.ok(
+        ApiResponse.success(admissionPointerService.executePreparedVersionCutover(request)));
   }
 }

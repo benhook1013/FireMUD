@@ -10,11 +10,13 @@ import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
+import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
+import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.AfterEach;
@@ -142,6 +144,30 @@ class AdmissionPointerServiceImplTest {
                         "pvu-1")));
 
     assertEquals(409, ex.getStatusCode().value());
+  }
+
+  @Test
+  void executePreparedVersionCutoverUsesSessionAccountIdAsActorPrincipal() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.executePreparedVersionCutover(any()))
+        .thenReturn(
+            ExecutePreparedVersionCutoverResponse.newBuilder()
+                .setPointer(pointerEntry("demo", "production", 2L, 7L, 4L))
+                .build());
+
+    AdmissionPointerDto result =
+        service.executePreparedVersionCutover(
+            new ExecutePreparedVersionCutoverRequest(
+                "demo", "production", 2L, 7L, "pvu-1", "cutover", "req-1", 3L));
+
+    assertEquals(4L, result.pointerVersion());
+    verify(gameSessionControlPlaneClient)
+        .executePreparedVersionCutover(
+            org.mockito.ArgumentMatchers.argThat(
+                request ->
+                    request.getActorPrincipal().equals("42")
+                        && request.getPreparedVersionUpgradeId().equals("pvu-1")
+                        && request.getExpectedPointerVersion() == 3L));
   }
 
   private AdmissionPointerControlPlaneEntry pointerEntry(

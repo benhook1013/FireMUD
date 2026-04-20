@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfigurati
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
+import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
 import net.firedevops.firemud.loggingadmin.service.AdmissionPointerService;
 import net.firedevops.firemud.test.WithFiremudJwtTestProperties;
@@ -138,5 +139,22 @@ class AdmissionPointerControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].pointerVersion").value(3));
+  }
+
+  @Test
+  void executePreparedVersionCutoverRejectsCrossTenantScopedAdmin() throws Exception {
+    ExecutePreparedVersionCutoverRequest request =
+        new ExecutePreparedVersionCutoverRequest(
+            "demo", "production", 2L, 7L, "pvu-1", "cutover", "req-1", 3L);
+    String token =
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+
+    mockMvc
+        .perform(
+            post("/admin/admission-pointers/cutover")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
   }
 }

@@ -8,6 +8,8 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
+import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
@@ -67,5 +69,10 @@ public class GameSessionControlPlaneClient
 
   public SetAdmissionPointerResponse setAdmissionPointer(SetAdmissionPointerRequest request) {
     return stub().setAdmissionPointer(request);
+  }
+
+  public ExecutePreparedVersionCutoverResponse executePreparedVersionCutover(
+      ExecutePreparedVersionCutoverRequest request) {
+    return stub().executePreparedVersionCutover(request);
   }
 }
