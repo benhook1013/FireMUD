@@ -121,8 +121,8 @@ World Management is a required publish-gate participant and maintains a stable d
 
 Implementation Notes:
 
-- The current implementation computes the digest from the tenant’s draft topology rows using the existing tenant-scoped schema and returns synthetic `appliedCommitId = "version:<versionId>"`.
-- That keeps the publish gate honest against the current data model while the broader target-state `(tenantId, versionId)` draft graph is still being shaped into service storage.
+- The current implementation computes the digest from version-scoped world-template rows for the requested `(tenantId, versionId)` and returns synthetic `appliedCommitId = "version:<versionId>"` until the later applied-revision ledger lands.
+- Current version-scoped digest inputs include `region`, `zone`, `room`, `room_exit`, and `generation_rule`; later topology, spawn, and generation-template families must join this same `(tenantId, versionId)` digest contract when introduced.
 
 - Included objects:
   - version-scoped topology tables such as `region_template`, `zone_template`, `room_template`, `terrain_template`, `room_exit_template`, and equivalent normalized topology relations;

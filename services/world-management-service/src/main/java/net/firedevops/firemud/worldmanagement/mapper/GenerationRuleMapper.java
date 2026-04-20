@@ -9,6 +9,7 @@ import org.mapstruct.Mapping;
 public interface GenerationRuleMapper {
   GenerationRuleDto toDto(GenerationRule entity);
 
+  @Mapping(target = "versionId", ignore = true)
   @Mapping(target = "version", ignore = true)
   GenerationRule toEntity(GenerationRuleDto dto);
 }

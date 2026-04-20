@@ -7,4 +7,6 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface ZoneRepository extends JpaRepository<Zone, Long> {
   java.util.List<Zone> findByTenantIdOrderByIdAsc(Long tenantId);
+
+  java.util.List<Zone> findByTenantIdAndVersionIdOrderByIdAsc(Long tenantId, Long versionId);
 }

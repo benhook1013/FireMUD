@@ -39,12 +39,15 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
       throw new IllegalArgumentException("version_id is required");
     }
     long tenantKey = Long.parseLong(tenantId);
+    long versionKey = Long.parseLong(versionId);
     try {
       String canonicalJson =
           objectMapper.writeValueAsString(
               Map.of(
                   "items",
-                  itemRepository.findByTenantIdOrderByIdAsc(tenantKey).stream()
+                  itemRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
                       .map(
                           item ->
                               Map.<String, Object>of(
@@ -58,7 +61,9 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
                                   "defaultStackFamilyKey", value(item.getDefaultStackFamilyKey())))
                       .toList(),
                   "npcs",
-                  npcRepository.findByTenantIdOrderByIdAsc(tenantKey).stream()
+                  npcRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
                       .map(
                           npc ->
                               Map.<String, Object>of(
@@ -68,7 +73,9 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
                                   "respawnDelaySeconds", npc.getRespawnDelaySeconds()))
                       .toList(),
                   "craftingRecipes",
-                  craftingRecipeRepository.findByTenantIdOrderByIdAsc(tenantKey).stream()
+                  craftingRecipeRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
                       .map(
                           recipe ->
                               Map.<String, Object>of(

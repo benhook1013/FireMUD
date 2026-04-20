@@ -45,12 +45,15 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
       throw new IllegalArgumentException("version_id is required");
     }
     long tenantKey = Long.parseLong(tenantId);
+    long versionKey = Long.parseLong(versionId);
     try {
       String canonicalJson =
           objectMapper.writeValueAsString(
               Map.of(
                   "regions",
-                  regionRepository.findByTenantIdOrderByIdAsc(tenantKey).stream()
+                  regionRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
                       .map(
                           region ->
                               Map.<String, Object>of(
@@ -64,7 +67,9 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
                                   "spacingMultiplier", region.getSpacingMultiplier()))
                       .toList(),
                   "zones",
-                  zoneRepository.findByTenantIdOrderByIdAsc(tenantKey).stream()
+                  zoneRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
                       .map(
                           zone ->
                               Map.<String, Object>of(
@@ -73,7 +78,9 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
                                   "name", zone.getName()))
                       .toList(),
                   "rooms",
-                  roomRepository.findByTenantIdOrderByIdAsc(tenantKey).stream()
+                  roomRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
                       .map(
                           room ->
                               Map.<String, Object>of(
@@ -87,7 +94,9 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
                                       value(room.getDescriptionLocalizedVariantsJson())))
                       .toList(),
                   "roomExits",
-                  roomExitRepository.findByTenantIdOrderByIdAsc(tenantKey).stream()
+                  roomExitRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
                       .map(
                           roomExit ->
                               Map.<String, Object>of(
@@ -98,7 +107,9 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
                                   "cost", roomExit.getCost()))
                       .toList(),
                   "generationRules",
-                  generationRuleRepository.findByTenantIdOrderByIdAsc(tenantKey).stream()
+                  generationRuleRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
                       .map(
                           rule ->
                               Map.<String, Object>of(

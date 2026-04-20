@@ -14,6 +14,9 @@ public class Region {
   @Column(nullable = false)
   private Long tenantId;
 
+  @Column(nullable = false)
+  private Long versionId = 1L;
+
   /**
    * Identifier for the world shard hosting this region. Shards allow the world to span multiple
    * servers while keeping regions isolated. A value of {@code 0} indicates the default shard.

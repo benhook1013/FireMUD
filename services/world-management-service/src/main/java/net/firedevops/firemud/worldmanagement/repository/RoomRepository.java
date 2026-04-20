@@ -7,4 +7,6 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface RoomRepository extends JpaRepository<Room, Long> {
   java.util.List<Room> findByTenantIdOrderByIdAsc(Long tenantId);
+
+  java.util.List<Room> findByTenantIdAndVersionIdOrderByIdAsc(Long tenantId, Long versionId);
 }

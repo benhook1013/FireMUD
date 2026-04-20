@@ -13,6 +13,8 @@ public interface RoomExitRepository extends JpaRepository<RoomExit, Long> {
 
   List<RoomExit> findByTenantIdOrderByIdAsc(Long tenantId);
 
+  List<RoomExit> findByTenantIdAndVersionIdOrderByIdAsc(Long tenantId, Long versionId);
+
   @Query(
       "SELECT re FROM RoomExit re JOIN FETCH re.toRoom WHERE re.tenantId = :tenantId AND re.fromRoom.id = :roomId")
   List<RoomExit> findByTenantIdAndFromRoomId(

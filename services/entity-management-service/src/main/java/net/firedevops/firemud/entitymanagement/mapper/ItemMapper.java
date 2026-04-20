@@ -9,6 +9,7 @@ import org.mapstruct.Mapping;
 public interface ItemMapper {
   ItemDto toDto(Item entity);
 
+  @Mapping(target = "versionId", ignore = true)
   @Mapping(target = "version", ignore = true)
   Item toEntity(ItemDto dto);
 }

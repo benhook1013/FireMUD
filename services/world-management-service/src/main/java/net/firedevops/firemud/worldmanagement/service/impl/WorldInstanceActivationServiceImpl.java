@@ -184,7 +184,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
     region.setGeneratorParams("{}");
     region.setSpacingMultiplier(1.0);
     RegionInstance savedRegion = regionInstanceRepository.save(region);
-    materializeRoomTopology(savedRegion, request.tenantId(), request.gameInstanceId());
+    materializeRoomTopology(
+        savedRegion, request.tenantId(), request.versionId(), request.gameInstanceId());
 
     logger.info(
         "Prepared world instance tenant={} gameInstanceId={} launchDescriptorId={} versionId={}",
@@ -425,9 +426,10 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
   }
 
   private void materializeRoomTopology(
-      RegionInstance regionInstance, long tenantId, long gameInstanceId) {
+      RegionInstance regionInstance, long tenantId, long versionId, long gameInstanceId) {
     Map<Long, ZoneInstance> zoneInstancesByTemplateId = new LinkedHashMap<>();
-    for (Zone templateZone : zoneRepository.findByTenantIdOrderByIdAsc(tenantId)) {
+    for (Zone templateZone :
+        zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, versionId)) {
       ZoneInstance zoneInstance = new ZoneInstance();
       zoneInstance.setTenantId(tenantId);
       zoneInstance.setGameInstanceId(gameInstanceId);
@@ -438,7 +440,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
       ZoneInstance savedZoneInstance = zoneInstanceRepository.save(zoneInstance);
       zoneInstancesByTemplateId.put(templateZone.getId(), savedZoneInstance);
     }
-    List<Room> templateRooms = roomRepository.findByTenantIdOrderByIdAsc(tenantId);
+    List<Room> templateRooms =
+        roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, versionId);
     Map<Long, RoomInstance> roomInstancesByTemplateId = new LinkedHashMap<>();
     for (Room templateRoom : templateRooms) {
       ZoneInstance zoneInstance = zoneInstancesByTemplateId.get(templateRoom.getZone().getId());
@@ -460,7 +463,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
       RoomInstance savedRoomInstance = roomInstanceRepository.save(roomInstance);
       roomInstancesByTemplateId.put(templateRoom.getId(), savedRoomInstance);
     }
-    for (RoomExit templateExit : roomExitRepository.findByTenantIdOrderByIdAsc(tenantId)) {
+    for (RoomExit templateExit :
+        roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, versionId)) {
       RoomInstance fromRoomInstance =
           roomInstancesByTemplateId.get(templateExit.getFromRoom().getId());
       RoomInstance toRoomInstance = roomInstancesByTemplateId.get(templateExit.getToRoom().getId());

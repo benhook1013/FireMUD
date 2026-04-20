@@ -47,8 +47,8 @@ Entity Management is a required publish-gate participant and must maintain a sta
 
 Implementation Notes:
 
-- The current implementation hashes the tenant’s draft entity-definition tables in their existing tenant-scoped schema and returns synthetic `appliedCommitId = "version:<versionId>"`.
-- That preserves one canonical digest gate now while the future fully version-scoped entity-template graph remains implementation follow-through.
+- The current implementation hashes the version-scoped entity-definition rows for the requested `(tenantId, versionId)` and returns synthetic `appliedCommitId = "version:<versionId>"` until the later applied-revision ledger lands.
+- Current version-scoped digest inputs include `items`, `npcs`, and `crafting_recipes`; later entity-template families must join this same `(tenantId, versionId)` digest contract when introduced.
 
 - Included objects:
   - version-scoped entity-template tables such as item, NPC, equipment, loot-table, and balance-curve definitions keyed by `(tenantId, versionId)`;

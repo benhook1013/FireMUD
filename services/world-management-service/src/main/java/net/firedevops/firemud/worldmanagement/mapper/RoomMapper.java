@@ -12,6 +12,7 @@ public interface RoomMapper {
   @org.mapstruct.Mapping(target = "zone.region.id", source = "regionId")
   @org.mapstruct.Mapping(target = "nameLocalizedVariantsJson", ignore = true)
   @org.mapstruct.Mapping(target = "descriptionLocalizedVariantsJson", ignore = true)
+  @org.mapstruct.Mapping(target = "versionId", ignore = true)
   @org.mapstruct.Mapping(target = "version", ignore = true)
   Room toEntity(RoomDto dto);
 }

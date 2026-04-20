@@ -17,6 +17,7 @@ public interface NpcMapper {
       target = "lastDefeatedAt",
       expression =
           "java(dto.lastDefeatedAtEpochMs() == null ? null : java.time.Instant.ofEpochMilli(dto.lastDefeatedAtEpochMs()))")
+  @Mapping(target = "versionId", ignore = true)
   @Mapping(target = "version", ignore = true)
   Npc toEntity(NpcDto dto);
 }

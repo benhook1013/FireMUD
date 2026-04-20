@@ -12,4 +12,8 @@ public interface CraftingRecipeRepository extends JpaRepository<CraftingRecipe, 
 
   @EntityGraph(attributePaths = {"ingredients", "ingredients.item", "resultItem"})
   java.util.List<CraftingRecipe> findByTenantIdOrderByIdAsc(Long tenantId);
+
+  @EntityGraph(attributePaths = {"ingredients", "ingredients.item", "resultItem"})
+  java.util.List<CraftingRecipe> findByTenantIdAndVersionIdOrderByIdAsc(
+      Long tenantId, Long versionId);
 }

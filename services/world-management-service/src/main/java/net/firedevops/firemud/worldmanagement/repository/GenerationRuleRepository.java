@@ -11,4 +11,7 @@ public interface GenerationRuleRepository extends JpaRepository<GenerationRule, 
   Page<GenerationRule> findByTenantId(Long tenantId, Pageable pageable);
 
   java.util.List<GenerationRule> findByTenantIdOrderByIdAsc(Long tenantId);
+
+  java.util.List<GenerationRule> findByTenantIdAndVersionIdOrderByIdAsc(
+      Long tenantId, Long versionId);
 }

@@ -14,6 +14,9 @@ public class Room {
   @Column(nullable = false)
   private Long tenantId;
 
+  @Column(nullable = false)
+  private Long versionId = 1L;
+
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "zone_id", nullable = false)
   private Zone zone;

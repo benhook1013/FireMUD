@@ -14,6 +14,9 @@ public class Item {
   @Column(nullable = false)
   private Long tenantId;
 
+  @Column(nullable = false)
+  private Long versionId = 1L;
+
   @Column(nullable = false, length = 100)
   private String name;
 

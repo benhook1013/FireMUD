@@ -20,5 +20,7 @@ public interface RegionRepository extends JpaRepository<Region, Long> {
 
   List<Region> findByTenantIdOrderByIdAsc(Long tenantId);
 
+  List<Region> findByTenantIdAndVersionIdOrderByIdAsc(Long tenantId, Long versionId);
+
   List<Region> findByTenantIdAndShardId(Long tenantId, Integer shardId);
 }

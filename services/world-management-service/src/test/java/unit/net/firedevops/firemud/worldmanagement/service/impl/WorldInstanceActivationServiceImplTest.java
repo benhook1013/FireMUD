@@ -114,12 +114,12 @@ class WorldInstanceActivationServiceImplTest {
                         .setVersionStateEpoch(77L)
                         .build())
                 .build());
-    when(zoneRepository.findByTenantIdOrderByIdAsc(42L))
+    when(zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L))
         .thenReturn(List.of(templateZone(42L, 11L)));
-    when(roomRepository.findByTenantIdOrderByIdAsc(42L))
+    when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L))
         .thenReturn(List.of(templateRoom(42L, 1021L)));
     when(zoneInstanceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-    when(roomExitRepository.findByTenantIdOrderByIdAsc(42L)).thenReturn(List.of());
+    when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L)).thenReturn(List.of());
     when(roomInstanceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(roomInstanceExitRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -314,6 +314,7 @@ class WorldInstanceActivationServiceImplTest {
     Room room = new Room();
     room.setId(roomId);
     room.setTenantId(tenantId);
+    room.setVersionId(11L);
     room.setZone(zone);
     room.setName("Login Hall");
     room.setDescription("A narrow testing hall.");
@@ -324,6 +325,7 @@ class WorldInstanceActivationServiceImplTest {
     Zone zone = new Zone();
     zone.setId(zoneId);
     zone.setTenantId(tenantId);
+    zone.setVersionId(11L);
     zone.setName("Starter Zone");
     return zone;
   }

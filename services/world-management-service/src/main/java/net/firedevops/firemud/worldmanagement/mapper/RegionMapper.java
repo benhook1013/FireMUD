@@ -9,6 +9,7 @@ import org.mapstruct.Mapping;
 public interface RegionMapper {
   RegionDto toDto(Region entity);
 
+  @Mapping(target = "versionId", ignore = true)
   @Mapping(target = "version", ignore = true)
   Region toEntity(RegionDto dto);
 }

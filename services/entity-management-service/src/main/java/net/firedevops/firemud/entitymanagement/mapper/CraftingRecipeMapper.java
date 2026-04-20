@@ -11,5 +11,6 @@ public interface CraftingRecipeMapper {
   CraftingRecipeDto toDto(CraftingRecipe entity);
 
   @Mapping(target = "resultItem.id", source = "resultItemId")
+  @Mapping(target = "versionId", ignore = true)
   CraftingRecipe toEntity(CraftingRecipeDto dto);
 }

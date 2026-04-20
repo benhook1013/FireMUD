@@ -11,7 +11,7 @@ It intentionally omits completed slices and uses the individual slice docs as th
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
 1. [08.1 Publish Digest Gating and Release Attestation](./08.1-task-list-publish-digest-gating-and-release-attestation-vertical-slice.md)
-   Remaining: build on the now-live canonical publish-attempt framework, participant observations, recorded-digest baselines, typed gate failures, typed missing-attestation reads, and exact manifest-key repair proof by replacing today's tenant-draft hashing with later fully version-scoped digest inputs and extending the same hard-fail attestation contract to later consumers.
+   Remaining: build on the now-live canonical publish-attempt framework, participant observations, recorded-digest baselines, typed gate failures, typed missing-attestation reads, exact manifest-key repair proof, and current World/Entity version-scoped digest inputs by extending the same hard-fail attestation contract to later consumers and later domain-template families.
 2. [08.2 Published Asset Manifest and Purge Lifecycle](./08.2-task-list-published-asset-manifest-and-purge-lifecycle-vertical-slice.md)
    Remaining: keep the now-live artifact-state proof, exact exported-key proof, exact-bytes repair, and tombstone/purge workflow substrate moving toward broader normalized deletion/reference-table truth and richer derived-artifact coverage.
 3. [08.3 Launch Descriptor and Activation Preflight](./08.3-task-list-launch-descriptor-and-activation-preflight-vertical-slice.md)
