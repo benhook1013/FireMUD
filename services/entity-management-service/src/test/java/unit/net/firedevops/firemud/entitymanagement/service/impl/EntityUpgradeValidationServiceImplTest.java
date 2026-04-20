@@ -52,8 +52,19 @@ class EntityUpgradeValidationServiceImplTest {
   }
 
   @Test
-  void failsClosedWhenSurvivorRowsExistBeforeS1S2ValidationIsImplemented() {
+  void returnsCompatibleWhenOnlyS1SurvivorRowsExist() {
     Mockito.when(characterRepository.countByTenantId(1L)).thenReturn(2L);
+    Mockito.when(characterFriendRepository.countByTenantId(1L)).thenReturn(1L);
+
+    var result = service.validateEntityUpgradeMappings(1L, 7L, 9L, null);
+
+    assertEquals("COMPATIBLE", result.result());
+    assertEquals(false, result.hasS2Rows());
+    assertEquals(false, result.remapSetRequired());
+  }
+
+  @Test
+  void requiresRemapWhenTemplateBoundSurvivorRowsExist() {
     Mockito.when(inventoryEntryRepository.countByCharacterTenantId(1L)).thenReturn(1L);
 
     var result = service.validateEntityUpgradeMappings(1L, 7L, 9L, null);
@@ -61,6 +72,18 @@ class EntityUpgradeValidationServiceImplTest {
     assertEquals("INCOMPATIBLE", result.result());
     assertEquals(true, result.hasS2Rows());
     assertEquals(true, result.remapSetRequired());
-    assertTrue(result.reasons().get(0).contains("ENTITY_SURVIVOR_STATE_UNSUPPORTED"));
+    assertTrue(result.reasons().get(0).contains("ENTITY_REMAP_REQUIRED"));
+  }
+
+  @Test
+  void acceptsApprovedRemapForTemplateBoundSurvivorRows() {
+    Mockito.when(characterEquipmentRepository.countByCharacterTenantId(1L)).thenReturn(1L);
+
+    var result = service.validateEntityUpgradeMappings(1L, 7L, 9L, "remap-v1-v2");
+
+    assertEquals("COMPATIBLE", result.result());
+    assertEquals(true, result.hasS2Rows());
+    assertEquals(false, result.remapSetRequired());
+    assertEquals("remap-v1-v2", result.remapSetId());
   }
 }

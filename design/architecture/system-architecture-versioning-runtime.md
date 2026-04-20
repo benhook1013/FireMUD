@@ -359,7 +359,7 @@ These names are the canonical initial-slice preflight vocabulary until service i
 Initial-slice notes:
 
 - In the first live implementation slice, World Management declares no mandatory `S2` row families. `ValidateWorldUpgradeMappings` therefore still reports `stateClassesChecked=["S3"]` and `hasS2Rows=false`, but it now proves more than one row exists: the source world must be in a cutover-eligible lifecycle state and still have retained `region_instance`, `zone_instance`, and `room_instance` topology before it reports `COMPATIBLE`.
-- In the first live Entity Management implementation slice, the validation surface is also honest about current persisted runtime families: it checks tenant-surviving `character`, `inventory`, `character_equipment`, and `character_friend` families plus the current instance-scoped `S3` families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`). If no tenant-surviving rows exist, the participant reports `COMPATIBLE` for the current first-cut substrate. If any tenant-surviving rows exist, the participant fails closed with `INCOMPATIBLE` until explicit `S1` / `S2` survivor-state validation and remap proof are implemented.
+- In the first live Entity Management implementation slice, the validation surface is also honest about current persisted runtime families: it checks tenant-surviving `character`, `inventory`, `character_equipment`, and `character_friend` families plus the current instance-scoped `S3` families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`). `character` and `character_friend` are supported `S1` survivor state. `inventory` and `character_equipment` are treated as current `S2` template-bound survivor state: if either family has rows, cutover requires the frozen approved `remapSetId`; without that id Entity returns `INCOMPATIBLE` with `ENTITY_REMAP_REQUIRED`, and with it Entity reports `COMPATIBLE` while echoing the exact id bound into the prepared cutover proof.
 
 The `ValidateInstanceCutoverCompatibility` contract below is the orchestration surface for these rules; it must report which state classes were checked, which owning domains attested compatibility, and whether any remap set was required.
 
@@ -411,7 +411,7 @@ Replacement-instance cutover requires an explicit compatibility preflight before
   - Game Session then fails closed if target Game Design version-state or published-release-bundle proof is missing/invalid.
   - Game Session gathers World and Entity participant attestations into one canonical response.
   - `PrepareVersionUpgrade` persists that same proof bundle as a durable `prepared_version_upgrade` control-plane record for later cutover consumers.
-  - World currently reports the honest first-cut `S3` row-family view described above. Entity now enumerates both survivor and instance-scoped row families, but deliberately fails closed when survivor rows exist until richer `S1` / `S2` cutover semantics are implemented.
+  - World currently reports the honest first-cut `S3` row-family view described above. Entity now enumerates both survivor and instance-scoped row families, accepts current `S1` survivor rows, and requires the frozen approved `remapSetId` whenever current `S2` inventory/equipment rows exist.
 - Pointer swap is forbidden until this preflight reports `COMPATIBLE`; no best-effort fallback defaults are allowed at cutover time.
 
 Illustrative compatibility responses:

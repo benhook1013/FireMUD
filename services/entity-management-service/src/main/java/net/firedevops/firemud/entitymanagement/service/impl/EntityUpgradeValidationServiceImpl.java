@@ -69,28 +69,27 @@ public class EntityUpgradeValidationServiceImpl implements EntityUpgradeValidati
     itemStackRepository.countByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
     containerInstanceRepository.countByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
     roomGroundInventoryRepository.countByIdTenantIdAndIdGameInstanceId(tenantId, gameInstanceId);
+    String normalizedRemapSetId = normalizeBlank(remapSetId);
     boolean hasTemplateBoundRows = inventoryRows > 0 || equipmentRows > 0;
-    boolean hasSurvivorRows =
-        characterRows > 0 || inventoryRows > 0 || equipmentRows > 0 || friendRows > 0;
-    if (hasSurvivorRows) {
+    if (hasTemplateBoundRows && normalizedRemapSetId == null) {
       return new EntityUpgradeValidationResultDto(
           STATE_CLASSES,
           CHECKED_FAMILIES,
-          hasTemplateBoundRows,
+          true,
           "INCOMPATIBLE",
-          hasTemplateBoundRows && normalizeBlank(remapSetId) == null,
+          true,
           List.of(
-              "ENTITY_SURVIVOR_STATE_UNSUPPORTED: character, inventory, equipment, and friend rows require explicit S1/S2 survivor-state validation before replacement-instance cutover"),
-          normalizeBlank(remapSetId));
+              "ENTITY_REMAP_REQUIRED: inventory and equipment rows reference durable entity templates and require an approved remapSetId before replacement-instance cutover"),
+          null);
     }
     return new EntityUpgradeValidationResultDto(
         STATE_CLASSES,
         CHECKED_FAMILIES,
-        false,
+        hasTemplateBoundRows,
         "COMPATIBLE",
         false,
         List.of(),
-        normalizeBlank(remapSetId));
+        normalizedRemapSetId);
   }
 
   private String normalizeBlank(String value) {
