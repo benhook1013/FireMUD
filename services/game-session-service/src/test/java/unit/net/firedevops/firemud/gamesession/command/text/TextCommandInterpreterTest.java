@@ -828,16 +828,14 @@ class TextCommandInterpreterTest {
         interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
 
     assertTrue(login.commandResult().accepted());
+    Mockito.clearInvocations(commandService);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "MOVE north", false);
 
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("PLAY_REQUIRED", interpretation.commandResult().errorCode());
-    verify(moveHandler, never())
-        .handle(
-            Mockito.any(net.firedevops.firemud.gamesession.service.SessionContext.class),
-            Mockito.any(TextCommand.class));
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -846,10 +844,7 @@ class TextCommandInterpreterTest {
 
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
-    verify(moveHandler, never())
-        .handle(
-            Mockito.any(net.firedevops.firemud.gamesession.service.SessionContext.class),
-            Mockito.any(TextCommand.class));
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test

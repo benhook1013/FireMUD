@@ -8,8 +8,7 @@ final class MoveTextCommandDispatchHandler implements TextCommandDispatchHandler
   private final net.firedevops.firemud.gamesession.service.CommandService commandService;
 
   MoveTextCommandDispatchHandler(
-      net.firedevops.firemud.gamesession.service.CommandService commandService,
-      MoveCommandHandler moveHandler) {
+      net.firedevops.firemud.gamesession.service.CommandService commandService) {
     this.commandService = commandService;
   }
 

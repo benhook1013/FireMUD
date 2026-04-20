@@ -133,7 +133,7 @@ Game Session now has a real current-boundary durable gameplay execution seam ins
 The first migrated command families are movement plus the first item/equipment/container mutation surface:
 
 - built-in movement input now enqueues durably instead of performing its authoritative room mutation directly in the dispatch handler;
-- movement execution reuses the shared move-planning logic to preserve player-visible semantics, but the authoritative room change now flows through one dedicated idempotent movement-apply seam keyed by `effectId`;
+- movement execution reuses the shared move-planning logic to preserve player-visible semantics, but `MoveCommandHandler` no longer exposes a public synchronous session-write path and the authoritative room change now flows through one dedicated idempotent movement-apply seam keyed by `effectId`;
 - duplicate movement effect application converges to replay/no-op rather than a second room mutation;
 - player-visible movement output is delivered asynchronously through the same active-websocket plus screen-buffer-aware delivery path used for runtime recipient delivery;
 - item/equipment/container mutation commands, currently `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE`, enqueue durably from the player-facing command path and execute from the durable post-drain effect executor before their player-visible outputs are delivered;

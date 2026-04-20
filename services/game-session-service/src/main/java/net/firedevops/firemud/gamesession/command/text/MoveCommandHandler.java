@@ -11,7 +11,6 @@ import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -29,20 +28,10 @@ public class MoveCommandHandler {
   private static final String FAILURES_METRIC = "gamesession.command.move.failures";
 
   private final GameLogicClient gameLogicClient;
-  private final SessionContextService sessionContextService;
   private final LookCommandHandler lookCommandHandler;
   private final GameLogicProperties gameLogicProperties;
   private final EffectiveSettingsResolver settingsResolver;
   private final MeterRegistry meterRegistry;
-
-  public MoveCommandHandlingResult handle(SessionContext context, TextCommand command) {
-    PreparedMoveCommandResult prepared = prepare(context, command);
-    if (!prepared.success()) {
-      return new MoveCommandHandlingResult(prepared.commandResult(), prepared.responseOutput());
-    }
-    sessionContextService.save(prepared.updatedContext());
-    return new MoveCommandHandlingResult(prepared.commandResult(), prepared.responseOutput());
-  }
 
   public PreparedMoveCommandResult prepare(SessionContext context, TextCommand command) {
     Objects.requireNonNull(context, "context must not be null");

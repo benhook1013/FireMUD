@@ -376,7 +376,7 @@ public class TextCommandInterpreter {
             new AuthoredActionTextCommandDispatchHandler(authoredActionHandler),
             new ItemTextCommandDispatchHandler(commandService, itemHandler),
             new CommunicationTextCommandDispatchHandler(communicationHandler),
-            new MoveTextCommandDispatchHandler(commandService, moveHandler),
+            new MoveTextCommandDispatchHandler(commandService),
             new LookTextCommandDispatchHandler(commandService, lookHandler)));
   }
 }
