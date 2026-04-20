@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cloud.gateway.config.GatewayProperties;
+import org.springframework.cloud.gateway.filter.FilterDefinition;
 import org.springframework.cloud.gateway.route.RouteDefinition;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
@@ -54,5 +55,32 @@ class GatewayRoutesConfigurationProdTest {
             .orElseThrow(() -> new AssertionError("Session route should have a Path predicate"));
 
     assertThat(pathArgs.values()).containsExactly("/api/session/**");
+    assertHasStripPrefixTwo(sessionRoute);
+  }
+
+  @Test
+  void restEdgeRoutesStripExternalServicePrefixBeforeForwarding() {
+    assertThat(route("admin").getPredicates().get(0).getArgs().values())
+        .containsExactly("/api/admin/**");
+    assertHasStripPrefixTwo(route("admin"));
+    assertHasStripPrefixTwo(route("design"));
+    assertHasStripPrefixTwo(route("account"));
+    assertHasStripPrefixTwo(route("social"));
+  }
+
+  private RouteDefinition route(String routeId) {
+    return gatewayProperties.getRoutes().stream()
+        .filter(route -> routeId.equals(route.getId()))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("Expected route to be configured: " + routeId));
+  }
+
+  private void assertHasStripPrefixTwo(RouteDefinition route) {
+    FilterDefinition filter =
+        route.getFilters().stream()
+            .filter(candidate -> "StripPrefix".equals(candidate.getName()))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("Expected StripPrefix filter"));
+    assertThat(filter.getArgs().values()).containsExactly("2");
   }
 }

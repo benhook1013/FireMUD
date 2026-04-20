@@ -74,8 +74,7 @@ class AdmissionPointerControllerTest {
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
-        .perform(
-            get("/admin/admission-pointers").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .perform(get("/admission-pointers").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].worldSlug").value("demo"))
         .andExpect(jsonPath("$.data[0].tenantId").value(2));
@@ -104,7 +103,7 @@ class AdmissionPointerControllerTest {
 
     mockMvc
         .perform(
-            post("/admin/admission-pointers")
+            post("/admission-pointers")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -137,7 +136,7 @@ class AdmissionPointerControllerTest {
 
     mockMvc
         .perform(
-            get("/admin/admission-pointers/demo/production/audit")
+            get("/admission-pointers/demo/production/audit")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].pointerVersion").value(3));
@@ -153,7 +152,7 @@ class AdmissionPointerControllerTest {
 
     mockMvc
         .perform(
-            post("/admin/admission-pointers/cutover")
+            post("/admission-pointers/cutover")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -170,7 +169,7 @@ class AdmissionPointerControllerTest {
 
     mockMvc
         .perform(
-            post("/admin/admission-pointers/version-upgrades")
+            post("/admission-pointers/version-upgrades")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(
                     objectMapper.writeValueAsString(
@@ -188,7 +187,7 @@ class AdmissionPointerControllerTest {
 
     mockMvc
         .perform(
-            get("/admin/admission-pointers/version-upgrades/2/pvu-1")
+            get("/admission-pointers/version-upgrades/2/pvu-1")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
   }

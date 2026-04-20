@@ -54,6 +54,8 @@
 
 The canonical external allowlist stops there. World Management, Entity Management, Game Logic, and Automation & Scripting do not expose direct Gateway-routed external APIs in the base architecture unless a dedicated design update extends the allowlist.
 
+Gateway routes strip the first two path segments before forwarding these REST families to their owning services. For example, `/api/admin/admission-pointers` is forwarded to Logging & Admin as `/admission-pointers`, and `/api/account/auth/login` is forwarded to Account as `/auth/login`. The `/assets/**` object-store route keeps its dedicated single-prefix strip behavior.
+
 ## Tenant and Header Trust Model
 
 - Spring Cloud Gateway remains tenant-agnostic. It forwards tenant-related headers only after applying the gateway’s header trust and canonicalization rules.

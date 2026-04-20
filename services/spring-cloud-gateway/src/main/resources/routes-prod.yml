@@ -8,22 +8,32 @@ spring:
               uri: ws://game-session-service.default.svc.cluster.local:8080
               predicates:
                 - Path=/api/session/**
+              filters:
+                - StripPrefix=2
             - id: admin
               uri: http://logging-admin-service.default.svc.cluster.local:8080
               predicates:
                 - Path=/api/admin/**
+              filters:
+                - StripPrefix=2
             - id: design
               uri: http://game-design-service.default.svc.cluster.local:8080
               predicates:
                 - Path=/api/design/**
+              filters:
+                - StripPrefix=2
             - id: account
               uri: http://account-service.default.svc.cluster.local:8080
               predicates:
                 - Path=/api/account/**
+              filters:
+                - StripPrefix=2
             - id: social
               uri: http://social-groups-service.default.svc.cluster.local:8080
               predicates:
                 - Path=/api/social/**
+              filters:
+                - StripPrefix=2
             - id: asset-store
               uri: http://minio.default.svc.cluster.local:9000
               predicates:
