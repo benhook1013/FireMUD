@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.InstanceCutoverCompatibilityService;
 import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.CutoverCompatibilityResult;
 import net.firedevops.firemud.gamesession.v1.CutoverParticipantResult;
@@ -29,6 +30,8 @@ import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
+import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
@@ -37,6 +40,9 @@ import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
+import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
+import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
+import net.firedevops.firemud.gamesession.v1.PreparedVersionUpgrade;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionRequest;
@@ -64,6 +70,7 @@ public final class GameSessionControlPlaneGrpcService
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final InstanceCutoverCompatibilityService instanceCutoverCompatibilityService;
+  private final VersionUpgradePreparationService versionUpgradePreparationService;
   private final TickService tickService;
   private final MeterRegistry meterRegistry;
 
@@ -76,6 +83,7 @@ public final class GameSessionControlPlaneGrpcService
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
+      VersionUpgradePreparationService versionUpgradePreparationService,
       TickService tickService,
       MeterRegistry meterRegistry) {
     this.gameInstanceRepository = gameInstanceRepository;
@@ -83,6 +91,7 @@ public final class GameSessionControlPlaneGrpcService
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.instanceCutoverCompatibilityService = instanceCutoverCompatibilityService;
+    this.versionUpgradePreparationService = versionUpgradePreparationService;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
   }
@@ -565,6 +574,89 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.prepareVersionUpgrade")
+  public void prepareVersionUpgrade(
+      PrepareVersionUpgradeRequest request,
+      StreamObserver<PrepareVersionUpgradeResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      var preparation =
+          versionUpgradePreparationService.prepareVersionUpgrade(
+              parseTenantId(request.getTenantId()),
+              parseGameInstanceId(request.getSourceGameInstanceId()),
+              parseGameInstanceId(request.getTargetVersionId()),
+              request.getControlPlaneRequestId());
+      responseObserver.onNext(
+          PrepareVersionUpgradeResponse.newBuilder()
+              .setPreparation(toPreparedVersionUpgrade(preparation))
+              .build());
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      PrepareVersionUpgradeResponse response =
+          PrepareVersionUpgradeResponse.newBuilder()
+              .setError(authorizationError("PrepareVersionUpgrade", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      PrepareVersionUpgradeResponse response =
+          PrepareVersionUpgradeResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("PrepareVersionUpgrade failed", ex);
+      PrepareVersionUpgradeResponse response =
+          PrepareVersionUpgradeResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getPreparedVersionUpgrade")
+  public void getPreparedVersionUpgrade(
+      GetPreparedVersionUpgradeRequest request,
+      StreamObserver<GetPreparedVersionUpgradeResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      var preparation =
+          versionUpgradePreparationService.getPreparedVersionUpgrade(
+              parseTenantId(request.getTenantId()), request.getPreparationId());
+      responseObserver.onNext(
+          GetPreparedVersionUpgradeResponse.newBuilder()
+              .setPreparation(toPreparedVersionUpgrade(preparation))
+              .build());
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      GetPreparedVersionUpgradeResponse response =
+          GetPreparedVersionUpgradeResponse.newBuilder()
+              .setError(authorizationError("GetPreparedVersionUpgrade", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      GetPreparedVersionUpgradeResponse response =
+          GetPreparedVersionUpgradeResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("GetPreparedVersionUpgrade failed", ex);
+      GetPreparedVersionUpgradeResponse response =
+          GetPreparedVersionUpgradeResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
   private AdmissionPointerControlPlaneEntry toEntry(GameplayAdmissionPointerAuditEntry entry) {
     return AdmissionPointerControlPlaneEntry.newBuilder()
         .setWorldSlug(entry.worldSlug())
@@ -612,6 +704,29 @@ public final class GameSessionControlPlaneGrpcService
         .setResult(toCutoverCompatibilityResult(result.result()))
         .addAllReasons(result.reasons())
         .build();
+  }
+
+  private PreparedVersionUpgrade toPreparedVersionUpgrade(
+      net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto preparation) {
+    PreparedVersionUpgrade.Builder builder =
+        PreparedVersionUpgrade.newBuilder()
+            .setPreparationId(preparation.preparationId())
+            .setControlPlaneRequestId(preparation.controlPlaneRequestId())
+            .setTenantId(Long.toString(preparation.tenantId()))
+            .setSourceGameInstanceId(Long.toString(preparation.sourceGameInstanceId()))
+            .setSourceVersionId(Long.toString(preparation.sourceVersionId()))
+            .setTargetVersionId(Long.toString(preparation.targetVersionId()))
+            .setTargetLaunchDescriptorId(preparation.targetLaunchDescriptorId())
+            .setResult(toCutoverCompatibilityResult(preparation.result()))
+            .addAllReasons(preparation.reasons())
+            .addAllCheckedParticipants(preparation.checkedParticipants())
+            .setCheckedAtMs(preparation.checkedAt().toEpochMilli())
+            .addAllParticipantResults(
+                preparation.participantResults().stream().map(this::toParticipantResult).toList());
+    if (preparation.remapSetId() != null) {
+      builder.setRemapSetId(preparation.remapSetId());
+    }
+    return builder.build();
   }
 
   private CutoverCompatibilityResult toCutoverCompatibilityResult(String result) {

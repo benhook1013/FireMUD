@@ -57,6 +57,9 @@ public class InstanceCutoverCompatibilityServiceImpl
     if (descriptor.hasError()) {
       String reason = errorSummary(descriptor.getError());
       return new InstanceCutoverCompatibilityDto(
+          sourceVersionId,
+          targetVersionId,
+          null,
           "INCOMPATIBLE",
           List.of(reason),
           List.of("GAME_DESIGN"),
@@ -105,6 +108,9 @@ public class InstanceCutoverCompatibilityServiceImpl
     reasons.addAll(collectReasons(entityValidation.getReasonsList(), entityValidation.getError()));
 
     return new InstanceCutoverCompatibilityDto(
+        sourceVersionId,
+        targetVersionId,
+        descriptor.getLaunchDescriptor().getLaunchDescriptorId(),
         summarizeOverallResult(participantResults),
         reasons,
         checkedParticipants,

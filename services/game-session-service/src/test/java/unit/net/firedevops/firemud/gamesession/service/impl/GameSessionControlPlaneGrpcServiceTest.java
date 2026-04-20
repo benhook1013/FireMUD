@@ -24,16 +24,21 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditE
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.InstanceCutoverCompatibilityService;
 import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
+import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
+import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
+import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
@@ -181,6 +186,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(RuntimeRegionStatusRepository.class),
             authorityService,
             Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -232,6 +238,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(RuntimeRegionStatusRepository.class),
             authorityService,
             Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -273,6 +280,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(RuntimeRegionStatusRepository.class),
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -336,6 +344,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(RuntimeRegionStatusRepository.class),
             authorityService,
             Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -386,6 +395,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(RuntimeRegionStatusRepository.class),
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -430,6 +440,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             repository,
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -458,6 +469,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(compatibilityService.validateInstanceCutoverCompatibility(1L, 7L, 9L))
         .thenReturn(
             new net.firedevops.firemud.gamesession.dto.InstanceCutoverCompatibilityDto(
+                7L,
+                9L,
+                "ld-9",
                 "COMPATIBLE",
                 List.of(),
                 List.of("GAME_DESIGN", "WORLD", "ENTITY"),
@@ -486,6 +500,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(RuntimeRegionStatusRepository.class),
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             compatibilityService,
+            Mockito.mock(VersionUpgradePreparationService.class),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
 
@@ -512,6 +527,108 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(2, responseRef.get().getParticipantResultsCount());
   }
 
+  @Test
+  void prepareVersionUpgradeReturnsPersistedPreparationForAdminCaller() {
+    VersionUpgradePreparationService preparationService =
+        Mockito.mock(VersionUpgradePreparationService.class);
+    Mockito.when(preparationService.prepareVersionUpgrade(1L, 7L, 9L, "pvu-req-1"))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto(
+                "pvu-1",
+                "pvu-req-1",
+                1L,
+                7L,
+                7L,
+                9L,
+                "ld-9",
+                "remap-1",
+                "COMPATIBLE",
+                List.of(),
+                List.of("GAME_DESIGN", "WORLD", "ENTITY"),
+                Instant.parse("2026-04-20T10:05:00Z"),
+                List.of()));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            preparationService,
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<PrepareVersionUpgradeResponse> responseRef = new AtomicReference<>();
+    service.prepareVersionUpgrade(
+        PrepareVersionUpgradeRequest.newBuilder()
+            .setTenantId("1")
+            .setSourceGameInstanceId("7")
+            .setTargetVersionId("9")
+            .setControlPlaneRequestId("pvu-req-1")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(PrepareVersionUpgradeResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("pvu-1", responseRef.get().getPreparation().getPreparationId());
+    assertEquals("pvu-req-1", responseRef.get().getPreparation().getControlPlaneRequestId());
+    assertEquals("ld-9", responseRef.get().getPreparation().getTargetLaunchDescriptorId());
+    assertEquals("remap-1", responseRef.get().getPreparation().getRemapSetId());
+  }
+
+  @Test
+  void getPreparedVersionUpgradeReturnsPreparationForAdminCaller() {
+    VersionUpgradePreparationService preparationService =
+        Mockito.mock(VersionUpgradePreparationService.class);
+    Mockito.when(preparationService.getPreparedVersionUpgrade(1L, "pvu-1"))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto(
+                "pvu-1",
+                "pvu-req-1",
+                1L,
+                7L,
+                7L,
+                9L,
+                "ld-9",
+                "remap-1",
+                "COMPATIBLE",
+                List.of(),
+                List.of("GAME_DESIGN", "WORLD", "ENTITY"),
+                Instant.parse("2026-04-20T10:05:00Z"),
+                List.of()));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            preparationService,
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<GetPreparedVersionUpgradeResponse> responseRef = new AtomicReference<>();
+    service.getPreparedVersionUpgrade(
+        GetPreparedVersionUpgradeRequest.newBuilder()
+            .setTenantId("1")
+            .setPreparationId("pvu-1")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetPreparedVersionUpgradeResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("pvu-1", responseRef.get().getPreparation().getPreparationId());
+    assertEquals("pvu-req-1", responseRef.get().getPreparation().getControlPlaneRequestId());
+  }
+
   private static GameSessionControlPlaneGrpcService newService(GameInstanceRepository repository) {
     return newService(repository, new SimpleMeterRegistry());
   }
@@ -524,6 +641,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(RuntimeRegionStatusRepository.class),
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
         Mockito.mock(InstanceCutoverCompatibilityService.class),
+        Mockito.mock(VersionUpgradePreparationService.class),
         Mockito.mock(TickService.class),
         meterRegistry);
   }
