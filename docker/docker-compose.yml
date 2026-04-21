@@ -42,11 +42,15 @@ x-service-resources: &service-resources
 x-service-env-file: &service-env-file
   - ../.env
 
+x-repo-root-context: &repo-root-context
+  repo_root: ..
+
 services:
   account-service:
     build:
-      context: ..
-      dockerfile: services/account-service/Dockerfile
+      context: ../services/account-service/build/libs
+      dockerfile: ../../Dockerfile
+      additional_contexts: *repo-root-context
     ports:
       - "8081:8080"
     <<: *service-resources
@@ -70,8 +74,9 @@ services:
       <<: *service-health
   gateway:
     build:
-      context: ..
-      dockerfile: services/spring-cloud-gateway/Dockerfile
+      context: ../services/spring-cloud-gateway/build/libs
+      dockerfile: ../../Dockerfile
+      additional_contexts: *repo-root-context
     ports:
       - "8080:8080"
     <<: *service-resources
@@ -94,8 +99,9 @@ services:
       <<: *service-health
   automation-scripting-service:
     build:
-      context: ..
-      dockerfile: services/automation-scripting-service/Dockerfile
+      context: ../services/automation-scripting-service/build/libs
+      dockerfile: ../../Dockerfile
+      additional_contexts: *repo-root-context
     ports:
       - "8082:8080"
     <<: *service-resources
@@ -118,8 +124,9 @@ services:
       <<: *service-health
   entity-management-service:
     build:
-      context: ..
-      dockerfile: services/entity-management-service/Dockerfile
+      context: ../services/entity-management-service/build/libs
+      dockerfile: ../../Dockerfile
+      additional_contexts: *repo-root-context
     ports:
       - "8083:8080"
     <<: *service-resources
@@ -142,8 +149,9 @@ services:
       <<: *service-health
   game-design-service:
     build:
-      context: ..
-      dockerfile: services/game-design-service/Dockerfile
+      context: ../services/game-design-service/build/libs
+      dockerfile: ../../Dockerfile
+      additional_contexts: *repo-root-context
     ports:
       - "8084:8080"
     <<: *service-resources
@@ -166,8 +174,9 @@ services:
       <<: *service-health
   game-logic-service:
     build:
-      context: ..
-      dockerfile: services/game-logic-service/Dockerfile
+      context: ../services/game-logic-service/build/libs
+      dockerfile: ../../Dockerfile
+      additional_contexts: *repo-root-context
     ports:
       - "8085:8080"
     <<: *service-resources
@@ -190,8 +199,9 @@ services:
       <<: *service-health
   game-session-service:
     build:
-      context: ..
-      dockerfile: services/game-session-service/Dockerfile
+      context: ../services/game-session-service/build/libs
+      dockerfile: ../../Dockerfile
+      additional_contexts: *repo-root-context
     ports:
       - "8086:8080"
     <<: *service-resources
@@ -220,8 +230,9 @@ services:
       <<: *service-health
   logging-admin-service:
     build:
-      context: ..
-      dockerfile: services/logging-admin-service/Dockerfile
+      context: ../services/logging-admin-service/build/libs
+      dockerfile: ../../Dockerfile
+      additional_contexts: *repo-root-context
     ports:
       - "8087:8080"
     <<: *service-resources
@@ -244,8 +255,9 @@ services:
       <<: *service-health
   social-groups-service:
     build:
-      context: ..
-      dockerfile: services/social-groups-service/Dockerfile
+      context: ../services/social-groups-service/build/libs
+      dockerfile: ../../Dockerfile
+      additional_contexts: *repo-root-context
     ports:
       - "8088:8080"
     <<: *service-resources
@@ -268,8 +280,9 @@ services:
       <<: *service-health
   tcp-proxy-service:
     build:
-      context: ..
-      dockerfile: services/tcp-proxy-service/Dockerfile
+      context: ../services/tcp-proxy-service/build/libs
+      dockerfile: ../../Dockerfile
+      additional_contexts: *repo-root-context
     ports:
       - "2323:2323"
       - "8089:8080"
@@ -293,8 +306,9 @@ services:
       <<: *service-health
   world-management-service:
     build:
-      context: ..
-      dockerfile: services/world-management-service/Dockerfile
+      context: ../services/world-management-service/build/libs
+      dockerfile: ../../Dockerfile
+      additional_contexts: *repo-root-context
     ports:
       - "8090:8080"
     <<: *service-resources
