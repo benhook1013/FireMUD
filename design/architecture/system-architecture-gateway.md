@@ -300,12 +300,20 @@ This section is the canonical source of truth for connect-token enforcement and 
   - Gateway validates signatures against the issuer's published verification key set with explicit `kid` selection and overlap handling during rotation.
 - **Transport location**
   - Server-side and non-browser clients may send the connect token in the dedicated handshake header (`X-Firemud-Connect-Token`) on `/ws/game/**`.
-  - First-party browser clients cannot rely on arbitrary custom WebSocket headers and must use a gateway-approved browser-safe carrier, such as cookies or WebSocket subprotocol, that feeds the same validation, replay, and context-handoff pipeline.
+  - First-party browser clients send the connect token through the `Firemud-Connect-Token` cookie set by `POST /auth/connect-token`.
+  - Required cookie attributes: `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/ws/game`, and `Max-Age` no longer than the connect-token TTL.
+  - The cookie value is the connect token. Browser JavaScript must not read, copy, or persist the token outside the cookie; client code uses the non-secret response metadata from `POST /auth/connect-token` for retry and expiry UX.
+  - Gateway must accept exactly one connect-token carrier on non-proxy `/ws/game/**` handshakes. If both `X-Firemud-Connect-Token` and `Cookie: Firemud-Connect-Token=...` are present, Gateway rejects the handshake as `CONNECT_TOKEN_REJECTED` rather than choosing precedence.
   - Gateway must not accept connect tokens from query parameters in player-facing environments unless a future security review explicitly changes this rule and documents the resulting logging, referrer, and replay implications.
 - **Required claims**
   - `accountId`
   - `tenantId`
   - `gameInstanceId`
+  - `worldSlug`
+  - `realmSlug`
+  - `pointerVersion`
+  - `connectScopeId`
+  - `requestId`
   - `exp` (absolute expiration)
   - `jti` (single-use nonce for replay defense)
 - **Lifetime and replay**

@@ -100,6 +100,20 @@ Expected inputs include environment-specific values such as:
 
 For staging restores sourced from production-origin snapshots, `SANITIZATION_EVIDENCE_REF` must point at the required in-repo sanitization evidence before traffic may reopen.
 
+### 5. Secret-compliance evidence refresh
+
+Post-restore hardening changes the Tier A trust lineage for the environment. Before quarantine can be lifted, operators must refresh `design/operations/secret-compliance/<environment>.yaml` and its immutable supporting evidence so promotion, DR-readiness, and traffic-open checks no longer point at pre-restore credential evidence.
+
+The refresh must include the credential classes affected by restore hardening:
+
+- `jwt-signing-keys-jwks`
+- `postgres-application-credentials`
+- `backup-object-store-credentials`
+- `asset-store-credentials` when external asset storage is enabled
+- `operator-credentials`
+
+Each refreshed credential record must use exactly one freshness timestamp: `lastProvisionedAt` when the fresh boundary was newly bootstrapped and has not completed its first planned rotation, or `lastRotationAt` when the restore-hardening job rotated an existing credential lineage. The referenced evidence payload must include an immutable artifact identifier and must be linked from the canonical recovery record under `secretComplianceRefresh`.
+
 ## Post-Restore Coordination Recovery Gate
 
 After PostgreSQL is restored, but before normal application startup and before quarantine is lifted, the restore workflow must prove that Coordination Redis is operating in exactly one approved recovery mode:
@@ -128,11 +142,12 @@ Runbooks should treat `post-restore-secret-hardening` as a mandatory step in any
 4. Run `post-restore-secret-hardening` in the target namespace and wait for success.
 5. Confirm workload, bridge, and operator leaf certificates have been reissued and peers converged.
 6. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values.
-7. For staging restores from production-origin data, ensure sanitization evidence exists and is referenced.
-8. Start normal workloads in a controlled order and confirm application health checks, login/session flows, gameplay smoke, and JWT validation while ingress remains quarantined.
-9. Only then remove quarantine and route external or player traffic to the restored cluster.
+7. Refresh the environment secret-compliance record and immutable evidence payload, and link that refresh from the recovery record.
+8. For staging restores from production-origin data, ensure sanitization evidence exists and is referenced.
+9. Start normal workloads in a controlled order and confirm application health checks, login/session flows, gameplay smoke, and JWT validation while ingress remains quarantined.
+10. Only then remove quarantine and route external or player traffic to the restored cluster.
 
-For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run equivalent one-shot restore-hardening automation that performs the same four control groups and writes the canonical recovery record before reopening player traffic.
+For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run equivalent one-shot restore-hardening automation that performs the same control groups and writes the canonical recovery record before reopening player traffic.
 
 ## Planned DB Credential Rotation
 

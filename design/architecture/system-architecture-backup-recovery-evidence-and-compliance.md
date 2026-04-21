@@ -116,6 +116,9 @@ Validation rules:
 
 Required fields:
 
+- `schemaVersion`
+- `environment`
+- `status` (`pass`)
 - `lastSuccessfulBackupAt`
 - `lastSuccessfulRestoreDrillAt`
 - `lastRestoreDrillAt`
@@ -177,6 +180,7 @@ Required top-level fields:
 - `databaseCredentialRotation`
 - `certificateReissuance`
 - `externalCredentialValidation`
+- `secretComplianceRefresh`
 - `sanitizationEvidenceRef` when staging is restored from production-origin data
 - `smokeStatus`
 - `smokeEvidence`
@@ -189,6 +193,7 @@ Nested control-group requirements:
 - `databaseCredentialRotation` includes rotation job reference, affected Secret refs, and rollout-restart completion evidence
 - `certificateReissuance` includes workload, bridge, and operator leaf identity evidence plus peer-convergence evidence
 - `externalCredentialValidation` includes one result per credential class with `validationMethod`, `validatedAt`, `validatedBy`, `observedValue`, isolation assertion, and immutable evidence ref
+- `secretComplianceRefresh` references the refreshed `design/operations/secret-compliance/<environment>.yaml` record, the immutable evidence payload updated by restore hardening, the credential classes refreshed, and whether each class used `lastProvisionedAt` or `lastRotationAt`
 - `coordinationRecoveryEvidence` proves exactly one restore mode
 - `sessionRecovery` makes reset-sensitive session/auth handling machine-checkable and must use explicit handling values:
   - `gameSessionHandling`: `preserved`, `invalidated`, or `reestablished`
@@ -197,7 +202,7 @@ Nested control-group requirements:
 Validation rules:
 
 - quarantine remains in place until the record is complete and all required control groups pass
-- `quarantineReleasedAt` must be later than restore-safe-mode entry, coordination recovery, hardening, external-credential validation, and smoke-check completion times
+- `quarantineReleasedAt` must be later than restore-safe-mode entry, coordination recovery, hardening, external-credential validation, secret-compliance refresh, and smoke-check completion times
 - traffic reopen is non-compliant if this record is missing, incomplete, or inconsistent with the restore event
 
 Operator credential evidence representation:

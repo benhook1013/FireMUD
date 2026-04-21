@@ -9,6 +9,7 @@ Authentication is performed via plaintext `LOGIN` commands for gameplay protocol
 - Prompt-based `LOGIN` flows (username then password prompts) are part of the target protocol design; until they are fully implemented across transports, clients should use `LOGIN <username> <password> [otp]` / `LOGON ...`.
 - Character selection and gameplay takeover semantics are canonicalized on `{tenantId, gameInstanceId, characterId}`.
 - First-party `/ws/game/**` now uses the concrete bootstrap path documented below: `POST /auth/player-bootstrap`, bootstrap-backed `POST /auth/connect-token`, gateway connect-token enforcement plus signed connect-context, then bare first-party `LOGIN` followed by `PLAY`.
+- The browser-safe `Firemud-Connect-Token` HttpOnly cookie carrier is the target first-party browser contract. The current gateway implementation still accepts the header carrier used by non-browser clients; browser cookie issuance and gateway cookie validation need follow-up implementation before first-party browser gameplay is production-ready.
 - `/sessions/{sessionId}/refresh-roles` exists as an operational hook; until full role-refresh token regeneration is wired end-to-end, implementations may expose a placeholder response while still performing automatic refresh on role updates.
 
 ## Contract Decisions (Normative)
@@ -231,9 +232,10 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
     - expired grants are treated as non-existent for visibility and admission
     - successful create/revoke must be immediately visible to subsequent discovery/admission reads
     - if grant authority is unavailable, non-public realm discovery and admission fail closed rather than falling back to stale local cache state
-- Connect-token issuance API: control-plane endpoint (for example `POST /auth/connect-token`) that returns exactly one short-lived token per request and logs `accountId`, `tenantId`, `gameInstanceId`, `jti`, and issuance timestamp.
+- Connect-token issuance API: control-plane endpoint (for example `POST /auth/connect-token`) that mints exactly one short-lived token per request and logs `accountId`, `tenantId`, `gameInstanceId`, `jti`, and issuance timestamp.
   - Minimum request fields: `connectScopeId`, `requestId`.
-  - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `realmSlug`, `jti`, `issuedAt`.
+  - Minimum response fields for non-browser clients: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `realmSlug`, `jti`, `issuedAt`.
+  - Browser response mode: first-party browser clients receive the connect token as an HttpOnly cookie rather than as JavaScript-readable response data. The response still returns non-secret metadata (`expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `realmSlug`, `jti`, `issuedAt`) so the client can drive retry UX without reading the token.
   - Before issuance, Account Service must resolve `connectScopeId` to the canonical `{tenantId, realmSlug, gameInstanceId, pointerVersion}` tuple, perform a live membership/public-admission check for `{accountId, tenantId, realmSlug}`, a live runtime entitlement check for `tenantId`, and a live realm-routing read for the selected realm target via the Game Session control-plane API.
   - The resolved tuple used for issuance must be treated as immutable for that request. Issuance may succeed only if `connectScopeId`, current realm visibility/grant state, and current admission-pointer state still converge on the same target at evaluation time.
   - `requestId` is the idempotency key for connect-token issuance. Retrying the same `(accountId, connectScopeId, requestId)` must return the same token payload or the same deterministic application failure; callers must use a new `requestId` when intentionally starting a new issuance attempt after rediscovery.
@@ -242,26 +244,30 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
   - First-party clients may request connect tokens only for realm targets returned by the canonical bootstrap-discovery contract for that caller; hidden or unauthorized realms must not be inferable by probing connect-token issuance directly.
   - If the realm was only caller-visible through an explicit non-public access grant, connect-token issuance must re-check that grant at issuance time rather than trusting earlier discovery alone.
   - Missing required request/response fields are contract violations and must fail closed rather than being defaulted by callers.
-- Transport: connect-token carriage on `/ws/game/**` handshake. Server-side and non-browser clients may use the dedicated `X-Firemud-Connect-Token` handshake header. Browser first-party clients must use a gateway-approved browser-safe carrier that preserves the same token semantics and replay checks; query-string carriage is not allowed in player-facing environments unless a future security review explicitly changes that rule.
-- Required claims: `accountId`, `tenantId`, `gameInstanceId`, `exp`, `jti`.
+- Transport: connect-token carriage on `/ws/game/**` handshake.
+  - First-party browser clients use the cookie `Firemud-Connect-Token` set by `POST /auth/connect-token` with `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/ws/game`, and `Max-Age` no longer than the connect-token TTL. The cookie value is the connect token; browser JavaScript must not read or persist it.
+  - Server-side and non-browser clients may use the dedicated `X-Firemud-Connect-Token` handshake header.
+  - Gateway must accept exactly one connect-token carrier for non-proxy gameplay handshakes. If both the cookie and header are present, or if either carrier is malformed, Gateway rejects the handshake as `CONNECT_TOKEN_REJECTED` rather than choosing precedence.
+  - Query-string carriage is not allowed in player-facing environments unless a future security review explicitly changes that rule.
+- Required claims: `accountId`, `tenantId`, `gameInstanceId`, `worldSlug`, `realmSlug`, `pointerVersion`, `connectScopeId`, `requestId`, `exp`, `jti`.
 - Lifetime: short-lived (target <= 30 seconds).
 - Signing and verification: token is signed by the Account/authentication control-plane key set and verified only at Gateway for `/ws/game/**` policy decisions.
 - Replay defense: gateway validates `jti` against a bounded replay cache and rejects replays until token expiry.
   - Replay cache owner: Gateway.
-  - Replay key format: `gateway:connect-token:replay:<jti>`.
+  - Replay key format: `gateway:connect-token:jti:<jti>`.
   - Replay TTL: `exp + bounded_skew` (recommended 30 seconds).
   - Capacity policy: bounded cardinality with deterministic eviction (`oldest-expiry-first`) and overload metrics when capacity limits are reached.
 - Enforcement:
   - `/ws/game/**` is the only gameplay WebSocket route.
-  - Non-proxy gameplay clients must present a valid connect token; missing/invalid/expired/replayed tokens are rejected with HTTP `403`.
+  - Non-proxy gameplay clients must present a valid connect token; missing, invalid, expired, replayed, scope-mismatched, or replay-protection-unavailable token state is rejected with HTTP `403` and the bounded handshake classes defined in [Reconnection Strategy](./system-architecture-reconnection.md#http-handshake-failures-on-ws-game).
   - TCP Proxy bridge traffic is admitted without a connect token only when the gateway authenticates the proxy identity over the internal mTLS listener and header-trust checks pass.
-- Error mapping: invalid/expired/replayed/missing token where required maps to HTTP `403` at handshake.
+- Error mapping: connect-token admission failures map to HTTP `403` at handshake, with specific `CONNECT_*` classes when the gateway can classify the failure.
 
 The connect token is not a gameplay authorization grant and does not replace the canonical `LOGIN` + `PLAY` flow. It is an edge-admission artifact bound to a prior first-party bootstrap identity, not a substitute for gameplay authentication or gameplay binding.
 
 #### Gateway-to-Game Session connect context (normative)
 
-Gateway verification of `X-Firemud-Connect-Token` must not be translated into trust of raw forwarded headers. For first-party `/ws/game/**` handshakes, Gateway must attach a short-lived signed connect context that Game Session verifies before applying connect-token scope checks.
+Gateway verification of the presented connect token, whether from `Firemud-Connect-Token` cookie or `X-Firemud-Connect-Token` header, must not be translated into trust of raw forwarded headers. For first-party `/ws/game/**` handshakes, Gateway must attach a short-lived signed connect context that Game Session verifies before applying connect-token scope checks.
 
 - Gateway-issued context fields (minimum): `accountId`, `tenantId`, `gameInstanceId`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`.
 - Transport: single signed compact payload header (for example `X-Firemud-Connect-Context`) plus `kid` metadata if not embedded in payload.
@@ -285,7 +291,7 @@ To remove ambiguity between connect-token admission and `LOGIN`, first-party web
 2. Use bootstrap-authenticated discovery endpoints to select a caller-visible world/realm/character target.
 3. Request a short-lived gameplay connect token for one target selected by `connectScopeId` returned by that discovery contract. This call performs the live membership/public-admission and runtime entitlement checks for that target.
    - The issuance path must also validate the target against the authoritative realm-routing record. If the target is no longer admissible for the selected realm, the request fails before socket open rather than issuing a stale token.
-4. Open gameplay WebSocket on `/ws/game/**` with connect-token carriage appropriate to the client. Browser clients use the gateway-approved browser-safe carrier; server-side and non-browser clients may use `X-Firemud-Connect-Token`.
+4. Open gameplay WebSocket on `/ws/game/**` with connect-token carriage appropriate to the client. Browser clients use the `Firemud-Connect-Token` HttpOnly cookie set by `POST /auth/connect-token`; server-side and non-browser clients may use `X-Firemud-Connect-Token`.
 5. Complete gameplay authentication in-band using `LOGIN` (or `LOGON`) and then lobby binding with `PLAY`.
 
 Normative constraints:
@@ -326,9 +332,10 @@ Authorization: Bearer <bootstrapToken>
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-123" }
--> { connectToken, accountId, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production", expiresAt }
+Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
+-> { accountId, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production", expiresAt, jti, issuedAt }
 
-GET /ws/game/** with browser-compatible connect token carriage
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 
 LOGIN
 OK LOGIN Logged in
@@ -371,9 +378,10 @@ Authorization: Bearer <bootstrapToken>
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_emberfall_production_v1", requestId: "req-join-1" }
--> { connectToken, accountId, tenantId: "tenant-emberfall", realmSlug: "production", gameInstanceId: "production", expiresAt }
+Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
+-> { accountId, tenantId: "tenant-emberfall", realmSlug: "production", gameInstanceId: "production", expiresAt, jti, issuedAt }
 
-GET /ws/game/** with browser-compatible connect token carriage
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 LOGIN
 PLAY emberfall production Mara
 OK PLAY Entered Emberfall / Live Realm as Mara
@@ -429,9 +437,10 @@ Authorization: Bearer <bootstrapToken>
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_playtest_docks_v4", requestId: "req-456" }
--> { connectToken, accountId, tenantId: "tenant-demo", realmSlug: "playtest-docks", gameInstanceId: "playtest-docks", expiresAt }
+Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
+-> { accountId, tenantId: "tenant-demo", realmSlug: "playtest-docks", gameInstanceId: "playtest-docks", expiresAt, jti, issuedAt }
 
-GET /ws/game/** with browser-compatible connect token carriage
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 
 LOGIN
 OK LOGIN Logged in
@@ -548,7 +557,12 @@ First-party gameplay admission and reconnect clients should treat the following 
 
 | Surface | Canonical code | Trigger condition | Required client reaction |
 | --- | --- | --- | --- |
-| `/ws/game/**` handshake (`403`) | `CONNECT_TOKEN_REJECTED` | Connect token is missing, expired, invalid, or replayed where required | Obtain a fresh connect token and open a new socket with bounded retry/backoff. This is a handshake classification, not a post-connect text-protocol `ERROR <CODE>` response. |
+| `/ws/game/**` handshake (`403`) | `CONNECT_TOKEN_MISSING` | Connect token is absent where required | Obtain a fresh connect token and open a new socket with bounded retry/backoff. This is a handshake classification, not a post-connect text-protocol `ERROR <CODE>` response. |
+| `/ws/game/**` handshake (`403`) | `CONNECT_TOKEN_EXPIRED` | Connect token expired before gateway validation completed | Obtain a fresh connect token and open a new socket with bounded retry/backoff. |
+| `/ws/game/**` handshake (`403`) | `CONNECT_TOKEN_REPLAYED` | Connect token `jti` was already used within the replay window | Obtain a fresh connect token and open a new socket with bounded retry/backoff; repeated replay failures should not fast-loop. |
+| `/ws/game/**` handshake (`403`) | `CONNECT_SCOPE_MISMATCH` | Handshake-carried scope does not match the verified connect-token scope | Rerun bootstrap discovery for the intended realm target, obtain a fresh connect token, and open a new socket. |
+| `/ws/game/**` handshake (`403`) | `CONNECT_REPLAY_PROTECTION_UNAVAILABLE` | Gateway cannot validate connect-token replay state and fail-closes | Retry with bounded slower backoff and surface temporary edge-auth-unavailable context rather than backend-outage messaging. |
+| `/ws/game/**` handshake (`403`) | `CONNECT_TOKEN_REJECTED` | Connect token is malformed, signature-invalid, missing required claims, wrong-audience, or otherwise rejected outside the narrower classes above | Obtain a fresh connect token and open a new socket with bounded retry/backoff. |
 | `/ws/game/**` handshake (`403`) | `POLICY_DENY` | Edge policy rejects the handshake for a non-token reason (for example proxy trust/config mismatch) | Treat as non-retriable until operator/client configuration is corrected. This is a handshake classification, not a post-connect text-protocol `ERROR <CODE>` response. |
 | `PLAY` on first-party `/ws/game/**` | `CONNECT_CONTEXT_INVALID` | Required gateway-signed connect context is missing, expired, unverifiable, or otherwise invalid | Refresh connect token, reconnect, then re-`LOGIN`; do not retry `PLAY` on the current socket. |
 | `PLAY` on first-party `/ws/game/**` | `CONNECT_SCOPE_MISMATCH` | Requested `{tenantId, gameInstanceId}` does not match the validated connect-token scope | Re-select the intended world, obtain a fresh connect token for that target, reconnect, and retry `PLAY`. |

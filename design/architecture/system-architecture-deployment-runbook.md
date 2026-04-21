@@ -35,6 +35,21 @@ Before the first player-facing deployment into `hobby-self-hosted`, `staging`, o
 
 Bootstrap is part of the deployment contract, not an informal prerequisite. A player-facing environment is not considered deployable until this bootstrap pass succeeds with environment-specific credentials and bindings.
 
+## Fresh-Boundary Restore Bootstrap
+
+A restore into a new cluster, new namespace boundary, rebuilt control plane, or replacement hobby host is a fresh-boundary restore. It must run the environment bootstrap contract before restored workloads can be treated as player-facing, even when the target environment name is the same as before the incident.
+
+The restore source may provide PostgreSQL data, selected Kubernetes manifests, and non-secret configuration, but the new boundary must create or re-bind environment-owned trust material before normal workload startup:
+
+1. Create the target namespace and keep it in restore quarantine before any Gateway, TCP Proxy, scheduler, worker, or Game Session tick executor can accept traffic or create new coordination state.
+2. Provision registry pull credentials, PostgreSQL admin/application credentials, JWT signing/JWKS resources, cert-manager issuer bindings, workload/bridge/operator certificate resources, backup/object-store credentials, asset-store credentials, outbound-communications bindings, and operator credential bindings for the new boundary.
+3. Restore PostgreSQL data and manifests with normal application workloads held at zero replicas or behind a restore-safe startup gate.
+4. Re-run `./dev-tools/deploy/preflight.sh <environment>` and require the bootstrap, secret, JWT/JWKS, bridge, Redis, external-binding, and service-discovery checks to pass for the new boundary before progressing.
+5. Run the post-restore hardening and coordination recovery sequence from `design/architecture/system-architecture-post-restore-hardening.md`.
+6. Refresh the environment secret-compliance record and recovery record with the new provisioning, rotation, reissuance, and validation evidence before quarantine can be lifted.
+
+Restored snapshot-era Secrets are not authoritative trust material for a fresh-boundary restore. Operators may use restored Secret objects only as temporary inputs to hardening or data recovery, and they must be replaced, rotated, reissued, or explicitly re-bound to the new environment boundary before player traffic reopens.
+
 ## Production Traffic-Open Backup Gate
 
 Before opening production to player traffic for the first time, or reopening it after a restore into a fresh environment boundary, operators must prove that recovery already works for the live environment:
@@ -57,6 +72,7 @@ This is a traffic-open gate, not a routine steady-state rollout gate.
 2. **Verify CI/CD Status**
    - Ensure the GitHub Actions pipeline for the target branch and tag is green.
    - Check that container image digests are available in the configured registry.
+   - For production releases, confirm the release digest manifest exists and binds the release tag, production deployment reference, production attestation, staging deployment record, and exact service digest set being promoted.
    - Confirm deployment evidence includes rollback-mode classification (`rollback-compatible` or `roll-forward-only`) for the release candidate.
    - Treat rollback compatibility as broader than binary compatibility alone: previous digests must remain safe to re-apply against the current database schema, secret/config contract, mounted file-path contract, and expected external bindings.
 3. **Run Preflight Policy Checks**

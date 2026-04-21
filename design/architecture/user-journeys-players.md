@@ -66,7 +66,7 @@ Player → Account Service
 The first successful session for a new player follows a single canonical onboarding flow regardless of client type:
 
 1. **Authenticate the Platform Account**
-   - **First-party web client** – Obtains a short-lived player bootstrap token through the [Account Service](./microservices/account-service/README.md), uses bootstrap-backed discovery endpoints to choose a world/realm/character target, then requests a connect token and opens the gameplay WebSocket through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). The backend bootstrap and connect-scope path is now the canonical selection model; the dedicated first-party web application still owns the browser-safe token-carriage UX so browser clients do not depend on custom WebSocket headers.
+   - **First-party web client** – Obtains a short-lived player bootstrap token through the [Account Service](./microservices/account-service/README.md), uses bootstrap-backed discovery endpoints to choose a world/realm/character target, then requests a connect token and opens the gameplay WebSocket through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Browser clients receive the connect token as the short-lived `Firemud-Connect-Token` HttpOnly cookie, so they do not depend on custom WebSocket headers.
    - **Telnet / MCP client** – Connects through the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) and authenticates in-band with `LOGIN`.
 2. **Browse or Discover Joinable Worlds** – The player may use `WORLDS` before login to browse the platform publicly, then use the same command again after login to see the authenticated discovery set they can actually enter. Existing memberships always qualify. In v1, a live default production realm may also be publicly discoverable even before the player has joined that tenant, so brand-new accounts can still discover where they would enter through the public-production onboarding path. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
 3. **Choose a Realm** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to choose between the default production realm and any explicitly authorized additional realms such as a playtest fork. Hidden or unauthorized realms are never disclosed. Public discovery applies only to the default production realm in v1; any additional realm requires an explicit access grant from the creator or operator. On the default public production realm, first-party bootstrap creates the player's `player` membership during connect-token issuance before socket admission; credential-bearing text clients create it through the same Account Service writer boundary during `PLAY`.
@@ -104,7 +104,7 @@ GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/{world}/realms
 GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters
 POST /auth/connect-token { connectScopeId=cs_demo_production_v17 }
-GET /ws/game/** with browser-compatible connect token carriage
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 LOGIN
 PLAY <world> [realm] [character]
 ```
@@ -118,7 +118,7 @@ GET /auth/bootstrap/worlds/emberfall/realms
 GET /auth/bootstrap/worlds/emberfall/realms/production/characters
 POST /characters { world=emberfall, realm=production, name=Mara, template=human-fighter }
 POST /auth/connect-token { connectScopeId=cs_emberfall_production_v1 }
-GET /ws/game/** with browser-compatible connect token carriage
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 LOGIN
 PLAY emberfall production Mara
 OK PLAY Entered Emberfall / Live Realm as Mara

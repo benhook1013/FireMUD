@@ -133,7 +133,8 @@ Runtime caller contract:
   - Account bootstrap discovery, in-band `PLAY`, connect-token issuance, and reconnect validation must all consume this same pointer contract rather than maintaining separate realm-to-instance routing rules.
 - `IssueConnectToken` / `POST /auth/connect-token` is the authoritative gameplay bootstrap token-issuance surface.
   - Minimum request fields: `connectScopeId`, `requestId`.
-  - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `realmSlug`, `gameInstanceId`, `jti`, `issuedAt`.
+  - Minimum response fields for non-browser clients: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `realmSlug`, `gameInstanceId`, `jti`, `issuedAt`.
+  - Browser clients receive the connect token as `Set-Cookie: Firemud-Connect-Token=...` with the gateway-required security attributes and receive only non-secret response metadata in the body.
 - Bootstrap discovery surfaces must return `connectScopeId` together with `tenantId`, `realmSlug`, `gameInstanceId`, `pointerVersion`, `evaluatedAt`, and `connectScopeExpiresAt`.
 - `connectScopeExpiresAt` bounds how long the discovery-issued selector may be reused as a convenience token. Once it expires, callers must rerun discovery instead of treating the selector as a durable realm handle.
 - Account Service must expose bootstrap-discovery endpoints that accept only the `player-bootstrap` token profile and return the canonical caller-visible worlds, realms, characters, and a canonical `connectScopeId` selector for each admissible realm target.

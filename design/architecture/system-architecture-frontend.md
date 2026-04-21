@@ -44,8 +44,8 @@ Frontend flows are split between **player gameplay sessions** and **admin/creato
 
 - **Player UI (gameplay)**  
   - First-party browser clients are expected to be hosted by the dedicated first-party web application service, even when the first version is only a terminal-style browser client. Spring Cloud Gateway remains the public gameplay/API edge, but it should not become the long-term host for the player web application itself.  
-  - First-party clients must first call the dedicated player-bootstrap endpoint (`POST /auth/player-bootstrap` or equivalent) with player credentials to establish short-lived account identity for gameplay bootstrap only, then use bootstrap-authenticated HTTP discovery endpoints to choose a caller-visible world/realm/character target, then obtain a short-lived connect token (`POST /auth/connect-token`) using the discovery-provided `connectScopeId` before opening `/ws/game/**`, then complete gameplay authentication by issuing `LOGIN` over the WebSocket channel using the already-verified bootstrap/connect context rather than replaying username/password/OTP from the browser, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).  
-  - Browser transport constraints matter: a browser WebSocket cannot set arbitrary custom handshake headers the way Telnet smart clients, Mudlet integrations, or server-side clients can. The backend connect-token and gateway validation substrate is already implemented around the canonical connect-token concept; the dedicated first-party web application service must choose a browser-compatible gameplay handshake carrier such as cookies, WebSocket subprotocol, or another gateway-approved browser-safe mechanism rather than assuming custom WebSocket headers are available from JavaScript. Query parameters remain disallowed for player-facing environments unless a future security review explicitly changes that rule.  
+  - First-party clients must first call the dedicated player-bootstrap endpoint (`POST /auth/player-bootstrap` or equivalent) with player credentials to establish short-lived account identity for gameplay bootstrap only, then use bootstrap-authenticated HTTP discovery endpoints to choose a caller-visible world/realm/character target, then call `POST /auth/connect-token` using the discovery-provided `connectScopeId`. For browser clients, that call sets the short-lived `Firemud-Connect-Token` HttpOnly cookie used by the `/ws/game/**` handshake; then the client opens `/ws/game/**` and completes gameplay authentication by issuing `LOGIN` over the WebSocket channel using the already-verified bootstrap/connect context rather than replaying username/password/OTP from the browser, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).
+  - Browser transport constraints matter: a browser WebSocket cannot set arbitrary custom handshake headers the way Telnet smart clients, Mudlet integrations, or server-side clients can. The first-party browser flow therefore uses the `Firemud-Connect-Token` cookie set by `POST /auth/connect-token` with `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/ws/game`, and `Max-Age` no longer than the connect-token TTL. The React client must not read or persist the connect token itself; it only consumes non-secret response metadata such as `expiresAt`, `tenantId`, `realmSlug`, and `gameInstanceId`. Query parameters remain disallowed for player-facing environments unless a future security review explicitly changes that rule.
   - The React client does not store or expose control-plane Browser JWTs for gameplay. It may hold only the short-lived, memory-only `player-bootstrap` token described in the authentication design and use it solely for gameplay bootstrap surfaces such as bootstrap discovery and `POST /auth/connect-token`.  
   - Explicit player logout must revoke the current `player-bootstrap` token with Account Service `POST /auth/logout` in addition to closing gameplay sockets and clearing reconnect state. If the logout call cannot complete, the client must still clear local state immediately and rely on the bootstrap token's short server-side TTL or account-level revocation for eventual cleanup.
   - Canonical player logout order is: stop reconnect attempts, close the gameplay socket, call `POST /auth/logout` with the current `player-bootstrap` token when one exists, clear remembered world/character selection plus reconnect metadata, clear the in-memory `player-bootstrap` token, and render the logged-out player state.
@@ -79,7 +79,12 @@ Client rule for discovery-issued selectors:
 
 For gameplay WebSocket handshake failures on `/ws/game/**`, first-party clients must also differentiate HTTP `403` handshake classes:
 
-- `CONNECT_TOKEN_REJECTED`: prompt a fresh gameplay handshake token acquisition and retry with bounded backoff.
+- `CONNECT_TOKEN_MISSING`: request a fresh connect token and retry the socket open with bounded backoff.
+- `CONNECT_TOKEN_EXPIRED`: request a fresh connect token and retry the socket open with bounded backoff.
+- `CONNECT_TOKEN_REPLAYED`: request a fresh connect token and retry with bounded backoff; repeated replay failures should surface a session-recovery action instead of fast-looping.
+- `CONNECT_SCOPE_MISMATCH`: rerun bootstrap discovery for the selected world/realm/character target, request a fresh connect token for that scope, and retry on a new socket.
+- `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`: keep the current auth state, show a temporary edge-auth-unavailable message, and retry with slower bounded backoff.
+- `CONNECT_TOKEN_REJECTED`: request a fresh connect token and retry with bounded backoff; if repeated after refresh, restart the first-party bootstrap flow.
 - `POLICY_DENY`: treat as non-retriable until configuration is corrected and surface an actionable error.
 
 These handshake classes are edge-handshake outcomes, not gameplay text-protocol `ERROR <CODE>` frames. Clients only start handling protocol-level `ERROR <CODE>` responses after the WebSocket has been established and `LOGIN`/`PLAY` exchange begins.
@@ -109,9 +114,10 @@ Authorization: Bearer <bootstrapToken>
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-1" }
--> { connectToken, expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production" }
+Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
+-> { expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production", jti, issuedAt }
 
-GET /ws/game/** with browser-compatible connect token carriage
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 
 LOGIN
 OK LOGIN Logged in
@@ -123,9 +129,10 @@ OK PLAY Entered world: Demo World / Live Realm as Mara
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-2" }
--> { connectToken, expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production" }
+Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
+-> { expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production", jti, issuedAt }
 
-GET /ws/game/** with browser-compatible connect token carriage
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 
 LOGIN
 OK LOGIN Logged in

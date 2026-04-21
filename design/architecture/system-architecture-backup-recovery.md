@@ -156,6 +156,8 @@ Ambiguous restore behavior is not allowed:
 - Velero backs up Deployments, StatefulSets, ConfigMaps, and Secrets but not volume snapshots.
 - `restore-cluster.sh` is a restore-bootstrap step only unless it explicitly documents the full restore-safe-mode, coordination-recovery, and post-restore-hardening flow for the target environment.
 - Manual restore still requires restore-safe mode, restore-mode selection, coordination recovery, post-restore hardening, external credential validation, and smoke verification before traffic may reopen.
+- A restore into a new cluster, namespace boundary, control-plane boundary, or replacement host must first run the fresh-boundary restore bootstrap defined in `system-architecture-deployment-runbook.md`. Restored snapshot-era Secrets are not authoritative trust material for the new boundary; they must be replaced, rotated, reissued, or explicitly re-bound before traffic reopen.
+- Post-restore hardening must refresh the environment secret-compliance record and immutable evidence payload before quarantine is lifted, so later promotion and DR-readiness checks do not rely on pre-restore credential evidence.
 - `FIREMUD_K8S_NAMESPACE` remains the explicit override for throwaway restore drills and non-default restore targets.
 - Manual restore guidance still includes the concrete bootstrap sequence, but application workloads must remain stopped or restore-safe-fenced until recovery-mode gating completes. Restoring manifests is allowed; starting normal Game Session, Gateway, TCP Proxy, automation, and outbound processors before the chosen recovery mode is proven is not allowed.
 - If dumps live in `PG_DUMP_BUCKET`, download them first with `aws s3 cp ...`, adding `--endpoint-url` for MinIO-backed buckets as needed.
@@ -168,8 +170,8 @@ Manual bootstrap example sequence:
 4. Restore manifests or Velero resources with normal application workloads held at zero replicas or under an enforced restore-safe startup gate; only infrastructure and maintenance Jobs required for recovery may run.
 5. Choose and record exactly one restore mode: `cold_start_restore` or `scoped_reset_restore`.
 6. Complete the selected coordination recovery gate before any normal Game Session or automation worker can create fresh coordination state.
-7. Run post-restore hardening, external credential validation, required sanitization checks, and smoke verification.
-8. Start normal workloads and reopen traffic only after the recovery record is complete.
+7. Run post-restore hardening, external credential validation, secret-compliance evidence refresh, required sanitization checks, and smoke verification.
+8. Start normal workloads and reopen traffic only after the recovery record and refreshed secret-compliance evidence are complete.
 
 ## Local Development
 
