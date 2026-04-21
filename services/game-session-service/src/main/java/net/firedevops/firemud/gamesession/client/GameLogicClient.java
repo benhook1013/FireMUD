@@ -30,11 +30,13 @@ import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import net.firedevops.firemud.gamelogic.v1.CommunicationTargetKind;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
+import net.firedevops.firemud.gamelogic.v1.DropCarriedItemRequest;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveRequest;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
+import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
@@ -310,6 +312,43 @@ public class GameLogicClient
     }
   }
 
+  public PickupItemFromRoomResponse pickupVisibleRoomItem(
+      SessionContext context, String itemReference, int quantity) {
+    return pickupVisibleRoomItem(context, itemReference, quantity, null);
+  }
+
+  public PickupItemFromRoomResponse pickupVisibleRoomItem(
+      SessionContext context, String itemReference, int quantity, String effectId) {
+    String tenantId = Long.toString(context.tenantId());
+    String sessionId = Long.toString(context.sessionId());
+    String accountId = Long.toString(context.accountId());
+    String characterId = Long.toString(context.characterId());
+    String gameInstanceId = Long.toString(context.gameInstanceId());
+    String roomInstanceId = context.roomInstanceId();
+    PickupVisibleRoomItemRequest.Builder request =
+        PickupVisibleRoomItemRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setSessionId(sessionId)
+            .setAccountId(accountId)
+            .setCharacterId(characterId)
+            .setGameInstanceId(gameInstanceId)
+            .setRoomInstanceId(roomInstanceId)
+            .setItemReference(itemReference)
+            .setQuantity(quantity)
+            .setSessionAttestation(sessionAttestation(context, roomInstanceId));
+    if (StringUtils.hasText(effectId)) {
+      request.setEffectId(effectId);
+    }
+    try {
+      return callStub().pickupVisibleRoomItem(request.build());
+    } catch (RuntimeException ex) {
+      LOG.warn("Game Logic visible room item pickup failed", ex);
+      return PickupItemFromRoomResponse.newBuilder()
+          .setError(error("INVENTORY_UNAVAILABLE", "Inventory service unavailable"))
+          .build();
+    }
+  }
+
   public DropItemToRoomResponse dropItemToRoom(
       SessionContext context,
       String roomInstanceId,
@@ -365,6 +404,43 @@ public class GameLogicClient
       return callStub().dropItemToRoom(request.build());
     } catch (RuntimeException ex) {
       LOG.warn("Game Logic inventory drop failed", ex);
+      return DropItemToRoomResponse.newBuilder()
+          .setError(error("INVENTORY_UNAVAILABLE", "Inventory service unavailable"))
+          .build();
+    }
+  }
+
+  public DropItemToRoomResponse dropCarriedItem(
+      SessionContext context, String itemReference, int quantity) {
+    return dropCarriedItem(context, itemReference, quantity, null);
+  }
+
+  public DropItemToRoomResponse dropCarriedItem(
+      SessionContext context, String itemReference, int quantity, String effectId) {
+    String tenantId = Long.toString(context.tenantId());
+    String sessionId = Long.toString(context.sessionId());
+    String accountId = Long.toString(context.accountId());
+    String characterId = Long.toString(context.characterId());
+    String gameInstanceId = Long.toString(context.gameInstanceId());
+    String roomInstanceId = context.roomInstanceId();
+    DropCarriedItemRequest.Builder request =
+        DropCarriedItemRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setSessionId(sessionId)
+            .setAccountId(accountId)
+            .setCharacterId(characterId)
+            .setGameInstanceId(gameInstanceId)
+            .setRoomInstanceId(roomInstanceId)
+            .setItemReference(itemReference)
+            .setQuantity(quantity)
+            .setSessionAttestation(sessionAttestation(context, roomInstanceId));
+    if (StringUtils.hasText(effectId)) {
+      request.setEffectId(effectId);
+    }
+    try {
+      return callStub().dropCarriedItem(request.build());
+    } catch (RuntimeException ex) {
+      LOG.warn("Game Logic carried item drop failed", ex);
       return DropItemToRoomResponse.newBuilder()
           .setError(error("INVENTORY_UNAVAILABLE", "Inventory service unavailable"))
           .build();

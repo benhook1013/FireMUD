@@ -174,7 +174,7 @@ class InventoryCommandHandlerTest {
                         .setItemName("Rough Iron Key")
                         .build())
                 .build());
-    when(gameLogicClient.pickupItemFromRoom(context, "room-7", "7", null, "", null, 1))
+    when(gameLogicClient.pickupVisibleRoomItem(context, "rough iron key", 1))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -231,7 +231,7 @@ class InventoryCommandHandlerTest {
                         .setItemName("Torch")
                         .build())
                 .build());
-    when(gameLogicClient.pickupItemFromRoom(context, "room-7", "7", null, "", null, 2))
+    when(gameLogicClient.pickupVisibleRoomItem(context, "Torch", 2))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -281,7 +281,7 @@ class InventoryCommandHandlerTest {
                         .setVisibleRef("ammo/iron")
                         .build())
                 .build());
-    when(gameLogicClient.pickupItemFromRoom(context, "room-7", "7", null, "", null, 3))
+    when(gameLogicClient.pickupVisibleRoomItem(context, "Arrow", 3))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -331,7 +331,7 @@ class InventoryCommandHandlerTest {
                         .setVisibleRef("ammo/iron")
                         .build())
                 .build());
-    when(gameLogicClient.pickupItemFromRoom(context, "room-7", "7", null, "", "ammo/iron", 3))
+    when(gameLogicClient.pickupVisibleRoomItem(context, "ammo/iron", 3))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -367,16 +367,13 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getWithExplicitReferenceRejectsQuantityGreaterThanOne() {
-    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.pickupVisibleRoomItem(context, "torch1", 2))
         .thenReturn(
-            ListRoomGroundInventoryResponse.newBuilder()
-                .addItems(
-                    RoomGroundInventoryItem.newBuilder()
-                        .setItemId("7")
-                        .setItemInstanceId("7")
-                        .setVisibleRef("torch1")
-                        .setItemName("Torch")
-                        .build())
+            PickupItemFromRoomResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("INVALID_ARGUMENT")
+                        .setMessage("Explicit item refs require quantity 1 for GET"))
                 .build());
 
     InventoryCommandHandlingResult result =
@@ -401,7 +398,7 @@ class InventoryCommandHandlerTest {
                         .setItemName("Torch")
                         .build())
                 .build());
-    when(gameLogicClient.pickupItemFromRoom(context, "room-7", "ITEM-009", "ITEM-009", "", null, 1))
+    when(gameLogicClient.pickupVisibleRoomItem(context, "ITEM-009", 1))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -434,19 +431,8 @@ class InventoryCommandHandlerTest {
   @Test
   void dropWithItemReferenceCallsDropMutation() {
     when(gameLogicClient.queryInventory(context))
-        .thenReturn(
-            QueryInventoryResponse.newBuilder()
-                .addItems(
-                    InventoryItem.newBuilder()
-                        .setItemId("7")
-                        .setItemInstanceId("7")
-                        .setItemName("Rough Iron Key")
-                        .setItemDescription("A battered key")
-                        .setQuantity(1)
-                        .build())
-                .build(),
-            QueryInventoryResponse.newBuilder().build());
-    when(gameLogicClient.dropItemToRoom(context, "room-7", "7", null, "7", null, 1))
+        .thenReturn(QueryInventoryResponse.newBuilder().build());
+    when(gameLogicClient.dropCarriedItem(context, "rough iron key", 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -481,32 +467,12 @@ class InventoryCommandHandlerTest {
                 .addItems(
                     InventoryItem.newBuilder()
                         .setItemId("7")
-                        .setItemInstanceId("7")
-                        .setVisibleRef("torch1")
-                        .setItemName("Torch")
-                        .setItemDescription("A small torch")
-                        .setQuantity(1)
-                        .build())
-                .addItems(
-                    InventoryItem.newBuilder()
-                        .setItemId("7")
-                        .setItemInstanceId("8")
-                        .setVisibleRef("torch2")
-                        .setItemName("Torch")
-                        .setItemDescription("A small torch")
-                        .setQuantity(1)
-                        .build())
-                .build(),
-            QueryInventoryResponse.newBuilder()
-                .addItems(
-                    InventoryItem.newBuilder()
-                        .setItemId("7")
                         .setItemName("Torch")
                         .setItemDescription("A small torch")
                         .setQuantity(1)
                         .build())
                 .build());
-    when(gameLogicClient.dropItemToRoom(context, "room-7", "7", null, "7", null, 2))
+    when(gameLogicClient.dropCarriedItem(context, "Torch", 2))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -533,18 +499,13 @@ class InventoryCommandHandlerTest {
 
   @Test
   void dropWithExplicitReferenceRejectsQuantityGreaterThanOne() {
-    when(gameLogicClient.queryInventory(context))
+    when(gameLogicClient.dropCarriedItem(context, "torch1", 2))
         .thenReturn(
-            QueryInventoryResponse.newBuilder()
-                .addItems(
-                    InventoryItem.newBuilder()
-                        .setItemId("7")
-                        .setItemInstanceId("7")
-                        .setVisibleRef("torch1")
-                        .setItemName("Torch")
-                        .setItemDescription("A small torch")
-                        .setQuantity(1)
-                        .build())
+            DropItemToRoomResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("INVALID_ARGUMENT")
+                        .setMessage("Explicit item refs require quantity 1 for DROP"))
                 .build());
 
     InventoryCommandHandlingResult result =
@@ -573,7 +534,7 @@ class InventoryCommandHandlerTest {
                         .build())
                 .build(),
             QueryInventoryResponse.newBuilder().build());
-    when(gameLogicClient.dropItemToRoom(context, "room-7", "7", null, "7", "ammo/iron", 3))
+    when(gameLogicClient.dropCarriedItem(context, "ammo/iron", 3))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -602,25 +563,13 @@ class InventoryCommandHandlerTest {
             QueryInventoryResponse.newBuilder()
                 .addItems(
                     InventoryItem.newBuilder()
-                        .setItemId("10")
-                        .setItemInstanceId("10")
-                        .setItemName("Old Chest")
-                        .setItemDescription("A worn chest")
-                        .setContainerInstanceId("container-10")
-                        .setQuantity(1)
-                        .build())
-                .build())
-        .thenReturn(
-            QueryInventoryResponse.newBuilder()
-                .addItems(
-                    InventoryItem.newBuilder()
                         .setItemId("7")
                         .setItemName("Torch")
                         .setItemDescription("A small torch")
                         .setQuantity(1)
                         .build())
                 .build());
-    when(gameLogicClient.dropItemToRoom(context, "room-7", "10", null, "container-10", null, 1))
+    when(gameLogicClient.dropCarriedItem(context, "Old Chest", 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -657,7 +606,7 @@ class InventoryCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(gameLogicClient.dropItemToRoom(context, "room-7", "7", null, "7", null, 1))
+    when(gameLogicClient.dropCarriedItem(context, "rough iron key", 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setError(

@@ -13,12 +13,17 @@ import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
+import net.firedevops.firemud.gamelogic.v1.DropCarriedItemRequest;
+import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -141,5 +146,130 @@ class ItemRuntimeServiceTest {
                 .build());
 
     assertThat(service.wearEquipment(request).getEquipmentItem().getSlot()).isEqualTo("HEAD");
+  }
+
+  @Test
+  void pickupVisibleRoomItemResolvesReferenceBeforeDelegatingToEntityRuntime() {
+    PickupVisibleRoomItemRequest request =
+        PickupVisibleRoomItemRequest.newBuilder()
+            .setTenantId("1")
+            .setSessionId("99")
+            .setAccountId("3")
+            .setCharacterId("7")
+            .setGameInstanceId("9")
+            .setRoomInstanceId("room-1")
+            .setItemReference("torch1")
+            .setQuantity(1)
+            .setSessionAttestation("attestation")
+            .setEffectId("effect-1")
+            .build();
+    when(entityStub.listRoomGroundInventory(
+            ListRoomGroundInventoryRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("9")
+                .setRoomInstanceId("room-1")
+                .setSessionAttestation("attestation")
+                .build()))
+        .thenReturn(
+            ListRoomGroundInventoryResponse.newBuilder()
+                .addItems(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("100")
+                        .setItemInstanceId("500")
+                        .setContainerInstanceId("ground-container-1")
+                        .setVisibleRef("torch1")
+                        .setItemName("Torch")
+                        .build())
+                .build());
+    when(entityStub.pickupItemFromRoom(
+            PickupItemFromRoomRequest.newBuilder()
+                .setTenantId("1")
+                .setCharacterId("7")
+                .setGameInstanceId("9")
+                .setRoomInstanceId("room-1")
+                .setItemId("100")
+                .setItemInstanceId("500")
+                .setContainerInstanceId("ground-container-1")
+                .setQuantity(1)
+                .setSessionAttestation("attestation")
+                .setEffectId("effect-1")
+                .build()))
+        .thenReturn(
+            PickupItemFromRoomResponse.newBuilder()
+                .setInventoryItem(InventoryItem.newBuilder().setItemName("Torch"))
+                .build());
+
+    PickupItemFromRoomResponse response = service.pickupVisibleRoomItem(request);
+
+    assertThat(response.getInventoryItem().getItemName()).isEqualTo("Torch");
+  }
+
+  @Test
+  void dropCarriedItemResolvesStackReferenceBeforeDelegatingToEntityRuntime() {
+    DropCarriedItemRequest request =
+        DropCarriedItemRequest.newBuilder()
+            .setTenantId("1")
+            .setSessionId("99")
+            .setAccountId("3")
+            .setCharacterId("7")
+            .setGameInstanceId("9")
+            .setRoomInstanceId("room-1")
+            .setItemReference("ammo/iron")
+            .setQuantity(3)
+            .setSessionAttestation("attestation")
+            .setEffectId("effect-1")
+            .build();
+    when(entityStub.queryInventory(
+            QueryInventoryRequest.newBuilder()
+                .setTenantId("1")
+                .setCharacterId("7")
+                .setSessionAttestation("attestation")
+                .build()))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("100")
+                        .setVisibleRef("ammo/iron")
+                        .setItemName("Arrow")
+                        .setQuantity(12)
+                        .build())
+                .build());
+    when(entityStub.dropItemToRoom(
+            DropItemToRoomRequest.newBuilder()
+                .setTenantId("1")
+                .setCharacterId("7")
+                .setGameInstanceId("9")
+                .setRoomInstanceId("room-1")
+                .setItemId("100")
+                .setContainerInstanceId("100")
+                .setStackFamilyKey("ammo/iron")
+                .setQuantity(3)
+                .setSessionAttestation("attestation")
+                .setEffectId("effect-1")
+                .build()))
+        .thenReturn(DropItemToRoomResponse.newBuilder().build());
+
+    DropItemToRoomResponse response = service.dropCarriedItem(request);
+
+    assertThat(response.hasError()).isFalse();
+  }
+
+  @Test
+  void pickupVisibleRoomItemRejectsMissingReferenceAsApplicationError() {
+    PickupVisibleRoomItemRequest request =
+        PickupVisibleRoomItemRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("9")
+            .setRoomInstanceId("room-1")
+            .setQuantity(1)
+            .setSessionAttestation("attestation")
+            .build();
+
+    PickupItemFromRoomResponse response = service.pickupVisibleRoomItem(request);
+
+    assertThat(response.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(response.getError().getMessage()).isEqualTo("GET command requires an item");
   }
 }

@@ -163,6 +163,54 @@ class InventoryServiceImplTest {
   }
 
   @Test
+  void listRoomGroundItemsReturnsOnlyCurrentRoomGroundDtos() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    InventoryServiceImpl service =
+        service(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            itemStackRepo,
+            visibleRefAllocator);
+
+    Item torch = item(2L, 11L, "Torch", false, null, false);
+    Item arrows = item(3L, 11L, "Arrows", false, null, true);
+    arrows.setStackVariantKey("ammo/iron");
+    ItemInstance roomTorch = itemInstance(501L, 11L, null, torch, null, "GI-1", "R-1");
+    ItemStack roomArrows = stack(701L, 11L, null, arrows, 12);
+    roomArrows.setGameInstanceId("GI-1");
+    roomArrows.setRoomInstanceId("R-1");
+    roomArrows.setStackFamilyKey("ammo/iron");
+
+    when(itemInstanceRepo
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
+                11L, "GI-1", "R-1", Pageable.unpaged()))
+        .thenReturn(new PageImpl<>(List.of(roomTorch)));
+    when(itemStackRepo
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullOrderByIdAsc(
+                11L, "GI-1", "R-1", Pageable.unpaged()))
+        .thenReturn(new PageImpl<>(List.of(roomArrows)));
+
+    var result = service.listRoomGroundItems(11L, "GI-1", "R-1", Pageable.unpaged());
+
+    assertEquals(2, result.getTotalElements());
+    assertEquals(3L, result.getContent().get(0).itemId());
+    assertEquals(12, result.getContent().get(0).quantity());
+    assertEquals("ammo/iron", result.getContent().get(0).visibleRef());
+    assertEquals(501L, result.getContent().get(1).itemInstanceId());
+    assertEquals("GI-1", result.getContent().get(1).gameInstanceId());
+    assertEquals("R-1", result.getContent().get(1).roomInstanceId());
+    verify(characterRepo, never()).findByIdAndTenantId(anyLong(), anyLong());
+  }
+
+  @Test
   void addItemRejectsCrossTenantOwnership() {
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
     ContainerInstanceRepository containerInstanceRepo =

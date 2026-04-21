@@ -28,6 +28,7 @@ The current branch state is materially ahead of the original `06` plan:
 - Game Session now records central item-command invocation/failure metrics through `gamesession.command.item.*` with `type` and `error` tags, so operators can distinguish expected player mistakes from backend or validation failures consistently across inventory, equipment, and container verbs.
 - The developer smoke guide and player playtest checklist now include the WebSocket/Telnet item-equipment extension: `INV HERE`, `GET`, `INVENTORY`, `DROP`, `EQUIPMENT`, `WEAR`, `REMOVE`, and an incompatible-equipment error check where the fixture exists.
 - Game Logic now exposes the first item/container/equipment runtime RPC seam, so Game Session text handlers dispatch `INVENTORY`, `INV HERE`, `GET`, `DROP`, `CONTAINER`, `PUT`, `TAKE`, `EQUIPMENT`, `WEAR`, and `REMOVE` through Game Logic before Entity Management persistence is touched.
+- Game Logic now owns player-facing room-ground and carried-item selector resolution for `GET` and `DROP`: Game Session passes the current session/game/room context plus raw item reference and quantity, Game Logic lists the appropriate holder surface, resolves names/visible refs/container refs/stack refs, and then delegates the concrete mutation to Entity Management.
 - Entity Management now has the first game-configured equipment schema substrate: versioned slot definitions, slot groups, body-layout slot membership, character body-layout keys, and runtime equipment validation against those authored concepts.
 - the authored stackability/fungibility follow-up is now tracked explicitly in `06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md`.
 
@@ -140,7 +141,7 @@ Current implementation note:
   - `UnequipItem`.
 - [x] Prefer landing room-ground pickup/drop orchestration before broader container semantics so the first player-visible loop is narrow and auditable.
 - [x] Keep the Game Logic layer responsible for gameplay-facing validation and orchestration, while Entity Management remains authoritative for item/container/equipment persistence.
-- [ ] Ensure Game Logic can combine room visibility, room-ground container identity, session/character identity, and item-filter/query semantics into stable player-facing results.
+- [x] Ensure Game Logic can combine room visibility, room-ground container identity, session/character identity, and item-filter/query semantics into stable player-facing results.
 - [x] Add unit tests covering successful pickup/drop/equip flows, invalid item names/selectors, incompatible slots, inaccessible containers, and backend error propagation.
 
 ## 6. Game Session Service: Text Command Wiring and UX
@@ -167,7 +168,7 @@ Current implementation note:
 - [x] Add a Telnet-focused variant through TCP Proxy and Gateway covering the same path and asserting transcript parity with WebSocket up to framing differences.
 - [x] Add at least one equipment-focused cross-service regression showing a successful bind to a configurable slot and a representative failure case such as incompatible slot/body-layout.
 - [x] Assert the item path traverses the intended service boundary (Game Session -> Game Logic -> Entity Management, with World Management room identity where relevant) using logs, metrics, or interceptors similar to the existing LOOK/SAY/movement slices.
-- [ ] Ensure the regression coverage also proves the audit trail is written for successful transfer/equip operations.
+- [x] Ensure the regression coverage also proves the audit trail is written for successful transfer/equip operations.
 
 ## 8. Developer Workflows, Docs, and Examples
 
@@ -180,8 +181,8 @@ Current implementation note:
 
 - [x] Run the relevant Entity Management, Game Design, Game Logic, Game Session, and cross-service test targets for the item slice and confirm they pass.
 - [ ] Manually verify one happy-path pickup/drop flow and one happy-path equipment flow over both WebSocket and Telnet.
-- [ ] Confirm the audit trail is written for successful item/equipment mutations and that representative failure paths do not leave partially applied state.
-- [ ] Confirm inventory queries can distinguish carried, equipped, and room-ground items in a way that is compatible with future filtered gameplay commands and richer GUIs.
+- [x] Confirm the audit trail is written for successful item/equipment mutations and that representative failure paths do not leave partially applied state.
+- [x] Confirm inventory queries can distinguish carried, equipped, and room-ground items in a way that is compatible with future filtered gameplay commands and richer GUIs.
 
 ---
 

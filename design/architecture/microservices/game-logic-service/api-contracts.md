@@ -33,6 +33,7 @@ Expected response:
 - `Ping(PingRequest) returns (PingResponse)` is the basic connectivity check defined in [`game_logic_service.proto`](../../../../protos/game-logic/v1/game_logic_service.proto).
 - `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` evaluates a parsed gameplay command and returns the outcome.
 - `SendCommunication` accepts `tenant_id`, `session_id`, `character_id`, speaker metadata, normalized `text`, and explicit target/scope metadata. It is the shared gameplay communication contract for the current built-in modes and should evolve toward richer communication-intent handling rather than splintering into one bespoke API per verb.
+- `PickupVisibleRoomItem` and `DropCarriedItem` are the player-facing item selector RPCs for the current `GET` and `DROP` command path. Game Session sends the current session/game/room context, raw item reference, and quantity; Game Logic resolves names, visible refs, container identities, and stack-family refs against the appropriate visible holder before delegating the concrete mutation to Entity Management.
 - All application-level failures are returned via `shared.v1.ErrorDetail` while the gRPC status remains `OK`; `grpc.app_error` must be recorded with the error code.
 
 ```bash

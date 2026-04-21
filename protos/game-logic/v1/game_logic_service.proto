@@ -35,6 +35,10 @@ service GameLogicService {
       returns (entity_management.v1.PickupItemFromRoomResponse);
   rpc DropItemToRoom(entity_management.v1.DropItemToRoomRequest)
       returns (entity_management.v1.DropItemToRoomResponse);
+  rpc PickupVisibleRoomItem(PickupVisibleRoomItemRequest)
+      returns (entity_management.v1.PickupItemFromRoomResponse);
+  rpc DropCarriedItem(DropCarriedItemRequest)
+      returns (entity_management.v1.DropItemToRoomResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
 }
 
@@ -122,6 +126,32 @@ message MoveResult {
   bool success = 1;
   LookResult destination_look = 2;
   shared.v1.ErrorDetail error = 3;
+}
+
+message PickupVisibleRoomItemRequest {
+  string tenant_id = 1;
+  string session_id = 2;
+  string account_id = 3;
+  string character_id = 4;
+  string game_instance_id = 5;
+  string room_instance_id = 6;
+  string item_reference = 7;
+  int32 quantity = 8;
+  string session_attestation = 9;
+  string effect_id = 10;
+}
+
+message DropCarriedItemRequest {
+  string tenant_id = 1;
+  string session_id = 2;
+  string account_id = 3;
+  string character_id = 4;
+  string game_instance_id = 5;
+  string room_instance_id = 6;
+  string item_reference = 7;
+  int32 quantity = 8;
+  string session_attestation = 9;
+  string effect_id = 10;
 }
 
 enum CommunicationType {

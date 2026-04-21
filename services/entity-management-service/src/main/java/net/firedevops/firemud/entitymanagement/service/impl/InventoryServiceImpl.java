@@ -705,15 +705,17 @@ public class InventoryServiceImpl implements InventoryService {
 
   private Comparator<InventoryEntryDto> inventoryOrdering() {
     return Comparator.comparing((InventoryEntryDto dto) -> dto.itemName().toLowerCase())
-        .thenComparing(dto -> dto.itemInstanceId() == null ? 1 : 0)
-        .thenComparing(dto -> dto.itemInstanceId() == null ? Long.MAX_VALUE : dto.itemInstanceId())
+        .thenComparingInt(dto -> dto.itemInstanceId() == null ? 1 : 0)
+        .thenComparingLong(
+            dto -> dto.itemInstanceId() == null ? Long.MAX_VALUE : dto.itemInstanceId())
         .thenComparing(InventoryEntryDto::itemId);
   }
 
   private Comparator<RoomGroundInventoryEntryDto> roomGroundOrdering() {
     return Comparator.comparing((RoomGroundInventoryEntryDto dto) -> dto.itemName().toLowerCase())
-        .thenComparing(dto -> dto.itemInstanceId() == null ? 1 : 0)
-        .thenComparing(dto -> dto.itemInstanceId() == null ? Long.MAX_VALUE : dto.itemInstanceId())
+        .thenComparingInt(dto -> dto.itemInstanceId() == null ? 1 : 0)
+        .thenComparingLong(
+            dto -> dto.itemInstanceId() == null ? Long.MAX_VALUE : dto.itemInstanceId())
         .thenComparing(RoomGroundInventoryEntryDto::itemId);
   }
 

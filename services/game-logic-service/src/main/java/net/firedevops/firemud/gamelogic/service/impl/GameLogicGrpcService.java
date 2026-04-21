@@ -37,6 +37,7 @@ import net.firedevops.firemud.gamelogic.service.ItemRuntimeService;
 import net.firedevops.firemud.gamelogic.service.LookAggregationService;
 import net.firedevops.firemud.gamelogic.service.MoveAggregationService;
 import net.firedevops.firemud.gamelogic.service.PingService;
+import net.firedevops.firemud.gamelogic.v1.DropCarriedItemRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
@@ -46,6 +47,7 @@ import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveRequest;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
+import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
@@ -317,6 +319,23 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   public void dropItemToRoom(
       DropItemToRoomRequest request, StreamObserver<DropItemToRoomResponse> responseObserver) {
     responseObserver.onNext(itemRuntimeService.dropItemToRoom(request));
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamelogicGrpc.pickupVisibleRoomItem")
+  public void pickupVisibleRoomItem(
+      PickupVisibleRoomItemRequest request,
+      StreamObserver<PickupItemFromRoomResponse> responseObserver) {
+    responseObserver.onNext(itemRuntimeService.pickupVisibleRoomItem(request));
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamelogicGrpc.dropCarriedItem")
+  public void dropCarriedItem(
+      DropCarriedItemRequest request, StreamObserver<DropItemToRoomResponse> responseObserver) {
+    responseObserver.onNext(itemRuntimeService.dropCarriedItem(request));
     responseObserver.onCompleted();
   }
 

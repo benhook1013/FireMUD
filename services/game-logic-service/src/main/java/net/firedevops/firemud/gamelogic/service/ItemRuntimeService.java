@@ -8,6 +8,7 @@ import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
@@ -22,14 +23,18 @@ import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
+import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
+import net.firedevops.firemud.gamelogic.v1.DropCarriedItemRequest;
+import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
@@ -79,6 +84,113 @@ public class ItemRuntimeService {
           .setError(error("DropItemToRoom", "INVENTORY_UNAVAILABLE", ex))
           .build();
     }
+  }
+
+  public PickupItemFromRoomResponse pickupVisibleRoomItem(PickupVisibleRoomItemRequest request) {
+    if (request.getQuantity() <= 0) {
+      return pickupError("INVALID_ARGUMENT", "GET quantity must be positive");
+    }
+    String reference = request.getItemReference();
+    if (!StringUtils.hasText(reference)) {
+      return pickupError("INVALID_ARGUMENT", "GET command requires an item");
+    }
+    ListRoomGroundInventoryResponse roomItems =
+        listRoomGroundInventory(
+            ListRoomGroundInventoryRequest.newBuilder()
+                .setTenantId(request.getTenantId())
+                .setGameInstanceId(request.getGameInstanceId())
+                .setRoomInstanceId(request.getRoomInstanceId())
+                .setSessionAttestation(request.getSessionAttestation())
+                .build());
+    if (roomItems.hasError()) {
+      return PickupItemFromRoomResponse.newBuilder().setError(roomItems.getError()).build();
+    }
+    RoomGroundInventoryItem item =
+        roomItems.getItemsList().stream()
+            .filter(candidate -> matchesReference(candidate, reference))
+            .findFirst()
+            .orElse(null);
+    if (item == null) {
+      return pickupError("INVALID_ARGUMENT", "No room item matches \"" + reference + "\"");
+    }
+    if (request.getQuantity() > 1 && explicitInstanceReference(item, reference)) {
+      return pickupError("INVALID_ARGUMENT", "Explicit item refs require quantity 1 for GET");
+    }
+    PickupItemFromRoomRequest.Builder entityRequest =
+        PickupItemFromRoomRequest.newBuilder()
+            .setTenantId(request.getTenantId())
+            .setCharacterId(request.getCharacterId())
+            .setGameInstanceId(request.getGameInstanceId())
+            .setRoomInstanceId(request.getRoomInstanceId())
+            .setItemId(item.getItemId())
+            .setQuantity(request.getQuantity())
+            .setSessionAttestation(request.getSessionAttestation());
+    if (explicitInstanceReference(item, reference)) {
+      entityRequest.setItemInstanceId(item.getItemInstanceId());
+    }
+    if (StringUtils.hasText(resolveContainerInstanceId(item))) {
+      entityRequest.setContainerInstanceId(resolveContainerInstanceId(item));
+    }
+    if (stackSelection(item, reference)) {
+      entityRequest.setStackFamilyKey(item.getVisibleRef());
+    }
+    if (StringUtils.hasText(request.getEffectId())) {
+      entityRequest.setEffectId(request.getEffectId());
+    }
+    return pickupItemFromRoom(entityRequest.build());
+  }
+
+  public DropItemToRoomResponse dropCarriedItem(DropCarriedItemRequest request) {
+    if (request.getQuantity() <= 0) {
+      return dropError("INVALID_ARGUMENT", "DROP quantity must be positive");
+    }
+    String reference = request.getItemReference();
+    if (!StringUtils.hasText(reference)) {
+      return dropError("INVALID_ARGUMENT", "DROP command requires an item");
+    }
+    QueryInventoryResponse inventory =
+        queryInventory(
+            QueryInventoryRequest.newBuilder()
+                .setTenantId(request.getTenantId())
+                .setCharacterId(request.getCharacterId())
+                .setSessionAttestation(request.getSessionAttestation())
+                .build());
+    if (inventory.hasError()) {
+      return DropItemToRoomResponse.newBuilder().setError(inventory.getError()).build();
+    }
+    InventoryItem item =
+        inventory.getItemsList().stream()
+            .filter(candidate -> matchesReference(candidate, reference))
+            .findFirst()
+            .orElse(null);
+    if (item == null) {
+      return dropError("INVALID_ARGUMENT", "No carried item matches \"" + reference + "\"");
+    }
+    if (request.getQuantity() > 1 && explicitInstanceReference(item, reference)) {
+      return dropError("INVALID_ARGUMENT", "Explicit item refs require quantity 1 for DROP");
+    }
+    DropItemToRoomRequest.Builder entityRequest =
+        DropItemToRoomRequest.newBuilder()
+            .setTenantId(request.getTenantId())
+            .setCharacterId(request.getCharacterId())
+            .setGameInstanceId(request.getGameInstanceId())
+            .setRoomInstanceId(request.getRoomInstanceId())
+            .setItemId(item.getItemId())
+            .setQuantity(request.getQuantity())
+            .setSessionAttestation(request.getSessionAttestation());
+    if (explicitInstanceReference(item, reference)) {
+      entityRequest.setItemInstanceId(item.getItemInstanceId());
+    }
+    if (StringUtils.hasText(resolveContainerInstanceId(item))) {
+      entityRequest.setContainerInstanceId(resolveContainerInstanceId(item));
+    }
+    if (stackSelection(item, reference)) {
+      entityRequest.setStackFamilyKey(item.getVisibleRef());
+    }
+    if (StringUtils.hasText(request.getEffectId())) {
+      entityRequest.setEffectId(request.getEffectId());
+    }
+    return dropItemToRoom(entityRequest.build());
   }
 
   public ListEquipmentResponse listEquipment(ListEquipmentRequest request) {
@@ -148,5 +260,77 @@ public class ItemRuntimeService {
             ? "Entity Management unavailable"
             : description;
     return GrpcAppErrors.error(meterRegistry, LOG, operation, code, message);
+  }
+
+  private PickupItemFromRoomResponse pickupError(String code, String message) {
+    return PickupItemFromRoomResponse.newBuilder()
+        .setError(GrpcAppErrors.error(meterRegistry, LOG, "PickupVisibleRoomItem", code, message))
+        .build();
+  }
+
+  private DropItemToRoomResponse dropError(String code, String message) {
+    return DropItemToRoomResponse.newBuilder()
+        .setError(GrpcAppErrors.error(meterRegistry, LOG, "DropCarriedItem", code, message))
+        .build();
+  }
+
+  private boolean matchesReference(InventoryItem item, String reference) {
+    return matchesReference(item.getItemId(), reference)
+        || matchesReference(item.getItemName(), reference)
+        || matchesReference(item.getItemInstanceId(), reference)
+        || matchesReference(item.getVisibleRef(), reference)
+        || matchesReference(resolveContainerInstanceId(item), reference);
+  }
+
+  private boolean matchesReference(RoomGroundInventoryItem item, String reference) {
+    return matchesReference(item.getItemId(), reference)
+        || matchesReference(item.getItemName(), reference)
+        || matchesReference(item.getItemInstanceId(), reference)
+        || matchesReference(item.getVisibleRef(), reference)
+        || matchesReference(resolveContainerInstanceId(item), reference);
+  }
+
+  private boolean matchesReference(String candidate, String reference) {
+    return StringUtils.hasText(candidate)
+        && StringUtils.hasText(reference)
+        && candidate.equalsIgnoreCase(reference);
+  }
+
+  private boolean explicitInstanceReference(InventoryItem item, String reference) {
+    return StringUtils.hasText(item.getItemInstanceId())
+        && (matchesReference(item.getItemInstanceId(), reference)
+            || (!stackSelection(item, reference)
+                && (matchesReference(item.getVisibleRef(), reference)
+                    || matchesReference(resolveContainerInstanceId(item), reference))));
+  }
+
+  private boolean explicitInstanceReference(RoomGroundInventoryItem item, String reference) {
+    return StringUtils.hasText(item.getItemInstanceId())
+        && (matchesReference(item.getItemInstanceId(), reference)
+            || (!stackSelection(item, reference)
+                && (matchesReference(item.getVisibleRef(), reference)
+                    || matchesReference(resolveContainerInstanceId(item), reference))));
+  }
+
+  private boolean stackSelection(InventoryItem item, String reference) {
+    return !StringUtils.hasText(item.getItemInstanceId())
+        && matchesReference(item.getVisibleRef(), reference);
+  }
+
+  private boolean stackSelection(RoomGroundInventoryItem item, String reference) {
+    return !StringUtils.hasText(item.getItemInstanceId())
+        && matchesReference(item.getVisibleRef(), reference);
+  }
+
+  private String resolveContainerInstanceId(InventoryItem item) {
+    return StringUtils.hasText(item.getContainerInstanceId())
+        ? item.getContainerInstanceId()
+        : item.getItemId();
+  }
+
+  private String resolveContainerInstanceId(RoomGroundInventoryItem item) {
+    return StringUtils.hasText(item.getContainerInstanceId())
+        ? item.getContainerInstanceId()
+        : item.getItemId();
   }
 }

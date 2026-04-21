@@ -11,14 +11,21 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
+import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
+import net.firedevops.firemud.gamelogic.v1.DropCarriedItemRequest;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
+import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.Test;
@@ -155,6 +162,142 @@ class GameLogicClientTest {
             SESSION_CONTEXT, "1021", "7", "item-7", "ground-1021", "iron", 2, "effect-1");
 
     assertThat(response.getInventoryItem().getItemName()).isEqualTo("Arrow");
+  }
+
+  @Test
+  void pickupVisibleRoomItemForwardsRawReferenceAndSessionContextThroughGameLogic()
+      throws Exception {
+    GameLogicClient client = newClient();
+    GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
+        mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    PickupVisibleRoomItemRequest request =
+        PickupVisibleRoomItemRequest.newBuilder()
+            .setTenantId("22")
+            .setSessionId("41")
+            .setAccountId("0")
+            .setCharacterId("123")
+            .setGameInstanceId("1")
+            .setRoomInstanceId("1021")
+            .setItemReference("torch1")
+            .setQuantity(1)
+            .setSessionAttestation("attestation")
+            .setEffectId("effect-1")
+            .build();
+    when(stub.pickupVisibleRoomItem(request))
+        .thenReturn(
+            PickupItemFromRoomResponse.newBuilder()
+                .setInventoryItem(InventoryItem.newBuilder().setItemName("Torch"))
+                .build());
+    setStub(client, stub);
+
+    PickupItemFromRoomResponse response =
+        client.pickupVisibleRoomItem(SESSION_CONTEXT, "torch1", 1, "effect-1");
+
+    assertThat(response.getInventoryItem().getItemName()).isEqualTo("Torch");
+  }
+
+  @Test
+  void listRoomGroundInventoryForwardsCurrentGameRoomAndAttestation() throws Exception {
+    GameLogicClient client = newClient();
+    GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
+        mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    ListRoomGroundInventoryRequest request =
+        ListRoomGroundInventoryRequest.newBuilder()
+            .setTenantId("22")
+            .setGameInstanceId("1")
+            .setRoomInstanceId("1021")
+            .setSessionAttestation("attestation")
+            .build();
+    when(stub.listRoomGroundInventory(request))
+        .thenReturn(
+            ListRoomGroundInventoryResponse.newBuilder()
+                .addItems(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Torch")
+                        .build())
+                .build());
+    setStub(client, stub);
+
+    ListRoomGroundInventoryResponse response =
+        client.listRoomGroundInventory(SESSION_CONTEXT, "1021");
+
+    assertThat(response.getItemsList())
+        .extracting(RoomGroundInventoryItem::getItemName)
+        .containsExactly("Torch");
+  }
+
+  @Test
+  void dropItemForwardsRoomContainerStackAndEffectContextThroughGameLogic() throws Exception {
+    GameLogicClient client = newClient();
+    GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
+        mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    DropItemToRoomRequest request =
+        DropItemToRoomRequest.newBuilder()
+            .setTenantId("22")
+            .setCharacterId("123")
+            .setGameInstanceId("1")
+            .setRoomInstanceId("1021")
+            .setItemId("7")
+            .setItemInstanceId("item-7")
+            .setContainerInstanceId("container-7")
+            .setStackFamilyKey("iron")
+            .setQuantity(2)
+            .setSessionAttestation("attestation")
+            .setEffectId("effect-1")
+            .build();
+    when(stub.dropItemToRoom(request))
+        .thenReturn(
+            DropItemToRoomResponse.newBuilder()
+                .setRoomGroundItem(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Arrow")
+                        .setQuantity(2)
+                        .build())
+                .build());
+    setStub(client, stub);
+
+    DropItemToRoomResponse response =
+        client.dropItemToRoom(
+            SESSION_CONTEXT, "1021", "7", "item-7", "container-7", "iron", 2, "effect-1");
+
+    assertThat(response.getRoomGroundItem().getItemName()).isEqualTo("Arrow");
+  }
+
+  @Test
+  void dropCarriedItemForwardsRawReferenceAndSessionContextThroughGameLogic() throws Exception {
+    GameLogicClient client = newClient();
+    GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
+        mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    DropCarriedItemRequest request =
+        DropCarriedItemRequest.newBuilder()
+            .setTenantId("22")
+            .setSessionId("41")
+            .setAccountId("0")
+            .setCharacterId("123")
+            .setGameInstanceId("1")
+            .setRoomInstanceId("1021")
+            .setItemReference("torch1")
+            .setQuantity(1)
+            .setSessionAttestation("attestation")
+            .setEffectId("effect-1")
+            .build();
+    when(stub.dropCarriedItem(request))
+        .thenReturn(
+            DropItemToRoomResponse.newBuilder()
+                .setRoomGroundItem(RoomGroundInventoryItem.newBuilder().setItemName("Torch"))
+                .build());
+    setStub(client, stub);
+
+    DropItemToRoomResponse response =
+        client.dropCarriedItem(SESSION_CONTEXT, "torch1", 1, "effect-1");
+
+    assertThat(response.getRoomGroundItem().getItemName()).isEqualTo("Torch");
   }
 
   private static GameLogicClient newClient() {
