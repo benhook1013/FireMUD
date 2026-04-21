@@ -80,7 +80,7 @@ This ordering is now historical context rather than future plan:
 
 ## 2. Entity Management Service: Runtime Containment and Query Contract
 
-- [ ] Before changing this service for the slice, run `./gradlew :entity-management-service:test` and stabilize the baseline if necessary.
+- [x] Before changing this service for the slice, run `./gradlew :entity-management-service:test` and stabilize the baseline if necessary.
 - [x] Replace or extend the current weak inventory-facing contract (`QueryInventory -> item_ids[]`) with a richer inventory query shape that can return item instance metadata, container/equipped state, quantity, and game-defined type/tag information needed for gameplay and future GUIs.
 - [x] Treat this authoritative runtime contract as the real starting point for `06`; do not begin by adding command text without first landing the inventory/query/transfer model that the command path will call.
 - [x] Introduce or refine explicit runtime records for:
@@ -123,7 +123,7 @@ Current implementation note:
 
 ## 4. Game Design Service and Configurable Equipment Model
 
-- [ ] Before changing this service for the slice, run `./gradlew :game-design-service:test` and stabilize the baseline if necessary.
+- [x] Before changing this service for the slice, run `./gradlew :game-design-service:test` and stabilize the baseline if necessary.
 - [x] Define or refine the design-time model for configurable slot definitions, body layouts, or equivalent equipment schemas so different games can define species/archetype-specific attachment points.
 - [x] Avoid hardcoding a universal humanoid slot enum as the authoritative model. Familiar names like `head` or `left_hand` may appear in data, but they must be game-configured concepts rather than platform truth.
 - [x] Define how item templates declare equipment compatibility, such as slot groups, attachment rules, or other design-defined compatibility metadata.
@@ -131,7 +131,7 @@ Current implementation note:
 
 ## 5. Game Logic Service: Item Interaction Resolution
 
-- [ ] Before changing this service for the slice, run `./gradlew :game-logic-service:test` and stabilize the baseline if necessary.
+- [x] Before changing this service for the slice, run `./gradlew :game-logic-service:test` and stabilize the baseline if necessary.
 - [x] Introduce or refine gameplay-oriented RPCs for the first inventory actions, for example:
   - `QueryVisibleInventory` / `QueryContainerContents`;
   - `PickupItem`;
@@ -174,11 +174,11 @@ Current implementation note:
 - [x] Add or update a smoke/manual verification sequence demonstrating `LOGIN` / `PLAY` / `LOOK` / `GET` / `INVENTORY` / `DROP` over WebSocket.
 - [x] Add a second Telnet-oriented example with the same flow and at least one equipment action.
 - [x] Update the Entity Management, Game Logic, Game Session, and Game Design docs with short implementation-status notes once the slice starts landing so readers can tell what is live versus deferred.
-- [ ] Update any user-journey or gameplay examples that currently imply rooms only show static descriptions; after this slice they should also reflect visible room items, carrying state, and basic equipment state where relevant.
+- [x] Update any user-journey or gameplay examples that currently imply rooms only show static descriptions; after this slice they should also reflect visible room items, carrying state, and basic equipment state where relevant.
 
 ## 9. Final QA Checklist
 
-- [ ] Run the relevant Entity Management, Game Design, Game Logic, Game Session, and cross-service test targets for the item slice and confirm they pass.
+- [x] Run the relevant Entity Management, Game Design, Game Logic, Game Session, and cross-service test targets for the item slice and confirm they pass.
 - [ ] Manually verify one happy-path pickup/drop flow and one happy-path equipment flow over both WebSocket and Telnet.
 - [ ] Confirm the audit trail is written for successful item/equipment mutations and that representative failure paths do not leave partially applied state.
 - [ ] Confirm inventory queries can distinguish carried, equipped, and room-ground items in a way that is compatible with future filtered gameplay commands and richer GUIs.

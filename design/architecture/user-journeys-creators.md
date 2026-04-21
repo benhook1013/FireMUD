@@ -84,6 +84,8 @@ Creators refine the world and its inhabitants using several services:
 
 World and entity changes are versioned so creators can iterate safely and roll back as needed. See [Game Templates](./microservices/game-design-service/game-templates.md) for starting points.
 
+For item and equipment authoring, creators define more than item names and stats. They also define game-specific equipment slots, optional slot groups, body-layout slot membership, item stackability, and item slot compatibility. Familiar slot names such as `HEAD` or `HAND` are content choices, not platform-global enums; a game can instead define slots such as `TAIL_RING`, `WING`, `PAW`, or `MODULE_BAY` and attach those slots only to body layouts that support them. Runtime equipment validation uses those published definitions, so a player cannot equip an item into a slot their selected character body layout does not expose.
+
 ---
 
 ## 3. Add Automation & Scripting

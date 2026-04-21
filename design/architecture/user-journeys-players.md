@@ -155,6 +155,33 @@ Game actions are resolved on a fixed tick loop as outlined in the [Tick System](
 
 If a tenant is temporarily unavailable because billing or entitlements block gameplay, the player sees a clear tenant-scoped error before `PLAY` succeeds. If a creator or operator cuts a realm over to a replacement instance, reconnect follows the same lobby and admission flow and lands on the currently routable realm target.
 
+The current player-facing gameplay loop includes room views, communication, movement, and the first item-management commands. After `PLAY`, a player can use `LOOK` to read the current room, `INV HERE` to inspect visible room-ground items, `GET <item>` / `DROP <item>` to move items between the room and their carried inventory, `INVENTORY` to inspect carried items, `CONTAINER <item>` / `PUT` / `TAKE` for named carried containers, and `EQUIPMENT` / `WEAR` / `REMOVE` for equipment state. Item views expose stable selectors when exact targeting is needed, so duplicate or stack-backed items can be manipulated without relying on prose descriptions alone. Equipment actions are validated against the game's authored slot/body-layout model when that schema exists, so non-humanoid characters or game-specific attachment points produce explicit errors rather than silent no-ops.
+
+Example gameplay transcript:
+
+```text
+LOOK
+The Ember Gate
+You stand before a red stone arch.
+Items here:
+- Torch [torch3]
+INV HERE
+Room Inventory:
+- Torch [torch3]
+GET torch3
+You pick up Torch.
+INVENTORY
+Inventory:
+- Torch [torch3]
+EQUIPMENT
+You have nothing equipped.
+WEAR torch3
+You wear Torch.
+EQUIPMENT
+Equipment:
+- HAND: Torch [torch3]
+```
+
 ```plaintext
 Player → TCP Proxy / Gateway → Game Session Service → Backend Services
 ```
