@@ -11,10 +11,13 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
+import net.firedevops.firemud.entitymanagement.entity.EquipmentSlotDefinition;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
+import net.firedevops.firemud.entitymanagement.repository.BodyLayoutSlotDefinitionRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
+import net.firedevops.firemud.entitymanagement.repository.EquipmentSlotDefinitionRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import org.junit.jupiter.api.Test;
@@ -30,6 +33,10 @@ class EquipmentServiceImplTest {
         Mockito.mock(ContainerInstanceRepository.class);
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    EquipmentSlotDefinitionRepository slotRepo =
+        Mockito.mock(EquipmentSlotDefinitionRepository.class);
+    BodyLayoutSlotDefinitionRepository bodyLayoutSlotRepo =
+        Mockito.mock(BodyLayoutSlotDefinitionRepository.class);
     EquipmentServiceImpl service =
         new EquipmentServiceImpl(
             itemInstanceRepo,
@@ -37,7 +44,9 @@ class EquipmentServiceImplTest {
             charRepo,
             itemRepo,
             new ItemTransferSupport(),
-            new ContainerHolderSyncSupport(containerInstanceRepo));
+            new ContainerHolderSyncSupport(containerInstanceRepo),
+            slotRepo,
+            bodyLayoutSlotRepo);
 
     Character character = character(1L, 11L);
     Item item = item(2L, 11L, "Leather Cap", true, "HEAD");
@@ -71,6 +80,10 @@ class EquipmentServiceImplTest {
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
+    EquipmentSlotDefinitionRepository slotRepo =
+        Mockito.mock(EquipmentSlotDefinitionRepository.class);
+    BodyLayoutSlotDefinitionRepository bodyLayoutSlotRepo =
+        Mockito.mock(BodyLayoutSlotDefinitionRepository.class);
     EquipmentServiceImpl service =
         new EquipmentServiceImpl(
             itemInstanceRepo,
@@ -79,7 +92,9 @@ class EquipmentServiceImplTest {
             itemRepo,
             new ItemTransferSupport(),
             itemTransferAuditWriter,
-            new ContainerHolderSyncSupport(containerInstanceRepo));
+            new ContainerHolderSyncSupport(containerInstanceRepo),
+            slotRepo,
+            bodyLayoutSlotRepo);
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Leather Cap", true, "head");
@@ -126,6 +141,10 @@ class EquipmentServiceImplTest {
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
+    EquipmentSlotDefinitionRepository slotRepo =
+        Mockito.mock(EquipmentSlotDefinitionRepository.class);
+    BodyLayoutSlotDefinitionRepository bodyLayoutSlotRepo =
+        Mockito.mock(BodyLayoutSlotDefinitionRepository.class);
     EquipmentServiceImpl service =
         new EquipmentServiceImpl(
             itemInstanceRepo,
@@ -134,7 +153,9 @@ class EquipmentServiceImplTest {
             itemRepo,
             new ItemTransferSupport(),
             itemTransferAuditWriter,
-            new ContainerHolderSyncSupport(containerInstanceRepo));
+            new ContainerHolderSyncSupport(containerInstanceRepo),
+            slotRepo,
+            bodyLayoutSlotRepo);
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Leather Cap", true, "head");
@@ -164,6 +185,10 @@ class EquipmentServiceImplTest {
         Mockito.mock(ContainerInstanceRepository.class);
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    EquipmentSlotDefinitionRepository slotRepo =
+        Mockito.mock(EquipmentSlotDefinitionRepository.class);
+    BodyLayoutSlotDefinitionRepository bodyLayoutSlotRepo =
+        Mockito.mock(BodyLayoutSlotDefinitionRepository.class);
     EquipmentServiceImpl service =
         new EquipmentServiceImpl(
             itemInstanceRepo,
@@ -171,7 +196,9 @@ class EquipmentServiceImplTest {
             charRepo,
             itemRepo,
             new ItemTransferSupport(),
-            new ContainerHolderSyncSupport(containerInstanceRepo));
+            new ContainerHolderSyncSupport(containerInstanceRepo),
+            slotRepo,
+            bodyLayoutSlotRepo);
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Leather Cap", true, "HEAD");
@@ -185,6 +212,123 @@ class EquipmentServiceImplTest {
         .thenReturn(Optional.of(stale));
 
     assertThrows(IllegalArgumentException.class, () -> service.removeWornItem(1L, 1L, "HEAD"));
+  }
+
+  @Test
+  void wearItemRequiresAuthoredSlotWhenEquipmentSchemaExists() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    EquipmentSlotDefinitionRepository slotRepo =
+        Mockito.mock(EquipmentSlotDefinitionRepository.class);
+    BodyLayoutSlotDefinitionRepository bodyLayoutSlotRepo =
+        Mockito.mock(BodyLayoutSlotDefinitionRepository.class);
+    EquipmentServiceImpl service =
+        new EquipmentServiceImpl(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            charRepo,
+            itemRepo,
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo),
+            slotRepo,
+            bodyLayoutSlotRepo);
+
+    Character character = character(1L, 1L);
+    Item item = item(2L, 1L, "Strange Helm", false, "horn");
+    when(charRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(item));
+    when(slotRepo.existsByTenantIdAndVersionId(1L, 1L)).thenReturn(true);
+    when(slotRepo.findByTenantIdAndVersionIdAndSlotKey(1L, 1L, "HORN"))
+        .thenReturn(Optional.empty());
+
+    assertThrows(IllegalArgumentException.class, () -> service.wearItem(1L, 1L, 2L, null));
+    verify(itemInstanceRepo, never())
+        .existsByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
+            any(), any(), any());
+  }
+
+  @Test
+  void wearItemRequiresBodyLayoutToSupportAuthoredSlot() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    EquipmentSlotDefinitionRepository slotRepo =
+        Mockito.mock(EquipmentSlotDefinitionRepository.class);
+    BodyLayoutSlotDefinitionRepository bodyLayoutSlotRepo =
+        Mockito.mock(BodyLayoutSlotDefinitionRepository.class);
+    EquipmentServiceImpl service =
+        new EquipmentServiceImpl(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            charRepo,
+            itemRepo,
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo),
+            slotRepo,
+            bodyLayoutSlotRepo);
+
+    Character character = character(1L, 1L);
+    character.setBodyLayoutKey("SERPENT");
+    Item item = item(2L, 1L, "Leather Boots", false, "feet");
+    EquipmentSlotDefinition slot = slot("FEET", "FEET");
+    when(charRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(item));
+    when(slotRepo.existsByTenantIdAndVersionId(1L, 1L)).thenReturn(true);
+    when(slotRepo.findByTenantIdAndVersionIdAndSlotKey(1L, 1L, "FEET"))
+        .thenReturn(Optional.of(slot));
+    when(bodyLayoutSlotRepo.existsByTenantIdAndVersionIdAndBodyLayoutKey(1L, 1L, "SERPENT"))
+        .thenReturn(true);
+    when(bodyLayoutSlotRepo.existsByTenantIdAndVersionIdAndBodyLayoutKeyAndSlotKey(
+            1L, 1L, "SERPENT", "FEET"))
+        .thenReturn(false);
+
+    assertThrows(IllegalArgumentException.class, () -> service.wearItem(1L, 1L, 2L, null));
+    verify(itemInstanceRepo, never())
+        .existsByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
+            any(), any(), any());
+  }
+
+  @Test
+  void wearItemRequiresItemSlotGroupToMatchAuthoredSlotGroup() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    EquipmentSlotDefinitionRepository slotRepo =
+        Mockito.mock(EquipmentSlotDefinitionRepository.class);
+    BodyLayoutSlotDefinitionRepository bodyLayoutSlotRepo =
+        Mockito.mock(BodyLayoutSlotDefinitionRepository.class);
+    EquipmentServiceImpl service =
+        new EquipmentServiceImpl(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            charRepo,
+            itemRepo,
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo),
+            slotRepo,
+            bodyLayoutSlotRepo);
+
+    Character character = character(1L, 1L);
+    Item item = item(2L, 1L, "Wing Harness", false, "back");
+    item.setEquipmentSlotGroupKey("WINGS");
+    EquipmentSlotDefinition slot = slot("BACK", "TORSO");
+    when(charRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(item));
+    when(slotRepo.existsByTenantIdAndVersionId(1L, 1L)).thenReturn(true);
+    when(slotRepo.findByTenantIdAndVersionIdAndSlotKey(1L, 1L, "BACK"))
+        .thenReturn(Optional.of(slot));
+
+    assertThrows(IllegalArgumentException.class, () -> service.wearItem(1L, 1L, 2L, null));
+    verify(itemInstanceRepo, never())
+        .existsByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
+            any(), any(), any());
   }
 
   private static Character character(Long id, Long tenantId) {
@@ -204,6 +348,16 @@ class EquipmentServiceImplTest {
     item.setContainer(container);
     item.setEquipmentSlot(equipmentSlot);
     return item;
+  }
+
+  private static EquipmentSlotDefinition slot(String slotKey, String slotGroupKey) {
+    EquipmentSlotDefinition slot = new EquipmentSlotDefinition();
+    slot.setTenantId(1L);
+    slot.setVersionId(1L);
+    slot.setSlotKey(slotKey);
+    slot.setDisplayName(slotKey);
+    slot.setSlotGroupKey(slotGroupKey);
+    return slot;
   }
 
   private static ItemInstance itemInstance(

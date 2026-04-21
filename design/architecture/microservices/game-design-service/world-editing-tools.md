@@ -16,6 +16,14 @@ Current item-authoring note:
 - this is only the authoring seam for future fungible quantity behavior, not live runtime merge/split behavior;
 - equipment, containers, and other stateful items should remain authored non-stackable unless a later slice deliberately proves they are safe to treat as fungible.
 
+Current equipment-authoring model:
+
+- equipment slots are authored per `(tenantId, versionId)` as stable slot keys such as `HEAD`, `BACK`, `TAIL_RING`, or any other game-defined term;
+- slot definitions can carry an optional slot group key so templates can say "this item fits any slot in this group" without making the platform own universal humanoid anatomy;
+- runtime body layouts are authored as sets of allowed slot keys, and characters carry a `bodyLayoutKey` that selects which slot set applies;
+- item templates keep a default `equipmentSlot` for the first runtime command loop and may also declare an `equipmentSlotGroupKey` compatibility guard;
+- if no slot/body-layout schema has been authored for a version, Entity Management allows the legacy direct slot string as a bootstrap fallback, but once a schema exists the runtime validates slot existence, item compatibility, and body-layout membership before equipment binds.
+
 Illustrative generation/revision sequence:
 
 1. Create or update a generation revision for a declared target scope.

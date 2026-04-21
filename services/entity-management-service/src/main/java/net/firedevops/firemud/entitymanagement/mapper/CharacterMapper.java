@@ -12,6 +12,7 @@ public interface CharacterMapper {
   @Mapping(target = "inventoryEntries", ignore = true)
   @Mapping(target = "lastLoginAt", ignore = true)
   @Mapping(target = "playableStateKey", ignore = true)
+  @Mapping(target = "bodyLayoutKey", constant = "DEFAULT")
   @Mapping(target = "version", ignore = true)
   Character toEntity(CharacterDto dto);
 }

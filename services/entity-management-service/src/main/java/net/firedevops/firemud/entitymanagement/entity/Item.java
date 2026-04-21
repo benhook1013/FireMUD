@@ -26,6 +26,9 @@ public class Item {
   @Column(name = "equipment_slot", length = 32)
   private String equipmentSlot;
 
+  @Column(name = "equipment_slot_group_key", length = 64)
+  private String equipmentSlotGroupKey;
+
   @Column(name = "is_container", nullable = false)
   private boolean container;
 

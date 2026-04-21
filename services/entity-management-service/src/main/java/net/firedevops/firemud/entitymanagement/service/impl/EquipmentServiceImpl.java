@@ -1,14 +1,18 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.util.Locale;
 import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
+import net.firedevops.firemud.entitymanagement.entity.EquipmentSlotDefinition;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
+import net.firedevops.firemud.entitymanagement.repository.BodyLayoutSlotDefinitionRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
+import net.firedevops.firemud.entitymanagement.repository.EquipmentSlotDefinitionRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
@@ -20,13 +24,23 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class EquipmentServiceImpl implements EquipmentService {
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring repositories are framework-managed singletons and only stored")
   private final ItemInstanceRepository itemInstanceRepository;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring repositories are framework-managed singletons and only stored")
   private final ContainerInstanceRepository containerInstanceRepository;
+
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
   private final ItemTransferSupport itemTransferSupport;
   private final ItemTransferAuditWriter itemTransferAuditWriter;
   private final ContainerHolderSyncSupport containerHolderSyncSupport;
+  private final EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository;
+  private final BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository;
 
   @Autowired
   public EquipmentServiceImpl(
@@ -36,7 +50,9 @@ public class EquipmentServiceImpl implements EquipmentService {
       ItemRepository itemRepository,
       ItemTransferSupport itemTransferSupport,
       ItemTransferAuditWriter itemTransferAuditWriter,
-      ContainerHolderSyncSupport containerHolderSyncSupport) {
+      ContainerHolderSyncSupport containerHolderSyncSupport,
+      EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository,
+      BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository) {
     this.itemInstanceRepository = itemInstanceRepository;
     this.containerInstanceRepository = containerInstanceRepository;
     this.characterRepository = characterRepository;
@@ -44,6 +60,8 @@ public class EquipmentServiceImpl implements EquipmentService {
     this.itemTransferSupport = itemTransferSupport;
     this.itemTransferAuditWriter = itemTransferAuditWriter;
     this.containerHolderSyncSupport = containerHolderSyncSupport;
+    this.equipmentSlotDefinitionRepository = equipmentSlotDefinitionRepository;
+    this.bodyLayoutSlotDefinitionRepository = bodyLayoutSlotDefinitionRepository;
   }
 
   EquipmentServiceImpl(
@@ -52,7 +70,9 @@ public class EquipmentServiceImpl implements EquipmentService {
       CharacterRepository characterRepository,
       ItemRepository itemRepository,
       ItemTransferSupport itemTransferSupport,
-      ContainerHolderSyncSupport containerHolderSyncSupport) {
+      ContainerHolderSyncSupport containerHolderSyncSupport,
+      EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository,
+      BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository) {
     this(
         itemInstanceRepository,
         containerInstanceRepository,
@@ -60,7 +80,9 @@ public class EquipmentServiceImpl implements EquipmentService {
         itemRepository,
         itemTransferSupport,
         new NoOpItemTransferAuditWriter(),
-        containerHolderSyncSupport);
+        containerHolderSyncSupport,
+        equipmentSlotDefinitionRepository,
+        bodyLayoutSlotDefinitionRepository);
   }
 
   @Override
@@ -88,6 +110,7 @@ public class EquipmentServiceImpl implements EquipmentService {
     Character character = requireCharacter(tenantId, characterId);
     Item item = requireWearableItem(tenantId, itemId);
     String slot = normalizeSlot(requireWearableSlot(item));
+    requireSlotCompatible(character, item, slot);
     if (itemInstanceRepository
         .existsByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
             tenantId, characterId, slot)) {
@@ -149,6 +172,33 @@ public class EquipmentServiceImpl implements EquipmentService {
     return requireText(item.getEquipmentSlot(), "equipmentSlot");
   }
 
+  private void requireSlotCompatible(Character character, Item item, String slot) {
+    Long tenantId = character.getTenantId();
+    Long versionId = item.getVersionId();
+    String bodyLayoutKey = normalizeBodyLayout(character.getBodyLayoutKey());
+    boolean slotSchemaExists =
+        equipmentSlotDefinitionRepository.existsByTenantIdAndVersionId(tenantId, versionId);
+    if (slotSchemaExists) {
+      EquipmentSlotDefinition slotDefinition =
+          equipmentSlotDefinitionRepository
+              .findByTenantIdAndVersionIdAndSlotKey(tenantId, versionId, slot)
+              .orElseThrow(() -> new IllegalArgumentException("Equipment slot is not defined"));
+      String requiredSlotGroup = normalizeOptional(item.getEquipmentSlotGroupKey());
+      if (requiredSlotGroup != null
+          && !requiredSlotGroup.equals(normalizeOptional(slotDefinition.getSlotGroupKey()))) {
+        throw new IllegalArgumentException("Equipment slot is incompatible");
+      }
+    }
+
+    if (bodyLayoutSlotDefinitionRepository.existsByTenantIdAndVersionIdAndBodyLayoutKey(
+            tenantId, versionId, bodyLayoutKey)
+        && !bodyLayoutSlotDefinitionRepository
+            .existsByTenantIdAndVersionIdAndBodyLayoutKeyAndSlotKey(
+                tenantId, versionId, bodyLayoutKey, slot)) {
+      throw new IllegalArgumentException("Body layout does not support equipment slot");
+    }
+  }
+
   private CharacterEquipmentEntryDto toDto(ItemInstance instance) {
     return new CharacterEquipmentEntryDto(
         instance.getTenantId(),
@@ -202,5 +252,17 @@ public class EquipmentServiceImpl implements EquipmentService {
 
   private String normalizeSlot(String slot) {
     return requireText(slot, "slot").toUpperCase(Locale.ROOT);
+  }
+
+  private String normalizeBodyLayout(String bodyLayoutKey) {
+    return requireText(bodyLayoutKey == null ? "DEFAULT" : bodyLayoutKey, "bodyLayoutKey")
+        .toUpperCase(Locale.ROOT);
+  }
+
+  private String normalizeOptional(String value) {
+    if (value == null || value.isBlank()) {
+      return null;
+    }
+    return value.trim().toUpperCase(Locale.ROOT);
   }
 }

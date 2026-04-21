@@ -10,6 +10,7 @@ public record ItemDto(
     @NotNull @Size(max = 100) String name,
     String description,
     String equipmentSlot,
+    String equipmentSlotGroupKey,
     boolean container,
     boolean stackable,
     ItemStackCompatibilityMode stackCompatibilityMode,

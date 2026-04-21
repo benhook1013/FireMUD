@@ -28,6 +28,7 @@ The current branch state is materially ahead of the original `06` plan:
 - Game Session now records central item-command invocation/failure metrics through `gamesession.command.item.*` with `type` and `error` tags, so operators can distinguish expected player mistakes from backend or validation failures consistently across inventory, equipment, and container verbs.
 - The developer smoke guide and player playtest checklist now include the WebSocket/Telnet item-equipment extension: `INV HERE`, `GET`, `INVENTORY`, `DROP`, `EQUIPMENT`, `WEAR`, `REMOVE`, and an incompatible-equipment error check where the fixture exists.
 - Game Logic now exposes the first item/container/equipment runtime RPC seam, so Game Session text handlers dispatch `INVENTORY`, `INV HERE`, `GET`, `DROP`, `CONTAINER`, `PUT`, `TAKE`, `EQUIPMENT`, `WEAR`, and `REMOVE` through Game Logic before Entity Management persistence is touched.
+- Entity Management now has the first game-configured equipment schema substrate: versioned slot definitions, slot groups, body-layout slot membership, character body-layout keys, and runtime equipment validation against those authored concepts.
 - the authored stackability/fungibility follow-up is now tracked explicitly in `06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md`.
 
 The most important remaining design work in this slice family is:
@@ -123,10 +124,10 @@ Current implementation note:
 ## 4. Game Design Service and Configurable Equipment Model
 
 - [ ] Before changing this service for the slice, run `./gradlew :game-design-service:test` and stabilize the baseline if necessary.
-- [ ] Define or refine the design-time model for configurable slot definitions, body layouts, or equivalent equipment schemas so different games can define species/archetype-specific attachment points.
-- [ ] Avoid hardcoding a universal humanoid slot enum as the authoritative model. Familiar names like `head` or `left_hand` may appear in data, but they must be game-configured concepts rather than platform truth.
-- [ ] Define how item templates declare equipment compatibility, such as slot groups, attachment rules, or other design-defined compatibility metadata.
-- [ ] Document how runtime entities resolve which slots exist for a given character/NPC/body layout and how that interacts with future species/class rules without dragging the slice into a full progression rewrite.
+- [x] Define or refine the design-time model for configurable slot definitions, body layouts, or equivalent equipment schemas so different games can define species/archetype-specific attachment points.
+- [x] Avoid hardcoding a universal humanoid slot enum as the authoritative model. Familiar names like `head` or `left_hand` may appear in data, but they must be game-configured concepts rather than platform truth.
+- [x] Define how item templates declare equipment compatibility, such as slot groups, attachment rules, or other design-defined compatibility metadata.
+- [x] Document how runtime entities resolve which slots exist for a given character/NPC/body layout and how that interacts with future species/class rules without dragging the slice into a full progression rewrite.
 
 ## 5. Game Logic Service: Item Interaction Resolution
 

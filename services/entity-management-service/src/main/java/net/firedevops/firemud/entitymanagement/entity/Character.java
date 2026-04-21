@@ -38,6 +38,9 @@ public class Character {
   @Column(nullable = false, length = 100)
   private String name;
 
+  @Column(nullable = false, length = 64)
+  private String bodyLayoutKey = "DEFAULT";
+
   private int level;
 
   @Column(nullable = false)
