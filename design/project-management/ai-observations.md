@@ -115,3 +115,8 @@ Entry format:
   - Context: checking observability review findings against `02.14.4` showed the cardinality slice removed raw tenant/session labels from ordinary gameplay metrics, but older player-experience dashboard/snippet docs still described raw `tenantId` SLO labels.
   - Observation: when a later implementation slice hardens metric-label policy without updating all reference PromQL and dashboard docs, architecture reviews keep finding stale contradictions even though the intended direction is already implemented.
   - Expected pattern: future observability slices should update the architecture doc, reference PromQL, dashboards, and slice-support docs in the same batch when metric label policy changes.
+
+- `2026-04-22`: Untracked repo files must be treated as potentially valuable local work unless a human confirms disposal
+  - Context: an untracked audit markdown file tripped `lintMarkdown`, and deleting it to clear local hygiene would have destroyed live design work that only existed in the working tree.
+  - Observation: in this repo, untracked files are not safe to treat as disposable temp noise just because they are outside Git or fail checks; they may be active human or AI work products.
+  - Expected pattern: if an untracked file is not unquestionably generated junk and not the direct target of the task, leave it alone and ask before deleting or cleaning it up.

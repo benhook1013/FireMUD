@@ -32,6 +32,7 @@ Use this file as the canonical AI instruction source for this repository.
 - Expect dirty worktrees with unrelated edits from parallel AI or human sessions.
 - Continue working in scope; do not stop only because unrelated files are modified.
 - Do not run workspace cleanup commands that modify the Git working tree or index (for example `git restore`, `git checkout`, `git reset`, `git clean`, `git stash`) unless a human explicitly asks for that exact action.
+- Do not delete untracked files just because they appear temporary, fail a linter, or were created by a prior AI session. If an untracked file is not unquestionably disposable and in scope for the current task, leave it in place and ask a human before removing it.
 - Never revert, clean up, or reformat unrelated files.
 - If a target file is already modified, edit in place and preserve in-progress changes.
 - If overlapping edits make intent unclear or risky, ask a human before proceeding.
