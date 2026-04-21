@@ -285,7 +285,7 @@ To remove ambiguity between connect-token admission and `LOGIN`, first-party web
 2. Use bootstrap-authenticated discovery endpoints to select a caller-visible world/realm/character target.
 3. Request a short-lived gameplay connect token for one target selected by `connectScopeId` returned by that discovery contract. This call performs the live membership/public-admission and runtime entitlement checks for that target.
    - The issuance path must also validate the target against the authoritative realm-routing record. If the target is no longer admissible for the selected realm, the request fails before socket open rather than issuing a stale token.
-4. Open gameplay WebSocket on `/ws/game/**` with `X-Firemud-Connect-Token`.
+4. Open gameplay WebSocket on `/ws/game/**` with connect-token carriage appropriate to the client. Browser clients use the gateway-approved browser-safe carrier; server-side and non-browser clients may use `X-Firemud-Connect-Token`.
 5. Complete gameplay authentication in-band using `LOGIN` (or `LOGON`) and then lobby binding with `PLAY`.
 
 Normative constraints:
@@ -373,7 +373,7 @@ Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_emberfall_production_v1", requestId: "req-join-1" }
 -> { connectToken, accountId, tenantId: "tenant-emberfall", realmSlug: "production", gameInstanceId: "production", expiresAt }
 
-GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+GET /ws/game/** with browser-compatible connect token carriage
 LOGIN
 PLAY emberfall production Mara
 OK PLAY Entered Emberfall / Live Realm as Mara
@@ -431,7 +431,7 @@ Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_playtest_docks_v4", requestId: "req-456" }
 -> { connectToken, accountId, tenantId: "tenant-demo", realmSlug: "playtest-docks", gameInstanceId: "playtest-docks", expiresAt }
 
-GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+GET /ws/game/** with browser-compatible connect token carriage
 
 LOGIN
 OK LOGIN Logged in
@@ -648,7 +648,7 @@ When adding a new public HTTP/gRPC route:
 
 - Classify it using the shared classes from [Authorization Route Matrix](./system-architecture-authz-route-matrix.md): `public`, `account_scoped`, `player_bootstrap_tenant`, `pre_tenant_discovery`, `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, or `cross_tenant_data_bearing`.
 - For all non-public routes, require `AuthTokenInterceptor` and the Tenant Authorization Contract described above.
-- For tenant-scoped routes that must remain reachable when a tenant is `suspended` or `canceled` for billing (for example, updating payment methods, viewing invoices, exporting data), explicitly mark them as **billing-safe control-plane routes** using a shared mechanism such as an annotation or route metadata flag (for example, `@BillingSafe`).
+- For tenant-scoped routes that must remain reachable when a tenant is `suspended` or `canceled` for billing (for example, updating payment methods, viewing invoices, or tenant-scoped data export), explicitly mark them as **billing-safe control-plane routes** using a shared mechanism such as an annotation or route metadata flag (for example, `@BillingSafe`). Full account export remains `account_scoped` and must not be used as the suspended-tenant recovery export.
 - Log and audit cross-tenant operations, especially when initiated by roles such as `platformAdmin`, so misuse or misconfiguration is observable.
 - Register the route and its classification in [Authorization Route Matrix](./system-architecture-authz-route-matrix.md) so middleware and CI policy checks can enforce consistency.
 
