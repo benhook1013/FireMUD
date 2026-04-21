@@ -102,6 +102,8 @@ These are not major design problems, but they are not fully closed.
    Remaining: operator-proof the chosen alert thresholds in preview/prod-like runs.
 6. [02.14.4 Metrics Cardinality and Label Policy Hardening](./02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
    Remaining: only opportunistic audit tail work and later policy wording cleanup.
+7. [02.14.5 Player-Experience Canary and Deadman Smoke](./02.14.5-task-list-player-experience-canary-and-deadman-smoke-vertical-slice.md)
+   Remaining: implement the prod-like observability smoke proof for player-flow canaries, independent entry-path blackbox probes, external deadman heartbeat, non-production failure injection, and retained traffic-open evidence.
 
 ## Operator-Proof / Audit Tails
 
@@ -109,3 +111,4 @@ These are still useful, but they are not the next best feature/code-shape slices
 
 1. `02.18.6` operator-proof the chosen scheduler thresholds
 2. `02.14.4` opportunistic metrics-cardinality tail only
+3. `02.14.5` prod-like canary/deadman smoke proof
