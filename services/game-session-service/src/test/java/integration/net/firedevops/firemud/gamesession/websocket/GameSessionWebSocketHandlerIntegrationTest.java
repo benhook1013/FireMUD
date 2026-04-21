@@ -317,12 +317,24 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("41"), eq("QUICKLOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
+    when(commandService.enqueue(eq("41"), eq("AFK"), eq(false)))
+        .thenAnswer(
+            invocation -> {
+              gameplayPresenceService.setExplicitAfk(41L, true);
+              return CommandEnqueueResult.success();
+            });
     when(commandService.enqueue(eq("42"), eq("LOGIN demo@example.com swordfish"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("42"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("1"), eq("PLAY demo"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
+    when(commandService.enqueue(eq("1"), eq("AFK"), eq(false)))
+        .thenAnswer(
+            invocation -> {
+              gameplayPresenceService.setExplicitAfk(1L, true);
+              return CommandEnqueueResult.success();
+            });
     when(commandService.enqueue(eq("1"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(gameLogicClient.resolveLook(
@@ -825,7 +837,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Game-Instance-Id", "41");
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch responseLatch = new CountDownLatch(3);
     AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
 
     var future =
@@ -847,23 +858,23 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 } else if (payload.startsWith("OK PLAY")) {
                   session.sendMessage(new TextMessage("AFK"));
                 }
-                responseLatch.countDown();
               }
             },
             headers,
             URI.create("ws://localhost:" + port + "/ws/game"));
 
-    future.get(5, TimeUnit.SECONDS);
-    assertThat(responseLatch.await(10, TimeUnit.SECONDS)).isTrue();
-    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK AFK"));
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    await()
+        .atMost(5, TimeUnit.SECONDS)
+        .untilAsserted(() -> verify(commandService).enqueue("41", "AFK", false));
     GameplayPresence presence =
         gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
             .filter(entry -> entry.sessionId() == 41L)
             .findFirst()
             .orElseThrow();
     assertThat(presence.explicitAfkSinceEpochMs()).isNotNull();
-    verify(commandService, never()).enqueue("41", "AFK", false);
-    WebSocketSession session = sessionRef.get();
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
+    session = sessionRef.get();
     if (session != null && session.isOpen()) {
       session.close();
     }
@@ -1302,8 +1313,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 } else if (isStructuredCommand(payload, "PLAY")) {
                   playAck.countDown();
                   session.sendMessage(new TextMessage("AFK"));
-                } else if (isStructuredCommand(payload, "AFK")) {
-                  session.sendMessage(new TextMessage("WHO"));
                 } else if (isStructuredCommand(payload, "WHO")) {
                   whoAck.countDown();
                 }
@@ -1314,6 +1323,18 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     WebSocketSession session = future.get(5, TimeUnit.SECONDS);
     assertThat(playAck.await(5, TimeUnit.SECONDS)).isTrue();
+    await()
+        .atMost(5, TimeUnit.SECONDS)
+        .untilAsserted(
+            () ->
+                assertThat(
+                        gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+                            .filter(entry -> entry.sessionId() == 1L)
+                            .findFirst()
+                            .orElseThrow()
+                            .explicitAfkSinceEpochMs())
+                    .isNotNull());
+    session.sendMessage(new TextMessage("WHO"));
     assertThat(whoAck.await(10, TimeUnit.SECONDS)).isTrue();
     sessionRef.get().close();
 

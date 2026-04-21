@@ -29,7 +29,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 9. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
    Remaining: the first ledger-side `effectKey`, deterministic `effectId`, movement-backed replay/no-op seam, Entity Management item mutation response replay guard, transfer-audit `effectId` plus session correlation, and first apply/replay metrics are now live; the next gap is later domain guard consumers.
 10. [02.18.11 Migrate Live Gameplay Commands Onto the Durable Execution Path](./02.18.11-task-list-migrate-live-gameplay-commands-onto-durable-execution-path-vertical-slice.md)
-   Remaining: movement plus `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE` are now migrated durable command families with the first downstream Entity Management replay guard; the next gap is any later state-changing command family and its owning service guard.
+   Remaining: movement, `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, `REMOVE`, `SAY`, `WHISPER`, `TELL`, and `AFK` are now migrated durable command families with the first downstream Entity Management replay guard; the next gap is any later state-changing command family and its owning service guard.
 
 ### 2. Active architecture follow-through
 

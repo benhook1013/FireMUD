@@ -20,4 +20,12 @@ public record PreparedVersionUpgradeDto(
     Long executedTargetGameInstanceId,
     Long executedPointerVersion,
     Instant executedAt,
-    String executionControlPlaneRequestId) {}
+    String executionControlPlaneRequestId) {
+
+  public PreparedVersionUpgradeDto {
+    reasons = reasons == null ? List.of() : List.copyOf(reasons);
+    checkedParticipants =
+        checkedParticipants == null ? List.of() : List.copyOf(checkedParticipants);
+    participantResults = participantResults == null ? List.of() : List.copyOf(participantResults);
+  }
+}

@@ -4,10 +4,11 @@ import org.springframework.stereotype.Component;
 
 @Component
 final class ActivityTextCommandDispatchHandler implements TextCommandDispatchHandler {
-  private final AfkCommandHandler afkCommandHandler;
+  private final net.firedevops.firemud.gamesession.service.CommandService commandService;
 
-  ActivityTextCommandDispatchHandler(AfkCommandHandler afkCommandHandler) {
-    this.afkCommandHandler = afkCommandHandler;
+  ActivityTextCommandDispatchHandler(
+      net.firedevops.firemud.gamesession.service.CommandService commandService) {
+    this.commandService = commandService;
   }
 
   @Override
@@ -18,11 +19,10 @@ final class ActivityTextCommandDispatchHandler implements TextCommandDispatchHan
   @Override
   public TextCommandInterpretationResult handle(TextCommandDispatchRequest request) {
     return switch (request.command().type()) {
-      case AFK -> {
-        AfkCommandHandlingResult afkResult =
-            afkCommandHandler.handle(request.sessionId(), request.command());
-        yield new TextCommandInterpretationResult(afkResult.commandResult(), afkResult.outputs());
-      }
+      case AFK ->
+          new TextCommandInterpretationResult(
+              commandService.enqueue(
+                  request.sessionId(), request.command().rawLine(), request.requiresSoloTick()));
       default ->
           throw new IllegalArgumentException(
               "Unsupported activity command type: " + request.command().type());

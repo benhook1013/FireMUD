@@ -12,4 +12,12 @@ public record InstanceCutoverCompatibilityDto(
     List<String> checkedParticipants,
     Instant checkedAt,
     String remapSetId,
-    List<CutoverParticipantCompatibilityDto> participantResults) {}
+    List<CutoverParticipantCompatibilityDto> participantResults) {
+
+  public InstanceCutoverCompatibilityDto {
+    reasons = reasons == null ? List.of() : List.copyOf(reasons);
+    checkedParticipants =
+        checkedParticipants == null ? List.of() : List.copyOf(checkedParticipants);
+    participantResults = participantResults == null ? List.of() : List.copyOf(participantResults);
+  }
+}

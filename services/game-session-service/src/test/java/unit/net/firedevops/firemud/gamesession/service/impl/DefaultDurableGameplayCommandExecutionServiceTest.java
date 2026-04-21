@@ -7,6 +7,8 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
+import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.MoveCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.PreparedMoveCommandResult;
@@ -35,6 +37,9 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
       Mockito.mock(SessionContextService.class);
   private final MoveCommandHandler moveCommandHandler = Mockito.mock(MoveCommandHandler.class);
   private final ItemCommandHandler itemCommandHandler = Mockito.mock(ItemCommandHandler.class);
+  private final CommunicationCommandHandler communicationCommandHandler =
+      Mockito.mock(CommunicationCommandHandler.class);
+  private final AfkCommandHandler afkCommandHandler = Mockito.mock(AfkCommandHandler.class);
   private final MovementEffectIdempotencyService movementEffectIdempotencyService =
       Mockito.mock(MovementEffectIdempotencyService.class);
   private final PlayerOutputDeliveryService playerOutputDeliveryService =
@@ -52,6 +57,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             sessionContextService,
             moveCommandHandler,
             itemCommandHandler,
+            communicationCommandHandler,
+            afkCommandHandler,
             movementEffectIdempotencyService,
             playerOutputDeliveryService);
   }
@@ -178,6 +185,60 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
                 .counter()
                 .count())
         .isEqualTo(1.0);
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+  }
+
+  @Test
+  void executeAppliesDurableCommunicationAndDeliversOutput() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("SAY", "SAY Hello there");
+    TickEffect effect = tickEffect("tfx-4", "cmd-4");
+    TextCommand parsed =
+        new TextCommand(TextCommandType.SAY, java.util.List.of("Hello there"), "SAY Hello there");
+    PlayerOutput output = PlayerOutput.message("You say, \"Hello there.\"");
+    when(parser.parse("SAY Hello there")).thenReturn(parsed);
+    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(communicationCommandHandler.handle(context, parsed))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandlingResult(
+                CommandEnqueueResult.success(), java.util.List.of(output)));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("APPLIED");
+    assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
+    assertThat(result.gameplayResult()).isEqualTo("APPLIED");
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+  }
+
+  @Test
+  void executeAppliesDurableAfkAndDeliversOutput() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("AFK", "AFK");
+    TickEffect effect = tickEffect("tfx-5", "cmd-5");
+    TextCommand parsed =
+        new TextCommand(
+            TextCommandType.AFK,
+            java.util.List.of(),
+            "AFK",
+            "AFK",
+            new net.firedevops.firemud.gamesession.command.text.TextCommandPayload.AfkRequest(
+                true));
+    PlayerOutput output = PlayerOutput.notice("AFK enabled.");
+    when(parser.parse("AFK")).thenReturn(parsed);
+    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(afkCommandHandler.handle(context, parsed))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.command.text.AfkCommandHandlingResult(
+                CommandEnqueueResult.success(), java.util.List.of(output)));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("APPLIED");
+    assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
+    assertThat(result.gameplayResult()).isEqualTo("APPLIED");
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
   }
 

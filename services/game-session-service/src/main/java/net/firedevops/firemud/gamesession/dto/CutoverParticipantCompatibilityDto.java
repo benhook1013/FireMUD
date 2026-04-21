@@ -8,4 +8,12 @@ public record CutoverParticipantCompatibilityDto(
     List<String> checkedFamilies,
     boolean hasS2Rows,
     String result,
-    List<String> reasons) {}
+    List<String> reasons) {
+
+  public CutoverParticipantCompatibilityDto {
+    stateClassesChecked =
+        stateClassesChecked == null ? List.of() : List.copyOf(stateClassesChecked);
+    checkedFamilies = checkedFamilies == null ? List.of() : List.copyOf(checkedFamilies);
+    reasons = reasons == null ? List.of() : List.copyOf(reasons);
+  }
+}

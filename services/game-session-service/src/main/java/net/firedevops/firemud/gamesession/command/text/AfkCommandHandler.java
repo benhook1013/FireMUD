@@ -44,6 +44,21 @@ public final class AfkCommandHandler {
         List.of(PlayerOutput.notice(enabled ? "AFK enabled." : "AFK cleared.")));
   }
 
+  public AfkCommandHandlingResult handle(SessionContext context, TextCommand command) {
+    if (context == null || context.gameInstanceId() <= 0) {
+      return failure("NOT_PLAYING", "You are not in the game.");
+    }
+    if (!(command.payload() instanceof TextCommandPayload.AfkRequest request)
+        || request.enabled() == null) {
+      return failure("INVALID_ARGUMENT", "Usage: AFK [ON|OFF]");
+    }
+    boolean enabled = request.enabled();
+    gameplayPresenceService.setExplicitAfk(context.sessionId(), enabled);
+    return new AfkCommandHandlingResult(
+        CommandEnqueueResult.success(),
+        List.of(PlayerOutput.notice(enabled ? "AFK enabled." : "AFK cleared.")));
+  }
+
   private AfkCommandHandlingResult failure(String code, String message) {
     return new AfkCommandHandlingResult(
         CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.notice(message)));

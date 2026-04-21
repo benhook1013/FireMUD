@@ -77,7 +77,7 @@ public class GameLogicClient
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
-                    .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
+                    .setGameInstanceId(gameInstanceId)
                     .setRoomInstanceId(roomId)
                     .build())
             .build();
@@ -132,11 +132,11 @@ public class GameLogicClient
             .setTenantId(tenantId)
             .setSessionId(sessionId)
             .setCharacterId(characterId)
-            .setAccountId(accountId == null ? "" : accountId)
+            .setAccountId(accountId)
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
-                    .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
+                    .setGameInstanceId(gameInstanceId)
                     .setRoomInstanceId(roomId)
                     .build())
             .setType(type)
@@ -144,7 +144,7 @@ public class GameLogicClient
             .setTargetKind(targetKindFor(type))
             .setTargetCharacterId(targetCharacterId == null ? "" : targetCharacterId)
             .setTargetCharacterName(targetCharacterName == null ? "" : targetCharacterName)
-            .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
+            .setGameInstanceId(gameInstanceId)
             .setSpeakerName(speakerName == null ? "" : speakerName)
             .setSessionAttestation(
                 gameplaySessionAttestationService.issueGameplaySessionAttestation(
@@ -168,7 +168,7 @@ public class GameLogicClient
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
-                    .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
+                    .setGameInstanceId(gameInstanceId)
                     .setRoomInstanceId(roomId)
                     .build())
             .setDirection(direction)

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
@@ -19,6 +20,9 @@ public class VersionUpgradePreparationServiceImpl implements VersionUpgradePrepa
   private final PreparedVersionUpgradeRepository preparedVersionUpgradeRepository;
   private final ObjectMapper objectMapper;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected ObjectMapper is framework-managed and retained internally")
   public VersionUpgradePreparationServiceImpl(
       InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
       PreparedVersionUpgradeRepository preparedVersionUpgradeRepository,

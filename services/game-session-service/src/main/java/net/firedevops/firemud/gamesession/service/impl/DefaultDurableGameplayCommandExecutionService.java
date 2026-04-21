@@ -4,6 +4,8 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.MoveCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.PreparedMoveCommandResult;
@@ -32,6 +34,8 @@ public final class DefaultDurableGameplayCommandExecutionService
   private final SessionContextService sessionContextService;
   private final MoveCommandHandler moveCommandHandler;
   private final ItemCommandHandler itemCommandHandler;
+  private final CommunicationCommandHandler communicationCommandHandler;
+  private final AfkCommandHandler afkCommandHandler;
   private final MovementEffectIdempotencyService movementEffectIdempotencyService;
   private final PlayerOutputDeliveryService playerOutputDeliveryService;
 
@@ -41,6 +45,8 @@ public final class DefaultDurableGameplayCommandExecutionService
       SessionContextService sessionContextService,
       MoveCommandHandler moveCommandHandler,
       ItemCommandHandler itemCommandHandler,
+      CommunicationCommandHandler communicationCommandHandler,
+      AfkCommandHandler afkCommandHandler,
       MovementEffectIdempotencyService movementEffectIdempotencyService,
       PlayerOutputDeliveryService playerOutputDeliveryService) {
     this.meterRegistry = meterRegistry;
@@ -48,6 +54,8 @@ public final class DefaultDurableGameplayCommandExecutionService
     this.sessionContextService = sessionContextService;
     this.moveCommandHandler = moveCommandHandler;
     this.itemCommandHandler = itemCommandHandler;
+    this.communicationCommandHandler = communicationCommandHandler;
+    this.afkCommandHandler = afkCommandHandler;
     this.movementEffectIdempotencyService = movementEffectIdempotencyService;
     this.playerOutputDeliveryService = playerOutputDeliveryService;
   }
@@ -56,7 +64,7 @@ public final class DefaultDurableGameplayCommandExecutionService
   public Optional<DurableGameplayCommandExecutionResult> execute(
       TickEffect effect, GameplayCommand command) {
     TextCommand parsed = textCommandParser.parse(command.getCommandText());
-    if (parsed.type() != TextCommandType.MOVE && !isDurableItemMutation(parsed.type())) {
+    if (!isDurableCommand(parsed.type())) {
       return Optional.empty();
     }
     Optional<SessionContext> maybeContext =
@@ -75,6 +83,12 @@ public final class DefaultDurableGameplayCommandExecutionService
     SessionContext context = maybeContext.orElseThrow();
     if (isDurableItemMutation(parsed.type())) {
       return Optional.of(executeItemMutation(context, parsed, command, effect.getEffectId()));
+    }
+    if (isDurableCommunication(parsed.type())) {
+      return Optional.of(executeCommunicationMutation(context, parsed, command));
+    }
+    if (parsed.type() == TextCommandType.AFK) {
+      return Optional.of(executeAfkMutation(context, parsed, command));
     }
     PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, parsed);
     if (!prepared.commandResult().accepted()) {
@@ -100,6 +114,48 @@ public final class DefaultDurableGameplayCommandExecutionService
   private DurableGameplayCommandExecutionResult executeItemMutation(
       SessionContext context, TextCommand parsed, GameplayCommand command, String effectId) {
     TextCommandInterpretationResult result = itemCommandHandler.handle(context, parsed, effectId);
+    if (!result.outputs().isEmpty()) {
+      playerOutputDeliveryService.deliver(context, result.outputs(), true);
+    }
+    if (result.commandResult().accepted()) {
+      return recordResult(
+          command,
+          new DurableGameplayCommandExecutionResult("APPLIED", "APPLIED", "APPLIED", null, null));
+    }
+    return recordResult(
+        command,
+        new DurableGameplayCommandExecutionResult(
+            "REJECTED",
+            "COMPLETED",
+            "NOT_APPLIED",
+            result.commandResult().errorCode(),
+            result.commandResult().errorMessage()));
+  }
+
+  private DurableGameplayCommandExecutionResult executeCommunicationMutation(
+      SessionContext context, TextCommand parsed, GameplayCommand command) {
+    var result = communicationCommandHandler.handle(context, parsed);
+    if (!result.outputs().isEmpty()) {
+      playerOutputDeliveryService.deliver(context, result.outputs(), true);
+    }
+    if (result.commandResult().accepted()) {
+      return recordResult(
+          command,
+          new DurableGameplayCommandExecutionResult("APPLIED", "APPLIED", "APPLIED", null, null));
+    }
+    return recordResult(
+        command,
+        new DurableGameplayCommandExecutionResult(
+            "REJECTED",
+            "COMPLETED",
+            "NOT_APPLIED",
+            result.commandResult().errorCode(),
+            result.commandResult().errorMessage()));
+  }
+
+  private DurableGameplayCommandExecutionResult executeAfkMutation(
+      SessionContext context, TextCommand parsed, GameplayCommand command) {
+    var result = afkCommandHandler.handle(context, parsed);
     if (!result.outputs().isEmpty()) {
       playerOutputDeliveryService.deliver(context, result.outputs(), true);
     }
@@ -160,6 +216,20 @@ public final class DefaultDurableGameplayCommandExecutionService
       case GET, DROP, PUT, TAKE, WEAR, REMOVE -> true;
       default -> false;
     };
+  }
+
+  private boolean isDurableCommunication(TextCommandType type) {
+    return switch (type) {
+      case SAY, WHISPER, TELL -> true;
+      default -> false;
+    };
+  }
+
+  private boolean isDurableCommand(TextCommandType type) {
+    return type == TextCommandType.MOVE
+        || type == TextCommandType.AFK
+        || isDurableItemMutation(type)
+        || isDurableCommunication(type);
   }
 
   private DurableGameplayCommandExecutionResult recordResult(

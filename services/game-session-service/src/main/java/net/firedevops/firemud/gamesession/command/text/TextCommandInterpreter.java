@@ -369,13 +369,13 @@ public class TextCommandInterpreter {
             new EnqueueOnlyTextCommandDispatchHandler(commandService),
             new WorldsTextCommandDispatchHandler(worldsHandler),
             new SessionTextCommandDispatchHandler(loginHandler, logoutHandler, playHandler),
-            new ActivityTextCommandDispatchHandler(afkHandler),
+            new ActivityTextCommandDispatchHandler(commandService),
             new HelpTextCommandDispatchHandler(helpHandler),
             new WhoTextCommandDispatchHandler(whoHandler),
             new FriendsTextCommandDispatchHandler(friendsHandler),
             new AuthoredActionTextCommandDispatchHandler(authoredActionHandler),
             new ItemTextCommandDispatchHandler(commandService, itemHandler),
-            new CommunicationTextCommandDispatchHandler(communicationHandler),
+            new CommunicationTextCommandDispatchHandler(commandService),
             new MoveTextCommandDispatchHandler(commandService),
             new LookTextCommandDispatchHandler(commandService, lookHandler)));
   }

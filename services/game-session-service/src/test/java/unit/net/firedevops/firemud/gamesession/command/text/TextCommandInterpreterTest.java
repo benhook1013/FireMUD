@@ -891,20 +891,17 @@ class TextCommandInterpreterTest {
     assertTrue(login.commandResult().accepted());
     assertTrue(play.commandResult().accepted());
 
-    SessionContext played = sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
-    when(communicationHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
-        .thenReturn(
-            new CommunicationCommandHandlingResult(
-                CommandEnqueueResult.success(),
-                List.of(PlayerOutput.message("You say, \"Hello there\""))));
+    when(commandService.enqueue("1", "SAY Hello there", false))
+        .thenReturn(CommandEnqueueResult.success("cmd-say-1"));
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "SAY Hello there", false);
 
     assertTrue(interpretation.commandResult().accepted());
     assertEquals(
-        "You say, \"Hello there\"\ndemo> ", renderedResponse("SAY Hello there", interpretation));
-    verify(communicationHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
+        List.of(PlayerOutputKind.PROMPT),
+        interpretation.outputs().stream().map(PlayerOutput::kind).toList());
+    verify(commandService).enqueue("1", "SAY Hello there", false);
   }
 
   @Test
