@@ -33,7 +33,6 @@ services:
   game-session-service:
     environment:
       <<: *local-java-env
-      GAME_LOGIC_DEFAULT_ROOM_ID: "1"
 
   logging-admin-service:
     environment:

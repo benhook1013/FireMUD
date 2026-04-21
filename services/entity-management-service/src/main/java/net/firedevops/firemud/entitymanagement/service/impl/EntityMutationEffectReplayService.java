@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.function.Supplier;
 import net.firedevops.firemud.entitymanagement.entity.EntityMutationEffect;
 import net.firedevops.firemud.entitymanagement.repository.EntityMutationEffectRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,9 +47,7 @@ public class EntityMutationEffectReplayService {
     if (existing.isPresent()) {
       return replay(existing.orElseThrow(), normalizedOperationName, parser);
     }
-    int inserted =
-        repository.insertInProgress(tenantId, normalizedEffectId, normalizedOperationName);
-    if (inserted == 0) {
+    if (!createInProgressMarker(tenantId, normalizedEffectId, normalizedOperationName)) {
       EntityMutationEffect raced =
           repository
               .findByTenantIdAndEffectId(tenantId, normalizedEffectId)
@@ -59,6 +58,20 @@ public class EntityMutationEffectReplayService {
       return replay(raced, normalizedOperationName, parser);
     }
     return executeFirstApplication(tenantId, normalizedEffectId, normalizedOperationName, mutation);
+  }
+
+  private boolean createInProgressMarker(Long tenantId, String effectId, String operationName) {
+    EntityMutationEffect effect = new EntityMutationEffect();
+    effect.setTenantId(tenantId);
+    effect.setEffectId(effectId);
+    effect.setOperationName(operationName);
+    effect.setStatus(STATUS_IN_PROGRESS);
+    try {
+      repository.saveAndFlush(effect);
+      return true;
+    } catch (DataIntegrityViolationException ex) {
+      return false;
+    }
   }
 
   private <T extends MessageLite> T executeFirstApplication(

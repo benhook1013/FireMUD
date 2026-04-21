@@ -78,7 +78,8 @@ class EntityMutationEffectReplayServiceTest {
     when(repository.findByTenantIdAndEffectId(1L, "effect-1"))
         .thenReturn(Optional.empty())
         .thenReturn(Optional.of(effect));
-    when(repository.insertInProgress(1L, "effect-1", "PickupItemFromRoom")).thenReturn(1);
+    when(repository.saveAndFlush(Mockito.any(EntityMutationEffect.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     PickupItemFromRoomResponse expected = pickupResponse("Lantern");
 
     PickupItemFromRoomResponse response =

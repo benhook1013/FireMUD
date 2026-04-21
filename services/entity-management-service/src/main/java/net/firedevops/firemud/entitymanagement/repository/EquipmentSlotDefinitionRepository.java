@@ -8,6 +8,8 @@ public interface EquipmentSlotDefinitionRepository
     extends JpaRepository<EquipmentSlotDefinition, Long> {
   boolean existsByTenantIdAndVersionId(Long tenantId, Long versionId);
 
+  boolean existsByTenantIdAndVersionIdAndSlotKey(Long tenantId, Long versionId, String slotKey);
+
   Optional<EquipmentSlotDefinition> findByTenantIdAndVersionIdAndSlotKey(
       Long tenantId, Long versionId, String slotKey);
 }

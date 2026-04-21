@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -20,6 +21,7 @@ import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepos
 import net.firedevops.firemud.entitymanagement.repository.EquipmentSlotDefinitionRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
+import net.firedevops.firemud.entitymanagement.service.EquipmentSlotIncompatibleException;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageImpl;
@@ -179,6 +181,63 @@ class EquipmentServiceImplTest {
   }
 
   @Test
+  void removeWornItemReturnsRemovedSlotWhileMovingItemIntoInventory() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
+    EquipmentSlotDefinitionRepository slotRepo =
+        Mockito.mock(EquipmentSlotDefinitionRepository.class);
+    BodyLayoutSlotDefinitionRepository bodyLayoutSlotRepo =
+        Mockito.mock(BodyLayoutSlotDefinitionRepository.class);
+    EquipmentServiceImpl service =
+        new EquipmentServiceImpl(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            charRepo,
+            itemRepo,
+            new ItemTransferSupport(),
+            itemTransferAuditWriter,
+            new ContainerHolderSyncSupport(containerInstanceRepo),
+            slotRepo,
+            bodyLayoutSlotRepo);
+
+    Character character = character(1L, 1L);
+    Item item = item(2L, 1L, "Leather Cap", true, "HEAD");
+    ItemInstance equipped = itemInstance(701L, 1L, character, item, "HEAD");
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(77L);
+    containerInstance.setItemInstance(equipped);
+    containerInstance.setItem(item);
+
+    when(charRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemInstanceRepo
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
+                1L, 1L, "HEAD"))
+        .thenReturn(Optional.of(equipped));
+    when(itemInstanceRepo.save(any(ItemInstance.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(containerInstanceRepo.findByItemInstance_Id(701L))
+        .thenReturn(Optional.of(containerInstance));
+
+    var removed = service.removeWornItem(1L, 1L, "HEAD");
+
+    assertEquals(77L, removed.containerInstanceId());
+    assertEquals("HEAD", removed.slot());
+    assertEquals("Leather Cap", removed.itemName());
+    assertNull(equipped.getEquipmentSlot());
+    ItemTransferSupport transferSupport = new ItemTransferSupport();
+    verify(itemTransferAuditWriter)
+        .recordInstanceTransfer(
+            equipped,
+            transferSupport.equipment(1L, 1L, "HEAD"),
+            transferSupport.inventory(character),
+            transferSupport.audit("REMOVE", 1L));
+  }
+
+  @Test
   void removeWornItemRejectsStaleEquippedSourceMismatch() {
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
     ContainerInstanceRepository containerInstanceRepo =
@@ -244,7 +303,9 @@ class EquipmentServiceImplTest {
     when(slotRepo.findByTenantIdAndVersionIdAndSlotKey(1L, 1L, "HORN"))
         .thenReturn(Optional.empty());
 
-    assertThrows(IllegalArgumentException.class, () -> service.wearItem(1L, 1L, 2L, null));
+    IllegalArgumentException ex =
+        assertThrows(IllegalArgumentException.class, () -> service.wearItem(1L, 1L, 2L, null));
+    assertEquals("Equipment slot is not defined", ex.getMessage());
     verify(itemInstanceRepo, never())
         .existsByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
             any(), any(), any());
@@ -287,7 +348,10 @@ class EquipmentServiceImplTest {
             1L, 1L, "SERPENT", "FEET"))
         .thenReturn(false);
 
-    assertThrows(IllegalArgumentException.class, () -> service.wearItem(1L, 1L, 2L, null));
+    EquipmentSlotIncompatibleException ex =
+        assertThrows(
+            EquipmentSlotIncompatibleException.class, () -> service.wearItem(1L, 1L, 2L, null));
+    assertEquals("Leather Boots cannot be worn by this body layout.", ex.getMessage());
     verify(itemInstanceRepo, never())
         .existsByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
             any(), any(), any());

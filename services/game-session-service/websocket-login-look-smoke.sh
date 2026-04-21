@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Direct WebSocket -> Game Session smoke test: WORLDS + LOGIN + PLAY + LOOK after readiness.
+# Direct WebSocket -> Game Session smoke test: WORLDS + LOGIN + PLAY + item/equipment loop after readiness.
 set -euo pipefail
 
 SMOKE_GAME_SESSION_WS_URL=${SMOKE_GAME_SESSION_WS_URL:-ws://localhost:8086/ws/game}
@@ -26,7 +26,7 @@ else
   exit 1
 fi
 
-echo "Running direct WebSocket WORLDS + LOGIN + PLAY + LOOK smoke test against ${SMOKE_GAME_SESSION_WS_URL}"
+echo "Running direct WebSocket WORLDS + LOGIN + PLAY + item/equipment smoke test against ${SMOKE_GAME_SESSION_WS_URL}"
 echo "Using username='${SMOKE_USERNAME}' (password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 
@@ -173,6 +173,45 @@ def recv_text(ws, label, timeout):
     raise RuntimeError(f"Timed out waiting for {label} after {timeout}s") from last_error
 
 
+def drain_available(ws, responses, quiet_timeout=0.25):
+    deadline = time.time() + quiet_timeout
+    while time.time() < deadline:
+        remaining = max(0.05, deadline - time.time())
+        try:
+            responses.append(recv_text(ws, "drain chunk", remaining).strip())
+        except RuntimeError:
+            return
+
+
+def wait_for_incremental_text(ws, responses, start_index, label, expected_substrings, timeout):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        remaining = max(0.1, deadline - time.time())
+        responses.append(
+            recv_text(ws, f"{label} response chunk", min(remaining, timeout_seconds)).strip()
+        )
+        response = "\n".join(chunk for chunk in responses[start_index:] if chunk)
+        if all(substring in response for substring in expected_substrings):
+            drain_available(ws, responses)
+            return response
+    raise RuntimeError(
+        f"Expected {label} response containing {expected_substrings}, got '{response}'"
+    )
+
+
+def send_and_expect(ws, line, expected_substrings, label, timeout=timeout_seconds):
+    if not hasattr(ws, "_smoke_responses"):
+        ws._smoke_responses = []
+    start_index = len(ws._smoke_responses)
+    ws.send(line)
+    response = wait_for_incremental_text(
+        ws, ws._smoke_responses, start_index, label, expected_substrings, timeout
+    )
+    print(f"=== {label} response ===")
+    print(response.strip() or "<empty>")
+    return response
+
+
 
 def websocket_smoke():
     ws = websocket.create_connection(
@@ -183,52 +222,28 @@ def websocket_smoke():
             f"X-Tenant-Id: {tenant_id}",
         ],
     )
+    ws._smoke_responses = []
     try:
-        ws.send("WORLDS")
-        worlds_response = recv_text(ws, "WORLDS response", timeout_seconds)
-        print("=== WORLDS response ===")
-        print(worlds_response.strip() or "<empty>")
-        if worlds_expect not in worlds_response:
-            raise RuntimeError(
-                f"Expected WORLDS response containing '{worlds_expect}', got '{worlds_response}'"
-            )
-
-        ws.send(f"LOGIN {username} {password}")
-        login_response = recv_text(ws, "LOGIN response", timeout_seconds)
-        print("=== LOGIN response ===")
-        print(login_response.strip() or "<empty>")
-        if login_expect not in login_response:
-            raise RuntimeError(
-                f"Expected LOGIN response containing '{login_expect}', got '{login_response}'"
-            )
-
-        ws.send("PLAY demo")
-        play_response = recv_text(ws, "PLAY response", timeout_seconds)
-        print("=== PLAY response ===")
-        print(play_response.strip() or "<empty>")
-        if play_expect not in play_response:
-            raise RuntimeError(
-                f"Expected PLAY response containing '{play_expect}', got '{play_response}'"
-            )
-
-        ws.send("LOOK")
-        look_chunks = []
-        deadline = time.time() + look_timeout_seconds
-        while time.time() < deadline:
-            remaining = max(0.1, deadline - time.time())
-            look_chunks.append(recv_text(ws, "LOOK response chunk", min(remaining, timeout_seconds)))
-            combined = "\n".join(chunk.strip() for chunk in look_chunks if chunk.strip())
-            if look_expect in combined:
-                look_response = combined
-                break
-        else:
-            look_response = "\n".join(chunk.strip() for chunk in look_chunks if chunk.strip())
-        print("=== LOOK response ===")
-        print(look_response.strip() or "<empty>")
-        if look_expect not in look_response:
-            raise RuntimeError(
-                f"Expected LOOK response containing '{look_expect}', got '{look_response}'"
-            )
+        send_and_expect(ws, "WORLDS", [worlds_expect], "WORLDS")
+        send_and_expect(ws, f"LOGIN {username} {password}", [login_expect], "LOGIN")
+        send_and_expect(ws, "PLAY demo", [play_expect], "PLAY")
+        send_and_expect(ws, "LOOK", [look_expect], "LOOK", timeout=look_timeout_seconds)
+        send_and_expect(ws, "INV HERE", ["Room Inventory:", "Torch"], "INV HERE")
+        send_and_expect(ws, "GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET")
+        send_and_expect(ws, "DROP Torch", ["You drop Torch."], "DROP")
+        send_and_expect(ws, "INV HERE", ["Room Inventory:", "Torch"], "INV HERE after DROP")
+        send_and_expect(ws, "EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty")
+        send_and_expect(ws, "WEAR Leather Cap", ["You wear Leather Cap."], "WEAR")
+        send_and_expect(ws, "EQUIPMENT", ["Equipment:", "HEAD", "Leather Cap"], "EQUIPMENT worn")
+        send_and_expect(ws, "REMOVE HEAD", ["You remove Leather Cap."], "REMOVE", timeout=look_timeout_seconds)
+        send_and_expect(ws, "EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty again")
+        send_and_expect(
+            ws,
+            "WEAR Iron Boots",
+            ["ERROR SLOT_INCOMPATIBLE", "Iron Boots cannot be worn by this body layout"],
+            "WEAR incompatible",
+            timeout=look_timeout_seconds,
+        )
     finally:
         ws.close()
 

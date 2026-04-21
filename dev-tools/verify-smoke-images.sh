@@ -35,7 +35,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "Smoke image proof: destroy local compose state, resolve smoke-image tags via docker/.env, start the stack, then run WebSocket and Telnet LOGIN -> PLAY -> LOOK proofs."
+echo "Smoke image proof: destroy local compose state, resolve smoke-image tags via docker/.env, start the stack, then run WebSocket and Telnet LOGIN -> PLAY -> item/equipment proofs."
 if [[ "${SMOKE_IMAGE_LOCAL_ONLY:-false}" == "true" ]]; then
   echo "Local-only mode enabled: compose will reuse matching local images and skip remote pulls."
 fi

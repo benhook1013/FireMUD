@@ -19,6 +19,7 @@ import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
 import net.firedevops.firemud.entitymanagement.service.EntityUpgradeValidationService;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
+import net.firedevops.firemud.entitymanagement.service.EquipmentSlotIncompatibleException;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
@@ -696,6 +697,19 @@ public class EntityManagementGrpcService
               .setError(
                   GrpcAppErrors.error(
                       meterRegistry, logger, "WearEquipment", ex.getCode(), ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (EquipmentSlotIncompatibleException ex) {
+      WearEquipmentItemResponse response =
+          WearEquipmentItemResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "WearEquipment",
+                      EquipmentSlotIncompatibleException.CODE,
+                      ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

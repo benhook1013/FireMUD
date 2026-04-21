@@ -50,3 +50,8 @@ Entry format:
   - Context: running `:tcp-proxy-service:check -PfullCheck` after adding the Telnet item/equipment parity proof.
   - Observation: the suite passes, but shutdown can still log `CANCELLED: Channel is forcefully shutdown` from async disconnect notifications after the nested Game Session channel has already closed, which makes successful test output look suspicious.
   - Expected pattern: cross-service teardown should drain or suppress expected post-shutdown disconnect notifications so warnings remain actionable.
+
+- `2026-04-21`: Source-built Docker smoke scripts must rebuild boot jars before rebuilding images
+  - Context: extending the local fresh-bootstrap smoke proof exposed that `docker compose up --build` rebuilt images from stale `build/libs/*bootJar` artifacts, so the supposedly current source-built stack was still running an old World Management jar without runtime room-instance migrations.
+  - Observation: rebuilding Docker layers is not enough when service Dockerfiles copy prebuilt Gradle jars; the local proof can look fresh while silently testing old application code.
+  - Expected pattern: canonical source-built Docker smoke scripts should run the service `bootJar` tasks before `docker compose ... --build`, and AI workflows should treat stale packaged artifacts as a runtime/bootstrap risk.

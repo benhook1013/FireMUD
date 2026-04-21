@@ -16,6 +16,7 @@ import net.firedevops.firemud.entitymanagement.repository.EquipmentSlotDefinitio
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
+import net.firedevops.firemud.entitymanagement.service.EquipmentSlotIncompatibleException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -153,7 +154,17 @@ public class EquipmentServiceImpl implements EquipmentService {
     itemTransferAuditWriter.recordInstanceTransfer(
         saved, expectedSource, destination, auditContext);
     containerHolderSyncSupport.ensureSynced(saved);
-    return toDto(saved);
+    CharacterEquipmentEntryDto removed = toDto(saved);
+    return new CharacterEquipmentEntryDto(
+        removed.tenantId(),
+        removed.characterId(),
+        normalizedSlot,
+        removed.itemId(),
+        removed.itemName(),
+        removed.itemDescription(),
+        removed.itemInstanceId(),
+        removed.containerInstanceId(),
+        removed.visibleRef());
   }
 
   private Character requireCharacter(Long tenantId, Long characterId) {
@@ -195,7 +206,8 @@ public class EquipmentServiceImpl implements EquipmentService {
         && !bodyLayoutSlotDefinitionRepository
             .existsByTenantIdAndVersionIdAndBodyLayoutKeyAndSlotKey(
                 tenantId, versionId, bodyLayoutKey, slot)) {
-      throw new IllegalArgumentException("Body layout does not support equipment slot");
+      throw new EquipmentSlotIncompatibleException(
+          item.getName() + " cannot be worn by this body layout.");
     }
   }
 

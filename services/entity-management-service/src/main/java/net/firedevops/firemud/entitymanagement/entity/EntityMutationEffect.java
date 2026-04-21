@@ -1,16 +1,15 @@
 package net.firedevops.firemud.entitymanagement.entity;
 
-import jakarta.persistence.Basic;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import lombok.Data;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Data
 @Entity
@@ -32,8 +31,8 @@ public class EntityMutationEffect {
   @Column(length = 255)
   private String responseType;
 
-  @Lob
-  @Basic(fetch = FetchType.LAZY)
+  @JdbcTypeCode(SqlTypes.VARBINARY)
+  @Column(columnDefinition = "bytea")
   private byte[] responsePayload;
 
   @Column(nullable = false, length = 32)

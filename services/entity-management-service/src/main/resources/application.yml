@@ -80,7 +80,7 @@ firemud:
     ttlSeconds: 300
   look:
     rooms:
-      "1:R-1021":
+      "1:1021":
         entities:
           - entity-id: "P-1183"
             display-name: "Sora"
@@ -100,7 +100,7 @@ firemud:
             vision-priority: 8
             reload-hint: STABLE
             visible: true
-      "1:R-2045":
+      "1:2045":
         entities:
           - entity-id: "NPC-42"
             display-name: "Master Smith Torga"
