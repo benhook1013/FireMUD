@@ -340,6 +340,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     String roomInventoryBeforePickup;
     String pickupResponse;
+    String containerViewResponse;
+    String putResponse;
+    String takeResponse;
     String dropResponse;
     String roomInventoryAfterDrop;
     String emptyEquipmentResponse;
@@ -371,6 +374,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       roomInventoryBeforePickup = readBlockAfterContains(reader, "Room Inventory:");
       writer.println("GET Torch");
       pickupResponse = readBlockAfterContains(reader, "You pick up Torch.");
+      writer.println("CONTAINER Backpack");
+      containerViewResponse = readBlockAfterContains(reader, "Container: Backpack [backpack#1]");
+      writer.println("PUT Torch INTO Backpack");
+      putResponse = readBlockAfterContains(reader, "You put Torch into Backpack.");
+      writer.println("TAKE Torch FROM Backpack");
+      takeResponse = readBlockAfterContains(reader, "You take Torch from Backpack.");
       writer.println("DROP Torch");
       dropResponse = readBlockAfterContains(reader, "You drop Torch.");
       writer.println("INV HERE");
@@ -388,11 +397,22 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       incompatibleResponse = readLineAfterContains(reader, "ERROR SLOT_INCOMPATIBLE");
     }
 
-    assertThat(roomInventoryBeforePickup).contains("- Torch [torch#1] (A small torch)");
+    assertThat(roomInventoryBeforePickup)
+        .contains("- Torch [torch#1] (A small torch)")
+        .contains("- Backpack [backpack#1] (A weathered backpack)");
     assertThat(pickupResponse)
         .contains("You pick up Torch.")
         .contains("Inventory:")
         .contains("- Torch [torch#1] (A small torch)");
+    assertThat(containerViewResponse)
+        .contains("Container: Backpack [backpack#1]")
+        .contains("- Ration [ration#1] (A dry trail ration)");
+    assertThat(putResponse)
+        .contains("You put Torch into Backpack.")
+        .contains("- Torch [torch#1] (A small torch)");
+    assertThat(takeResponse)
+        .contains("You take Torch from Backpack.")
+        .contains("- Ration [ration#1] (A dry trail ration)");
     assertThat(dropResponse).contains("You drop Torch.");
     assertThat(roomInventoryAfterDrop).contains("- Torch [torch#1] (A small torch)");
     assertThat(emptyEquipmentResponse).contains("You have nothing equipped.");
@@ -418,6 +438,26 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
               assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
               assertThat(request.getRoomInstanceId()).isEqualTo(LookTestFixtures.ROOM_ID);
               assertThat(request.getItemId()).isEqualTo("torch");
+              assertThat(request.getEffectId()).isNotBlank();
+            });
+    assertThat(ENTITY_STUB.lastPutRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+              assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+              assertThat(request.getContainerInstanceId()).isEqualTo("container-backpack-1");
+              assertThat(request.getItemId()).isEqualTo("torch");
+              assertThat(request.getItemInstanceId()).isEqualTo("torch-ground-1");
+              assertThat(request.getEffectId()).isNotBlank();
+            });
+    assertThat(ENTITY_STUB.lastTakeRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+              assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+              assertThat(request.getContainerInstanceId()).isEqualTo("container-backpack-1");
+              assertThat(request.getItemId()).isEqualTo("torch");
+              assertThat(request.getItemInstanceId()).isBlank();
               assertThat(request.getEffectId()).isNotBlank();
             });
     assertThat(ENTITY_STUB.lastRemoveRequest())

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Telnet -> Gateway -> Game Session smoke test: WORLDS + LOGIN + PLAY + item/equipment loop over TCP Proxy.
+# Telnet -> Gateway -> Game Session smoke test: WORLDS + LOGIN + PLAY + item/container/equipment loop over TCP Proxy.
 set -euo pipefail
 
 TCP_PORT=${TCP_PROXY_PORT:-2323}
@@ -29,7 +29,7 @@ else
   exit 1
 fi
 
-echo "Running Telnet WORLDS + LOGIN + PLAY + item/equipment smoke test against ${SMOKE_HOST}:${TCP_PORT}"
+echo "Running Telnet WORLDS + LOGIN + PLAY + item/container/equipment smoke test against ${SMOKE_HOST}:${TCP_PORT}"
 echo "Using username='${SMOKE_USERNAME}' (password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 echo "Using account API base '${SMOKE_ACCOUNT_API_BASE}' for smoke validation"
@@ -272,10 +272,31 @@ try:
         send_and_expect(sock, responses, f"LOGIN {username} {password}", [login_expect], "LOGIN")
         send_and_expect(sock, responses, "PLAY demo", [play_expect], "PLAY")
         send_and_expect(sock, responses, "LOOK", [look_expect], "LOOK")
-        send_and_expect(sock, responses, "INV HERE", ["Room Inventory:", "Torch"], "INV HERE")
+        send_and_expect(sock, responses, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE")
         send_and_expect(sock, responses, "GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET")
+        send_and_expect(
+            sock,
+            responses,
+            "CONTAINER Backpack",
+            ["Container: Backpack [backpack#1]", "Ration"],
+            "CONTAINER",
+        )
+        send_and_expect(
+            sock,
+            responses,
+            "PUT Torch INTO Backpack",
+            ["You put Torch into Backpack.", "Container: Backpack [backpack#1]", "Torch"],
+            "PUT",
+        )
+        send_and_expect(
+            sock,
+            responses,
+            "TAKE Torch FROM Backpack",
+            ["You take Torch from Backpack.", "Container: Backpack [backpack#1]", "Ration"],
+            "TAKE",
+        )
         send_and_expect(sock, responses, "DROP Torch", ["You drop Torch."], "DROP")
-        send_and_expect(sock, responses, "INV HERE", ["Room Inventory:", "Torch"], "INV HERE after DROP")
+        send_and_expect(sock, responses, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE after DROP")
         send_and_expect(sock, responses, "EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty")
         send_and_expect(sock, responses, "WEAR Leather Cap", ["You wear Leather Cap."], "WEAR")
         send_and_expect(sock, responses, "EQUIPMENT", ["Equipment:", "HEAD", "Leather Cap"], "EQUIPMENT worn")
@@ -292,5 +313,5 @@ except OSError as exc:
     sys.stderr.write(f"Failed to connect to {host}:{port}: {exc}\n")
     sys.exit(1)
 
-print("Telnet WORLDS + LOGIN + PLAY + item/equipment smoke test passed.")
+print("Telnet WORLDS + LOGIN + PLAY + item/container/equipment smoke test passed.")
 PYTHON

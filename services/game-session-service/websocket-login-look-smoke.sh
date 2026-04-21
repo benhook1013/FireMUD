@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Direct WebSocket -> Game Session smoke test: WORLDS + LOGIN + PLAY + item/equipment loop after readiness.
+# Direct WebSocket -> Game Session smoke test: WORLDS + LOGIN + PLAY + item/container/equipment loop after readiness.
 set -euo pipefail
 
 SMOKE_GAME_SESSION_WS_URL=${SMOKE_GAME_SESSION_WS_URL:-ws://localhost:8086/ws/game}
@@ -26,7 +26,7 @@ else
   exit 1
 fi
 
-echo "Running direct WebSocket WORLDS + LOGIN + PLAY + item/equipment smoke test against ${SMOKE_GAME_SESSION_WS_URL}"
+echo "Running direct WebSocket WORLDS + LOGIN + PLAY + item/container/equipment smoke test against ${SMOKE_GAME_SESSION_WS_URL}"
 echo "Using username='${SMOKE_USERNAME}' (password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 
@@ -228,10 +228,28 @@ def websocket_smoke():
         send_and_expect(ws, f"LOGIN {username} {password}", [login_expect], "LOGIN")
         send_and_expect(ws, "PLAY demo", [play_expect], "PLAY")
         send_and_expect(ws, "LOOK", [look_expect], "LOOK", timeout=look_timeout_seconds)
-        send_and_expect(ws, "INV HERE", ["Room Inventory:", "Torch"], "INV HERE")
+        send_and_expect(ws, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE")
         send_and_expect(ws, "GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET")
+        send_and_expect(
+            ws,
+            "CONTAINER Backpack",
+            ["Container: Backpack [backpack#1]", "Ration"],
+            "CONTAINER",
+        )
+        send_and_expect(
+            ws,
+            "PUT Torch INTO Backpack",
+            ["You put Torch into Backpack.", "Container: Backpack [backpack#1]", "Torch"],
+            "PUT",
+        )
+        send_and_expect(
+            ws,
+            "TAKE Torch FROM Backpack",
+            ["You take Torch from Backpack.", "Container: Backpack [backpack#1]", "Ration"],
+            "TAKE",
+        )
         send_and_expect(ws, "DROP Torch", ["You drop Torch."], "DROP")
-        send_and_expect(ws, "INV HERE", ["Room Inventory:", "Torch"], "INV HERE after DROP")
+        send_and_expect(ws, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE after DROP")
         send_and_expect(ws, "EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty")
         send_and_expect(ws, "WEAR Leather Cap", ["You wear Leather Cap."], "WEAR")
         send_and_expect(ws, "EQUIPMENT", ["Equipment:", "HEAD", "Leather Cap"], "EQUIPMENT worn")

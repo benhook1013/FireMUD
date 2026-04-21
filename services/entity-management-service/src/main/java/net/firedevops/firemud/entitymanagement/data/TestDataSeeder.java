@@ -3,11 +3,13 @@ package net.firedevops.firemud.entitymanagement.data;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entitymanagement.entity.BodyLayoutSlotDefinition;
 import net.firedevops.firemud.entitymanagement.entity.Character;
+import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.EquipmentSlotDefinition;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
 import net.firedevops.firemud.entitymanagement.repository.BodyLayoutSlotDefinitionRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
+import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.EquipmentSlotDefinitionRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
@@ -33,6 +35,7 @@ public class TestDataSeeder implements ApplicationRunner {
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
   private final ItemInstanceRepository itemInstanceRepository;
+  private final ContainerInstanceRepository containerInstanceRepository;
   private final EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository;
   private final BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository;
 
@@ -42,10 +45,16 @@ public class TestDataSeeder implements ApplicationRunner {
     Character demo = ensureDemoCharacter();
     ensureEquipmentSchema();
     Item torch = ensureItem("Torch", "A small torch", null);
+    Item backpack = ensureItem("Backpack", "A weathered backpack", "BACK");
+    backpack.setContainer(true);
+    backpack = itemRepository.save(backpack);
+    Item ration = ensureItem("Ration", "A dry trail ration", null);
     Item leatherCap = ensureItem("Leather Cap", "A small cap", "HEAD");
     Item ironBoots = ensureItem("Iron Boots", "Heavy iron boots", "FEET");
 
     ensureRoomItem(torch, "torch", 1L, "torch#1");
+    ContainerInstance roomBackpack = ensureRoomContainer(backpack, "backpack", 1L, "backpack#1");
+    ensureContainedItem(roomBackpack, ration, "ration", 1L, "ration#1");
     ensureCarriedItem(demo, leatherCap, "cap", 1L, "cap#1");
     ensureCarriedItem(demo, ironBoots, "boots", 1L, "boots#1");
   }
@@ -83,7 +92,9 @@ public class TestDataSeeder implements ApplicationRunner {
   private void ensureEquipmentSchema() {
     ensureEquipmentSlot("HEAD", "Head", "headwear");
     ensureEquipmentSlot("FEET", "Feet", "footwear");
+    ensureEquipmentSlot("BACK", "Back", "backwear");
     ensureBodyLayoutSlot("DEFAULT", "HEAD");
+    ensureBodyLayoutSlot("DEFAULT", "BACK");
   }
 
   private void ensureEquipmentSlot(String slotKey, String displayName, String slotGroupKey) {
@@ -139,19 +150,45 @@ public class TestDataSeeder implements ApplicationRunner {
             });
   }
 
-  private void ensureRoomItem(Item item, String token, long sequence, String visibleRef) {
+  private ContainerInstance ensureRoomContainer(
+      Item item, String token, long sequence, String visibleRef) {
+    ItemInstance itemInstance =
+        itemInstanceRepository
+            .findByTenantIdAndVisibleRef(DEMO_TENANT_ID, visibleRef)
+            .orElseGet(() -> createRoomItemInstance(item, token, sequence, visibleRef));
+    return containerInstanceRepository
+        .findByItemInstance_Id(itemInstance.getId())
+        .orElseGet(
+            () -> {
+              ContainerInstance container = new ContainerInstance();
+              container.setTenantId(DEMO_TENANT_ID);
+              container.setGameInstanceId(DEMO_GAME_INSTANCE_ID);
+              container.setRoomInstanceId(STARTER_ROOM_INSTANCE_ID);
+              container.setItem(item);
+              container.setItemInstance(itemInstance);
+              return containerInstanceRepository.save(container);
+            });
+  }
+
+  private void ensureContainedItem(
+      ContainerInstance container, Item item, String token, long sequence, String visibleRef) {
     if (itemInstanceRepository.existsByTenantIdAndVisibleRef(DEMO_TENANT_ID, visibleRef)) {
       return;
     }
     ItemInstance instance = new ItemInstance();
     instance.setTenantId(DEMO_TENANT_ID);
+    instance.setContainerInstance(container);
     instance.setItem(item);
-    instance.setGameInstanceId(DEMO_GAME_INSTANCE_ID);
-    instance.setRoomInstanceId(STARTER_ROOM_INSTANCE_ID);
     instance.setVisibleRefToken(token);
     instance.setVisibleRefSequence(sequence);
     instance.setVisibleRef(visibleRef);
     itemInstanceRepository.save(instance);
+  }
+
+  private void ensureRoomItem(Item item, String token, long sequence, String visibleRef) {
+    if (!itemInstanceRepository.existsByTenantIdAndVisibleRef(DEMO_TENANT_ID, visibleRef)) {
+      createRoomItemInstance(item, token, sequence, visibleRef);
+    }
   }
 
   private void ensureCarriedItem(
@@ -167,5 +204,18 @@ public class TestDataSeeder implements ApplicationRunner {
     instance.setVisibleRefSequence(sequence);
     instance.setVisibleRef(visibleRef);
     itemInstanceRepository.save(instance);
+  }
+
+  private ItemInstance createRoomItemInstance(
+      Item item, String token, long sequence, String visibleRef) {
+    ItemInstance instance = new ItemInstance();
+    instance.setTenantId(DEMO_TENANT_ID);
+    instance.setItem(item);
+    instance.setGameInstanceId(DEMO_GAME_INSTANCE_ID);
+    instance.setRoomInstanceId(STARTER_ROOM_INSTANCE_ID);
+    instance.setVisibleRefToken(token);
+    instance.setVisibleRefSequence(sequence);
+    instance.setVisibleRef(visibleRef);
+    return itemInstanceRepository.save(instance);
   }
 }

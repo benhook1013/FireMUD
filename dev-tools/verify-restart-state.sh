@@ -8,7 +8,7 @@ WS_SMOKE_SCRIPT="$ROOT_DIR/services/game-session-service/websocket-login-look-sm
 HEALTH_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
 BUILD_JARS_SCRIPT="$ROOT_DIR/dev-tools/build-compose-service-jars.sh"
 
-echo "Restart-state proof: preserve local compose volumes, restart the stack, then run WebSocket/Telnet LOGIN -> PLAY -> item/equipment proofs."
+echo "Restart-state proof: preserve local compose volumes, restart the stack, then run WebSocket/Telnet LOGIN -> PLAY -> item/container/equipment proofs."
 echo "Local volumes are left intact."
 
 "$BUILD_JARS_SCRIPT"

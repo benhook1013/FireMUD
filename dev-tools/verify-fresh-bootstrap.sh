@@ -8,7 +8,7 @@ WS_SMOKE_SCRIPT="$ROOT_DIR/services/game-session-service/websocket-login-look-sm
 HEALTH_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
 BUILD_JARS_SCRIPT="$ROOT_DIR/dev-tools/build-compose-service-jars.sh"
 
-echo "Fresh bootstrap proof: destroy local compose containers, networks, and named volumes, then rebuild and run WebSocket/Telnet LOGIN -> PLAY -> item/equipment proofs."
+echo "Fresh bootstrap proof: destroy local compose containers, networks, and named volumes, then rebuild and run WebSocket/Telnet LOGIN -> PLAY -> item/container/equipment proofs."
 echo "Destroyed named volumes: postgres-data, redis-coord-data, minio-data"
 
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans

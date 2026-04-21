@@ -279,6 +279,7 @@ class CommunicationWebSocketCrossServiceTest {
       client.send("INV HERE");
       client.awaitContains("Room Inventory:");
       client.awaitContains("- Torch [torch#1] (A small torch)");
+      client.awaitContains("- Backpack [backpack#1] (A weathered backpack)");
 
       client.send("GET Torch");
       client.awaitContains("You pick up Torch.");
@@ -294,6 +295,38 @@ class CommunicationWebSocketCrossServiceTest {
                 assertThat(request.getRoomInstanceId()).isEqualTo(ChatTestFixtures.ROOM_ID);
                 assertThat(request.getItemId()).isEqualTo("torch");
                 assertThat(request.getQuantity()).isEqualTo(1);
+                assertThat(request.getEffectId()).isNotBlank();
+              });
+
+      client.send("CONTAINER Backpack");
+      client.awaitContains("Container: Backpack [backpack#1]");
+      client.awaitContains("- Ration [ration#1] (A dry trail ration)");
+
+      client.send("PUT Torch INTO Backpack");
+      client.awaitContains("You put Torch into Backpack.");
+      client.awaitContains("- Torch [torch#1] (A small torch)");
+      assertThat(ENTITY_STUB.lastPutRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getContainerInstanceId()).isEqualTo("container-backpack-1");
+                assertThat(request.getItemId()).isEqualTo("torch");
+                assertThat(request.getItemInstanceId()).isEqualTo("torch-ground-1");
+                assertThat(request.getEffectId()).isNotBlank();
+              });
+
+      client.send("TAKE Torch FROM Backpack");
+      client.awaitContains("You take Torch from Backpack.");
+      client.awaitContains("- Ration [ration#1] (A dry trail ration)");
+      assertThat(ENTITY_STUB.lastTakeRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getContainerInstanceId()).isEqualTo("container-backpack-1");
+                assertThat(request.getItemId()).isEqualTo("torch");
+                assertThat(request.getItemInstanceId()).isBlank();
                 assertThat(request.getEffectId()).isNotBlank();
               });
 

@@ -62,6 +62,9 @@ public interface ItemInstanceRepository extends JpaRepository<ItemInstance, Long
   @EntityGraph(attributePaths = {"character", "item"})
   Optional<ItemInstance> findByIdAndTenantId(Long id, Long tenantId);
 
+  @EntityGraph(attributePaths = {"character", "item", "containerInstance"})
+  Optional<ItemInstance> findByTenantIdAndVisibleRef(Long tenantId, String visibleRef);
+
   boolean existsByTenantIdAndVisibleRef(Long tenantId, String visibleRef);
 
   @Transactional
