@@ -148,7 +148,7 @@ public final class DefaultDurableGameplayCommandExecutionService
       }
       return recordResult(command, replayResult(record));
     }
-    var result = communicationCommandHandler.handle(context, parsed);
+    var result = communicationCommandHandler.handle(context, parsed, effectId);
     durableGameplayReplayService.save(
         context.tenantId(),
         context.sessionId(),

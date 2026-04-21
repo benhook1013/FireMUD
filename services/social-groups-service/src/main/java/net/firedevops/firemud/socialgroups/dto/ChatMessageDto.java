@@ -11,4 +11,5 @@ public record ChatMessageDto(
     Long guildId,
     Long cityId,
     Long recipientAccountId,
-    net.firedevops.firemud.socialgroups.enums.ChatType type) {}
+    net.firedevops.firemud.socialgroups.enums.ChatType type,
+    String effectId) {}

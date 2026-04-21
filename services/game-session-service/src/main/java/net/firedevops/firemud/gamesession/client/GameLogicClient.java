@@ -121,7 +121,8 @@ public class GameLogicClient
       CommunicationType type,
       String text,
       String targetCharacterId,
-      String targetCharacterName) {
+      String targetCharacterName,
+      String effectId) {
     String tenantId = Long.toString(context.tenantId());
     String sessionId = Long.toString(context.sessionId());
     String characterId = Long.toString(context.characterId());
@@ -146,6 +147,7 @@ public class GameLogicClient
             .setTargetCharacterName(targetCharacterName == null ? "" : targetCharacterName)
             .setGameInstanceId(gameInstanceId)
             .setSpeakerName(speakerName == null ? "" : speakerName)
+            .setEffectId(effectId == null ? "" : effectId)
             .setSessionAttestation(
                 gameplaySessionAttestationService.issueGameplaySessionAttestation(
                     tenantId, sessionId, accountId, characterId, gameInstanceId, roomId))

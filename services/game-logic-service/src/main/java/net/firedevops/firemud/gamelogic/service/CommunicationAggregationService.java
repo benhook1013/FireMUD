@@ -99,6 +99,7 @@ public class CommunicationAggregationService {
                     .setType(mapType(request.getType()))
                     .setContent(normalizedText)
                     .setRecipientId(audience.recipientId().orElse(""))
+                    .setEffectId(request.getEffectId())
                     .build());
       } catch (StatusRuntimeException ex) {
         LOG.warn("SocialGroupsService unavailable for communication send", ex);

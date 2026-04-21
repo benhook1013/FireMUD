@@ -204,7 +204,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     when(parser.parse("SAY Hello there")).thenReturn(parsed);
     when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
     when(durableGameplayReplayService.find(22L, 42L, "tfx-4")).thenReturn(Optional.empty());
-    when(communicationCommandHandler.handle(context, parsed))
+    when(communicationCommandHandler.handle(context, parsed, "tfx-4"))
         .thenReturn(
             new net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandlingResult(
                 CommandEnqueueResult.success(), java.util.List.of(output)));

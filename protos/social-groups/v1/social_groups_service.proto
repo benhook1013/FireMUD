@@ -31,6 +31,7 @@ message SendMessageRequest {
   string recipient_id = 6;
   string guild_id = 7;
   string city_id = 8;
+  string effect_id = 9;
 }
 
 message SendMessageResponse {

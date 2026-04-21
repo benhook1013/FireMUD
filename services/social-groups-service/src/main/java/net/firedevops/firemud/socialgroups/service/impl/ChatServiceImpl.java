@@ -19,6 +19,7 @@ import net.firedevops.firemud.socialgroups.repository.ChatMessageRepository;
 import net.firedevops.firemud.socialgroups.service.ChatService;
 import net.firedevops.firemud.socialgroups.util.ProfanityFilter;
 import org.slf4j.Logger;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -85,6 +86,13 @@ public class ChatServiceImpl implements ChatService {
   @Transactional
   public ChatMessageDto sendMessage(SendMessageRequestDto request) {
     logger.info("Chat message from {}", request.senderAccountId());
+    String effectId = normalizeEffectId(request.effectId());
+    if (effectId != null) {
+      var existing = repository.findByTenantIdAndEffectId(request.tenantId(), effectId);
+      if (existing.isPresent()) {
+        return mapper.toDto(existing.orElseThrow());
+      }
+    }
     enforceChatPolicy(request.tenantId(), request.senderAccountId());
     String filtered = profanityFilter.filter(request.content());
     if (!filtered.equals(request.content())) {
@@ -102,8 +110,20 @@ public class ChatServiceImpl implements ChatService {
     message.setGuildId(request.guildId());
     message.setRecipientAccountId(request.recipientAccountId());
     message.setCityId(request.cityId());
+    message.setEffectId(effectId);
     message.setType(request.type());
-    ChatMessage saved = repository.save(message);
+    ChatMessage saved;
+    try {
+      saved = repository.save(message);
+    } catch (DataIntegrityViolationException ex) {
+      if (effectId == null) {
+        throw ex;
+      }
+      return repository
+          .findByTenantIdAndEffectId(request.tenantId(), effectId)
+          .map(mapper::toDto)
+          .orElseThrow(() -> ex);
+    }
     runAfterCommit(
         () -> {
           publishCounter.increment();
@@ -215,5 +235,9 @@ public class ChatServiceImpl implements ChatService {
       return chatProperties.getCity();
     }
     return chatProperties.getAccount();
+  }
+
+  private String normalizeEffectId(String effectId) {
+    return effectId == null || effectId.isBlank() ? null : effectId.trim();
   }
 }

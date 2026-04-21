@@ -73,6 +73,7 @@ message SendCommunicationRequest {
   string game_instance_id = 11;
   string speaker_name = 12;
   string session_attestation = 13;
+  string effect_id = 14;
 }
 
 message SendCommunicationResponse {

@@ -84,7 +84,8 @@ class CommunicationCommandHandlerTest {
             Mockito.any(),
             Mockito.anyString(),
             Mockito.anyString(),
-            Mockito.anyString()))
+            Mockito.anyString(),
+            Mockito.nullable(String.class)))
         .thenReturn(response);
 
     CommunicationCommandHandlingResult result =
@@ -106,7 +107,8 @@ class CommunicationCommandHandlerTest {
             CommunicationType.SAY,
             "hello travelers",
             "",
-            "");
+            "",
+            null);
   }
 
   @Test
@@ -155,7 +157,8 @@ class CommunicationCommandHandlerTest {
             Mockito.any(),
             Mockito.anyString(),
             Mockito.anyString(),
-            Mockito.anyString()))
+            Mockito.anyString(),
+            Mockito.nullable(String.class)))
         .thenReturn(
             SendCommunicationResponse.newBuilder()
                 .setSuccess(false)

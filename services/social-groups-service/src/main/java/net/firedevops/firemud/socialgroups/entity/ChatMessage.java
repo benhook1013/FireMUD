@@ -31,6 +31,9 @@ public class ChatMessage {
 
   @Column private Long recipientAccountId;
 
+  @Column(length = 64)
+  private String effectId;
+
   @Enumerated(EnumType.STRING)
   @Column(nullable = false, length = 20)
   private ChatType type;

@@ -47,6 +47,11 @@ public class CommunicationCommandHandler {
   private final MeterRegistry meterRegistry;
 
   public CommunicationCommandHandlingResult handle(SessionContext context, TextCommand command) {
+    return handle(context, command, null);
+  }
+
+  public CommunicationCommandHandlingResult handle(
+      SessionContext context, TextCommand command, String effectId) {
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
@@ -77,7 +82,8 @@ public class CommunicationCommandHandler {
                 mapType(command.type()),
                 parsed.message(),
                 parsed.targetCharacterId().orElse(""),
-                parsed.targetCharacterName().orElse(""));
+                parsed.targetCharacterName().orElse(""),
+                effectId);
         if (!response.getSuccess()) {
           String errorMessage =
               response.hasError() && response.getError().getMessage() != null

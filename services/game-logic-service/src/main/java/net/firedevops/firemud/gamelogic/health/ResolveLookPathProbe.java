@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamelogic.health;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -16,6 +17,9 @@ import org.springframework.stereotype.Component;
 
 /** Shared internal canary for the downstream calls made by {@code ResolveLook}. */
 @Component
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected gRPC stubs and attestation service are shared Spring-managed clients")
 public final class ResolveLookPathProbe {
   private static final long READINESS_DEADLINE_SECONDS = 2L;
   private static final String WORLD_DEPENDENCY = "worldManagementService";
@@ -125,6 +129,10 @@ public final class ResolveLookPathProbe {
 
   public record ProbeResult(
       boolean ready, String failingDependency, Map<String, Object> dependencies) {
+    public ProbeResult {
+      dependencies = Map.copyOf(dependencies);
+    }
+
     static ProbeResult up(Map<String, Object> dependencies) {
       return new ProbeResult(true, null, dependencies);
     }
