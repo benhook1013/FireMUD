@@ -2,7 +2,7 @@
   "name": "firemud-root",
   "private": true,
   "devDependencies": {
-    "@redocly/cli": "^2.28.1",
+    "@redocly/cli": "^2.29.0",
     "markdownlint-cli2": "^0.22.0"
   },
   "scripts": {
