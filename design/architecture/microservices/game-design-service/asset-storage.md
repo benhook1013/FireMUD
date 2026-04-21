@@ -201,6 +201,15 @@ Fail-closed reader rule:
 - If a runtime consumer does not understand the manifest `schemaVersion`, or if a required derived-world-artifact key is missing for the release it is trying to start, launch must fail before gameplay admission rather than guessing fallback paths or object keys.
 - Requiredness is determined from the attested release bundle metadata for that release, not by heuristics over manifest contents.
 
+## External Delivery Classification
+
+Published asset delivery uses the canonical external `/assets/**` family:
+
+- `/assets/**` is a read-only release-artifact surface, not a creator/control-plane write path.
+- The canonical object-store or CDN URL exported in `manifest.json` represents stable published bytes for that release.
+- Runtime consumers and clients must resolve published assets through the attested manifest/release metadata rather than inventing bucket paths or treating Game Design upload routes as runtime-read surfaces.
+- Any future authenticated or signed-read variant must still preserve `/assets/**` as a delivery family separate from Game Design creator APIs under `/api/design/**`.
+
 ## Table Structure
 
 The `game_assets` table stores ordinary design-time upload records. In the current first implementation slice it also stores the uploaded bytes used as the exact-bytes repair source. Columns include:

@@ -144,6 +144,26 @@ Network policies and ingress configuration must reflect this model:
 - Only Gateway and TCP Proxy Service are reachable from external networks.
 - Logging & Admin Service accepts traffic only from Gateway (and from observability systems where necessary), not from the public internet or VPN clients directly.
 
+#### External Route Family Matrix (Canonical)
+
+The public edge contract is defined at the route-family level before any service-specific path details:
+
+| External family | Canonical classification | Direct external writes allowed? | Required auth/audit notes |
+| --- | --- | --- | --- |
+| `/ws/game/**` | Player gameplay WebSocket ingress | No admin/control writes on this family | Connect-token handshake plus in-band `LOGIN` / `PLAY`; gameplay audit follows gameplay/session contracts. |
+| `/api/admin/**` | Logging & Admin external operator ingress | Yes, but only as Logging & Admin-owned operator workflows | Protected by `Authorization` header presence at Gateway and consuming-service JWT validation; operator intent and audit must be captured by Logging & Admin. |
+| `/api/session/**` | Game Session HTTP admin/control family | External reads and explicitly documented bypass-safe workflows only; operator/control writes otherwise route through Logging & Admin or remain internal-only | Distinct HTTP family from `/ws/game/**`; mutable runtime/tick-region actions must still execute through fenced internal ownership and must not treat the edge prefix as blanket permission for undocumented writes. |
+| `/api/account/**` | Account external admin/bootstrap family | Reads plus explicitly documented bypass-safe account/bootstrap workflows only | Consuming service owns JWT/bootstrap token validation and subject binding; quota/entitlement override writes still require Logging & Admin ingress. |
+| `/api/design/**` | Game Design external creator/admin family | Reads plus the explicitly allowlisted bypass-safe creator-write classes for assets/templates and other architecture-approved domain-local workflows | Game Design owns tenant checks, validation, and audit for these creator workflows. |
+| `/api/social/**` | Social & Groups external admin/read family | Reads and explicitly documented bypass-safe workflows only | Moderation/operator writes remain Logging & Admin ingress unless a future architecture update explicitly allows more. |
+| `/assets/**` | Published asset delivery family | No | Read-only published artifact delivery surface. URLs are stable release artifacts, gateway- or CDN-fronted, and are not design-time mutation or tenant-admin ingress paths. |
+
+Route-family rules:
+
+- A public `/api/{service}/**` prefix does not make every service-local subtree public.
+- Internal-only service-local paths such as `/internal/**` remain non-edge contracts even if current gateway YAML still forwards a coarse family prefix.
+- Service docs must publish the externally supported route inventory for their family instead of leaving exposure implied by the gateway path matcher alone.
+
 #### Infrastructure Management Plane Capability Matrix (Canonical)
 
 The management-plane contract must be explicit so operator tooling does not assume unsupported mutating behavior in production-like environments.

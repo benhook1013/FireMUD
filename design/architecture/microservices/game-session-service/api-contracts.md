@@ -58,6 +58,20 @@ Service definitions reside in [../../../../protos/game-session/v1](../../../../p
 
 Use `/sessions/{id}/refresh-roles` after updating an account's privileges so the session reflects the latest role assignments.
 
+#### External HTTP route classification
+
+Game Session owns the `/api/session/**` Gateway family, but that family is not a blanket public-write contract.
+
+| Service-local route | External classification | Notes |
+| --- | --- | --- |
+| `GET /ping` | Infra/local health only | Not part of the external admin/product contract. |
+| `POST /sessions` | Internal-only or Logging & Admin-mediated operator write until a dedicated bypass-safe design says otherwise | This is a control-plane instance lifecycle mutation, not a player admission route. |
+| `POST /sessions/{id}/stop` | Internal-only or Logging & Admin-mediated operator write | Stops runtime state and therefore follows the operator-write ingress policy by default. |
+| `POST /sessions/{id}/restart` | Internal-only or Logging & Admin-mediated operator write | Same classification as stop/start lifecycle mutations. |
+| `POST /sessions/{id}/refresh-roles` | Internal-only maintenance path | Used to refresh session/runtime auth context after account-role changes; not a documented external bypass-safe write. |
+
+If a future change wants any of the mutating `/sessions*` routes to be callable directly from external operator tools, the owning contract must explicitly mark that exact route as bypass-safe and explain its auth class, audit behavior, and lease-owner forwarding rules in the same change.
+
 ```bash
 curl http://localhost:8080/ping
 ```
