@@ -64,9 +64,14 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
   @Override
   @Transactional
   public VersionAssetArtifactStateDto markExportedUnattested(
-      String tenantId, long versionId, String workflowId, ExportedAssetManifest exportedManifest) {
+      String tenantId,
+      long versionId,
+      int exportedVersionNumber,
+      String workflowId,
+      ExportedAssetManifest exportedManifest) {
     VersionAssetArtifact artifact = findOrCreate(tenantId, versionId);
     artifact.setArtifactState(VersionAssetArtifactState.EXPORTED_UNATTESTED);
+    artifact.setExportedVersionNumber(exportedVersionNumber);
     artifact.setStateEpoch(artifact.getStateEpoch() + 1);
     artifact.setManifestHash(exportedManifest.manifestHash());
     artifact.setLastWorkflowId(workflowId);
@@ -108,12 +113,14 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
   public void markFailed(
       String tenantId,
       long versionId,
+      int exportedVersionNumber,
       String workflowId,
       ExportedAssetManifest exportedManifest,
       String errorCode,
       String errorMessage) {
     VersionAssetArtifact artifact = findOrCreate(tenantId, versionId);
     artifact.setArtifactState(VersionAssetArtifactState.FAILED);
+    artifact.setExportedVersionNumber(exportedVersionNumber);
     artifact.setStateEpoch(artifact.getStateEpoch() + 1);
     artifact.setManifestHash(exportedManifest == null ? null : exportedManifest.manifestHash());
     artifact.setLastWorkflowId(workflowId);
@@ -168,6 +175,16 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
         publishedReleaseBundleRepository
             .findByTenantIdAndVersionId(tenantId, versionId)
             .isPresent();
+    if (artifact.getExportedVersionNumber() <= 0) {
+      return new VersionAssetDeletionEligibilityDto(
+          artifact.getTenantId(),
+          artifact.getVersionId(),
+          false,
+          artifact.getArtifactState().name(),
+          artifact.getStateEpoch(),
+          "VERSION_ASSET_EXPORT_PROOF_MISSING",
+          "version asset artifact proof is missing the exported version number");
+    }
     if (version.isPresent() && version.get().getVersionState() != VersionLifecycleState.RETIRED) {
       return new VersionAssetDeletionEligibilityDto(
           artifact.getTenantId(),
@@ -229,6 +246,7 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
   }
 
   @Override
+  @Transactional
   public VersionAssetPurgeWorkflowStatusDto finalizePurgeVersionAssets(
       String tenantId, long versionId, String purgeWorkflowId, long expectedStateEpoch) {
     VersionAssetArtifact artifact = requireArtifact(tenantId, versionId);
@@ -238,15 +256,10 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
       throw new IllegalStateException("PURGE_FINALIZATION_CONFLICT");
     }
     VersionAssetPurgeWorkflow workflow = requireWorkflow(tenantId, versionId, purgeWorkflowId);
-    Version version =
-        versionRepository
-            .findById(versionId)
-            .filter(found -> found.getTenantId().equals(tenantId))
-            .orElseThrow(() -> new IllegalArgumentException("version not found"));
     try {
       assetExportService.deleteExportedAssets(
           tenantId,
-          version.getVersionNumber(),
+          artifact.getExportedVersionNumber(),
           deserializeKeys(artifact.getExportedManifestAssetKeysJson()));
       artifact.setArtifactState(VersionAssetArtifactState.PURGED);
       artifact.setStateEpoch(artifact.getStateEpoch() + 1);
@@ -343,6 +356,7 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
               VersionAssetArtifact created = new VersionAssetArtifact();
               created.setTenantId(tenantId);
               created.setVersionId(versionId);
+              created.setExportedVersionNumber(0);
               created.setArtifactState(VersionAssetArtifactState.STAGED);
               created.setStateEpoch(0);
               return created;
@@ -359,6 +373,7 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
     return new VersionAssetArtifactStateDto(
         artifact.getTenantId(),
         artifact.getVersionId(),
+        artifact.getExportedVersionNumber(),
         artifact.getArtifactState().name(),
         artifact.getStateEpoch(),
         artifact.getManifestHash(),

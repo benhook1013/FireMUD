@@ -6,6 +6,7 @@ import java.util.List;
 public record VersionAssetArtifactStateDto(
     String tenantId,
     Long versionId,
+    int exportedVersionNumber,
     String artifactState,
     long stateEpoch,
     String manifestHash,

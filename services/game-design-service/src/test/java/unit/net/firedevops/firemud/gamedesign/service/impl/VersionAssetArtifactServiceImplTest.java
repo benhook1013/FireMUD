@@ -59,9 +59,14 @@ class VersionAssetArtifactServiceImplTest {
 
     var state =
         service.markExportedUnattested(
-            "tenant-1", 7L, "workflow-1", new ExportedAssetManifest("hash-1", List.of("a", "b")));
+            "tenant-1",
+            7L,
+            8,
+            "workflow-1",
+            new ExportedAssetManifest("hash-1", List.of("a", "b")));
 
     assertEquals("EXPORTED_UNATTESTED", state.artifactState());
+    assertEquals(8, state.exportedVersionNumber());
     assertEquals(1L, state.stateEpoch());
     assertEquals("hash-1", state.manifestHash());
     assertEquals(List.of("a", "b"), state.exportedManifestAssetKeys());
@@ -160,6 +165,7 @@ class VersionAssetArtifactServiceImplTest {
     artifact.setTenantId("tenant-1");
     artifact.setVersionId(7L);
     artifact.setArtifactState(VersionAssetArtifactState.TOMBSTONED);
+    artifact.setExportedVersionNumber(8);
     artifact.setStateEpoch(5L);
     artifact.setManifestHash("hash-1");
     artifact.setExportedManifestAssetKeysJson("[\"logo.png\",\"manifest.json\"]");
@@ -199,10 +205,49 @@ class VersionAssetArtifactServiceImplTest {
   }
 
   @Test
+  void finalizePurgeUsesFrozenExportVersionNumberWithoutVersionRow() {
+    VersionAssetArtifact artifact = new VersionAssetArtifact();
+    artifact.setTenantId("tenant-1");
+    artifact.setVersionId(7L);
+    artifact.setExportedVersionNumber(8);
+    artifact.setArtifactState(VersionAssetArtifactState.TOMBSTONED);
+    artifact.setStateEpoch(5L);
+    artifact.setExportedManifestAssetKeysJson("[\"logo.png\",\"manifest.json\"]");
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(artifact));
+    when(repository.save(any(VersionAssetArtifact.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(purgeWorkflowRepository.save(any(VersionAssetPurgeWorkflow.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(versionRepository.findById(7L)).thenReturn(Optional.empty());
+    when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("tenant-1", 7L))
+        .thenReturn(Optional.empty());
+
+    var started = service.beginPurgeVersionAssets("tenant-1", 7L, 5L);
+
+    VersionAssetPurgeWorkflow workflow = new VersionAssetPurgeWorkflow();
+    workflow.setTenantId("tenant-1");
+    workflow.setVersionId(7L);
+    workflow.setPurgeWorkflowId(started.purgeWorkflowId());
+    workflow.setWorkflowStatus(VersionAssetPurgeWorkflowStatus.IN_PROGRESS);
+    workflow.setStartedFromStateEpoch(5L);
+    workflow.setRequestedAt(LocalDateTime.now());
+    workflow.setUpdatedAt(LocalDateTime.now());
+    when(purgeWorkflowRepository.findByTenantIdAndVersionIdAndPurgeWorkflowId(
+            "tenant-1", 7L, started.purgeWorkflowId()))
+        .thenReturn(Optional.of(workflow));
+
+    service.finalizePurgeVersionAssets("tenant-1", 7L, started.purgeWorkflowId(), 6L);
+
+    org.mockito.Mockito.verify(assetExportService)
+        .deleteExportedAssets("tenant-1", 8, List.of("logo.png", "manifest.json"));
+  }
+
+  @Test
   void canDeleteFailsClosedWhenVersionIsNotRetired() {
     VersionAssetArtifact artifact = new VersionAssetArtifact();
     artifact.setTenantId("tenant-1");
     artifact.setVersionId(7L);
+    artifact.setExportedVersionNumber(8);
     artifact.setArtifactState(VersionAssetArtifactState.TOMBSTONED);
     artifact.setStateEpoch(5L);
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(artifact));
@@ -217,5 +262,20 @@ class VersionAssetArtifactServiceImplTest {
 
     assertEquals(false, eligibility.deletable());
     assertEquals("VERSION_STATE_NOT_RETIRED", eligibility.failureCode());
+  }
+
+  @Test
+  void canDeleteFailsClosedWhenExportVersionProofIsMissing() {
+    VersionAssetArtifact artifact = new VersionAssetArtifact();
+    artifact.setTenantId("tenant-1");
+    artifact.setVersionId(7L);
+    artifact.setArtifactState(VersionAssetArtifactState.TOMBSTONED);
+    artifact.setStateEpoch(5L);
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(artifact));
+
+    var eligibility = service.canDeleteVersionAssets("tenant-1", 7L);
+
+    assertEquals(false, eligibility.deletable());
+    assertEquals("VERSION_ASSET_EXPORT_PROOF_MISSING", eligibility.failureCode());
   }
 }

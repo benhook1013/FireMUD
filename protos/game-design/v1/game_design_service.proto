@@ -390,6 +390,7 @@ message VersionAssetArtifactState {
   string last_error_message = 8;
   string updated_at = 9;
   repeated string exported_manifest_asset_keys = 10;
+  int32 exported_version_number = 11;
 }
 
 message VersionAssetDeletionEligibility {

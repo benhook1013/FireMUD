@@ -112,12 +112,14 @@ class VersionServiceImplTest {
     when(versionAssetArtifactService.markExportedUnattested(
             any(String.class),
             any(Long.class),
+            any(Integer.class),
             any(String.class),
             any(ExportedAssetManifest.class)))
         .thenReturn(
             new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
                 "tenant-1",
                 10L,
+                8,
                 "EXPORTED_UNATTESTED",
                 1L,
                 "abc123",
@@ -157,6 +159,7 @@ class VersionServiceImplTest {
             new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
                 "tenant-1",
                 10L,
+                8,
                 "PUBLISHED",
                 2L,
                 "abc123",
@@ -319,12 +322,14 @@ class VersionServiceImplTest {
     when(versionAssetArtifactService.markExportedUnattested(
             any(String.class),
             any(Long.class),
+            any(Integer.class),
             any(String.class),
             any(ExportedAssetManifest.class)))
         .thenReturn(
             new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
                 "tenant-1",
                 10L,
+                1,
                 "EXPORTED_UNATTESTED",
                 1L,
                 "abc123",

@@ -10,6 +10,7 @@ public interface VersionAssetArtifactService {
   VersionAssetArtifactStateDto markExportedUnattested(
       String tenantId,
       long versionId,
+      int exportedVersionNumber,
       String workflowId,
       net.firedevops.firemud.gamedesign.service.ExportedAssetManifest exportedManifest);
 
@@ -23,6 +24,7 @@ public interface VersionAssetArtifactService {
   void markFailed(
       String tenantId,
       long versionId,
+      int exportedVersionNumber,
       String workflowId,
       net.firedevops.firemud.gamedesign.service.ExportedAssetManifest exportedManifest,
       String errorCode,

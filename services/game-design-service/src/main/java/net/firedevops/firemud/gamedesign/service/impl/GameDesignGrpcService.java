@@ -1089,6 +1089,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     return net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
         .setTenantId(state.tenantId())
         .setVersionId(state.versionId())
+        .setExportedVersionNumber(state.exportedVersionNumber())
         .setArtifactState(ArtifactState.valueOf("ARTIFACT_STATE_" + state.artifactState()))
         .setStateEpoch(state.stateEpoch())
         .setManifestHash(state.manifestHash() == null ? "" : state.manifestHash())

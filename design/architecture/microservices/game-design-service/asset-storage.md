@@ -236,6 +236,7 @@ Artifact lifecycle state for each exported prefix must be persisted in a dedicat
 - `version_asset_artifact`:
   - `tenant_id`
   - `version_id`
+  - `exported_version_number` (the frozen version-number prefix used for object-store export and purge finalization)
   - `artifact_state` (`STAGED`, `EXPORTED_UNATTESTED`, `PUBLISHED`, `FAILED`, `TOMBSTONED`, `PURGE_IN_PROGRESS`, `PURGE_FAILED`, `PURGED`)
   - `state_epoch` (monotonic CAS token)
   - `manifest_hash`
@@ -272,7 +273,7 @@ Implementation notes:
 
 - `GetVersionAssetArtifactState`, `RepairPublishedVersionAssets`, `TombstoneVersionAssets`, `CanDeleteVersionAssets`, `BeginPurgeVersionAssets`, `FinalizePurgeVersionAssets`, and `GetVersionAssetPurgeStatus` are now live in `game-design-service`.
 - `version_asset_artifact` is now a persisted control-plane row and full-version publish updates it through `EXPORTED_UNATTESTED` and `PUBLISHED`.
-- the persisted artifact row now stores the exact exported manifest asset keys so cleanup, repair, and purge use exported proof rather than current draft-asset listings.
+- the persisted artifact row now stores the exact exported version number plus manifest asset keys so cleanup, repair, and purge use exported proof rather than current draft-asset listings or mutable version rows.
 - `version_asset_purge_workflow` is now the retained workflow-status surface for purge start/finalization outcomes.
 
 A basic repository (`GameAssetRepository`) and service implementation
@@ -426,7 +427,7 @@ Race-safe purge workflow:
   - transition `version_asset_artifact` from `TOMBSTONED` to `PURGE_IN_PROGRESS` (or equivalent) using `state_epoch` CAS, and
   - return a `purgeWorkflowId` for the object-store deletion phase.
 - If CAS fails or eligibility no longer holds, the API must fail without deleting objects.
-- Finalization transitions `PURGE_IN_PROGRESS -> PURGED` only after object deletion succeeds and must retain lifecycle metadata row for audit.
+- Finalization deletes object-store bytes using the frozen `exported_version_number` and exported manifest asset-key proof from `version_asset_artifact`, not by re-reading current draft assets or mutable version state. It transitions `PURGE_IN_PROGRESS -> PURGED` only after object deletion succeeds and must retain the lifecycle metadata row for audit.
 - On deletion/finalization failure, workflow must transition to `PURGE_FAILED` with structured `last_error_code`/`last_error_message`; operators then use retry/resume APIs instead of manual object-store surgery.
 
 ## Asset Upload Guardrails

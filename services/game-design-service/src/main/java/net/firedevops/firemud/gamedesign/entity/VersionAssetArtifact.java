@@ -26,6 +26,9 @@ public class VersionAssetArtifact {
   @Column(nullable = false)
   private Long versionId;
 
+  @Column(nullable = false)
+  private int exportedVersionNumber;
+
   @Enumerated(EnumType.STRING)
   @Column(nullable = false, length = 32)
   private VersionAssetArtifactState artifactState;

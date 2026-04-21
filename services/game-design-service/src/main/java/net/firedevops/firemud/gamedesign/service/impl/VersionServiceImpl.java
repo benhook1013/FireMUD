@@ -112,7 +112,12 @@ public class VersionServiceImpl implements VersionService {
       exportedManifest = assetExportService.exportAssets(tenantId, saved.getVersionNumber());
       exportedStateEpoch =
           versionAssetArtifactService
-              .markExportedUnattested(dto.tenantId(), dto.id(), publishWorkflowId, exportedManifest)
+              .markExportedUnattested(
+                  dto.tenantId(),
+                  dto.id(),
+                  saved.getVersionNumber(),
+                  publishWorkflowId,
+                  exportedManifest)
               .stateEpoch();
       String generationConfigRevision = generationConfigRevision(dto, exportedManifest);
       publishedReleaseBundleService.createFullVersionBundle(
@@ -138,6 +143,7 @@ public class VersionServiceImpl implements VersionService {
         versionAssetArtifactService.markFailed(
             dto.tenantId(),
             dto.id(),
+            saved.getVersionNumber(),
             publishWorkflowId,
             exportedManifest,
             publishFailureCode(ex),

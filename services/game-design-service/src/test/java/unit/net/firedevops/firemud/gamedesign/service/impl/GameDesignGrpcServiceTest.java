@@ -437,6 +437,7 @@ class GameDesignGrpcServiceTest {
             new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
                 "tenant-1",
                 7L,
+                8,
                 "PUBLISHED",
                 2L,
                 "hash-1",
@@ -471,6 +472,7 @@ class GameDesignGrpcServiceTest {
 
     assertEquals(
         "ARTIFACT_STATE_PUBLISHED", ref.get().getArtifactState().getArtifactState().name());
+    assertEquals(8, ref.get().getArtifactState().getExportedVersionNumber());
     assertEquals("hash-1", ref.get().getArtifactState().getManifestHash());
     assertEquals(2, ref.get().getArtifactState().getExportedManifestAssetKeysCount());
   }
@@ -482,6 +484,7 @@ class GameDesignGrpcServiceTest {
             new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
                 "tenant-1",
                 7L,
+                8,
                 "TOMBSTONED",
                 4L,
                 "hash-1",
