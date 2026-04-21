@@ -16,7 +16,7 @@ final class StackableItemSupport {
   }
 
   String compatibilityFingerprint(Item item) {
-    return compatibilityFingerprint(item, defaultStackFamilyKey(item));
+    return compatibilityFingerprint(item, authoredStackFamilyKey(item));
   }
 
   String compatibilityFingerprint(Item item, String stackFamilyKey) {
@@ -42,11 +42,11 @@ final class StackableItemSupport {
     };
   }
 
-  String defaultStackFamilyKey(Item item) {
+  String authoredStackFamilyKey(Item item) {
     if (item == null) {
       throw new IllegalArgumentException("item must be provided");
     }
-    return normalizeStackFamilyKey(item.getDefaultStackFamilyKey());
+    return normalizeStackFamilyKey(item.getStackVariantKey());
   }
 
   String normalizeStackFamilyKey(String stackFamilyKey) {

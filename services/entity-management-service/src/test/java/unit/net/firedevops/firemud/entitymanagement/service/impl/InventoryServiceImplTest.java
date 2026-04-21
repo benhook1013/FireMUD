@@ -335,7 +335,7 @@ class InventoryServiceImplTest {
     Character character = character(1L, 1L);
     Item arrows = item(2L, 1L, "Arrows", false, null, true);
     arrows.setStackCompatibilityMode(ItemStackCompatibilityMode.DEFINITION_AND_FAMILY);
-    arrows.setDefaultStackFamilyKey("ammo/iron");
+    arrows.setStackVariantKey("ammo/iron");
     ItemStack inventoryStack = stack(41L, 1L, character, arrows, 3);
     inventoryStack.setStackFamilyKey("ammo/iron");
     inventoryStack.setCompatibilityFingerprint("item-definition:2:family:ammo/iron");
@@ -385,7 +385,7 @@ class InventoryServiceImplTest {
     Character character = character(1L, 1L);
     Item arrows = item(2L, 1L, "Arrows", false, null, true);
     arrows.setStackCompatibilityMode(ItemStackCompatibilityMode.DEFINITION_AND_FAMILY);
-    arrows.setDefaultStackFamilyKey("ammo/iron");
+    arrows.setStackVariantKey("ammo/iron");
     ItemStack inventoryStack = stack(41L, 1L, character, arrows, 3);
     inventoryStack.setStackFamilyKey("ammo/iron");
     inventoryStack.setCompatibilityFingerprint("item-definition:2:family:ammo/iron");
@@ -785,7 +785,7 @@ class InventoryServiceImplTest {
     stack.setTenantId(tenantId);
     stack.setCharacter(character);
     stack.setItem(item);
-    stack.setStackFamilyKey(item.getDefaultStackFamilyKey());
+    stack.setStackFamilyKey(item.getStackVariantKey());
     stack.setCompatibilityFingerprint("item-definition:" + item.getId());
     stack.setQuantity(quantity);
     return stack;

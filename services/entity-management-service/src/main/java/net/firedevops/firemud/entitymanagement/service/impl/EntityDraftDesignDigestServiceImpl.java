@@ -58,7 +58,7 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
                                   "container", item.isContainer(),
                                   "stackable", item.isStackable(),
                                   "stackCompatibilityMode", item.getStackCompatibilityMode().name(),
-                                  "defaultStackFamilyKey", value(item.getDefaultStackFamilyKey())))
+                                  "stackVariantKey", value(item.getStackVariantKey())))
                       .toList(),
                   "npcs",
                   npcRepository

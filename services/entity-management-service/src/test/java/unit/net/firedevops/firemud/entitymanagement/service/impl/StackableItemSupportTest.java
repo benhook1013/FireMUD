@@ -21,7 +21,7 @@ class StackableItemSupportTest {
   void compatibilityFingerprintUsesFamilyWhenConfigured() {
     Item item = item(7L);
     item.setStackCompatibilityMode(ItemStackCompatibilityMode.DEFINITION_AND_FAMILY);
-    item.setDefaultStackFamilyKey("ammo/iron");
+    item.setStackVariantKey("ammo/iron");
 
     assertEquals("item-definition:7:family:ammo/iron", support.compatibilityFingerprint(item));
   }

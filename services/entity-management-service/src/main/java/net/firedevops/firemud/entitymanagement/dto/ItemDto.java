@@ -13,4 +13,4 @@ public record ItemDto(
     boolean container,
     boolean stackable,
     ItemStackCompatibilityMode stackCompatibilityMode,
-    String defaultStackFamilyKey) {}
+    String stackVariantKey) {}

@@ -37,8 +37,8 @@ public class Item {
   private ItemStackCompatibilityMode stackCompatibilityMode =
       ItemStackCompatibilityMode.DEFINITION_ONLY;
 
-  @Column(name = "default_stack_family_key", length = 128)
-  private String defaultStackFamilyKey;
+  @Column(name = "stack_variant_key", length = 128)
+  private String stackVariantKey;
 
   @Version private int version;
 }

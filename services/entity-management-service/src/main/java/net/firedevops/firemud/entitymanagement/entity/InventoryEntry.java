@@ -87,7 +87,7 @@ public class InventoryEntry {
     copy.setContainer(item.isContainer());
     copy.setStackable(item.isStackable());
     copy.setStackCompatibilityMode(item.getStackCompatibilityMode());
-    copy.setDefaultStackFamilyKey(item.getDefaultStackFamilyKey());
+    copy.setStackVariantKey(item.getStackVariantKey());
     return copy;
   }
 
@@ -104,7 +104,7 @@ public class InventoryEntry {
       copy.setContainer(item.isContainer());
       copy.setStackable(item.isStackable());
       copy.setStackCompatibilityMode(item.getStackCompatibilityMode());
-      copy.setDefaultStackFamilyKey(item.getDefaultStackFamilyKey());
+      copy.setStackVariantKey(item.getStackVariantKey());
       this.item = copy;
     }
   }

@@ -70,7 +70,7 @@ public class InventoryServiceImpl implements InventoryService {
     if (stackableItemSupport.usesStackStorage(item)) {
       incrementInventoryStack(character, item, quantity);
       return inventoryDtoForStackMutation(
-          character, item, stackableItemSupport.defaultStackFamilyKey(item), quantity);
+          character, item, stackableItemSupport.authoredStackFamilyKey(item), quantity);
     }
     List<ItemInstance> created = createCarriedItemInstances(character, item, quantity);
     return inventoryDtoForMutation(created.get(0), quantity);
@@ -264,7 +264,7 @@ public class InventoryServiceImpl implements InventoryService {
 
   private void incrementInventoryStack(Character character, Item item, int quantity) {
     incrementInventoryStack(
-        character, item, quantity, stackableItemSupport.defaultStackFamilyKey(item));
+        character, item, quantity, stackableItemSupport.authoredStackFamilyKey(item));
   }
 
   private void incrementInventoryStack(
