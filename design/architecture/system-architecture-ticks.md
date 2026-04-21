@@ -21,6 +21,17 @@ The tick system serves multiple audiences. Use these companion docs to jump dire
 
 This file provides a **condensed overview and anchor headings** so other docs can deep-link into specific topics. Detailed narrative and worked examples now live primarily in the audience-focused documents.
 
+## Implementation Notes
+
+The target-state tick architecture in this document is intentionally broader than the current live runtime boundary.
+
+Current live substrate to keep in mind while reading:
+
+- the live durable ownership and command-status boundary is currently keyed by `{tenantId, gameInstanceId}`, not true `regionId` partitioning;
+- the live control-plane/status APIs are `GetRuntimeOwnershipStatus` and `GetGameplayCommandStatus`, not the fuller target-state `GetRegionTickStatus` / `GetCommandStatus` contract described later in this doc;
+- the live `executorFence` is an opaque generation token used for compare-and-match stale-fence protection, not yet the richer numeric ordering model used in some target-state examples;
+- the live `tick_batch` / `tick_effect` substrate is real, but the full selected-work manifest and cross-region result-return contract described below are still target-state follow-through rather than fully shipped behavior.
+
 ---
 
 ## Hybrid Tick Model
@@ -121,11 +132,13 @@ Automation & Scripting Service instances typically:
 For any consumer or operator that needs to locate “where a region is” on the `(regionEpoch, tickId)` timeline:
 
 - **Bootstrap** from a durable view:
-  - Game Session exposes a control/status API (for example `GetRegionTickStatus`) backed by a PostgreSQL `RegionStatus` or equivalent table that records the latest committed `(regionEpoch, tickId)` per `<tenantId, regionId>`.
-  - New consumers and operational tools obtain their initial view of the timeline from this API or table; they do not infer it from Redis coordination keys.
+  - Target-state, Game Session exposes a control/status API such as `GetRegionTickStatus` backed by a PostgreSQL `RegionStatus` or equivalent table that records the latest committed `(regionEpoch, tickId)` per `<tenantId, regionId>`.
+  - Current live boundary: the equivalent owner-of-record/status read is `GetRuntimeOwnershipStatus` over the current `{tenantId, gameInstanceId}` ownership row. New consumers and operational tools should bootstrap from that live surface today and treat the region-scoped API described here as target-state until true region partitioning lands.
 - Minimum `RegionStatus` contract (required for consumers and admission control):
   - Timeline: `regionEpoch`, `lastCommittedTickId`, and an `updatedAt`/`lastCommitTimestamp`.
-  - Ownership fencing: a durable monotonic `executorFence` (or equivalent name) that increments on every successful lease acquisition for the region and is recorded on tick batches and other durable tick-control writes.
+  - Ownership fencing: a durable `executorFence` (or equivalent name) recorded on tick batches and other durable tick-control writes.
+    - Target-state may choose a monotonic numeric fence.
+    - Current live boundary uses an opaque generation token and compare-and-match semantics rather than numeric old/new ordering.
   - Health: a bounded `status`/`health` value (for example `RUNNING`, `DEGRADED`, `PAUSED`, `STALLED`).
   - Backlog indicators:
     - Minimum required when cross-region gameplay, replay-driven admission control, or backlog-based shedding is enabled: retry depth and remote follow-up lag/backlog so origin-side admission control can shed load without relying on Redis hints.

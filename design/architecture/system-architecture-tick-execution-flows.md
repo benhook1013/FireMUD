@@ -6,6 +6,14 @@ It is intended for developers implementing or reviewing tick-driven commands, Lu
 
 For the canonical, detailed design, see `design/architecture/system-architecture-ticks.md`.
 
+## Implementation Notes
+
+This document describes the target execution model. The current live runtime is narrower:
+
+- the durable owner/status surface is currently `{tenantId, gameInstanceId}`-scoped rather than true region-scoped;
+- the live command-status API is `GetGameplayCommandStatus`, not the fuller target-state `GetCommandStatus` shape described below;
+- the live batch/effect substrate exists, but selected-work manifests, cross-region result-return plumbing, and some richer command-status fields are still target-state follow-through.
+
 ## What This Covers
 
 - Per-command execution phases.
@@ -45,7 +53,7 @@ Within a region’s tick, each command proceeds through several phases:
    - For cross-region commands, the origin region:
      - Applies local-only effects first (for example, text feedback, animations).
      - Records durable follow-up work in PostgreSQL for the target entities (tick effect ledger / follow-up tables), with a stable effect identity and explicit target timeline eligibility (`target_region_epoch`, `due_tick_id`).
-       - `due_tick_id` is derived from the target region’s durable status surface (for example `GetRegionTickStatus` / `RegionStatus.lastCommittedTickId`) as `due_tick_id = target_last_committed_tick_id + delta_ticks` (immediate eligibility uses `delta_ticks = 1`).
+       - `due_tick_id` is derived from the target region’s durable status surface (target-state `GetRegionTickStatus` / `RegionStatus.lastCommittedTickId`; current live boundary uses the narrower ownership/status substrate) as `due_tick_id = target_last_committed_tick_id + delta_ticks` (immediate eligibility uses `delta_ticks = 1`).
        - Writers must persist `target_region_epoch` and `due_tick_id` from the same status read so retries and failover cannot shift eligibility non-deterministically.
      - Optionally writes a best-effort Redis hint marker such as `remote:<tenantId>:<entityId>` (for the target entity) to reduce latency when the target region drains follow-ups.
      - If the command needs to wait for remote completion, the origin region creates or updates a separate durable cross-region coordinator record. This waiting state is **not** kept as a non-terminal row inside the origin tick batch.
@@ -92,6 +100,11 @@ Ingress deduplication is not sufficient on its own: every accepted command must 
 - `ACCEPTED_DURABLE` designs may replace `LOST_BEFORE_STAGING` with a stronger replay/re-drive contract, but that contract must be documented explicitly in the feature design.
 
 #### Command Outcome Status Surface (Required)
+
+Current live note:
+
+- the shipped surface today is `GetGameplayCommandStatus` with the narrower lifecycle vocabulary documented in the `02.18.7` slice and Game Session proto;
+- the richer `ackLevel` / `ingressStatus` / bound-tick response described here remains target-state and should not be read as fully live repo behavior yet.
 
 Command outcome convergence must be externally observable through one canonical status surface. Whether this is implemented as an API, event stream, or both, the contract is:
 

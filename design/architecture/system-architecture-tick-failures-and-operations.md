@@ -6,6 +6,15 @@ It is aimed at both developers and operators who need to understand what happens
 
 For the canonical, detailed design, see `design/architecture/system-architecture-ticks.md`.
 
+## Implementation Notes
+
+This document describes the full target-state recovery and operator model. The current live substrate is narrower and should be read alongside the `02.18.7` through `02.18.9` slice docs:
+
+- the live durable ownership row is currently `{tenantId, gameInstanceId}`-scoped;
+- the live owner/status API is `GetRuntimeOwnershipStatus`, not yet a full region-scoped status surface;
+- the live fence token is opaque and compare-and-match based;
+- the live `tick_batch` / `tick_effect` ledger is real, but the full selected-work manifest, region-scoped replay controller breadth, and cross-region result-return semantics described below remain target-state follow-through.
+
 ## What This Covers
 
 - Crash recovery and replay behavior.
@@ -29,7 +38,7 @@ When implementing new failure-handling flows or adding operational procedures, e
 
 Tick recovery is driven by durable PostgreSQL tick state plus domain-level idempotency rules, with Redis acting only as a volatile coordination layer:
 
-- On executor crash or failover, a new worker acquires the region lease, re-establishes the authoritative recovery baseline from the durable tick-batch, tick effect ledger, follow-up tables, and `RegionStatus`, then inspects any surviving `tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and timer keys only as optional coordination hints while replay converges from durable state.
+- On executor crash or failover, a new worker acquires the region lease, re-establishes the authoritative recovery baseline from the durable tick-batch, tick effect ledger, follow-up tables, and target-state `RegionStatus` equivalent (current live boundary uses the narrower ownership/status row), then inspects any surviving `tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and timer keys only as optional coordination hints while replay converges from durable state.
 - Redis is treated as a volatile coordination layer with **at-least-once** semantics; network retries, executor failover, and AOF replay can all cause the same logical effect to be attempted more than once.
 - Domain services rely on `(region_epoch, tickId)` and effect guards to ensure that replays do not double-apply logical effects even when Redis state is partially lost.
 
