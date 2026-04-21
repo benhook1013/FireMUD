@@ -1,6 +1,6 @@
 # Smoke Tests for Login + PLAY + LOOK
 
-These steps exercise the same `WORLDS` (optional) + `LOGIN` + `PLAY` + `LOOK` flow that users take over both WebSocket (direct Game Session) and Telnet (via TCP Proxy + Gateway) transports. They deliberately use the `demo@example.com` / `swordfish` credentials that exist in the lightweight Account Service stub.
+These steps exercise the same `WORLDS` (optional) + `LOGIN` + `PLAY` + `LOOK` flow that users take over both WebSocket (direct Game Session) and Telnet (via TCP Proxy + Gateway) transports. The optional item/equipment extension then proves the first player-visible inventory loop over the same command surface. These examples deliberately use the `demo@example.com` / `swordfish` credentials that exist in the lightweight Account Service stub.
 
 ## Requirements
 
@@ -43,6 +43,29 @@ You are in a candle-lit antechamber carved into basalt.
 
 Capture both responses so you can compare them to the Telnet flow.
 
+Optional item/equipment extension, when the target environment has the demo item fixtures loaded:
+
+```text
+INV HERE
+GET Torch
+INVENTORY
+DROP Torch
+INV HERE
+EQUIPMENT
+WEAR Leather Cap
+EQUIPMENT
+REMOVE HEAD
+WEAR Iron Boots
+```
+
+Expected semantic checks:
+
+- `INV HERE` shows a room-ground `Torch`.
+- `GET Torch` reports `You pick up Torch.` and the refreshed `INVENTORY` shows the torch as carried.
+- `DROP Torch` reports `You drop Torch.` and the next `INV HERE` shows the torch back on the room ground.
+- `WEAR Leather Cap` reports success, `EQUIPMENT` shows `HEAD: Leather Cap`, and `REMOVE HEAD` reports success.
+- `WEAR Iron Boots` returns a clear `SLOT_INCOMPATIBLE` error in environments that carry the demo incompatible-item fixture.
+
 For Compose-backed blackbox verification, the canonical script is:
 
 ```bash
@@ -82,9 +105,13 @@ You are in a candle-lit antechamber carved into basalt.
 
 ```
 
+Run the same optional item/equipment extension from the WebSocket section if the environment has the demo item fixtures loaded. The Telnet transcript should be semantically identical to the WebSocket transcript apart from framing/prompt differences.
+
 ## 3. Verifying the Same Experience
 
 Compare the WebSocket `PLAY` + `LOOK` response and the Telnet `PLAY` + `LOOK` response; they should match semantically because both commands traverse `/ws/game/**` and are handled by the same Game Session admission and gameplay pipeline. Recording the output blocks above and diffing them is enough to prove parity. Document any differences (for example, missing blank lines) as regressions in [02.2-task-list-gameplay-admission-ux-vertical-slice.md](../project-management/vertical-slices/02.2-task-list-gameplay-admission-ux-vertical-slice.md).
+
+When running the optional item/equipment extension, compare the `INV HERE`, `GET`, `INVENTORY`, `DROP`, `EQUIPMENT`, `WEAR`, and `REMOVE` results across WebSocket and Telnet as the same parity proof. Differences in transport prompts are acceptable; differences in item state, equipment state, or error codes are regressions in [06-task-list-inventory-containers-equipment-vertical-slice.md](../project-management/vertical-slices/06-task-list-inventory-containers-equipment-vertical-slice.md).
 
 If any readiness endpoint for the target path is still not `UP`, do not treat retries or waiting inside the client flow as a valid substitute. The stack is not yet ready for player traffic.
 

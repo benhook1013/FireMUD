@@ -26,6 +26,7 @@ The current branch state is materially ahead of the original `06` plan:
 - WebSocket cross-service coverage also proves a carried-item equipment loop with `EQUIPMENT` / `WEAR` / `EQUIPMENT` / `REMOVE` / `EQUIPMENT`, plus a representative `SLOT_INCOMPATIBLE` failure, including Entity Management equipment request context and nonblank durable effect ids.
 - Telnet cross-service coverage now proves the same player-visible item/equipment command surface through TCP Proxy and Gateway, including `LOOK`, room-ground pickup/drop, equipment bind/unbind, incompatible equipment failure, and Entity Management request/effect-id assertions.
 - Game Session now records central item-command invocation/failure metrics through `gamesession.command.item.*` with `type` and `error` tags, so operators can distinguish expected player mistakes from backend or validation failures consistently across inventory, equipment, and container verbs.
+- The developer smoke guide and player playtest checklist now include the WebSocket/Telnet item-equipment extension: `INV HERE`, `GET`, `INVENTORY`, `DROP`, `EQUIPMENT`, `WEAR`, `REMOVE`, and an incompatible-equipment error check where the fixture exists.
 - the authored stackability/fungibility follow-up is now tracked explicitly in `06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md`.
 
 The most important remaining design work in this slice family is:
@@ -168,8 +169,8 @@ Current implementation note:
 
 ## 8. Developer Workflows, Docs, and Examples
 
-- [ ] Add or update a smoke/manual verification sequence demonstrating `LOGIN` / `PLAY` / `LOOK` / `GET` / `INVENTORY` / `DROP` over WebSocket.
-- [ ] Add a second Telnet-oriented example with the same flow and at least one equipment action.
+- [x] Add or update a smoke/manual verification sequence demonstrating `LOGIN` / `PLAY` / `LOOK` / `GET` / `INVENTORY` / `DROP` over WebSocket.
+- [x] Add a second Telnet-oriented example with the same flow and at least one equipment action.
 - [ ] Update the Entity Management, Game Logic, Game Session, and Game Design docs with short implementation-status notes once the slice starts landing so readers can tell what is live versus deferred.
 - [ ] Update any user-journey or gameplay examples that currently imply rooms only show static descriptions; after this slice they should also reflect visible room items, carrying state, and basic equipment state where relevant.
 
