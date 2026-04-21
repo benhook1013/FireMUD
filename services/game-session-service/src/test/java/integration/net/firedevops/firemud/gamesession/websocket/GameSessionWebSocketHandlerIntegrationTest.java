@@ -569,7 +569,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             headers,
             URI.create("ws://localhost:" + port + "/ws/game"));
 
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    future.get(5, TimeUnit.SECONDS);
     assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
     WebSocketSession currentSession = sessionRef.get();
     if (currentSession != null && currentSession.isOpen()) {
@@ -1121,7 +1121,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             headers,
             URI.create("ws://localhost:" + port + "/ws/game"));
 
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    future.get(5, TimeUnit.SECONDS);
     assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
     assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
     sessionRef.get().close();
@@ -1197,7 +1197,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             headers,
             URI.create("ws://localhost:" + port + "/ws/game"));
 
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    future.get(5, TimeUnit.SECONDS);
     assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
     assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
     sessionRef.get().close();

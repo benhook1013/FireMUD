@@ -8,6 +8,7 @@ final class SessionContextRedisKeys {
   private static final String IDENTITY_KEY_TEMPLATE = "sessionctx:%d:identity:%d:%d:context";
   private static final String NAME_KEY_TEMPLATE = "sessionctx:%d:identity:%d:name:%s:context";
   private static final String MOVEMENT_EFFECT_KEY_TEMPLATE = "sessionctx:%d:%d:movement-effect:%s";
+  private static final String DURABLE_EFFECT_KEY_TEMPLATE = "sessionctx:%d:%d:durable-effect:%s";
 
   private SessionContextRedisKeys() {}
 
@@ -29,6 +30,10 @@ final class SessionContextRedisKeys {
 
   static String movementEffectKey(long tenantId, long sessionId, String effectId) {
     return String.format(MOVEMENT_EFFECT_KEY_TEMPLATE, tenantId, sessionId, effectId);
+  }
+
+  static String durableEffectKey(long tenantId, long sessionId, String effectId) {
+    return String.format(DURABLE_EFFECT_KEY_TEMPLATE, tenantId, sessionId, effectId);
   }
 
   static String normalizeName(String value) {

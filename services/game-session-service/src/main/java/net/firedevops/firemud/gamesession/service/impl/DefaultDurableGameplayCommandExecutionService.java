@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.TickEffect;
 import net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService;
+import net.firedevops.firemud.gamesession.service.DurableGameplayReplayService;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyResult;
 import net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryService;
@@ -36,6 +37,7 @@ public final class DefaultDurableGameplayCommandExecutionService
   private final ItemCommandHandler itemCommandHandler;
   private final CommunicationCommandHandler communicationCommandHandler;
   private final AfkCommandHandler afkCommandHandler;
+  private final DurableGameplayReplayService durableGameplayReplayService;
   private final MovementEffectIdempotencyService movementEffectIdempotencyService;
   private final PlayerOutputDeliveryService playerOutputDeliveryService;
 
@@ -47,6 +49,7 @@ public final class DefaultDurableGameplayCommandExecutionService
       ItemCommandHandler itemCommandHandler,
       CommunicationCommandHandler communicationCommandHandler,
       AfkCommandHandler afkCommandHandler,
+      DurableGameplayReplayService durableGameplayReplayService,
       MovementEffectIdempotencyService movementEffectIdempotencyService,
       PlayerOutputDeliveryService playerOutputDeliveryService) {
     this.meterRegistry = meterRegistry;
@@ -56,6 +59,7 @@ public final class DefaultDurableGameplayCommandExecutionService
     this.itemCommandHandler = itemCommandHandler;
     this.communicationCommandHandler = communicationCommandHandler;
     this.afkCommandHandler = afkCommandHandler;
+    this.durableGameplayReplayService = durableGameplayReplayService;
     this.movementEffectIdempotencyService = movementEffectIdempotencyService;
     this.playerOutputDeliveryService = playerOutputDeliveryService;
   }
@@ -85,10 +89,11 @@ public final class DefaultDurableGameplayCommandExecutionService
       return Optional.of(executeItemMutation(context, parsed, command, effect.getEffectId()));
     }
     if (isDurableCommunication(parsed.type())) {
-      return Optional.of(executeCommunicationMutation(context, parsed, command));
+      return Optional.of(
+          executeCommunicationMutation(context, parsed, command, effect.getEffectId()));
     }
     if (parsed.type() == TextCommandType.AFK) {
-      return Optional.of(executeAfkMutation(context, parsed, command));
+      return Optional.of(executeAfkMutation(context, parsed, command, effect.getEffectId()));
     }
     PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, parsed);
     if (!prepared.commandResult().accepted()) {
@@ -133,45 +138,82 @@ public final class DefaultDurableGameplayCommandExecutionService
   }
 
   private DurableGameplayCommandExecutionResult executeCommunicationMutation(
-      SessionContext context, TextCommand parsed, GameplayCommand command) {
+      SessionContext context, TextCommand parsed, GameplayCommand command, String effectId) {
+    Optional<DurableGameplayReplayService.ReplayRecord> replay =
+        durableGameplayReplayService.find(context.tenantId(), context.sessionId(), effectId);
+    if (replay.isPresent()) {
+      DurableGameplayReplayService.ReplayRecord record = replay.orElseThrow();
+      if (!record.actorOutputs().isEmpty()) {
+        playerOutputDeliveryService.deliver(context, record.actorOutputs(), true);
+      }
+      return recordResult(command, replayResult(record));
+    }
     var result = communicationCommandHandler.handle(context, parsed);
+    durableGameplayReplayService.save(
+        context.tenantId(),
+        context.sessionId(),
+        effectId,
+        result.commandResult().accepted(),
+        result.commandResult().errorCode(),
+        result.commandResult().errorMessage(),
+        result.outputs());
     if (!result.outputs().isEmpty()) {
       playerOutputDeliveryService.deliver(context, result.outputs(), true);
     }
-    if (result.commandResult().accepted()) {
-      return recordResult(
-          command,
-          new DurableGameplayCommandExecutionResult("APPLIED", "APPLIED", "APPLIED", null, null));
-    }
-    return recordResult(
-        command,
-        new DurableGameplayCommandExecutionResult(
-            "REJECTED",
-            "COMPLETED",
-            "NOT_APPLIED",
-            result.commandResult().errorCode(),
-            result.commandResult().errorMessage()));
+    return recordResult(command, resultForCommandResult(result.commandResult()));
   }
 
   private DurableGameplayCommandExecutionResult executeAfkMutation(
-      SessionContext context, TextCommand parsed, GameplayCommand command) {
+      SessionContext context, TextCommand parsed, GameplayCommand command, String effectId) {
+    Optional<DurableGameplayReplayService.ReplayRecord> replay =
+        durableGameplayReplayService.find(context.tenantId(), context.sessionId(), effectId);
+    if (replay.isPresent()) {
+      DurableGameplayReplayService.ReplayRecord record = replay.orElseThrow();
+      if (!record.actorOutputs().isEmpty()) {
+        playerOutputDeliveryService.deliver(context, record.actorOutputs(), true);
+      }
+      return recordResult(command, replayResult(record));
+    }
     var result = afkCommandHandler.handle(context, parsed);
+    durableGameplayReplayService.save(
+        context.tenantId(),
+        context.sessionId(),
+        effectId,
+        result.commandResult().accepted(),
+        result.commandResult().errorCode(),
+        result.commandResult().errorMessage(),
+        result.outputs());
     if (!result.outputs().isEmpty()) {
       playerOutputDeliveryService.deliver(context, result.outputs(), true);
     }
-    if (result.commandResult().accepted()) {
-      return recordResult(
-          command,
-          new DurableGameplayCommandExecutionResult("APPLIED", "APPLIED", "APPLIED", null, null));
+    return recordResult(command, resultForCommandResult(result.commandResult()));
+  }
+
+  private DurableGameplayCommandExecutionResult resultForCommandResult(
+      net.firedevops.firemud.gamesession.dto.CommandEnqueueResult commandResult) {
+    if (commandResult.accepted()) {
+      return new DurableGameplayCommandExecutionResult("APPLIED", "APPLIED", "APPLIED", null, null);
     }
-    return recordResult(
-        command,
-        new DurableGameplayCommandExecutionResult(
-            "REJECTED",
-            "COMPLETED",
-            "NOT_APPLIED",
-            result.commandResult().errorCode(),
-            result.commandResult().errorMessage()));
+    return new DurableGameplayCommandExecutionResult(
+        "REJECTED",
+        "COMPLETED",
+        "NOT_APPLIED",
+        commandResult.errorCode(),
+        commandResult.errorMessage());
+  }
+
+  private DurableGameplayCommandExecutionResult replayResult(
+      DurableGameplayReplayService.ReplayRecord replayRecord) {
+    if (replayRecord.accepted()) {
+      return new DurableGameplayCommandExecutionResult(
+          "REPLAY_NOOP", "APPLIED", "REPLAY_NOOP", null, null);
+    }
+    return new DurableGameplayCommandExecutionResult(
+        "REPLAY_NOOP",
+        "COMPLETED",
+        "NOT_APPLIED",
+        replayRecord.failureCode(),
+        replayRecord.failureMessage());
   }
 
   private DurableGameplayCommandExecutionResult resultForApply(

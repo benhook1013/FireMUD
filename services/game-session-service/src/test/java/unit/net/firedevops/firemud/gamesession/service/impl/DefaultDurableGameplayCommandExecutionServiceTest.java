@@ -21,6 +21,7 @@ import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.TickEffect;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService.DurableGameplayCommandExecutionResult;
+import net.firedevops.firemud.gamesession.service.DurableGameplayReplayService;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyResult;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyStatus;
@@ -40,6 +41,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   private final CommunicationCommandHandler communicationCommandHandler =
       Mockito.mock(CommunicationCommandHandler.class);
   private final AfkCommandHandler afkCommandHandler = Mockito.mock(AfkCommandHandler.class);
+  private final DurableGameplayReplayService durableGameplayReplayService =
+      Mockito.mock(DurableGameplayReplayService.class);
   private final MovementEffectIdempotencyService movementEffectIdempotencyService =
       Mockito.mock(MovementEffectIdempotencyService.class);
   private final PlayerOutputDeliveryService playerOutputDeliveryService =
@@ -59,6 +62,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             itemCommandHandler,
             communicationCommandHandler,
             afkCommandHandler,
+            durableGameplayReplayService,
             movementEffectIdempotencyService,
             playerOutputDeliveryService);
   }
@@ -199,6 +203,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     PlayerOutput output = PlayerOutput.message("You say, \"Hello there.\"");
     when(parser.parse("SAY Hello there")).thenReturn(parsed);
     when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-4")).thenReturn(Optional.empty());
     when(communicationCommandHandler.handle(context, parsed))
         .thenReturn(
             new net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandlingResult(
@@ -209,6 +214,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     assertThat(result.effectStatus()).isEqualTo("APPLIED");
     assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
     assertThat(result.gameplayResult()).isEqualTo("APPLIED");
+    verify(durableGameplayReplayService)
+        .save(22L, 42L, "tfx-4", true, null, null, java.util.List.of(output));
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
   }
 
@@ -229,6 +236,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     PlayerOutput output = PlayerOutput.notice("AFK enabled.");
     when(parser.parse("AFK")).thenReturn(parsed);
     when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-5")).thenReturn(Optional.empty());
     when(afkCommandHandler.handle(context, parsed))
         .thenReturn(
             new net.firedevops.firemud.gamesession.command.text.AfkCommandHandlingResult(
@@ -239,6 +247,68 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     assertThat(result.effectStatus()).isEqualTo("APPLIED");
     assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
     assertThat(result.gameplayResult()).isEqualTo("APPLIED");
+    verify(durableGameplayReplayService)
+        .save(22L, 42L, "tfx-5", true, null, null, java.util.List.of(output));
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+  }
+
+  @Test
+  void executeReplaysStoredCommunicationWithoutInvokingHandler() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("SAY", "SAY Hello there");
+    TickEffect effect = tickEffect("tfx-6", "cmd-6");
+    TextCommand parsed =
+        new TextCommand(TextCommandType.SAY, java.util.List.of("Hello there"), "SAY Hello there");
+    PlayerOutput output = PlayerOutput.message("You say, \"Hello there.\"");
+    when(parser.parse("SAY Hello there")).thenReturn(parsed);
+    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-6"))
+        .thenReturn(
+            Optional.of(
+                new DurableGameplayReplayService.ReplayRecord(
+                    true, null, null, java.util.List.of(output))));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("REPLAY_NOOP");
+    assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
+    assertThat(result.gameplayResult()).isEqualTo("REPLAY_NOOP");
+    verify(communicationCommandHandler, never()).handle(Mockito.any(), Mockito.any());
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+  }
+
+  @Test
+  void executeReplaysStoredRejectedAfkWithoutInvokingHandler() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("AFK", "AFK");
+    TickEffect effect = tickEffect("tfx-7", "cmd-7");
+    TextCommand parsed =
+        new TextCommand(
+            TextCommandType.AFK,
+            java.util.List.of(),
+            "AFK",
+            "AFK",
+            new net.firedevops.firemud.gamesession.command.text.TextCommandPayload.AfkRequest(
+                true));
+    PlayerOutput output = PlayerOutput.error("INVALID_ARGUMENT", "AFK command rejected");
+    when(parser.parse("AFK")).thenReturn(parsed);
+    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-7"))
+        .thenReturn(
+            Optional.of(
+                new DurableGameplayReplayService.ReplayRecord(
+                    false, "INVALID_ARGUMENT", "AFK command rejected", java.util.List.of(output))));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("REPLAY_NOOP");
+    assertThat(result.commandExecutionOutcome()).isEqualTo("COMPLETED");
+    assertThat(result.gameplayResult()).isEqualTo("NOT_APPLIED");
+    assertThat(result.failureCode()).isEqualTo("INVALID_ARGUMENT");
+    verify(afkCommandHandler, never())
+        .handle(Mockito.any(SessionContext.class), Mockito.any(TextCommand.class));
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
   }
 

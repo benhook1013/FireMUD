@@ -27,9 +27,9 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 8. [02.18.9 Region Epoch, Fencing, and Runtime Ownership](./02.18.9-task-list-region-epoch-fencing-and-runtime-ownership-vertical-slice.md)
    Remaining: the durable owner row, pause/resume epoch bumps, stale-fence batch rejection, stale post-drain effect requeue, last-committed-batch pointer, and bounded ownership-status query are now live at the current game-instance boundary; the next gap is carrying that model into true region ownership and later downstream/domain-specific effect families.
 9. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
-   Remaining: the first ledger-side `effectKey`, deterministic `effectId`, movement-backed replay/no-op seam, Entity Management item mutation response replay guard, transfer-audit `effectId` plus session correlation, and first apply/replay metrics are now live; the next gap is later domain guard consumers.
+   Remaining: the first ledger-side `effectKey`, deterministic `effectId`, movement-backed replay/no-op seam, Game Session communication/activity replay guard, Entity Management item mutation response replay guard, transfer-audit `effectId` plus session correlation, and first apply/replay metrics are now live; the next gap is later domain guard consumers.
 10. [02.18.11 Migrate Live Gameplay Commands Onto the Durable Execution Path](./02.18.11-task-list-migrate-live-gameplay-commands-onto-durable-execution-path-vertical-slice.md)
-   Remaining: movement, `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, `REMOVE`, `SAY`, `WHISPER`, `TELL`, and `AFK` are now migrated durable command families with the first downstream Entity Management replay guard; the next gap is any later state-changing command family and its owning service guard.
+   Remaining: movement, `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, `REMOVE`, `SAY`, `WHISPER`, `TELL`, and `AFK` are now migrated durable command families with Game Session-owned replay guards plus the first downstream Entity Management replay guard; the next gap is any later state-changing command family and its owning service guard.
 
 ### 2. Active architecture follow-through
 
