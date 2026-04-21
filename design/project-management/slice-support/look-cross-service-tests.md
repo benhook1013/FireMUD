@@ -6,7 +6,7 @@ This plan documents how the cross-service WebSocket and Telnet tests exercise th
 
 1. Verify `LOGIN` + `LOOK` across Game Session → Game Logic → World / Entity using the shared TLS-enabled gRPC endpoints.
 2. Confirm both success and failure paths (e.g., missing room, downstream UNAVAILABLE) surface the documented transcripts (`OK LOOK` and `ERROR <CODE>`) on both transports.
-3. Ensure `gamesession.command.look.invocations` and `.failures` metrics increment with tenant/error tags during the flows.
+3. Ensure `gamesession.command.look.invocations` and `.failures` metrics increment during the flows, with failures tagged by bounded error code.
 4. Keep tests runnable via the dedicated `crossServiceTest` Gradle target so they can be executed without slowing down the default suite.
 
 ## Test data and prerequisites

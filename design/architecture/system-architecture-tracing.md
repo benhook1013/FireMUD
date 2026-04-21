@@ -2,6 +2,10 @@
 
 This document explains how distributed traces are collected and visualized across FireMUD services.
 
+## Implementation Notes
+
+The current implementation exports generic gRPC server spans through the shared `TracingInterceptor` and tags application-level gRPC errors on the active span. The named gameplay, tick, TCP Proxy, and backup spans in the catalog below are target-state instrumentation contracts for future implementation and smoke proofing; do not assume they are emitted by the current services unless a service-specific slice says so. Environments should only claim tenant/region-scoped incident sampling after the collector and service spans both support the required attributes.
+
 ---
 
 ## OpenTelemetry Collector

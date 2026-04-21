@@ -110,3 +110,8 @@ Entry format:
   - Context: checking scripting DSL/runtime review findings showed newer sibling docs had narrowed `onLoad`, dry-run, and event-scope ingress behavior while the high-precedence normative tables still required a live handler-style identity and success model.
   - Observation: when exception-heavy contracts are patched into service or runtime docs before the normative tables, architecture reviews keep rediscovering contradictions even though the intended decisions already exist nearby.
   - Expected pattern: for scripting/runtime contract changes, update `system-architecture-scripting-normative-contract-tables.md` first, then align service docs, observability docs, protos, and slices against that table in the same change.
+
+- `2026-04-21`: Observability assets must import metric-label policy changes with the slice
+  - Context: checking observability review findings against `02.14.4` showed the cardinality slice removed raw tenant/session labels from ordinary gameplay metrics, but older player-experience dashboard/snippet docs still described raw `tenantId` SLO labels.
+  - Observation: when a later implementation slice hardens metric-label policy without updating all reference PromQL and dashboard docs, architecture reviews keep finding stale contradictions even though the intended direction is already implemented.
+  - Expected pattern: future observability slices should update the architecture doc, reference PromQL, dashboards, and slice-support docs in the same batch when metric label policy changes.

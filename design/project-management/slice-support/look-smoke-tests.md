@@ -15,7 +15,7 @@ Dependencies: `wscat` (npm install -g wscat) or any WebSocket client.
 2. Continue with the normal flow; typed attach metadata is not part of the player-facing protocol.
 3. Send `LOGIN demo@example.com swordfish` and expect `OK LOGIN Logged in as demo@example.com`.
 4. Send `LOOK`. The response should match the canonical transcript in `design/project-management/vertical-slices/03-task-list-data-driven-look-vertical-slice.md#1-protocol-ux-and-design-alignment-for-look` (`OK LOOK`, room/exit/entity lines). Save the transcript (command + response) as `look-ws-<timestamp>.log`.
-5. (Optional) After the test, poll `/actuator/prometheus` or the Micrometer endpoint and confirm `gamesession.command.look.invocations{tenantId="1"}` incremented once and any failure scenario incremented `gamesession.command.look.failures{error="..."}`.
+5. (Optional) After the test, poll `/actuator/prometheus` or the Micrometer endpoint and confirm `gamesession.command.look.invocations` incremented once and any failure scenario incremented `gamesession.command.look.failures{error="..."}`.
 6. If the room does not exist or downstream services fail, verify the response matches one of the documented error codes (`ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`, `ERROR LOOK_UNAVAILABLE`).
 
 Save the full transcript (commands + responses) to a file for regression comparison.

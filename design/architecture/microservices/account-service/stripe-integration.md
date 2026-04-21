@@ -9,6 +9,10 @@ At a high level, the goals of the integration are:
 - Keep sensitive Stripe data and API keys confined to the Account Service boundary.
 - Ensure idempotent, auditable payment flows that cooperate with existing saga and multi-tenancy patterns.
 
+## Implementation Notes
+
+The `purchase_entitlement` and account-deletion billing-owner precondition contracts below are canonical target-state behavior. Current payment code records payment transactions, donations, refunds, platform fees, and creator shares, but still needs durable purchased-entitlement fulfillment/revocation and active-subscription deletion guards.
+
 ## Domain Model
 
 The Account Service owns billing records and maps them to Stripe resources while keeping `accountId` and `tenantId` as the primary internal keys:

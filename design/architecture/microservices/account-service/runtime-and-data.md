@@ -2,6 +2,10 @@
 
 This document defines the Account Service runtime model, persistent data ownership, Redis role, token/session responsibilities, and monetization-related domain notes.
 
+## Implementation Notes
+
+The account lifecycle state machine, global deletion preconditions, full-account versus tenant-scoped export split, and `purchase_entitlement` model are the canonical target design. The current service has partial foundations for payments, virtual currency, and tenant membership, but still needs schema/API/service follow-through for these lifecycle and purchased-entitlement contracts.
+
 ## Architecture and Runtime Notes
 
 - Stateless authentication uses short-lived JWT tokens for internal meta/control APIs. Two token profiles are issued:

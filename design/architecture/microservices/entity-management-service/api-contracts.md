@@ -71,7 +71,7 @@ Publish gating must fail closed if Entity Management cannot attest a digest cons
 
 - `tenantId`, `gameInstanceId`, and `roomInstanceId` (a `RoomInstanceRef`) so consumers can unambiguously scope the entity list to a running instance.
 - `entitySnapshotId` so consumers can cache or invalidate entity lists deterministically.
-- `asOfTickId` (or equivalent monotonic read-fence token) echoing the fence used to materialize this entity list.
+- the room-read fence value for this entity list. The live proto carries this as `entitySnapshotId`; future tick-ledger work may add an `asOfTickId` only through a coordinated proto and architecture update.
 - `entities[]`, each with `entityId`, `displayName`, `entityType` (`PLAYER`, `NPC`, `ITEM`), and optional `role`/`affiliation`.
 - `stateFlags` such as `isHidden`, `isInCombat`, or `isQuestTarget` so Game Logic can mask stealthy entities or highlight objectives.
 - `visionPriority` to help sort players before NPCs and list visible items at the end, keeping `LOOK` render ordering consistent.

@@ -213,9 +213,7 @@ The detailed scripting rules and categories (region-lease scripts, session-only 
 Game Session uses Redis for two related but distinct session concerns:
 
 - **Bootstrap/pre-auth transport context** is created when a socket connects and before gameplay authentication completes. Current Game Session implementations store this context under the `sessionctx:*` key family, such as `sessionctx:session:<sessionId>:context` and `sessionctx:<tenantId>:<sessionId>:context`, with unauthenticated fields such as `accountId = 0`, no `authTokenHash`, no `membershipVersion`, and only bootstrap scope such as tenant, locale, or initial game-instance hints. Gameplay commands must treat these entries as unauthenticated until `LOGIN` succeeds.
-- **Authenticated gameplay session state** is created or promoted after successful `LOGIN` and `PLAY`. The canonical target key family for this state is:
-
-- `session:game:<tenantId>:<gameInstanceId>:<sessionId>`
+- **Authenticated gameplay session state** is created or promoted after successful `LOGIN` and `PLAY`. The canonical target key family for this state is `session:game:<tenantId>:<gameInstanceId>:<sessionId>`.
 
 Authenticated gameplay session keys capture:
 

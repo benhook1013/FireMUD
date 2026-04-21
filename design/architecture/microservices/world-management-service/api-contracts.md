@@ -121,8 +121,7 @@ Illustrative responses:
 `GetRoomSnapshot` is the canonical endpoint feeding Game Logic's `ResolveLook`. It returns:
 
 - `tenantId`, `gameInstanceId`, and `roomInstanceId`, together forming the `RoomInstanceRef`;
-- a stable `worldSnapshotId` for LOOK-relevant world data;
-- `asOfTickId`, or equivalent monotonic room/read fence token;
+- a stable `worldSnapshotId` for LOOK-relevant world data. The live proto uses this as the room-read fence; future tick-ledger work may add an `asOfTickId` only through a coordinated proto and architecture update;
 - `roomName` and optional slug;
 - `shortDescription` and `longDescription`, with truncation rules governed by `LOOK_MAX_DESCRIPTION_CHARS`;
 - `exits`, including label, `targetRoomInstanceId`, and human-friendly direction text;

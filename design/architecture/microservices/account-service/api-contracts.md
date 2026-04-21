@@ -4,6 +4,10 @@ This document defines the Account Service REST and gRPC contracts, authenticatio
 
 The authoritative REST schema source lives in [../../../../services/account-service/src/main/resources/openapi.yaml](../../../../services/account-service/src/main/resources/openapi.yaml). Proto definitions are the authoritative gRPC source.
 
+## Implementation Notes
+
+The account lifecycle, full-account export, tenant-scoped export, and deletion precondition contracts below are the canonical target design. The current REST/OpenAPI, gRPC proto, and service implementation still need follow-through to remove tenant-keyed `ExportAccount` / `DeleteAccount` behavior and add the separate `ExportTenantData` billing-safe route.
+
 ## gRPC APIs
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `account_service.proto`.

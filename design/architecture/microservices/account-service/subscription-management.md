@@ -9,6 +9,10 @@ The goals of the subscription system include:
 - Respect tenant isolation while still enabling platform-wide reporting.
 - Coordinate with Stripe while keeping billing state consistent in FireMUD’s own database.
 
+## Implementation Notes
+
+The plan-change timing, over-quota behavior, pending-plan metadata, and full quota-bearing runtime entitlement response described below are canonical target-state behavior. Current implementation has the first runtime availability surface, but quota fields, pending plan metadata, and downgrade/cancellation enforcement still need implementation follow-through.
+
 ## Plan and Entitlement Model
 
 Subscriptions are modeled as **plans** that define resource limits and entitlements, and **subscription** records that attach those plans to specific tenants:
@@ -113,7 +117,7 @@ Subscription status feeds directly into tenant availability and resource enforce
     - Admission is closed immediately (no new sessions).
     - Connected gameplay sessions are revoked immediately.
     - Instance processes enter a bounded drain window (target: 5 minutes maximum) for internal cleanup and then stop. During this window they are not gameplay-admissible.
-  - A small, explicitly defined **billing-safe control-plane surface** remains accessible so owners can resolve billing issues or export data. This surface includes actions such as updating payment methods, viewing invoices, and initiating exports, but does not include starting game instances or editing live gameplay configuration. Service-specific docs and shared authorization middleware must explicitly mark which routes participate in this billing-safe surface so they remain reachable while gameplay is blocked.
+  - A small, explicitly defined **billing-safe control-plane surface** remains accessible so owners can resolve billing issues or export tenant-scoped data. This surface includes actions such as updating payment methods, viewing invoices, and initiating tenant-bounded exports, but does not include full account export, starting game instances, or editing live gameplay configuration. Service-specific docs and shared authorization middleware must explicitly mark which routes participate in this billing-safe surface so they remain reachable while gameplay is blocked.
   - As part of the transition into `suspended` or `canceled`, the Account Service must:
     - Write `session:auth:revoked_after:tenant:<tenantId>` with the current timestamp (authoritative writer), and
     - Emit a `TenantBillingStateChanged` event with `billing_state` set to `suspended` or `canceled`.

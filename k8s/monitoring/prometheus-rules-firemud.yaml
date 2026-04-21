@@ -27,7 +27,7 @@ spec:
           expr: |
             histogram_quantile(
               0.99,
-              sum by (service, tenantId, regionId, command, stage, le) (
+              sum by (service, scope, command, stage, le) (
                 rate(command_latency_stage_ms_bucket[5m])
               )
             )
@@ -65,22 +65,22 @@ spec:
         - record: login_success_ratio_gateway_15m
           expr: |
             (
-              sum by (tenantId) (rate(login_requests_total{service="spring-cloud-gateway",outcome="success"}[15m]))
+              sum by (scope) (rate(login_requests_total{service="spring-cloud-gateway",outcome="success"}[15m]))
                 /
-              sum by (tenantId) (rate(login_requests_total{service="spring-cloud-gateway"}[15m]))
+              sum by (scope) (rate(login_requests_total{service="spring-cloud-gateway"}[15m]))
             )
         - record: login_success_ratio_tcpproxy_15m
           expr: |
             (
-              sum by (tenantId) (rate(login_requests_total{service="tcp-proxy-service",outcome="success"}[15m]))
+              sum by (scope) (rate(login_requests_total{service="tcp-proxy-service",outcome="success"}[15m]))
                 /
-              sum by (tenantId) (rate(login_requests_total{service="tcp-proxy-service"}[15m]))
+              sum by (scope) (rate(login_requests_total{service="tcp-proxy-service"}[15m]))
             )
         - record: command_latency_ms_p99_gateway_5m
           expr: |
             histogram_quantile(
               0.99,
-              sum by (tenantId, regionId, command, le) (
+              sum by (scope, command, le) (
                 rate(command_end_to_end_latency_ms_bucket{service="spring-cloud-gateway",command=~"move|look|combat"}[5m])
               )
             )
@@ -88,7 +88,7 @@ spec:
           expr: |
             histogram_quantile(
               0.99,
-              sum by (tenantId, regionId, command, le) (
+              sum by (scope, command, le) (
                 rate(command_end_to_end_latency_ms_bucket{service="tcp-proxy-service",command=~"move|look|combat"}[5m])
               )
             )
@@ -96,35 +96,35 @@ spec:
           expr: |
             histogram_quantile(
               0.99,
-              sum by (tenantId, channel_type, le) (rate(chat_delivery_latency_ms_bucket[5m]))
+              sum by (scope, channel_type, le) (rate(chat_delivery_latency_ms_bucket[5m]))
             )
         - record: entrypath_availability_gateway_1d
           expr: |
             (
-              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome="success"}[1d]))
+              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome="success"}[1d]))
                 /
-              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[1d]))
+              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[1d]))
             )
         - record: entrypath_availability_gateway_5m
           expr: |
             (
-              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome="success"}[5m]))
+              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome="success"}[5m]))
                 /
-              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[5m]))
+              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[5m]))
             )
         - record: entrypath_availability_tcpproxy_1d
           expr: |
             (
-              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome="success"}[1d]))
+              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome="success"}[1d]))
                 /
-              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[1d]))
+              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[1d]))
             )
         - record: entrypath_availability_tcpproxy_5m
           expr: |
             (
-              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome="success"}[5m]))
+              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome="success"}[5m]))
                 /
-              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[5m]))
+              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[5m]))
             )
 
     - name: firemud.alerts.redis
@@ -402,7 +402,7 @@ spec:
             runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
           annotations:
             summary: Gateway entry-path availability degraded
-            description: One or more tenants have acute connection failures on a gateway-owned entry path.
+            description: One or more approved scopes have acute connection failures on a gateway-owned entry path.
         - alert: EntryPathAvailabilityLowGatewayCompliance
           expr: entrypath_availability_gateway_1d < 0.999
           for: 30m
@@ -414,7 +414,7 @@ spec:
             runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
           annotations:
             summary: Gateway entry-path availability below 1-day SLO
-            description: One or more tenants have sustained connection failures on a gateway-owned entry path over the compliance window.
+            description: One or more approved scopes have sustained connection failures on a gateway-owned entry path over the compliance window.
         - alert: EntryPathAvailabilityLowTcpProxy
           expr: entrypath_availability_tcpproxy_5m < 0.995
           for: 10m
@@ -426,7 +426,7 @@ spec:
             runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
           annotations:
             summary: TCP Proxy entry-path availability degraded
-            description: One or more tenants have acute connection failures on TCP Proxy entry paths.
+            description: One or more approved scopes have acute connection failures on TCP Proxy entry paths.
         - alert: EntryPathAvailabilityLowTcpProxyCompliance
           expr: entrypath_availability_tcpproxy_1d < 0.999
           for: 30m
@@ -438,7 +438,7 @@ spec:
             runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
           annotations:
             summary: TCP Proxy entry-path availability below 1-day SLO
-            description: One or more tenants have sustained connection failures on TCP Proxy entry paths over the compliance window.
+            description: One or more approved scopes have sustained connection failures on TCP Proxy entry paths over the compliance window.
         - alert: WebSocketEntryPathBlackboxUnavailable
           expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0
           for: 2m
