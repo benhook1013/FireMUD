@@ -300,6 +300,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       requireLaunchAttestationReadAccess();
       PublishedReleaseBundleDto bundle =
           versionService.getPublishedReleaseBundle(request.getTenantId(), request.getVersionId());
+      PublishedReleaseBundleContract.requireSupportedSchemaForRead(bundle);
       builder.setBundle(
           net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
               .setId(bundle.id())

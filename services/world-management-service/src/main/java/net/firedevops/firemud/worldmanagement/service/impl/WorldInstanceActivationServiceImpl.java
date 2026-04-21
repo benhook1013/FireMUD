@@ -49,6 +49,7 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
   static final String STATUS_FAILED_PRE_ACTIVATION = "FAILED_PRE_ACTIVATION";
   static final String STATUS_TERMINATING = "TERMINATING";
   static final String STATUS_TERMINATED = "TERMINATED";
+  private static final String SUPPORTED_RELEASE_ATTESTATION_SCHEMA_VERSION = "v1";
 
   private final WorldInstanceRepository worldInstanceRepository;
   private final RegionInstanceRepository regionInstanceRepository;
@@ -366,6 +367,7 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
           bundleResponse.getError().getCode() + ": " + bundleResponse.getError().getMessage());
     }
     var bundle = bundleResponse.getBundle();
+    requireSupportedReleaseAttestationSchema(bundle.getAttestationSchemaVersion());
     if (bundle.getId() != request.releaseBundleId()
         || bundle.getVersionId() != request.versionId()
         || !bundle.getGenerationConfigRevision().equals(request.generationConfigRevision())) {
@@ -537,5 +539,13 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
 
   private String releaseBundleRef(long tenantId, long versionId, long releaseBundleId) {
     return "prb:" + tenantId + ":" + versionId + ":" + releaseBundleId;
+  }
+
+  private void requireSupportedReleaseAttestationSchema(String schemaVersion) {
+    if (!SUPPORTED_RELEASE_ATTESTATION_SCHEMA_VERSION.equals(schemaVersion)) {
+      throw new IllegalArgumentException(
+          "SCHEMA_VERSION_UNSUPPORTED: unsupported published release bundle attestation schema "
+              + schemaVersion);
+    }
   }
 }

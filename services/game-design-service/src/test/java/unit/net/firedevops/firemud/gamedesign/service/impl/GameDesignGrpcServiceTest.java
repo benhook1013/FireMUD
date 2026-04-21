@@ -127,6 +127,38 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void getPublishedReleaseBundleRejectsUnsupportedSchema() {
+    Mockito.when(versionService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenReturn(
+            new PublishedReleaseBundleDto(
+                11L,
+                "tenant-1",
+                7L,
+                8,
+                "v999",
+                "workflow-1",
+                "abc123",
+                List.of("manifest.json"),
+                List.of(),
+                "genrev-1",
+                false,
+                null,
+                LocalDateTime.parse("2026-04-14T12:00:00")));
+
+    AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getPublishedReleaseBundle(
+          GetPublishedReleaseBundleRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("SCHEMA_VERSION_UNSUPPORTED", ref.get().getError().getCode());
+  }
+
+  @Test
   void resolveLaunchDescriptorReturnsDeterministicDescriptor() {
     Mockito.when(
             launchDescriptorService.resolveLaunchDescriptor(

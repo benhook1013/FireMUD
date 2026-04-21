@@ -39,6 +39,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private static final String STATUS_RUNNING = "RUNNING";
   private static final String STATUS_STOPPING = "STOPPING";
   private static final String STATUS_STOPPED = "STOPPED";
+  private static final String SUPPORTED_RELEASE_ATTESTATION_SCHEMA_VERSION = "v1";
 
   private final GameInstanceRepository repository;
   private final GameInstanceMapper mapper;
@@ -469,6 +470,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           bundleResponse.getError().getCode() + ": " + bundleResponse.getError().getMessage());
     }
     var bundle = bundleResponse.getBundle();
+    requireSupportedReleaseAttestationSchema(bundle.getAttestationSchemaVersion());
     if (bundle.getId() != descriptor.getReleaseBundleId()
         || bundle.getVersionId() != descriptor.getVersionId()
         || !bundle.getGenerationConfigRevision().equals(descriptor.getGenerationConfigRevision())
@@ -533,6 +535,14 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     if (!exportedKeys.containsAll(bundle.getRequiredManifestAssetKeysList())) {
       throw new IllegalArgumentException(
           "RELEASE_ATTESTATION_MISMATCH: published asset artifact state is missing required manifest asset keys");
+    }
+  }
+
+  private void requireSupportedReleaseAttestationSchema(String schemaVersion) {
+    if (!SUPPORTED_RELEASE_ATTESTATION_SCHEMA_VERSION.equals(schemaVersion)) {
+      throw new IllegalArgumentException(
+          "SCHEMA_VERSION_UNSUPPORTED: unsupported published release bundle attestation schema "
+              + schemaVersion);
     }
   }
 

@@ -83,6 +83,7 @@ class WorldInstanceActivationServiceImplTest {
                     PublishedReleaseBundle.newBuilder()
                         .setId(77L)
                         .setVersionId(11L)
+                        .setAttestationSchemaVersion("v1")
                         .setManifestHash("manifest-11")
                         .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-11")
@@ -263,6 +264,48 @@ class WorldInstanceActivationServiceImplTest {
 
     assertEquals(
         "RELEASE_ATTESTATION_MISMATCH: world activation request does not match the published release bundle",
+        error.getMessage());
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsUnsupportedReleaseBundleSchema() {
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.empty());
+    when(gameDesignClient.getPublishedReleaseBundle(42L, 11L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setId(77L)
+                        .setVersionId(11L)
+                        .setAttestationSchemaVersion("v999")
+                        .setManifestHash("manifest-11")
+                        .addRequiredManifestAssetKeys("manifest.json")
+                        .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.prepareWorldInstance(
+                    new PreparedWorldInstanceRequest(
+                        42L,
+                        101L,
+                        7L,
+                        "cp-1",
+                        "ld-1",
+                        11L,
+                        null,
+                        "{}",
+                        "genrev-11",
+                        77L,
+                        "prb:42:11:77",
+                        77L)));
+
+    assertEquals(
+        "SCHEMA_VERSION_UNSUPPORTED: unsupported published release bundle attestation schema v999",
         error.getMessage());
   }
 

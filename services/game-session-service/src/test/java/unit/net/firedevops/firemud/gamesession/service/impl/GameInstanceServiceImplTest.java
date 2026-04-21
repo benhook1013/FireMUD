@@ -335,6 +335,7 @@ class GameInstanceServiceImplTest {
                     net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
                         .setId(77L)
                         .setVersionId(11L)
+                        .setAttestationSchemaVersion("v1")
                         .setManifestHash("manifest-11")
                         .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-11")
@@ -395,6 +396,31 @@ class GameInstanceServiceImplTest {
 
     assertEquals(
         "RELEASE_ATTESTATION_MISMATCH: published asset artifact state does not match the release bundle",
+        error.getMessage());
+  }
+
+  @Test
+  void startSessionFailsWhenReleaseBundleSchemaIsUnsupported() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-schema", 42L);
+    when(gameDesignClient.getPublishedReleaseBundle(any(Long.class), any(Long.class)))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
+                        .setId(77L)
+                        .setVersionId(11L)
+                        .setAttestationSchemaVersion("v999")
+                        .setManifestHash("manifest-11")
+                        .addRequiredManifestAssetKeys("manifest.json")
+                        .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
+
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+
+    assertEquals(
+        "SCHEMA_VERSION_UNSUPPORTED: unsupported published release bundle attestation schema v999",
         error.getMessage());
   }
 

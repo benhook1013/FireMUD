@@ -98,6 +98,7 @@ class GameSessionApplicationIntegrationTest {
                     net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
                         .setId(77L)
                         .setVersionId(11L)
+                        .setAttestationSchemaVersion("v1")
                         .setManifestHash("manifest-11")
                         .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-11")
