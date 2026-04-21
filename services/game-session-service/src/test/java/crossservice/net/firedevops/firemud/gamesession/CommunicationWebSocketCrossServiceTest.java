@@ -262,6 +262,107 @@ class CommunicationWebSocketCrossServiceTest {
     }
   }
 
+  @Test
+  void websocketItemLoopMovesRoomItemThroughInventoryAndBack() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    ENTITY_STUB.resetItemState();
+
+    try (RecordingWebSocketClient client = openSessionClient(sessionId, "item-loop-conn")) {
+      client.send("LOGIN demo@example.com swordfish");
+      client.awaitResponseCount(1);
+      client.send("PLAY demo");
+      client.awaitResponseCount(2);
+      client.send("LOOK");
+      client.awaitContains("Candle-lit Antechamber");
+
+      client.send("INV HERE");
+      client.awaitContains("Room Inventory:");
+      client.awaitContains("- Torch [torch#1] (A small torch)");
+
+      client.send("GET Torch");
+      client.awaitContains("You pick up Torch.");
+      client.awaitContains("Inventory:");
+      client.awaitContains("- Torch [torch#1] (A small torch)");
+      assertThat(ENTITY_STUB.lastPickupRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getGameInstanceId())
+                    .isEqualTo(String.valueOf(DEMO_WORLD_INSTANCE_ID));
+                assertThat(request.getRoomInstanceId()).isEqualTo(ChatTestFixtures.ROOM_ID);
+                assertThat(request.getItemId()).isEqualTo("torch");
+                assertThat(request.getQuantity()).isEqualTo(1);
+                assertThat(request.getEffectId()).isNotBlank();
+              });
+
+      client.send("DROP Torch");
+      client.awaitContains("You drop Torch.");
+      client.send("INV HERE");
+      client.awaitContains("Room Inventory:");
+      client.awaitContains("- Torch [torch#1] (A small torch)");
+      assertThat(ENTITY_STUB.lastDropRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getGameInstanceId())
+                    .isEqualTo(String.valueOf(DEMO_WORLD_INSTANCE_ID));
+                assertThat(request.getRoomInstanceId()).isEqualTo(ChatTestFixtures.ROOM_ID);
+                assertThat(request.getItemId()).isEqualTo("torch");
+                assertThat(request.getQuantity()).isEqualTo(1);
+                assertThat(request.getEffectId()).isNotBlank();
+              });
+    }
+  }
+
+  @Test
+  void websocketEquipmentLoopMovesCarriedItemThroughSlotAndBack() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    ENTITY_STUB.resetItemState();
+
+    try (RecordingWebSocketClient client = openSessionClient(sessionId, "equipment-loop-conn")) {
+      client.send("LOGIN demo@example.com swordfish");
+      client.awaitResponseCount(1);
+      client.send("PLAY demo");
+      client.awaitResponseCount(2);
+
+      client.send("EQUIPMENT");
+      client.awaitContains("You have nothing equipped.");
+
+      client.send("WEAR Leather Cap");
+      client.awaitContains("You wear Leather Cap.");
+      assertThat(ENTITY_STUB.lastWearRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getItemId()).isEqualTo("leather-cap");
+                assertThat(request.getItemInstanceId()).isEqualTo("cap-carried-1");
+                assertThat(request.getEffectId()).isNotBlank();
+              });
+
+      client.send("EQUIPMENT");
+      client.awaitContains("- HEAD: Leather Cap [cap#1] (A small cap)");
+
+      client.send("REMOVE HEAD");
+      client.awaitContains("You remove Leather Cap.");
+      assertThat(ENTITY_STUB.lastRemoveRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getSlot()).isEqualTo("HEAD");
+                assertThat(request.getEffectId()).isNotBlank();
+              });
+
+      client.send("EQUIPMENT");
+      client.awaitContains("You have nothing equipped.");
+    }
+  }
+
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (ACCOUNT_STUB == null) {
       ACCOUNT_STUB = new AccountServiceStub(TestSocketUtils.findAvailableTcpPort());
