@@ -37,6 +37,8 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
   private static final String RESULT_NOOP = "NO_OP_ALREADY_APPLIED";
   private static final String OPERATION_UPSERT = "UPSERT";
   private static final String OPERATION_DELETE = "DELETE";
+  private static final String SCOPE_POLICY_REPLACE_SCOPE = "REPLACE_SCOPE";
+  private static final String SCOPE_POLICY_SEED_APPEND_ONLY = "SEED_APPEND_ONLY";
 
   private final RegionRepository regionRepository;
   private final ZoneRepository zoneRepository;
@@ -135,6 +137,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
 
   private Long applyRegion(WorldDesignMutationRequestDto request) {
     if (OPERATION_DELETE.equals(request.operationType())) {
+      failIfSeedAppendOnlyDelete(request);
       Region region = existingRegion(request);
       regionRepository.delete(region);
       return region.getId();
@@ -143,6 +146,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     if (payload == null) {
       throw appError("INVALID_ARGUMENT", "region payload is required");
     }
+    failIfSeedAppendOnlyUpdate(request);
     Region region =
         StringUtils.hasText(request.aggregateId()) ? existingRegion(request) : new Region();
     region.setTenantId(request.tenantId());
@@ -160,6 +164,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
 
   private Long applyZone(WorldDesignMutationRequestDto request) {
     if (OPERATION_DELETE.equals(request.operationType())) {
+      failIfSeedAppendOnlyDelete(request);
       Zone zone = existingZone(request);
       zoneRepository.delete(zone);
       return zone.getId();
@@ -168,6 +173,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     if (payload == null) {
       throw appError("INVALID_ARGUMENT", "zone payload is required");
     }
+    failIfSeedAppendOnlyUpdate(request);
     Zone zone = StringUtils.hasText(request.aggregateId()) ? existingZone(request) : new Zone();
     zone.setTenantId(request.tenantId());
     zone.setVersionId(request.versionId());
@@ -184,6 +190,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
 
   private Long applyRoom(WorldDesignMutationRequestDto request) {
     if (OPERATION_DELETE.equals(request.operationType())) {
+      failIfSeedAppendOnlyDelete(request);
       Room room = existingRoom(request);
       roomRepository.delete(room);
       return room.getId();
@@ -192,6 +199,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     if (payload == null) {
       throw appError("INVALID_ARGUMENT", "room payload is required");
     }
+    failIfSeedAppendOnlyUpdate(request);
     Room room = StringUtils.hasText(request.aggregateId()) ? existingRoom(request) : new Room();
     room.setTenantId(request.tenantId());
     room.setVersionId(request.versionId());
@@ -210,6 +218,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
 
   private Long applyRoomExit(WorldDesignMutationRequestDto request) {
     if (OPERATION_DELETE.equals(request.operationType())) {
+      failIfSeedAppendOnlyDelete(request);
       RoomExit exit = existingRoomExit(request);
       roomExitRepository.delete(exit);
       return exit.getId();
@@ -218,6 +227,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     if (payload == null) {
       throw appError("INVALID_ARGUMENT", "room_exit payload is required");
     }
+    failIfSeedAppendOnlyUpdate(request);
     RoomExit exit =
         StringUtils.hasText(request.aggregateId()) ? existingRoomExit(request) : new RoomExit();
     exit.setTenantId(request.tenantId());
@@ -243,6 +253,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
 
   private Long applyGenerationRule(WorldDesignMutationRequestDto request) {
     if (OPERATION_DELETE.equals(request.operationType())) {
+      failIfSeedAppendOnlyDelete(request);
       GenerationRule rule = existingGenerationRule(request);
       generationRuleRepository.delete(rule);
       return rule.getId();
@@ -251,6 +262,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     if (payload == null) {
       throw appError("INVALID_ARGUMENT", "generation_rule payload is required");
     }
+    failIfSeedAppendOnlyUpdate(request);
     GenerationRule rule =
         StringUtils.hasText(request.aggregateId())
             ? existingGenerationRule(request)
@@ -264,6 +276,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
 
   private Long applyWorldEntitySpawnBinding(WorldDesignMutationRequestDto request) {
     if (OPERATION_DELETE.equals(request.operationType())) {
+      failIfSeedAppendOnlyDelete(request);
       WorldEntitySpawnBinding binding = existingWorldEntitySpawnBinding(request);
       worldEntitySpawnBindingRepository.delete(binding);
       return binding.getId();
@@ -297,6 +310,9 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
                     entityTemplateType,
                     entityTemplateId)
                 .orElseGet(WorldEntitySpawnBinding::new);
+    if (isSeedAppendOnlyPolicy(request) && binding.getId() != null) {
+      throw appError("OUT_OF_SYNC", "SEED_APPEND_ONLY cannot rewrite an existing spawn binding");
+    }
     binding.setTenantId(request.tenantId());
     binding.setVersionId(request.versionId());
     binding.setRoom(room);
@@ -353,9 +369,34 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
       throw appError("INVALID_ARGUMENT", "unsupported operation");
     }
     requireText(request.aggregateType(), "aggregate_type");
+    if (StringUtils.hasText(request.scopeMutationPolicy())
+        && !SCOPE_POLICY_REPLACE_SCOPE.equals(request.scopeMutationPolicy())
+        && !SCOPE_POLICY_SEED_APPEND_ONLY.equals(request.scopeMutationPolicy())) {
+      throw appError("INVALID_ARGUMENT", "unsupported scope_mutation_policy");
+    }
+    if (StringUtils.hasText(request.scopeMutationPolicy())
+        && (!StringUtils.hasText(request.scopeType()) || !StringUtils.hasText(request.scopeId()))) {
+      throw appError("INVALID_ARGUMENT", "scope_type and scope_id are required for scope policy");
+    }
     if (OPERATION_DELETE.equals(request.operationType())
         && !StringUtils.hasText(request.aggregateId())) {
       throw appError("INVALID_ARGUMENT", "aggregate_id is required for delete");
+    }
+  }
+
+  private boolean isSeedAppendOnlyPolicy(WorldDesignMutationRequestDto request) {
+    return SCOPE_POLICY_SEED_APPEND_ONLY.equals(request.scopeMutationPolicy());
+  }
+
+  private void failIfSeedAppendOnlyDelete(WorldDesignMutationRequestDto request) {
+    if (isSeedAppendOnlyPolicy(request)) {
+      throw appError("OUT_OF_SYNC", "SEED_APPEND_ONLY cannot delete existing rows");
+    }
+  }
+
+  private void failIfSeedAppendOnlyUpdate(WorldDesignMutationRequestDto request) {
+    if (isSeedAppendOnlyPolicy(request) && StringUtils.hasText(request.aggregateId())) {
+      throw appError("OUT_OF_SYNC", "SEED_APPEND_ONLY cannot rewrite an existing aggregate");
     }
   }
 

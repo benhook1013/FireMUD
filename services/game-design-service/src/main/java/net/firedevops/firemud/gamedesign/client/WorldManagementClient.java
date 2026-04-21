@@ -115,7 +115,8 @@ public class WorldManagementClient
             .setScopeType(defaultString(mutation.scopeType()))
             .setScopeId(defaultString(mutation.scopeId()))
             .setExpectedDraftScopeRevisionEpoch(
-                defaultLong(mutation.expectedDraftScopeRevisionEpoch()));
+                defaultLong(mutation.expectedDraftScopeRevisionEpoch()))
+            .setScopeMutationPolicyValue(enumValue(mutation.scopeMutationPolicy()));
     if (mutation.region() != null) {
       return builder.setRegion(
           RegionDesignMutation.newBuilder()
@@ -194,6 +195,8 @@ public class WorldManagementClient
       case "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING" -> 6;
       case "ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM" -> 1;
       case "ENTITY_TEMPLATE_REFERENCE_TYPE_NPC" -> 2;
+      case "WORLD_DESIGN_SCOPE_MUTATION_POLICY_REPLACE_SCOPE" -> 1;
+      case "WORLD_DESIGN_SCOPE_MUTATION_POLICY_SEED_APPEND_ONLY" -> 2;
       default -> 0;
     };
   }

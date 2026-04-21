@@ -282,6 +282,12 @@ enum WorldDesignMutationResult {
   WORLD_DESIGN_MUTATION_RESULT_NO_OP_ALREADY_APPLIED = 2;
 }
 
+enum WorldDesignScopeMutationPolicy {
+  WORLD_DESIGN_SCOPE_MUTATION_POLICY_UNSPECIFIED = 0;
+  WORLD_DESIGN_SCOPE_MUTATION_POLICY_REPLACE_SCOPE = 1;
+  WORLD_DESIGN_SCOPE_MUTATION_POLICY_SEED_APPEND_ONLY = 2;
+}
+
 message ApplyWorldDesignMutationRequest {
   string tenant_id = 1;
   string version_id = 2;
@@ -294,6 +300,7 @@ message ApplyWorldDesignMutationRequest {
   string scope_type = 9;
   string scope_id = 10;
   int64 expected_draft_scope_revision_epoch = 11;
+  WorldDesignScopeMutationPolicy scope_mutation_policy = 12;
   oneof payload {
     RegionDesignMutation region = 20;
     ZoneDesignMutation zone = 21;

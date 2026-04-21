@@ -176,6 +176,29 @@ class WorldDesignMutationServiceImplTest {
     assertEquals(true, ex.getMessage().startsWith("UNRESOLVED_REFERENCE:"));
   }
 
+  @Test
+  void seedAppendOnlyRejectsAggregateRewrite() {
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.applyMutation(regionUpdateRequestWithPolicy("SEED_APPEND_ONLY")));
+
+    assertEquals(
+        "OUT_OF_SYNC: SEED_APPEND_ONLY cannot rewrite an existing aggregate", ex.getMessage());
+    verify(regionRepository, never()).save(any(Region.class));
+  }
+
+  @Test
+  void seedAppendOnlyRejectsDelete() {
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.applyMutation(regionDeleteRequestWithPolicy("SEED_APPEND_ONLY")));
+
+    assertEquals("OUT_OF_SYNC: SEED_APPEND_ONLY cannot delete existing rows", ex.getMessage());
+    verify(regionRepository, never()).delete(any(Region.class));
+  }
+
   private WorldDesignMutationRequestDto regionCreateRequest() {
     return new WorldDesignMutationRequestDto(
         1L,
@@ -189,6 +212,7 @@ class WorldDesignMutationServiceImplTest {
         "",
         "",
         0L,
+        "",
         new WorldDesignMutationRequestDto.RegionMutationDto(
             "North", "rain", 0, 123L, "ROOM_GRAPH", "{}", 1.0d),
         null,
@@ -211,6 +235,7 @@ class WorldDesignMutationServiceImplTest {
         "",
         "",
         0L,
+        "",
         new WorldDesignMutationRequestDto.RegionMutationDto(
             "North", "rain", 0, 123L, "ROOM_GRAPH", "{}", 1.0d),
         null,
@@ -233,6 +258,7 @@ class WorldDesignMutationServiceImplTest {
         "",
         "",
         0L,
+        "",
         null,
         null,
         null,
@@ -240,6 +266,51 @@ class WorldDesignMutationServiceImplTest {
         null,
         new WorldDesignMutationRequestDto.WorldEntitySpawnBindingMutationDto(
             "12", "NPC", "55", 2, 30));
+  }
+
+  private WorldDesignMutationRequestDto regionUpdateRequestWithPolicy(String scopeMutationPolicy) {
+    return new WorldDesignMutationRequestDto(
+        1L,
+        7L,
+        "commit-3",
+        "revision-3",
+        "UPSERT",
+        "REGION",
+        "44",
+        0L,
+        "ZONE",
+        "12",
+        0L,
+        scopeMutationPolicy,
+        new WorldDesignMutationRequestDto.RegionMutationDto(
+            "North", "rain", 0, 123L, "ROOM_GRAPH", "{}", 1.0d),
+        null,
+        null,
+        null,
+        null,
+        null);
+  }
+
+  private WorldDesignMutationRequestDto regionDeleteRequestWithPolicy(String scopeMutationPolicy) {
+    return new WorldDesignMutationRequestDto(
+        1L,
+        7L,
+        "commit-4",
+        "revision-4",
+        "DELETE",
+        "REGION",
+        "44",
+        0L,
+        "ZONE",
+        "12",
+        0L,
+        scopeMutationPolicy,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null);
   }
 
   private GetVersionStateResponse versionState(VersionLifecycleState state) {

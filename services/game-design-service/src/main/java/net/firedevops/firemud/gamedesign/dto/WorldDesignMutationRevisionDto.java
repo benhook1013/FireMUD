@@ -10,6 +10,7 @@ public record WorldDesignMutationRevisionDto(
     String scopeType,
     String scopeId,
     Long expectedDraftScopeRevisionEpoch,
+    String scopeMutationPolicy,
     RegionMutationDto region,
     ZoneMutationDto zone,
     RoomMutationDto room,

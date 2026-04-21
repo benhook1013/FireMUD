@@ -120,3 +120,8 @@ Entry format:
   - Context: an untracked audit markdown file tripped `lintMarkdown`, and deleting it to clear local hygiene would have destroyed live design work that only existed in the working tree.
   - Observation: in this repo, untracked files are not safe to treat as disposable temp noise just because they are outside Git or fail checks; they may be active human or AI work products.
   - Expected pattern: if an untracked file is not unquestionably generated junk and not the direct target of the task, leave it alone and ask before deleting or cleaning it up.
+
+- `2026-04-22`: Overlapping Gradle invocations can corrupt generated/proto-heavy class outputs into fake compile failures
+  - Context: running multiple Gradle service checks/tests in parallel around proto-regenerating modules produced `bad class file` / `NoSuchFileException` failures against classes that were not actually broken in source.
+  - Observation: for this repo's generated sources and shared-module graph, concurrent Gradle invocations can trample build outputs and create expensive false-negative compile results.
+  - Expected pattern: keep Gradle validation serialized in one invocation or one main-thread sequence when touching proto-heavy or shared modules, and treat sudden `.class` `NoSuchFileException` compile failures as possible build-state corruption before assuming a source regression.

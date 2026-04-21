@@ -727,6 +727,14 @@ public class WorldManagementGrpcService
         request.getScopeType(),
         request.getScopeId(),
         request.getExpectedDraftScopeRevisionEpoch(),
+        request.getScopeMutationPolicy()
+                == net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeMutationPolicy
+                    .WORLD_DESIGN_SCOPE_MUTATION_POLICY_UNSPECIFIED
+            ? ""
+            : request
+                .getScopeMutationPolicy()
+                .name()
+                .replace("WORLD_DESIGN_SCOPE_MUTATION_POLICY_", ""),
         request.hasRegion() ? toDto(request.getRegion()) : null,
         request.hasZone() ? toDto(request.getZone()) : null,
         request.hasRoom() ? toDto(request.getRoom()) : null,

@@ -77,6 +77,7 @@ message WorldDesignMutationRevision {
   string scope_type = 7;
   string scope_id = 8;
   int64 expected_draft_scope_revision_epoch = 9;
+  world_management.v1.WorldDesignScopeMutationPolicy scope_mutation_policy = 10;
   oneof payload {
     world_management.v1.RegionDesignMutation region = 20;
     world_management.v1.ZoneDesignMutation zone = 21;

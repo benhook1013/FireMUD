@@ -1201,6 +1201,11 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         request.getScopeType(),
         request.getScopeId(),
         request.getExpectedDraftScopeRevisionEpoch(),
+        request.getScopeMutationPolicy()
+                == net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeMutationPolicy
+                    .WORLD_DESIGN_SCOPE_MUTATION_POLICY_UNSPECIFIED
+            ? ""
+            : request.getScopeMutationPolicy().name(),
         request.hasRegion()
             ? new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
                 .RegionMutationDto(
