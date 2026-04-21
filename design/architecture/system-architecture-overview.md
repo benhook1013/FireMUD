@@ -177,7 +177,7 @@ FireMUD uses two complementary authentication modes that share a common identity
   - On success, Game Session creates and maintains a Redis-backed gameplay session binding (tenant, character, tick-region context) and enforces one active binding per `{tenantId, gameInstanceId, characterId}`. Gameplay traffic is authenticated by this Redis session context rather than by browser-style JWTs sent on each message.
 
 - **Admin and creator sessions (external admin/creator API plane)**  
-  - Admin and creator tools authenticate via HTTP/gRPC using JWTs issued by the **Account Service**, which publishes JWKS and remains the source of truth for token semantics.  
+  - External admin and creator tools authenticate via HTTP(S) using JWTs issued by the **Account Service**, which publishes JWKS and remains the source of truth for token semantics. Internal service-to-service gRPC remains direct and is not an external admin/creator edge contract unless a dedicated design update explicitly adds one.  
   - Internal services validate JWTs using a shared library and JWKS; they do not make ad-hoc token-parsing decisions.  
   - Spring Cloud Gateway forwards auth headers and can enforce coarse-grained route protections (for example, “admin endpoints require a valid JWT”) but does not own credential verification or authorization policy.
 

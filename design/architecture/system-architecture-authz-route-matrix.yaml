@@ -130,6 +130,7 @@ routes:
     scope: account
     classification: account_scoped
     subject_binding: caller_account_id_or_platform_admin
+    response_profile: full_account_export
     roles:
       any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
   - service: account-service
@@ -137,6 +138,9 @@ routes:
     scope: account
     classification: account_scoped
     subject_binding: caller_account_id_or_platform_admin
+    mutation_contract: account_delete_requires_no_nonterminal_owned_subscriptions
+    canonical_errors:
+      any_of: [ACCOUNT_DELETE_ACTIVE_BILLING_OWNER]
     roles:
       any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
   - service: account-service
@@ -193,6 +197,16 @@ routes:
     membership_watermark_applies: true
     required_live_checks: [membership]
     response_profile: high_level_only
+    roles:
+      any_of: [tenantAdmin]
+  - service: account-service
+    route: ExportTenantData
+    scope: tenant
+    classification: billing_safe_tenant
+    tenant_billing_watermark_applies: false
+    membership_watermark_applies: true
+    required_live_checks: [membership]
+    response_profile: tenant_export_only
     roles:
       any_of: [tenantAdmin]
   - service: account-service
