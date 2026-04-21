@@ -4,7 +4,7 @@ Best used for:
 
 - reviewing whether recently implemented systems land on the right shared substrates and authorities, rather than merely working locally
 
-Read the following sources first. Follow references only when a listed doc clearly delegates a canonical contract needed to judge a finding. Then inspect the concrete code paths implicated by the docs and current branch state.
+Read the following sources first. Follow references and read nearby related files as required when a listed doc clearly delegates a canonical contract or when a closely related file is needed to judge a finding. Then inspect the concrete code paths implicated by the docs and current branch state.
 
 - `design/architecture/system-architecture-overview.md`
 - `design/architecture/service-responsibility-matrix.md`

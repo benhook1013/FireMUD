@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Auth, Sessions, and Multi-tenancy
 
-Read the following documents. Follow references only when a listed document clearly delegates a canonical contract needed to resolve an implementation-blocking contradiction or missing security rule. Do not recursively expand through all related auth docs.
+Read the following documents. Follow references and read nearby related files as required when a listed document clearly delegates a canonical contract or when a closely related file is needed to resolve an implementation-blocking contradiction or missing security rule. Do not recursively expand through all related auth docs.
 
 - `design/architecture/system-architecture-authentication.md`
 - `design/architecture/system-architecture-session-behavior.md`

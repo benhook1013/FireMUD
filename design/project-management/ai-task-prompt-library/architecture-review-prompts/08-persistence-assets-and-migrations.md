@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Persistence, Assets, and Migrations
 
-Read the following documents. Follow references only when a listed document clearly delegates a canonical contract needed to resolve an implementation-blocking contradiction or missing rule. Do not recursively expand beyond that.
+Read the following documents. Follow references and read nearby related files as required when a listed document clearly delegates a canonical contract or when a closely related file is needed to resolve an implementation-blocking contradiction or missing rule. Do not recursively expand beyond that.
 
 - `design/architecture/microservices/entity-management-service/README.md`
 - `design/architecture/microservices/game-design-service/asset-storage.md`
@@ -11,8 +11,10 @@ Read the following documents. Follow references only when a listed document clea
 Then:
 
 - Review persistence, asset handling, and migration rules as a single end-to-end data design.
+- Check each finding against any already created slices or implementation that are clearly relevant, in case the issue has already been resolved in code or tracking and the design now needs to import that decision back into the docs.
 - Do not summarize behavior or describe what is already good.
 - Focus on issues that would cause incompatible implementations, unsafe data changes, or unclear ownership during the first implementation slice.
+- If slices, protos, or current implementation already resolve the seam but the design docs are stale, classify the issue as "import resolved decision back into design" rather than as an unresolved architecture blocker.
 - Do not let non-blocking polish and future-scale refinements crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve the design.
 - Return at most 5 issues, ordered by severity.
 - For each issue, include:

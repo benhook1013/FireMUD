@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Redis Operations and Recovery
 
-Read the following documents. Follow references only when a listed document clearly points to another canonical source needed to resolve an implementation-blocking contradiction or missing operational contract. Do not recursively expand beyond that.
+Read the following documents. Follow references and read nearby related files as required when a listed document clearly points to another canonical source or when a closely related file is needed to resolve an implementation-blocking contradiction or missing operational contract. Do not recursively expand beyond that.
 
 - `design/architecture/system-architecture-redis-operations.md`
 - `design/architecture/system-architecture-redis-metrics-catalog.md`
@@ -14,8 +14,10 @@ Read the following documents. Follow references only when a listed document clea
 Then:
 
 - Review Redis and tick-related operations as a single operator-facing design for failure handling, recovery, and safe intervention.
+- Check each finding against any already created slices or implementation that are clearly relevant, in case the issue has already been resolved in code or tracking and the design now needs to import that decision back into the docs.
 - Do not summarize the intended behavior or describe what is already good.
 - Focus on issues that would leave first-implementation operations unsafe, ambiguous, or impossible to execute consistently.
+- If slices, protos, or current implementation already resolve the seam but the design docs are stale, classify the issue as "import resolved decision back into design" rather than as an unresolved architecture blocker.
 - Do not attempt to list every theoretical ops improvement while blockers remain. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve operator safety or clarity.
 - Return at most 5 issues, ordered by severity. If more exist, keep only the most implementation-relevant ones.
 - For each issue, include:
