@@ -360,6 +360,19 @@ class CommunicationWebSocketCrossServiceTest {
 
       client.send("EQUIPMENT");
       client.awaitContains("You have nothing equipped.");
+
+      client.send("WEAR Iron Boots");
+      client.awaitContains(
+          "ERROR SLOT_INCOMPATIBLE Iron Boots cannot be worn by this body layout.");
+      assertThat(ENTITY_STUB.lastWearRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getItemId()).isEqualTo("iron-boots");
+                assertThat(request.getItemInstanceId()).isEqualTo("boots-carried-1");
+                assertThat(request.getEffectId()).isNotBlank();
+              });
     }
   }
 

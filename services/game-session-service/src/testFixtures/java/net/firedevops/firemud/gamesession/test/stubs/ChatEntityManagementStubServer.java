@@ -29,18 +29,22 @@ import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 
 public final class ChatEntityManagementStubServer implements AutoCloseable {
   private static final String TORCH_ITEM_ID = "torch";
   private static final String TORCH_INSTANCE_ID = "torch-ground-1";
   private static final String CAP_ITEM_ID = "leather-cap";
   private static final String CAP_INSTANCE_ID = "cap-carried-1";
+  private static final String BOOTS_ITEM_ID = "iron-boots";
+  private static final String BOOTS_INSTANCE_ID = "boots-carried-1";
   private static final String CAP_SLOT = "HEAD";
 
   private final Server server;
   private final int port;
   private boolean torchOnGround = true;
   private boolean capCarried = true;
+  private boolean bootsCarried = true;
   private boolean capEquipped;
   private PickupItemFromRoomRequest lastPickupRequest;
   private DropItemToRoomRequest lastDropRequest;
@@ -146,6 +150,7 @@ public final class ChatEntityManagementStubServer implements AutoCloseable {
   public synchronized void resetItemState() {
     torchOnGround = true;
     capCarried = true;
+    bootsCarried = true;
     capEquipped = false;
     lastPickupRequest = null;
     lastDropRequest = null;
@@ -197,6 +202,9 @@ public final class ChatEntityManagementStubServer implements AutoCloseable {
     if (capCarried) {
       response.addItems(capInventoryItem());
     }
+    if (bootsCarried) {
+      response.addItems(bootsInventoryItem());
+    }
     return response.build();
   }
 
@@ -225,6 +233,14 @@ public final class ChatEntityManagementStubServer implements AutoCloseable {
   private synchronized WearEquipmentItemResponse wearEquipmentItem(
       WearEquipmentItemRequest request) {
     lastWearRequest = request;
+    if (BOOTS_ITEM_ID.equals(request.getItemId())) {
+      return WearEquipmentItemResponse.newBuilder()
+          .setError(
+              ErrorDetail.newBuilder()
+                  .setCode("SLOT_INCOMPATIBLE")
+                  .setMessage("Iron Boots cannot be worn by this body layout."))
+          .build();
+    }
     capCarried = false;
     capEquipped = true;
     return WearEquipmentItemResponse.newBuilder()
@@ -274,6 +290,17 @@ public final class ChatEntityManagementStubServer implements AutoCloseable {
         .setQuantity(1)
         .setItemInstanceId(CAP_INSTANCE_ID)
         .setVisibleRef("cap#1")
+        .build();
+  }
+
+  private InventoryItem bootsInventoryItem() {
+    return InventoryItem.newBuilder()
+        .setItemId(BOOTS_ITEM_ID)
+        .setItemName("Iron Boots")
+        .setItemDescription("Heavy iron boots")
+        .setQuantity(1)
+        .setItemInstanceId(BOOTS_INSTANCE_ID)
+        .setVisibleRef("boots#1")
         .build();
   }
 
