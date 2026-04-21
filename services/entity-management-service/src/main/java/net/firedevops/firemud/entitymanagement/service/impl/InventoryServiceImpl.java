@@ -34,6 +34,7 @@ public class InventoryServiceImpl implements InventoryService {
   private final ItemStackRepository itemStackRepository;
   private final ItemVisibleRefAllocator itemVisibleRefAllocator;
   private final ItemTransferSupport itemTransferSupport;
+  private final ItemTransferAuditWriter itemTransferAuditWriter;
   private final ContainerHolderSyncSupport containerHolderSyncSupport;
   private final StackableItemSupport stackableItemSupport;
 
@@ -309,6 +310,14 @@ public class InventoryServiceImpl implements InventoryService {
                 });
     destination.setQuantity(destination.getQuantity() + quantity);
     itemStackRepository.save(destination);
+    itemTransferAuditWriter.recordStackTransfer(
+        tenantId,
+        item,
+        quantity,
+        source.getStackFamilyKey(),
+        itemTransferSupport.inventoryHolder(tenantId, character.getId()),
+        itemTransferSupport.roomHolder(tenantId, gameInstanceId, roomInstanceId),
+        itemTransferSupport.audit("DROP", character.getId()));
     return source.getStackFamilyKey();
   }
 
@@ -331,6 +340,14 @@ public class InventoryServiceImpl implements InventoryService {
     requireStackQuantity(source, quantity, "Room ground item not found");
     decrementOrDelete(source, quantity);
     incrementInventoryStack(character, item, quantity, source.getStackFamilyKey());
+    itemTransferAuditWriter.recordStackTransfer(
+        tenantId,
+        item,
+        quantity,
+        source.getStackFamilyKey(),
+        itemTransferSupport.roomHolder(tenantId, gameInstanceId, roomInstanceId),
+        itemTransferSupport.inventoryHolder(tenantId, character.getId()),
+        itemTransferSupport.audit("GET", character.getId()));
     return source.getStackFamilyKey();
   }
 
@@ -450,25 +467,32 @@ public class InventoryServiceImpl implements InventoryService {
       String gameInstanceId,
       String roomInstanceId) {
     for (ItemInstance instance : instances) {
-      itemTransferSupport.transfer(
-          instance,
-          itemTransferSupport.inventory(character.getTenantId(), character.getId()),
-          itemTransferSupport.room(gameInstanceId, roomInstanceId),
-          itemTransferSupport.audit("DROP", character.getId()));
+      ItemTransferSupport.ExpectedSource expectedSource =
+          itemTransferSupport.inventory(character.getTenantId(), character.getId());
+      ItemTransferSupport.Destination destination =
+          itemTransferSupport.room(gameInstanceId, roomInstanceId);
+      ItemTransferSupport.TransferAuditContext auditContext =
+          itemTransferSupport.audit("DROP", character.getId());
+      itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
       itemInstanceRepository.save(instance);
+      itemTransferAuditWriter.recordInstanceTransfer(
+          instance, expectedSource, destination, auditContext);
       containerHolderSyncSupport.ensureSynced(instance);
     }
   }
 
   private void moveItemInstancesToInventory(Character character, List<ItemInstance> instances) {
     for (ItemInstance instance : instances) {
-      itemTransferSupport.transfer(
-          instance,
+      ItemTransferSupport.ExpectedSource expectedSource =
           itemTransferSupport.room(
-              character.getTenantId(), instance.getGameInstanceId(), instance.getRoomInstanceId()),
-          itemTransferSupport.inventory(character),
-          itemTransferSupport.audit("GET", character.getId()));
+              character.getTenantId(), instance.getGameInstanceId(), instance.getRoomInstanceId());
+      ItemTransferSupport.Destination destination = itemTransferSupport.inventory(character);
+      ItemTransferSupport.TransferAuditContext auditContext =
+          itemTransferSupport.audit("GET", character.getId());
+      itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
       itemInstanceRepository.save(instance);
+      itemTransferAuditWriter.recordInstanceTransfer(
+          instance, expectedSource, destination, auditContext);
       containerHolderSyncSupport.ensureSynced(instance);
     }
   }

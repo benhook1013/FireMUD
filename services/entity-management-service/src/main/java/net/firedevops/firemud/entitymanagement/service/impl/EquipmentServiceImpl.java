@@ -2,7 +2,6 @@ package net.firedevops.firemud.entitymanagement.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import java.util.Locale;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
@@ -13,20 +12,56 @@ import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepos
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@RequiredArgsConstructor
 public class EquipmentServiceImpl implements EquipmentService {
   private final ItemInstanceRepository itemInstanceRepository;
   private final ContainerInstanceRepository containerInstanceRepository;
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
   private final ItemTransferSupport itemTransferSupport;
+  private final ItemTransferAuditWriter itemTransferAuditWriter;
   private final ContainerHolderSyncSupport containerHolderSyncSupport;
+
+  @Autowired
+  public EquipmentServiceImpl(
+      ItemInstanceRepository itemInstanceRepository,
+      ContainerInstanceRepository containerInstanceRepository,
+      CharacterRepository characterRepository,
+      ItemRepository itemRepository,
+      ItemTransferSupport itemTransferSupport,
+      ItemTransferAuditWriter itemTransferAuditWriter,
+      ContainerHolderSyncSupport containerHolderSyncSupport) {
+    this.itemInstanceRepository = itemInstanceRepository;
+    this.containerInstanceRepository = containerInstanceRepository;
+    this.characterRepository = characterRepository;
+    this.itemRepository = itemRepository;
+    this.itemTransferSupport = itemTransferSupport;
+    this.itemTransferAuditWriter = itemTransferAuditWriter;
+    this.containerHolderSyncSupport = containerHolderSyncSupport;
+  }
+
+  EquipmentServiceImpl(
+      ItemInstanceRepository itemInstanceRepository,
+      ContainerInstanceRepository containerInstanceRepository,
+      CharacterRepository characterRepository,
+      ItemRepository itemRepository,
+      ItemTransferSupport itemTransferSupport,
+      ContainerHolderSyncSupport containerHolderSyncSupport) {
+    this(
+        itemInstanceRepository,
+        containerInstanceRepository,
+        characterRepository,
+        itemRepository,
+        itemTransferSupport,
+        new NoOpItemTransferAuditWriter(),
+        containerHolderSyncSupport);
+  }
 
   @Override
   @Transactional(readOnly = true)
@@ -55,12 +90,15 @@ public class EquipmentServiceImpl implements EquipmentService {
     }
     ItemInstance instance =
         resolveWearableItemInstance(tenantId, characterId, itemId, itemInstanceId);
-    itemTransferSupport.transfer(
-        instance,
-        itemTransferSupport.inventory(tenantId, characterId),
-        itemTransferSupport.equipment(character, slot),
-        itemTransferSupport.audit("WEAR", characterId));
+    ItemTransferSupport.ExpectedSource expectedSource =
+        itemTransferSupport.inventory(tenantId, characterId);
+    ItemTransferSupport.Destination destination = itemTransferSupport.equipment(character, slot);
+    ItemTransferSupport.TransferAuditContext auditContext =
+        itemTransferSupport.audit("WEAR", characterId);
+    itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
     ItemInstance saved = itemInstanceRepository.save(instance);
+    itemTransferAuditWriter.recordInstanceTransfer(
+        saved, expectedSource, destination, auditContext);
     containerHolderSyncSupport.ensureSynced(saved);
     return toDto(saved);
   }
@@ -76,12 +114,15 @@ public class EquipmentServiceImpl implements EquipmentService {
             .findByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
                 tenantId, characterId, normalizedSlot)
             .orElseThrow(() -> new IllegalArgumentException("Equipment slot is empty"));
-    itemTransferSupport.transfer(
-        instance,
-        itemTransferSupport.equipment(tenantId, characterId, normalizedSlot),
-        itemTransferSupport.inventory(character),
-        itemTransferSupport.audit("REMOVE", characterId));
+    ItemTransferSupport.ExpectedSource expectedSource =
+        itemTransferSupport.equipment(tenantId, characterId, normalizedSlot);
+    ItemTransferSupport.Destination destination = itemTransferSupport.inventory(character);
+    ItemTransferSupport.TransferAuditContext auditContext =
+        itemTransferSupport.audit("REMOVE", characterId);
+    itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
     ItemInstance saved = itemInstanceRepository.save(instance);
+    itemTransferAuditWriter.recordInstanceTransfer(
+        saved, expectedSource, destination, auditContext);
     containerHolderSyncSupport.ensureSynced(saved);
     return toDto(saved);
   }

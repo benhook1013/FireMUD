@@ -20,6 +20,7 @@ The current branch state is materially ahead of the original `06` plan:
 - stable compact visible refs such as `satchel12` are now allocated and surfaced through management views and exact-item matching;
 - the gameplay command layer has its first bounded unification pass through `ItemCommandHandler`;
 - the remaining work under `06` is no longer "start item interactions", but tightening the canonical holder/transfer contract, adding explicit authored stackability, and aligning audit/validation semantics.
+- successful inventory, room-ground, equipment, and container-holder transfers now persist canonical `item_transfer_audits` rows for both item-instance and stack-backed movement in the same local transaction boundary as the mutation.
 - the authored stackability/fungibility follow-up is now tracked explicitly in `06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md`.
 
 The most important remaining design work in this slice family is:
@@ -92,7 +93,7 @@ This ordering is now historical context rather than future plan:
 
 ## 3. Entity Management Service: Inventory Transfer Audit
 
-- [ ] Introduce a canonical audit/event record for inventory and equipment mutation covering:
+- [x] Introduce a canonical audit/event record for inventory and equipment mutation covering:
   - item instance id;
   - item definition/template id;
   - quantity or stack delta;
@@ -101,9 +102,16 @@ This ordering is now historical context rather than future plan:
   - actor/session/effect/correlation identifiers;
   - tenant/game instance/room context;
   - action reason such as `pickup`, `drop`, `put`, `take`, `equip`, `unequip`, `create`, `destroy`, `split_stack`, `merge_stack`, or `admin_grant`.
-- [ ] Ensure the authoritative containment mutation and audit write happen in the same local transactional boundary where feasible so the system does not acknowledge state changes without a corresponding audit trail.
-- [ ] Document the intended operational use of this audit trail for item-duplication investigations, suspicious transfer analysis, and later invariant checks.
-- [ ] Add tests for at least: successful audited transfer, failed transfer producing no committed audit row, and deterministic correlation data on retried/idempotent operations.
+- [x] Ensure the authoritative containment mutation and audit write happen in the same local transactional boundary where feasible so the system does not acknowledge state changes without a corresponding audit trail.
+- [x] Document the intended operational use of this audit trail for item-duplication investigations, suspicious transfer analysis, and later invariant checks.
+- [x] Add tests for at least: successful audited transfer, failed transfer producing no committed audit row, and deterministic correlation data on retried/idempotent operations.
+
+Current implementation note:
+
+- the live audit record is `item_transfer_audits`;
+- current callers populate verb, actor character, item/item-instance identity, quantity or stack-family delta, and source/destination holder context;
+- `sessionId`, `effectId`, and explicit correlation ids are now first-class audit fields but remain null until caller paths that own those concepts thread them through;
+- the default deterministic correlation key is derived from verb, actor, item identity, quantity/family, and holder endpoints so repeated identical calls produce stable audit correlation data without pretending to offer broader replay semantics.
 
 ## 4. Game Design Service and Configurable Equipment Model
 
@@ -172,4 +180,4 @@ This ordering is now historical context rather than future plan:
 ## Deferred Follow-Up
 
 - Later slices can expand beyond the MVP item loop into stacking depth, nested container UX polish, crafting/material flows, banking/vendor inventories, loot generation, scripted item behavior, equipment durability, and richer client-side filtered inventory views.
-- Additional follow-up slices may also introduce stronger invariant/alert tooling over the inventory transfer audit trail once the canonical movement and equipment flows are stable.
+- Additional follow-up slices may also introduce stronger invariant/alert tooling over the now-live inventory transfer audit trail once the canonical movement and equipment flows are stable.

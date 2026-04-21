@@ -31,6 +31,7 @@ public class ContainerServiceImpl implements ContainerService {
   private final ItemRepository itemRepository;
   private final ItemStackRepository itemStackRepository;
   private final ItemTransferSupport itemTransferSupport;
+  private final ItemTransferAuditWriter itemTransferAuditWriter;
   private final ContainerHolderSyncSupport containerHolderSyncSupport;
   private final ContainerHolderPolicySupport containerHolderPolicySupport;
   private final StackableItemSupport stackableItemSupport;
@@ -43,6 +44,7 @@ public class ContainerServiceImpl implements ContainerService {
       ItemRepository itemRepository,
       ItemStackRepository itemStackRepository,
       ItemTransferSupport itemTransferSupport,
+      ItemTransferAuditWriter itemTransferAuditWriter,
       ContainerHolderSyncSupport containerHolderSyncSupport,
       ContainerHolderPolicySupport containerHolderPolicySupport,
       StackableItemSupport stackableItemSupport) {
@@ -52,6 +54,7 @@ public class ContainerServiceImpl implements ContainerService {
     this.itemRepository = itemRepository;
     this.itemStackRepository = itemStackRepository;
     this.itemTransferSupport = itemTransferSupport;
+    this.itemTransferAuditWriter = itemTransferAuditWriter;
     this.containerHolderSyncSupport = containerHolderSyncSupport;
     this.containerHolderPolicySupport = containerHolderPolicySupport;
     this.stackableItemSupport = stackableItemSupport;
@@ -72,6 +75,29 @@ public class ContainerServiceImpl implements ContainerService {
         itemRepository,
         itemStackRepository,
         itemTransferSupport,
+        new NoOpItemTransferAuditWriter(),
+        containerHolderSyncSupport,
+        new ContainerHolderPolicySupport(containerInstanceRepository),
+        new StackableItemSupport());
+  }
+
+  ContainerServiceImpl(
+      ContainerInstanceRepository containerInstanceRepository,
+      ItemInstanceRepository itemInstanceRepository,
+      CharacterRepository characterRepository,
+      ItemRepository itemRepository,
+      ItemStackRepository itemStackRepository,
+      ItemTransferSupport itemTransferSupport,
+      ItemTransferAuditWriter itemTransferAuditWriter,
+      ContainerHolderSyncSupport containerHolderSyncSupport) {
+    this(
+        containerInstanceRepository,
+        itemInstanceRepository,
+        characterRepository,
+        itemRepository,
+        itemStackRepository,
+        itemTransferSupport,
+        itemTransferAuditWriter,
         containerHolderSyncSupport,
         new ContainerHolderPolicySupport(containerInstanceRepository),
         new StackableItemSupport());
@@ -132,12 +158,16 @@ public class ContainerServiceImpl implements ContainerService {
                 tenantId, characterId, itemId);
     List<ItemInstance> moved = selectCarriedInstances(carried, itemInstanceId, quantity);
     for (ItemInstance instance : moved) {
-      itemTransferSupport.transfer(
-          instance,
-          itemTransferSupport.inventory(tenantId, characterId),
-          itemTransferSupport.container(containerInstance),
-          itemTransferSupport.audit("PUT", characterId));
+      ItemTransferSupport.ExpectedSource expectedSource =
+          itemTransferSupport.inventory(tenantId, characterId);
+      ItemTransferSupport.Destination destination =
+          itemTransferSupport.container(containerInstance);
+      ItemTransferSupport.TransferAuditContext auditContext =
+          itemTransferSupport.audit("PUT", characterId);
+      itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
       itemInstanceRepository.save(instance);
+      itemTransferAuditWriter.recordInstanceTransfer(
+          instance, expectedSource, destination, auditContext);
       containerHolderSyncSupport.requireExistingAndSync(instance);
     }
     return toMutationDto(moved.get(0), quantity);
@@ -171,12 +201,15 @@ public class ContainerServiceImpl implements ContainerService {
             tenantId, containerInstance.getId(), itemId);
     List<ItemInstance> moved = selectContainedInstances(contained, itemInstanceId, quantity);
     for (ItemInstance instance : moved) {
-      itemTransferSupport.transfer(
-          instance,
-          itemTransferSupport.container(tenantId, containerInstance.getId()),
-          itemTransferSupport.inventory(character),
-          itemTransferSupport.audit("TAKE", characterId));
+      ItemTransferSupport.ExpectedSource expectedSource =
+          itemTransferSupport.container(tenantId, containerInstance.getId());
+      ItemTransferSupport.Destination destination = itemTransferSupport.inventory(character);
+      ItemTransferSupport.TransferAuditContext auditContext =
+          itemTransferSupport.audit("TAKE", characterId);
+      itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
       itemInstanceRepository.save(instance);
+      itemTransferAuditWriter.recordInstanceTransfer(
+          instance, expectedSource, destination, auditContext);
       containerHolderSyncSupport.requireExistingAndSync(instance);
     }
     return toInventoryMutationDto(moved.get(0), quantity);
@@ -346,6 +379,14 @@ public class ContainerServiceImpl implements ContainerService {
                 });
     destination.setQuantity(destination.getQuantity() + quantity);
     itemStackRepository.save(destination);
+    itemTransferAuditWriter.recordStackTransfer(
+        tenantId,
+        item,
+        quantity,
+        source.getStackFamilyKey(),
+        itemTransferSupport.inventoryHolder(tenantId, characterId),
+        itemTransferSupport.containerHolder(tenantId, containerInstance.getId()),
+        itemTransferSupport.audit("PUT", characterId));
     return source.getStackFamilyKey();
   }
 
@@ -383,6 +424,14 @@ public class ContainerServiceImpl implements ContainerService {
                 });
     destination.setQuantity(destination.getQuantity() + quantity);
     itemStackRepository.save(destination);
+    itemTransferAuditWriter.recordStackTransfer(
+        tenantId,
+        item,
+        quantity,
+        source.getStackFamilyKey(),
+        itemTransferSupport.containerHolder(tenantId, containerInstance.getId()),
+        itemTransferSupport.inventoryHolder(tenantId, character.getId()),
+        itemTransferSupport.audit("TAKE", character.getId()));
     return source.getStackFamilyKey();
   }
 

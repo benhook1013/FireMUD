@@ -3,6 +3,10 @@ package net.firedevops.firemud.entitymanagement.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -223,6 +227,50 @@ class InventoryServiceImplTest {
   }
 
   @Test
+  void dropItemWritesInstanceTransferAudit() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
+    InventoryServiceImpl service =
+        service(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            itemStackRepo,
+            visibleRefAllocator,
+            itemTransferAuditWriter);
+
+    Character character = character(1L, 1L);
+    Item item = item(2L, 1L, "Torch", false, null, false);
+    ItemInstance first = itemInstance(41L, 1L, character, item, null, null, null);
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(item));
+    when(itemInstanceRepo
+            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
+                1L, 1L, 2L))
+        .thenReturn(List.of(first));
+    when(itemInstanceRepo.save(any(ItemInstance.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1);
+
+    ItemTransferSupport transferSupport = new ItemTransferSupport();
+    verify(itemTransferAuditWriter)
+        .recordInstanceTransfer(
+            first,
+            transferSupport.inventory(1L, 1L),
+            transferSupport.room("GI-1", "R-1"),
+            transferSupport.audit("DROP", 1L));
+  }
+
+  @Test
   void dropItemMovesStackQuantityToRoom() {
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
     ContainerInstanceRepository containerInstanceRepo =
@@ -268,6 +316,61 @@ class InventoryServiceImplTest {
     assertNull(dropped.itemInstanceId());
     assertEquals("ammo/iron", dropped.visibleRef());
     verify(itemStackRepo, Mockito.atLeastOnce()).save(Mockito.any(ItemStack.class));
+  }
+
+  @Test
+  void dropItemWritesStackTransferAudit() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
+    InventoryServiceImpl service =
+        service(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            itemStackRepo,
+            visibleRefAllocator,
+            itemTransferAuditWriter);
+
+    Character character = character(1L, 1L);
+    Item arrows = item(2L, 1L, "Arrows", false, null, true);
+    arrows.setStackCompatibilityMode(ItemStackCompatibilityMode.DEFINITION_AND_FAMILY);
+    arrows.setDefaultStackFamilyKey("ammo/iron");
+    ItemStack inventoryStack = stack(41L, 1L, character, arrows, 3);
+    inventoryStack.setStackFamilyKey("ammo/iron");
+    inventoryStack.setCompatibilityFingerprint("item-definition:2:family:ammo/iron");
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(arrows));
+    when(itemStackRepo
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
+                1L, 1L, 2L))
+        .thenReturn(List.of(inventoryStack));
+    when(itemStackRepo
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
+                1L, "GI-1", "R-1", 2L, "item-definition:2:family:ammo/iron"))
+        .thenReturn(Optional.empty());
+    when(itemStackRepo.save(any(ItemStack.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 2);
+
+    ItemTransferSupport transferSupport = new ItemTransferSupport();
+    verify(itemTransferAuditWriter)
+        .recordStackTransfer(
+            1L,
+            arrows,
+            2,
+            "ammo/iron",
+            transferSupport.inventoryHolder(1L, 1L),
+            transferSupport.roomHolder(1L, "GI-1", "R-1"),
+            transferSupport.audit("DROP", 1L));
   }
 
   @Test
@@ -382,6 +485,47 @@ class InventoryServiceImplTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> service.pickupItemFromRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1));
+  }
+
+  @Test
+  void pickupItemRejectsStaleSourceMismatchWithoutAuditWrite() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
+    InventoryServiceImpl service =
+        service(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            itemStackRepo,
+            visibleRefAllocator,
+            itemTransferAuditWriter);
+
+    Character character = character(1L, 1L);
+    Item item = item(2L, 1L, "Torch", false, null, false);
+    ItemInstance stale = itemInstance(41L, 1L, null, item, null, null, null);
+    stale.setCharacter(character);
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(item));
+    when(itemInstanceRepo
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndItem_IdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
+                1L, "GI-1", "R-1", 2L))
+        .thenReturn(List.of(stale));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.pickupItemFromRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1));
+
+    verify(itemTransferAuditWriter, never()).recordInstanceTransfer(any(), any(), any(), any());
+    verify(itemTransferAuditWriter, never())
+        .recordStackTransfer(anyLong(), any(), anyInt(), any(), any(), any(), any());
   }
 
   @Test
@@ -511,6 +655,24 @@ class InventoryServiceImplTest {
       ItemRepository itemRepo,
       ItemStackRepository itemStackRepo,
       ItemVisibleRefAllocator visibleRefAllocator) {
+    return service(
+        itemInstanceRepo,
+        containerInstanceRepo,
+        characterRepo,
+        itemRepo,
+        itemStackRepo,
+        visibleRefAllocator,
+        new NoOpItemTransferAuditWriter());
+  }
+
+  private InventoryServiceImpl service(
+      ItemInstanceRepository itemInstanceRepo,
+      ContainerInstanceRepository containerInstanceRepo,
+      CharacterRepository characterRepo,
+      ItemRepository itemRepo,
+      ItemStackRepository itemStackRepo,
+      ItemVisibleRefAllocator visibleRefAllocator,
+      ItemTransferAuditWriter itemTransferAuditWriter) {
     return new InventoryServiceImpl(
         itemInstanceRepo,
         containerInstanceRepo,
@@ -519,6 +681,7 @@ class InventoryServiceImplTest {
         itemStackRepo,
         visibleRefAllocator,
         new ItemTransferSupport(),
+        itemTransferAuditWriter,
         new ContainerHolderSyncSupport(containerInstanceRepo),
         new StackableItemSupport());
   }

@@ -3,6 +3,8 @@ package net.firedevops.firemud.entitymanagement.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -68,6 +70,7 @@ class EquipmentServiceImplTest {
         Mockito.mock(ContainerInstanceRepository.class);
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
     EquipmentServiceImpl service =
         new EquipmentServiceImpl(
             itemInstanceRepo,
@@ -75,6 +78,7 @@ class EquipmentServiceImplTest {
             charRepo,
             itemRepo,
             new ItemTransferSupport(),
+            itemTransferAuditWriter,
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
@@ -105,6 +109,13 @@ class EquipmentServiceImplTest {
     assertEquals("HEAD", carried.getEquipmentSlot());
     assertEquals("HEAD", equipped.slot());
     assertEquals(77L, equipped.containerInstanceId());
+    ItemTransferSupport transferSupport = new ItemTransferSupport();
+    verify(itemTransferAuditWriter)
+        .recordInstanceTransfer(
+            carried,
+            transferSupport.inventory(1L, 1L),
+            transferSupport.equipment(character, "HEAD"),
+            transferSupport.audit("WEAR", 1L));
   }
 
   @Test
@@ -114,6 +125,7 @@ class EquipmentServiceImplTest {
         Mockito.mock(ContainerInstanceRepository.class);
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
     EquipmentServiceImpl service =
         new EquipmentServiceImpl(
             itemInstanceRepo,
@@ -121,6 +133,7 @@ class EquipmentServiceImplTest {
             charRepo,
             itemRepo,
             new ItemTransferSupport(),
+            itemTransferAuditWriter,
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
@@ -141,6 +154,7 @@ class EquipmentServiceImplTest {
         .thenReturn(List.of(stale));
 
     assertThrows(IllegalArgumentException.class, () -> service.wearItem(1L, 1L, 2L, null));
+    verify(itemTransferAuditWriter, never()).recordInstanceTransfer(any(), any(), any(), any());
   }
 
   @Test

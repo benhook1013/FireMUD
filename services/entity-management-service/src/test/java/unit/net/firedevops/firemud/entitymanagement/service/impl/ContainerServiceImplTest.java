@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -135,6 +136,7 @@ class ContainerServiceImplTest {
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
     ContainerServiceImpl service =
         new ContainerServiceImpl(
             containerInstanceRepo,
@@ -143,6 +145,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            itemTransferAuditWriter,
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
@@ -172,6 +175,13 @@ class ContainerServiceImplTest {
     assertEquals("Torch", stored.itemName());
     assertEquals(1, stored.quantity());
     assertEquals(containerInstance, first.getContainerInstance());
+    ItemTransferSupport transferSupport = new ItemTransferSupport();
+    verify(itemTransferAuditWriter)
+        .recordInstanceTransfer(
+            first,
+            transferSupport.inventory(1L, 1L),
+            transferSupport.container(containerInstance),
+            transferSupport.audit("PUT", 1L));
   }
 
   @Test
