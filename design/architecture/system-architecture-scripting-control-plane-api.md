@@ -375,10 +375,7 @@ Required enum values:
 - `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK_PAUSE`
 - `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE`
 - `TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE`
-- `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED`
-- `TRIGGER_ADMISSION_OUTCOME_SCRIPT_DISABLED`
-- `TRIGGER_ADMISSION_OUTCOME_PLUGIN_DISABLED`
-- `TRIGGER_ADMISSION_OUTCOME_PLUGIN_COMPONENT_BLOCKED`
+- `TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED`
 - `TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE`
 
 Contract rules:
@@ -386,6 +383,7 @@ Contract rules:
 - Backpressure outcomes (`*_BACKPRESSURE_*`) must include bounded `retryAfterMs`.
 - `admissionOutcome` and `admissionReason` describe the **event-scope ingress decision** only. They must not be interpreted as a summary of all handler-scoped outcomes created after binding resolution.
 - Event-scope `admissionOutcome` and `admissionReason` must map directly to the ingress-time admission result recorded in ingress audit/logging surfaces for that request; they are not the same thing as later handler-scoped `finalOutcome` values recorded in `script_event_audit`.
+- Handler-scoped denials such as `quota_denied`, `script_disabled`, `plugin_disabled`, and `plugin_component_blocked` remain handler/audit outcomes after binding resolution. They are not valid event-scope ingress `admissionOutcome` values in the general fan-out contract.
 - Admission failures are application-level outcomes and must not be surfaced as transport errors.
 - For events that fan out to multiple handlers:
   - `admitted=true` means the request passed ingress-time fences and was accepted for handler resolution.

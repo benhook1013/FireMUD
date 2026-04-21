@@ -40,6 +40,8 @@ Domain services such as Game Session and Game Logic deliver automation events th
 - `scriptEventId` as an idempotency identifier following endpoint ownership rules.
 - `isDryRun` so live and dry-run/test traffic are always in separate idempotency namespaces.
 - `eventType` and versioning metadata such as `scriptPatchVersion`.
+- `eventSchemaVersion` for custom or service-specific events governed by the event registry.
+- `readSnapshotToken` when the canonical event-registry entry for that `eventType` requires an authoritative gameplay snapshot selector; it must be absent for events whose registry entry explicitly marks snapshot authority as `NONE`.
 - An envelope for the event payload, including any domain-specific fields.
 
 Event ingress is idempotent with respect to Trigger Identity and the resolved script handler. Repeated calls with the same Trigger Identity must not cause the DSL body to run twice. The Automation & Scripting Service implements this in accordance with the `scriptEventId` lifecycle and deduplication rules in [Scripting DSL Reference & Event Lifecycle](../../system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication).
@@ -50,6 +52,14 @@ Admission must also enforce pin consistency for `<tenantId, gameInstanceId>`:
 - If local pin state is stale beyond max age and cannot be refreshed, reject with `finalOutcome=pin_state_unavailable`.
 - If the request patch is `READY` but differs from the observed pinned patch for the instance, reject with `finalOutcome=version_unavailable` and a bounded mismatch reason rather than silently substituting a version.
 - Custom and service-specific events must additionally be validated against a canonical event registry so only authorized producer services can emit a given `eventType` and schema version.
+
+Canonical event-registry contract for ingress:
+
+- Each registry entry is keyed by `eventType` plus `eventSchemaVersion`.
+- The registry entry must define the owning producer service, allowed producer principal classes, payload schema/version, replay semantics, quota class, snapshot authority, consistency class, and whether `GLOBAL` bindings are legal.
+- For authoritative gameplay-affecting events, the registry entry must state that `readSnapshotToken` is required and must define the required scope encoded by that token.
+- For non-authoritative or synthetic events, the registry entry must explicitly mark `readSnapshotToken` forbidden so callers cannot imply stronger consistency than the event contract provides.
+- Registry rejection is an event-scope ingress failure and must use `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED` with a bounded `admissionReason` such as `unknown_event_type`, `schema_version_unsupported`, `producer_not_authorized`, `snapshot_token_required`, or `snapshot_token_forbidden`.
 
 Direct script upload and update APIs such as `UpdateScript` are limited to bootstrap/dev tooling and must not be used as a production runtime publish path.
 
@@ -110,6 +120,8 @@ During operator rollback pause (`PAUSED_FOR_ROLLBACK`), ingress must return an e
 - event-scope identity fields from the request, without inventing a synthetic `scriptId`
 
 These ingress response fields are event-scope only. A successful ingress admission means the request was accepted for handler resolution; it does not mean every resolved script or plugin handler later succeeded. Per-handler outcomes remain authoritative in `script_event_audit`.
+
+Event-scope admission outcomes are intentionally limited to ingress-time fences such as reload/rollback backpressure, version visibility, pin visibility, signer-policy visibility, and event-registry validation. Handler-scoped outcomes such as `quota_denied`, `script_disabled`, `plugin_disabled`, and `plugin_component_blocked` are recorded only after binding resolution in `script_event_audit`.
 
 For retry behavior:
 

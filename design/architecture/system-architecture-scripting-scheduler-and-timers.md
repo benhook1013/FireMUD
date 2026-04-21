@@ -62,6 +62,11 @@ All durable timer identity and scheduler checkpoints must be instance-aware even
   - walks forward from `lastTickId` to the current `tickId` using the heartbeat stream for that epoch; and
   - for each timer entry in the region index `automation:timer:{tenantRegionTag}`, determines which "every N ticks" boundaries were crossed during the gap. Before enqueueing any `onInterval` trigger, it first claims or inserts a durable trigger-instance row keyed by `(scheduleId, gameInstanceId, regionEpoch, dueTickId, triggerKind)` or an equivalent uniqueness projection.
 - Any missed `onInterval` triggers are then enqueued at most once before the leader resumes normal scheduling from the latest `(regionEpoch, tickId)`, capped by `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` per resume window. Candidates beyond this cap are intentionally truncated (coalesced or dropped) and surfaced via audit and metrics such as `automation_script_timer_catchup_truncated_total`.
+- Catch-up truncation must use one stable fairness algorithm when due candidates exceed `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME`:
+  - Build the candidate set ordered by `dueTickId ASC`, then `priorityTag` (`high`, `normal`, `background`), then stable schedule identity ASC.
+  - Admit catch-up firings in round-robin passes across distinct `scheduleDefinitionId` values so one noisy schedule cannot consume the entire resume window before other overdue schedules get one chance to fire.
+  - Within one schedule, admit at most one missed firing per pass, always the earliest remaining `dueTickId`.
+  - Once the resume cap is reached, remaining overdue firings are truncated rather than deferred into an unbounded backlog; emit audit/metrics that distinguish how many were coalesced or dropped.
 - If a per-script index is used, it is reconciled against the region index as needed; discrepancies are treated as projection bugs and corrected, not as new timers.
 - Because the authoritative schedule configuration lives in PostgreSQL and Redis holds only coordination state (timer indexes and checkpoints), leader changes do not reset cadences; they only introduce a bounded delay before the new leader catches up.
 
