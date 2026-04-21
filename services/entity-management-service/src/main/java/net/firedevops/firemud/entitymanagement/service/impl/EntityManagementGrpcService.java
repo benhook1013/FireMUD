@@ -6,6 +6,7 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationClaims;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -534,12 +535,13 @@ public class EntityManagementGrpcService
   public void queryInventory(
       QueryInventoryRequest request, StreamObserver<QueryInventoryResponse> responseObserver) {
     try {
-      requireGameplaySessionAttestation(
-          request.getSessionAttestation(),
-          request.getTenantId(),
-          request.getCharacterId(),
-          null,
-          null);
+      GameplaySessionAttestationClaims claims =
+          requireGameplaySessionAttestation(
+              request.getSessionAttestation(),
+              request.getTenantId(),
+              request.getCharacterId(),
+              null,
+              null);
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -643,12 +645,13 @@ public class EntityManagementGrpcService
       WearEquipmentItemRequest request,
       StreamObserver<WearEquipmentItemResponse> responseObserver) {
     try {
-      requireGameplaySessionAttestation(
-          request.getSessionAttestation(),
-          request.getTenantId(),
-          request.getCharacterId(),
-          null,
-          null);
+      GameplaySessionAttestationClaims claims =
+          requireGameplaySessionAttestation(
+              request.getSessionAttestation(),
+              request.getTenantId(),
+              request.getCharacterId(),
+              null,
+              null);
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -669,7 +672,8 @@ public class EntityManagementGrpcService
                         characterId,
                         itemId,
                         itemInstanceId,
-                        blankToNull(request.getEffectId()));
+                        blankToNull(request.getEffectId()),
+                        blankToNull(claims.sessionId()));
                 return WearEquipmentItemResponse.newBuilder()
                     .setEquipmentItem(toProto(dto))
                     .build();
@@ -724,12 +728,13 @@ public class EntityManagementGrpcService
   public void removeEquipment(
       RemoveEquipmentRequest request, StreamObserver<RemoveEquipmentResponse> responseObserver) {
     try {
-      requireGameplaySessionAttestation(
-          request.getSessionAttestation(),
-          request.getTenantId(),
-          request.getCharacterId(),
-          null,
-          null);
+      GameplaySessionAttestationClaims claims =
+          requireGameplaySessionAttestation(
+              request.getSessionAttestation(),
+              request.getTenantId(),
+              request.getCharacterId(),
+              null,
+              null);
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -744,7 +749,8 @@ public class EntityManagementGrpcService
                         tenantId,
                         characterId,
                         request.getSlot(),
-                        blankToNull(request.getEffectId()));
+                        blankToNull(request.getEffectId()),
+                        blankToNull(claims.sessionId()));
                 return RemoveEquipmentResponse.newBuilder().setEquipmentItem(toProto(dto)).build();
               },
               RemoveEquipmentResponse::parseFrom);
@@ -806,12 +812,13 @@ public class EntityManagementGrpcService
       ListContainerContentsRequest request,
       StreamObserver<ListContainerContentsResponse> responseObserver) {
     try {
-      requireGameplaySessionAttestation(
-          request.getSessionAttestation(),
-          request.getTenantId(),
-          request.getCharacterId(),
-          null,
-          null);
+      GameplaySessionAttestationClaims claims =
+          requireGameplaySessionAttestation(
+              request.getSessionAttestation(),
+              request.getTenantId(),
+              request.getCharacterId(),
+              null,
+              null);
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -887,12 +894,13 @@ public class EntityManagementGrpcService
       PutItemIntoContainerRequest request,
       StreamObserver<PutItemIntoContainerResponse> responseObserver) {
     try {
-      requireGameplaySessionAttestation(
-          request.getSessionAttestation(),
-          request.getTenantId(),
-          request.getCharacterId(),
-          null,
-          null);
+      GameplaySessionAttestationClaims claims =
+          requireGameplaySessionAttestation(
+              request.getSessionAttestation(),
+              request.getTenantId(),
+              request.getCharacterId(),
+              null,
+              null);
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -917,7 +925,8 @@ public class EntityManagementGrpcService
                         itemInstanceId,
                         blankToNull(request.getStackFamilyKey()),
                         request.getQuantity(),
-                        blankToNull(request.getEffectId()));
+                        blankToNull(request.getEffectId()),
+                        blankToNull(claims.sessionId()));
                 return PutItemIntoContainerResponse.newBuilder()
                     .setContainerItem(toProto(dto))
                     .build();
@@ -983,12 +992,13 @@ public class EntityManagementGrpcService
       TakeItemFromContainerRequest request,
       StreamObserver<TakeItemFromContainerResponse> responseObserver) {
     try {
-      requireGameplaySessionAttestation(
-          request.getSessionAttestation(),
-          request.getTenantId(),
-          request.getCharacterId(),
-          null,
-          null);
+      GameplaySessionAttestationClaims claims =
+          requireGameplaySessionAttestation(
+              request.getSessionAttestation(),
+              request.getTenantId(),
+              request.getCharacterId(),
+              null,
+              null);
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -1013,7 +1023,8 @@ public class EntityManagementGrpcService
                         itemInstanceId,
                         blankToNull(request.getStackFamilyKey()),
                         request.getQuantity(),
-                        blankToNull(request.getEffectId()));
+                        blankToNull(request.getEffectId()),
+                        blankToNull(claims.sessionId()));
                 return TakeItemFromContainerResponse.newBuilder()
                     .setInventoryItem(toProto(dto))
                     .build();
@@ -1165,12 +1176,13 @@ public class EntityManagementGrpcService
       PickupItemFromRoomRequest request,
       StreamObserver<PickupItemFromRoomResponse> responseObserver) {
     try {
-      requireGameplaySessionAttestation(
-          request.getSessionAttestation(),
-          request.getTenantId(),
-          request.getCharacterId(),
-          request.getGameInstanceId(),
-          request.getRoomInstanceId());
+      GameplaySessionAttestationClaims claims =
+          requireGameplaySessionAttestation(
+              request.getSessionAttestation(),
+              request.getTenantId(),
+              request.getCharacterId(),
+              request.getGameInstanceId(),
+              request.getRoomInstanceId());
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -1195,7 +1207,8 @@ public class EntityManagementGrpcService
                         request.getContainerInstanceId(),
                         blankToNull(request.getStackFamilyKey()),
                         quantity,
-                        blankToNull(request.getEffectId()));
+                        blankToNull(request.getEffectId()),
+                        blankToNull(claims.sessionId()));
                 return PickupItemFromRoomResponse.newBuilder()
                     .setInventoryItem(toProto(dto))
                     .build();
@@ -1260,12 +1273,13 @@ public class EntityManagementGrpcService
   public void dropItemToRoom(
       DropItemToRoomRequest request, StreamObserver<DropItemToRoomResponse> responseObserver) {
     try {
-      requireGameplaySessionAttestation(
-          request.getSessionAttestation(),
-          request.getTenantId(),
-          request.getCharacterId(),
-          request.getGameInstanceId(),
-          request.getRoomInstanceId());
+      GameplaySessionAttestationClaims claims =
+          requireGameplaySessionAttestation(
+              request.getSessionAttestation(),
+              request.getTenantId(),
+              request.getCharacterId(),
+              request.getGameInstanceId(),
+              request.getRoomInstanceId());
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -1290,7 +1304,8 @@ public class EntityManagementGrpcService
                         request.getContainerInstanceId(),
                         blankToNull(request.getStackFamilyKey()),
                         quantity,
-                        blankToNull(request.getEffectId()));
+                        blankToNull(request.getEffectId()),
+                        blankToNull(claims.sessionId()));
                 return DropItemToRoomResponse.newBuilder().setRoomGroundItem(toProto(dto)).build();
               },
               DropItemToRoomResponse::parseFrom);
@@ -1619,15 +1634,17 @@ public class EntityManagementGrpcService
         .build();
   }
 
-  private void requireGameplaySessionAttestation(
+  private GameplaySessionAttestationClaims requireGameplaySessionAttestation(
       String token,
       String tenantId,
       String characterId,
       String gameInstanceId,
       String roomInstanceId) {
+    GameplaySessionAttestationClaims claims = gameplaySessionAttestationService.requireValid(token);
     gameplaySessionAttestationService.requireGameplaySessionMatch(
         token, tenantId, null, null, characterId, gameInstanceId, roomInstanceId);
     requireInternalServiceCaller();
+    return claims;
   }
 
   private void requireGameplayOrProbeAttestation(

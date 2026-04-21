@@ -28,6 +28,27 @@ public interface ContainerService {
         null);
   }
 
+  default ContainerContentEntryDto putItemIntoContainer(
+      Long tenantId,
+      Long characterId,
+      Long containerInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      String stackFamilyKey,
+      int quantity,
+      String effectId) {
+    return putItemIntoContainer(
+        tenantId,
+        characterId,
+        containerInstanceId,
+        itemId,
+        itemInstanceId,
+        stackFamilyKey,
+        quantity,
+        effectId,
+        null);
+  }
+
   ContainerContentEntryDto putItemIntoContainer(
       Long tenantId,
       Long characterId,
@@ -36,7 +57,8 @@ public interface ContainerService {
       Long itemInstanceId,
       String stackFamilyKey,
       int quantity,
-      String effectId);
+      String effectId,
+      String sessionId);
 
   default InventoryEntryDto takeItemFromContainer(
       Long tenantId,
@@ -57,6 +79,27 @@ public interface ContainerService {
         null);
   }
 
+  default InventoryEntryDto takeItemFromContainer(
+      Long tenantId,
+      Long characterId,
+      Long containerInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      String stackFamilyKey,
+      int quantity,
+      String effectId) {
+    return takeItemFromContainer(
+        tenantId,
+        characterId,
+        containerInstanceId,
+        itemId,
+        itemInstanceId,
+        stackFamilyKey,
+        quantity,
+        effectId,
+        null);
+  }
+
   InventoryEntryDto takeItemFromContainer(
       Long tenantId,
       Long characterId,
@@ -65,5 +108,6 @@ public interface ContainerService {
       Long itemInstanceId,
       String stackFamilyKey,
       int quantity,
-      String effectId);
+      String effectId,
+      String sessionId);
 }

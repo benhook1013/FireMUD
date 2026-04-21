@@ -13,13 +13,28 @@ public interface EquipmentService {
     return wearItem(tenantId, characterId, itemId, itemInstanceId, null);
   }
 
+  default CharacterEquipmentEntryDto wearItem(
+      Long tenantId, Long characterId, Long itemId, Long itemInstanceId, String effectId) {
+    return wearItem(tenantId, characterId, itemId, itemInstanceId, effectId, null);
+  }
+
   CharacterEquipmentEntryDto wearItem(
-      Long tenantId, Long characterId, Long itemId, Long itemInstanceId, String effectId);
+      Long tenantId,
+      Long characterId,
+      Long itemId,
+      Long itemInstanceId,
+      String effectId,
+      String sessionId);
 
   default CharacterEquipmentEntryDto removeWornItem(Long tenantId, Long characterId, String slot) {
     return removeWornItem(tenantId, characterId, slot, null);
   }
 
+  default CharacterEquipmentEntryDto removeWornItem(
+      Long tenantId, Long characterId, String slot, String effectId) {
+    return removeWornItem(tenantId, characterId, slot, effectId, null);
+  }
+
   CharacterEquipmentEntryDto removeWornItem(
-      Long tenantId, Long characterId, String slot, String effectId);
+      Long tenantId, Long characterId, String slot, String effectId, String sessionId);
 }

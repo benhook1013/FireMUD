@@ -21,7 +21,7 @@ The current branch state is materially ahead of the original `06` plan:
 - the gameplay command layer has its first bounded unification pass through `ItemCommandHandler`;
 - the remaining work under `06` is no longer "start item interactions", but tightening the canonical holder/transfer contract, adding explicit authored stackability, and aligning audit/validation semantics.
 - successful inventory, room-ground, equipment, and container-holder transfers now persist canonical `item_transfer_audits` rows for both item-instance and stack-backed movement in the same local transaction boundary as the mutation.
-- replay-safe gameplay mutation requests now also thread durable `effectId` into those transfer-audit rows, so operator audit history can line up with the first live Entity Management replay guard instead of treating durability and item audit as separate tracks.
+- replay-safe gameplay mutation requests now also thread durable `effectId` plus attested gameplay `sessionId` into those transfer-audit rows, so operator audit history can line up with the first live Entity Management replay guard and the owning player session instead of treating durability and item audit as separate tracks.
 - the authored stackability/fungibility follow-up is now tracked explicitly in `06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md`.
 
 The most important remaining design work in this slice family is:
@@ -111,8 +111,7 @@ Current implementation note:
 
 - the live audit record is `item_transfer_audits`;
 - current callers populate verb, actor character, item/item-instance identity, quantity or stack-family delta, and source/destination holder context;
-- durable gameplay item/equipment/container mutations now populate `effectId` and use it as the explicit audit correlation key when present;
-- `sessionId` remains ready for later caller-owned propagation;
+- durable gameplay item/equipment/container mutations now populate both `effectId` and attested `sessionId`, and use `effectId` as the explicit audit correlation key when present;
 - the default deterministic correlation key is derived from verb, actor, item identity, quantity/family, and holder endpoints so repeated identical calls produce stable audit correlation data without pretending to offer broader replay semantics.
 
 ## 4. Game Design Service and Configurable Equipment Model

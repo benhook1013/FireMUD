@@ -27,7 +27,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 8. [02.18.9 Region Epoch, Fencing, and Runtime Ownership](./02.18.9-task-list-region-epoch-fencing-and-runtime-ownership-vertical-slice.md)
    Remaining: the durable owner row, pause/resume epoch bumps, stale-fence batch rejection, stale post-drain effect requeue, last-committed-batch pointer, and bounded ownership-status query are now live at the current game-instance boundary; the next gap is carrying that model into true region ownership and later downstream/domain-specific effect families.
 9. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
-   Remaining: the first ledger-side `effectKey`, deterministic `effectId`, movement-backed replay/no-op seam, Entity Management item mutation response replay guard, transfer-audit `effectId` correlation, and first apply/replay metrics are now live; the next gap is later domain guard consumers.
+   Remaining: the first ledger-side `effectKey`, deterministic `effectId`, movement-backed replay/no-op seam, Entity Management item mutation response replay guard, transfer-audit `effectId` plus session correlation, and first apply/replay metrics are now live; the next gap is later domain guard consumers.
 10. [02.18.11 Migrate Live Gameplay Commands Onto the Durable Execution Path](./02.18.11-task-list-migrate-live-gameplay-commands-onto-durable-execution-path-vertical-slice.md)
    Remaining: movement plus `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE` are now migrated durable command families with the first downstream Entity Management replay guard; the next gap is any later state-changing command family and its owning service guard.
 
@@ -50,7 +50,7 @@ These are already partly real in code and should continue after the immediate ru
 7. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
    Remaining: grow the first account-scoped friend presence seam, now consumed by REST, gRPC, and gameplay `FRIENDS`, into later social consumers and later privacy refinement without reopening `WHO`.
 8. [06 Task List Inventory, Containers, Equipment](./06-task-list-inventory-containers-equipment-vertical-slice.md)
-   Remaining: holder-transfer safety and canonical transfer-audit persistence are now live; the main remaining work is the `06.3` follow-through and later authored stackability.
+   Remaining: holder-transfer safety plus canonical transfer-audit persistence with attested session/effect correlation are now live; the main remaining work is the `06.3` follow-through and later authored stackability.
 9. [06.3.1 Stable Item Instance Visible Ref Allocation](./06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
 10. [06.3.2 Authored Stackability and Fungibility](./06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)

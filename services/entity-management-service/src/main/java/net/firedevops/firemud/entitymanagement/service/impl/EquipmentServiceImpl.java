@@ -79,7 +79,12 @@ public class EquipmentServiceImpl implements EquipmentService {
   @Transactional
   @Timed(value = "equipment.wear")
   public CharacterEquipmentEntryDto wearItem(
-      Long tenantId, Long characterId, Long itemId, Long itemInstanceId, String effectId) {
+      Long tenantId,
+      Long characterId,
+      Long itemId,
+      Long itemInstanceId,
+      String effectId,
+      String sessionId) {
     Character character = requireCharacter(tenantId, characterId);
     Item item = requireWearableItem(tenantId, itemId);
     String slot = normalizeSlot(requireWearableSlot(item));
@@ -94,7 +99,7 @@ public class EquipmentServiceImpl implements EquipmentService {
         itemTransferSupport.inventory(tenantId, characterId);
     ItemTransferSupport.Destination destination = itemTransferSupport.equipment(character, slot);
     ItemTransferSupport.TransferAuditContext auditContext =
-        itemTransferSupport.audit("WEAR", characterId, effectId);
+        itemTransferSupport.audit("WEAR", characterId, sessionId, effectId);
     itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
     ItemInstance saved = itemInstanceRepository.save(instance);
     itemTransferAuditWriter.recordInstanceTransfer(
@@ -107,7 +112,7 @@ public class EquipmentServiceImpl implements EquipmentService {
   @Transactional
   @Timed(value = "equipment.remove")
   public CharacterEquipmentEntryDto removeWornItem(
-      Long tenantId, Long characterId, String slot, String effectId) {
+      Long tenantId, Long characterId, String slot, String effectId, String sessionId) {
     String normalizedSlot = normalizeSlot(requireText(slot, "slot"));
     Character character = requireCharacter(tenantId, characterId);
     ItemInstance instance =
@@ -119,7 +124,7 @@ public class EquipmentServiceImpl implements EquipmentService {
         itemTransferSupport.equipment(tenantId, characterId, normalizedSlot);
     ItemTransferSupport.Destination destination = itemTransferSupport.inventory(character);
     ItemTransferSupport.TransferAuditContext auditContext =
-        itemTransferSupport.audit("REMOVE", characterId, effectId);
+        itemTransferSupport.audit("REMOVE", characterId, sessionId, effectId);
     itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
     ItemInstance saved = itemInstanceRepository.save(instance);
     itemTransferAuditWriter.recordInstanceTransfer(
