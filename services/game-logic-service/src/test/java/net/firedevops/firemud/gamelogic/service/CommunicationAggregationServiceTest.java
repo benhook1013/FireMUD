@@ -181,6 +181,39 @@ class CommunicationAggregationServiceTest {
   }
 
   @Test
+  void forwardsEffectIdToSocialGroupsRequest() {
+    ListRoomEntitiesResponse roomEntities =
+        ListRoomEntitiesResponse.newBuilder()
+            .addEntities(
+                RoomEntity.newBuilder()
+                    .setEntityId("player-0")
+                    .setDisplayName("Emberline")
+                    .setEntityType(EntityType.PLAYER)
+                    .build())
+            .build();
+    when(entityStub.listRoomEntities(any())).thenReturn(roomEntities);
+    when(socialStub.sendMessage(any()))
+        .thenReturn(SendMessageResponse.newBuilder().setSuccess(true).build());
+
+    SendCommunicationResponse resp =
+        service.send(
+            SendCommunicationRequest.newBuilder()
+                .setTenantId("tenant-1")
+                .setSessionId("sess-1")
+                .setCharacterId("player-0")
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setType(CommunicationType.SAY)
+                .setText("Hello travelers")
+                .setEffectId("fx-comm-9")
+                .build());
+
+    assertThat(resp.getSuccess()).isTrue();
+    ArgumentCaptor<SendMessageRequest> captor = ArgumentCaptor.forClass(SendMessageRequest.class);
+    verify(socialStub).sendMessage(captor.capture());
+    assertThat(captor.getValue().getEffectId()).isEqualTo("fx-comm-9");
+  }
+
+  @Test
   void whisperTargetsSingleRoomPlayer() {
     ListRoomEntitiesResponse roomEntities =
         ListRoomEntitiesResponse.newBuilder()
