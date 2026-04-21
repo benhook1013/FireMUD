@@ -14,9 +14,19 @@ final class ContainerHolderPolicySupport {
 
   ContainerInstance requireAccessibleContainer(
       Long tenantId, Long characterId, Long containerInstanceId) {
+    return requireAccessibleContainer(tenantId, characterId, containerInstanceId, null, null);
+  }
+
+  ContainerInstance requireAccessibleContainer(
+      Long tenantId,
+      Long characterId,
+      Long containerInstanceId,
+      String gameInstanceId,
+      String roomInstanceId) {
     ContainerInstance containerInstance =
         containerInstanceRepository
-            .findAccessibleByIdAndTenantIdAndCharacterId(containerInstanceId, tenantId, characterId)
+            .findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+                containerInstanceId, tenantId, characterId, gameInstanceId, roomInstanceId)
             .orElseThrow(() -> new IllegalArgumentException("Container instance not found"));
     requireContainerHolder(containerInstance);
     return containerInstance;

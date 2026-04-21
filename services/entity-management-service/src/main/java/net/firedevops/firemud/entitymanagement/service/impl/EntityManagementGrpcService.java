@@ -839,7 +839,12 @@ public class EntityManagementGrpcService
       long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
       var items =
           containerService.listContainerContents(
-              tenantId, characterId, containerInstanceId, Pageable.unpaged());
+              tenantId,
+              characterId,
+              containerInstanceId,
+              blankToNull(claims.gameInstanceId()),
+              blankToNull(claims.roomInstanceId()),
+              Pageable.unpaged());
       ListContainerContentsResponse response =
           ListContainerContentsResponse.newBuilder()
               .addAllItems(items.stream().map(this::toProto).toList())
@@ -935,6 +940,8 @@ public class EntityManagementGrpcService
                         tenantId,
                         characterId,
                         containerInstanceId,
+                        blankToNull(claims.gameInstanceId()),
+                        blankToNull(claims.roomInstanceId()),
                         itemId,
                         itemInstanceId,
                         blankToNull(request.getStackFamilyKey()),
@@ -1033,6 +1040,8 @@ public class EntityManagementGrpcService
                         tenantId,
                         characterId,
                         containerInstanceId,
+                        blankToNull(claims.gameInstanceId()),
+                        blankToNull(claims.roomInstanceId()),
                         itemId,
                         itemInstanceId,
                         blankToNull(request.getStackFamilyKey()),

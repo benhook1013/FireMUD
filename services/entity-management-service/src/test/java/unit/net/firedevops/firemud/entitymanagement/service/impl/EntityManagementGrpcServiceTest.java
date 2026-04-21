@@ -334,7 +334,8 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
-    Mockito.when(containerService.listContainerContents(1L, 7L, 10L, Pageable.unpaged()))
+    Mockito.when(
+            containerService.listContainerContents(1L, 7L, 10L, "GI-1", "R-1", Pageable.unpaged()))
         .thenReturn(
             new org.springframework.data.domain.PageImpl<>(
                 java.util.List.of(
@@ -443,7 +444,9 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
-    Mockito.when(containerService.putItemIntoContainer(1L, 7L, 10L, 11L, null, null, 2, null, "41"))
+    Mockito.when(
+            containerService.putItemIntoContainer(
+                1L, 7L, 10L, "GI-1", "R-1", 11L, null, null, 2, null, "41"))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto(
                 1L, 7L, 10L, 11L, "Torch", "A small torch", 2, null, null));
@@ -499,7 +502,9 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
-    Mockito.when(containerService.putItemIntoContainer(1L, 7L, 10L, 11L, 44L, null, 1, null, "41"))
+    Mockito.when(
+            containerService.putItemIntoContainer(
+                1L, 7L, 10L, "GI-1", "R-1", 11L, 44L, null, 1, null, "41"))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto(
                 1L, 7L, 10L, 11L, "Torch", "A small torch", 1, 44L, "torch44"));
@@ -557,7 +562,8 @@ class EntityManagementGrpcServiceTest {
         .thenReturn(counter);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     Mockito.when(
-            containerService.takeItemFromContainer(1L, 7L, 10L, 11L, null, null, 1, null, "41"))
+            containerService.takeItemFromContainer(
+                1L, 7L, 10L, "GI-1", "R-1", 11L, null, null, 1, null, "41"))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
                 1L, 7L, 11L, "Torch", "A small torch", 1, null, null, null));
@@ -610,7 +616,9 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
-    Mockito.when(containerService.takeItemFromContainer(1L, 7L, 10L, 11L, 44L, null, 1, null, "41"))
+    Mockito.when(
+            containerService.takeItemFromContainer(
+                1L, 7L, 10L, "GI-1", "R-1", 11L, 44L, null, 1, null, "41"))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
                 1L, 7L, 11L, "Torch", "A small torch", 1, 44L, null, "torch44"));

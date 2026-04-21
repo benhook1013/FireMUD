@@ -128,7 +128,7 @@ class HelpCommandHandlerTest {
             .outputs()
             .get(0)
             .text()
-            .contains("Inspect a carried container's contents."));
+            .contains("Inspect a carried or nearby room-ground container's contents."));
     assertTrue(
         containerResult
             .outputs()

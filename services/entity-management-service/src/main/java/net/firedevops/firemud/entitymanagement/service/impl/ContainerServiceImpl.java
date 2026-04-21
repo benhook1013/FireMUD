@@ -1,5 +1,6 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,11 +26,24 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ContainerServiceImpl implements ContainerService {
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring repositories are framework-managed singletons and only stored")
   private final ContainerInstanceRepository containerInstanceRepository;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring repositories are framework-managed singletons and only stored")
   private final ItemInstanceRepository itemInstanceRepository;
+
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring repositories are framework-managed singletons and only stored")
   private final ItemStackRepository itemStackRepository;
+
   private final ItemTransferSupport itemTransferSupport;
   private final ItemTransferAuditWriter itemTransferAuditWriter;
   private final ContainerHolderSyncSupport containerHolderSyncSupport;
@@ -108,10 +122,23 @@ public class ContainerServiceImpl implements ContainerService {
   @Timed(value = "container.list")
   public Page<ContainerContentEntryDto> listContainerContents(
       Long tenantId, Long characterId, Long containerInstanceId, Pageable pageable) {
+    return listContainerContents(tenantId, characterId, containerInstanceId, null, null, pageable);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "container.list")
+  public Page<ContainerContentEntryDto> listContainerContents(
+      Long tenantId,
+      Long characterId,
+      Long containerInstanceId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Pageable pageable) {
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
         containerHolderPolicySupport.requireAccessibleContainer(
-            tenantId, character.getId(), containerInstanceId);
+            tenantId, character.getId(), containerInstanceId, gameInstanceId, roomInstanceId);
     List<ContainerContentEntryDto> entries = new ArrayList<>();
     entries.addAll(
         itemInstanceRepository
@@ -141,11 +168,40 @@ public class ContainerServiceImpl implements ContainerService {
       int quantity,
       String effectId,
       String sessionId) {
+    return putItemIntoContainer(
+        tenantId,
+        characterId,
+        containerInstanceId,
+        null,
+        null,
+        itemId,
+        itemInstanceId,
+        stackFamilyKey,
+        quantity,
+        effectId,
+        sessionId);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "container.put")
+  public ContainerContentEntryDto putItemIntoContainer(
+      Long tenantId,
+      Long characterId,
+      Long containerInstanceId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      String stackFamilyKey,
+      int quantity,
+      String effectId,
+      String sessionId) {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
         containerHolderPolicySupport.requireAccessibleContainer(
-            tenantId, character.getId(), containerInstanceId);
+            tenantId, character.getId(), containerInstanceId, gameInstanceId, roomInstanceId);
     Item item = requireItem(tenantId, itemId);
     containerHolderPolicySupport.requireCanContainItem(containerInstance, item);
     if (stackableItemSupport.usesStackStorage(item)) {
@@ -195,11 +251,40 @@ public class ContainerServiceImpl implements ContainerService {
       int quantity,
       String effectId,
       String sessionId) {
+    return takeItemFromContainer(
+        tenantId,
+        characterId,
+        containerInstanceId,
+        null,
+        null,
+        itemId,
+        itemInstanceId,
+        stackFamilyKey,
+        quantity,
+        effectId,
+        sessionId);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "container.take")
+  public InventoryEntryDto takeItemFromContainer(
+      Long tenantId,
+      Long characterId,
+      Long containerInstanceId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      String stackFamilyKey,
+      int quantity,
+      String effectId,
+      String sessionId) {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
         containerHolderPolicySupport.requireAccessibleContainer(
-            tenantId, character.getId(), containerInstanceId);
+            tenantId, character.getId(), containerInstanceId, gameInstanceId, roomInstanceId);
     Item item = requireItem(tenantId, itemId);
     if (stackableItemSupport.usesStackStorage(item)) {
       String selectedStackFamilyKey =

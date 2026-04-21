@@ -57,7 +57,8 @@ class ContainerServiceImplTest {
     contained.setContainerInstance(containerInstance);
 
     when(characterRepo.findByIdAndTenantId(7L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 7L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 7L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdOrderByIdAsc(
             1L, 500L, Pageable.unpaged()))
@@ -111,7 +112,8 @@ class ContainerServiceImplTest {
     stack.setQuantity(4);
 
     when(characterRepo.findByIdAndTenantId(7L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 7L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 7L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdOrderByIdAsc(
             1L, 500L, Pageable.unpaged()))
@@ -160,7 +162,8 @@ class ContainerServiceImplTest {
     ItemInstance second = itemInstance(42L, 1L, character, item);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 1L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
     when(itemInstanceRepo
@@ -221,7 +224,8 @@ class ContainerServiceImplTest {
     inventoryStack.setQuantity(5);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 1L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(arrows));
     when(itemStackRepo
@@ -280,7 +284,8 @@ class ContainerServiceImplTest {
     second.setContainerInstance(containerInstance);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 1L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
     when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(1L, 500L, 3L))
@@ -323,7 +328,8 @@ class ContainerServiceImplTest {
     Item nestedContainer = item(3L, 1L, "Pouch", true, false);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 1L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(nestedContainer));
 
@@ -380,7 +386,8 @@ class ContainerServiceImplTest {
     second.setQuantity(4);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 1L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(arrows));
     when(itemStackRepo

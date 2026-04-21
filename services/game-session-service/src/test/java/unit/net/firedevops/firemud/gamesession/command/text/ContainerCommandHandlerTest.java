@@ -8,8 +8,10 @@ import java.util.List;
 import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
@@ -351,5 +353,115 @@ class ContainerCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs().get(0).text()).isEqualTo("You take Arrow x3 from Old Chest.");
+  }
+
+  @Test
+  void containerViewResolvesRoomGroundContainer() {
+    when(gameLogicClient.queryInventory(context))
+        .thenReturn(QueryInventoryResponse.newBuilder().build());
+    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+        .thenReturn(
+            ListRoomGroundInventoryResponse.newBuilder()
+                .addItems(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("10")
+                        .setItemName("Dropped Chest")
+                        .setVisibleRef("chest#1")
+                        .setContainerInstanceId("container-10")
+                        .build())
+                .build());
+    when(gameLogicClient.listContainerContents(context, "container-10"))
+        .thenReturn(ListContainerContentsResponse.newBuilder().build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            context,
+            new TextCommand(TextCommandType.CONTAINER, List.of("chest#1"), "CONTAINER chest#1"));
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
+    assertThat(view.title()).isEqualTo("Container: Dropped Chest [chest#1]");
+    assertThat(view.lines()).containsExactly("It is empty.");
+  }
+
+  @Test
+  void putIntoRoomGroundContainerUsesRoomResolution() {
+    when(gameLogicClient.queryInventory(context))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("99")
+                        .setItemName("Torch")
+                        .setVisibleRef("torch3")
+                        .build())
+                .build());
+    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+        .thenReturn(
+            ListRoomGroundInventoryResponse.newBuilder()
+                .addItems(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("10")
+                        .setItemName("Dropped Chest")
+                        .setVisibleRef("chest#1")
+                        .setContainerInstanceId("container-10")
+                        .build())
+                .build());
+    when(gameLogicClient.putItemIntoContainer(context, "container-10", "99", null, null, 1))
+        .thenReturn(PutItemIntoContainerResponse.newBuilder().build());
+    when(gameLogicClient.listContainerContents(context, "container-10"))
+        .thenReturn(ListContainerContentsResponse.newBuilder().build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            context,
+            new TextCommand(
+                TextCommandType.PUT,
+                List.of("torch", "INTO", "chest#1"),
+                "PUT torch INTO chest#1"));
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs().get(0).text()).isEqualTo("You put Torch into Dropped Chest.");
+  }
+
+  @Test
+  void takeFromRoomGroundContainerUsesRoomResolution() {
+    when(gameLogicClient.queryInventory(context))
+        .thenReturn(QueryInventoryResponse.newBuilder().build());
+    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+        .thenReturn(
+            ListRoomGroundInventoryResponse.newBuilder()
+                .addItems(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("10")
+                        .setItemName("Dropped Chest")
+                        .setVisibleRef("chest#1")
+                        .setContainerInstanceId("container-10")
+                        .build())
+                .build());
+    when(gameLogicClient.listContainerContents(context, "container-10"))
+        .thenReturn(
+            ListContainerContentsResponse.newBuilder()
+                .addItems(
+                    ContainerItem.newBuilder()
+                        .setContainerInstanceId("container-10")
+                        .setItemId("99")
+                        .setItemName("Torch")
+                        .build())
+                .build(),
+            ListContainerContentsResponse.newBuilder().build());
+    when(gameLogicClient.takeItemFromContainer(context, "container-10", "99", null, null, 1))
+        .thenReturn(TakeItemFromContainerResponse.newBuilder().build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            context,
+            new TextCommand(
+                TextCommandType.TAKE,
+                List.of("torch", "FROM", "chest#1"),
+                "TAKE torch FROM chest#1"));
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs().get(0).text()).isEqualTo("You take Torch from Dropped Chest.");
   }
 }

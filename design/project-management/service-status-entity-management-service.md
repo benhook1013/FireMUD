@@ -6,6 +6,7 @@
 - The data-driven `LOOK` slice is wired to entity visibility data through the service’s gRPC surface.
 - Runtime item/equipment/container mutation RPCs now carry session/effect context, use the current replay guard for duplicate effect delivery, and persist `item_transfer_audits` for successful holder movement.
 - Item instances have stable visible refs for management views and exact targeting, and explicitly stackable item definitions merge through holder-local stack records instead of collapsing ordinary item-instance identity.
+- Container instances now carry canonical holder/location state across carried, equipped, and room-ground transitions, and container access validation follows the current reachable holder/room location rather than assuming carried-only access.
 - Equipment runtime validation now supports game-authored slot definitions, item slot-group compatibility, and character body-layout slot membership while retaining a bootstrap fallback for versions with no authored equipment schema.
 - Cross-game character listing and crafting-oriented domain structures exist in the current codebase.
 

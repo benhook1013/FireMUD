@@ -9,7 +9,7 @@
   - `PLAY`
   - gameplay commands after admitted gameplay scope
 - Stage-aware `LOGIN_REQUIRED` / `PLAY_REQUIRED` guidance is implemented for wrong-stage input instead of older backend-flavored errors.
-- `LOOK`, `SAY`, `WHISPER`, `TELL`, `INVENTORY`, `INV HERE`, `GET`, `DROP`, `CONTAINER`, `PUT`, `TAKE`, `EQUIPMENT`, `WEAR`, and `REMOVE` are implemented through the current gameplay slices.
+- `LOOK`, `SAY`, `WHISPER`, `TELL`, `INVENTORY`, `INV HERE`, `GET`, `DROP`, `CONTAINER`, `PUT`, `TAKE`, `EQUIPMENT`, `WEAR`, and `REMOVE` are implemented through the current gameplay slices, including nearby room-ground container inspection and transfer.
 - Item command invocation/failure metrics are emitted through `gamesession.command.item.*` with command type and error tags.
 - Redis-backed session context, command queuing, tick-oriented coordination, feature flags, gRPC surfaces, and WebSocket handling exist in the service.
 - Reconnection/session-takeover concepts are partially implemented at the current slice level.
