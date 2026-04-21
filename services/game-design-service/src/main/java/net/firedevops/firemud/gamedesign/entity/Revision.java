@@ -18,11 +18,20 @@ public class Revision {
   private String tenantId;
 
   @Column(nullable = false)
+  private Long versionId;
+
+  @Column(nullable = false)
   private Long authorAccountId;
 
   @JdbcTypeCode(SqlTypes.JSON)
   @Column(nullable = false, columnDefinition = "jsonb")
   private String data;
+
+  @Column(nullable = false, length = 64)
+  private String revisionKind;
+
+  @Column(length = 128)
+  private String logicalRevisionId;
 
   @Column(nullable = false)
   private LocalDateTime createdAt = LocalDateTime.now();

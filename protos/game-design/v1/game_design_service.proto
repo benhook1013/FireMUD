@@ -3,6 +3,7 @@ syntax = "proto3";
 package gamedesign.v1;
 
 import "shared/v1/errors.proto";
+import "world-management/v1/world_management_service.proto";
 
 option java_package = "net.firedevops.firemud.gamedesign.v1";
 option java_multiple_files = true;
@@ -55,11 +56,41 @@ message SaveRevisionRequest {
   string data = 1;
   string tenant_id = 2;
   int64 author_account_id = 3;
+  int64 version_id = 4;
+  string revision_kind = 5;
+  WorldDesignMutationRevision world_design_mutation = 6;
 }
 
 message SaveRevisionResponse {
   int64 revision_id = 1;
   shared.v1.ErrorDetail error = 2;
+  AppliedWorldDesignMutation applied_world_design_mutation = 3;
+}
+
+message WorldDesignMutationRevision {
+  string logical_revision_id = 1;
+  string commit_id = 2;
+  world_management.v1.WorldDesignMutationOperation operation = 3;
+  world_management.v1.WorldDesignAggregateType aggregate_type = 4;
+  string aggregate_id = 5;
+  int64 expected_draft_revision_epoch = 6;
+  string scope_type = 7;
+  string scope_id = 8;
+  int64 expected_draft_scope_revision_epoch = 9;
+  oneof payload {
+    world_management.v1.RegionDesignMutation region = 20;
+    world_management.v1.ZoneDesignMutation zone = 21;
+    world_management.v1.RoomDesignMutation room = 22;
+    world_management.v1.RoomExitDesignMutation room_exit = 23;
+    world_management.v1.GenerationRuleDesignMutation generation_rule = 24;
+  }
+}
+
+message AppliedWorldDesignMutation {
+  world_management.v1.WorldDesignMutationResult result = 1;
+  string aggregate_id = 2;
+  int64 draft_revision_epoch = 3;
+  int64 draft_scope_revision_epoch = 4;
 }
 
 message PublishVersionRequest {

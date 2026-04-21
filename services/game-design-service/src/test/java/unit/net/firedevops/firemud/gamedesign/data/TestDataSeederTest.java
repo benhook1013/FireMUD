@@ -4,7 +4,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import net.firedevops.firemud.gamedesign.entity.Game;
+import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
@@ -41,6 +43,11 @@ class TestDataSeederTest {
     when(templateRepository.count()).thenReturn(0L);
     when(revisionRepository.count()).thenReturn(0L);
     when(versionRepository.count()).thenReturn(0L);
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("1");
+    when(versionRepository.findAll()).thenReturn(List.of(version));
+    when(versionRepository.save(any(Version.class))).thenReturn(version);
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 

@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
+import net.firedevops.firemud.gamedesign.v1.AppliedWorldDesignMutation;
 import net.firedevops.firemud.gamedesign.v1.ApproveTemplateRemapSetRequest;
 import net.firedevops.firemud.gamedesign.v1.ApproveTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.ArtifactState;
@@ -76,6 +77,8 @@ import net.firedevops.firemud.gamedesign.v1.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
@@ -114,9 +117,33 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       AdminRoleGuard.requireAdminRole();
       RevisionDto dto =
           new RevisionDto(
-              null, request.getTenantId(), request.getAuthorAccountId(), request.getData(), null);
+              null,
+              request.getTenantId(),
+              request.getVersionId(),
+              request.getAuthorAccountId(),
+              request.getData(),
+              request.getRevisionKind().isBlank() ? "GENERIC" : request.getRevisionKind(),
+              request.hasWorldDesignMutation()
+                  ? request.getWorldDesignMutation().getLogicalRevisionId()
+                  : null,
+              request.hasWorldDesignMutation() ? toDto(request.getWorldDesignMutation()) : null,
+              null,
+              null);
       RevisionDto saved = revisionService.saveRevision(dto);
       builder.setRevisionId(saved.id());
+      if (saved.appliedWorldDesignMutation() != null) {
+        builder.setAppliedWorldDesignMutation(
+            AppliedWorldDesignMutation.newBuilder()
+                .setResult(
+                    toProtoWorldDesignMutationResult(saved.appliedWorldDesignMutation().result()))
+                .setAggregateId(saved.appliedWorldDesignMutation().aggregateId())
+                .setDraftRevisionEpoch(saved.appliedWorldDesignMutation().draftRevisionEpoch())
+                .setDraftScopeRevisionEpoch(
+                    saved.appliedWorldDesignMutation().draftScopeRevisionEpoch() == null
+                        ? 0L
+                        : saved.appliedWorldDesignMutation().draftScopeRevisionEpoch())
+                .build());
+      }
     } catch (AdminAuthorizationException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -124,7 +151,11 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
-              meterRegistry, logger, "SaveRevision", "INVALID_ARGUMENT", ex.getMessage()));
+              meterRegistry,
+              logger,
+              "SaveRevision",
+              saveRevisionErrorCode(ex.getMessage()),
+              ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "SaveRevision", ex));
     }
@@ -1158,6 +1189,64 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     };
   }
 
+  private net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto toDto(
+      WorldDesignMutationRevision request) {
+    return new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto(
+        request.getLogicalRevisionId(),
+        request.getCommitId(),
+        request.getOperation().name(),
+        request.getAggregateType().name(),
+        request.getAggregateId(),
+        request.getExpectedDraftRevisionEpoch(),
+        request.getScopeType(),
+        request.getScopeId(),
+        request.getExpectedDraftScopeRevisionEpoch(),
+        request.hasRegion()
+            ? new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                .RegionMutationDto(
+                request.getRegion().getName(),
+                request.getRegion().getWeather(),
+                request.getRegion().getShardId(),
+                request.getRegion().getGenerationSeed(),
+                request.getRegion().getGeneratorType(),
+                request.getRegion().getGeneratorParams(),
+                request.getRegion().getSpacingMultiplier())
+            : null,
+        request.hasZone()
+            ? new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                .ZoneMutationDto(request.getZone().getName(), request.getZone().getRegionId())
+            : null,
+        request.hasRoom()
+            ? new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                .RoomMutationDto(
+                request.getRoom().getName(),
+                request.getRoom().getDescription(),
+                request.getRoom().getZoneId(),
+                request.getRoom().getNameLocalizedVariantsJson(),
+                request.getRoom().getDescriptionLocalizedVariantsJson())
+            : null,
+        request.hasRoomExit()
+            ? new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                .RoomExitMutationDto(
+                request.getRoomExit().getFromRoomId(),
+                request.getRoomExit().getToRoomId(),
+                request.getRoomExit().getDirection(),
+                request.getRoomExit().getCost())
+            : null,
+        request.hasGenerationRule()
+            ? new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                .GenerationRuleMutationDto(
+                request.getGenerationRule().getName(), request.getGenerationRule().getValue())
+            : null);
+  }
+
+  private WorldDesignMutationResult toProtoWorldDesignMutationResult(String result) {
+    if (result == null || result.isBlank()) {
+      return WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_UNSPECIFIED;
+    }
+    return WorldDesignMutationResult.valueOf(result);
+  }
+
   private String launchDescriptorErrorCode(String message, boolean allowSchemaUnsupported) {
     if (message == null || message.isBlank()) {
       return "INVALID_ARGUMENT";
@@ -1189,6 +1278,25 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     }
     if (message.startsWith("NOT_FOUND:")) {
       return "NOT_FOUND";
+    }
+    return "INVALID_ARGUMENT";
+  }
+
+  private String saveRevisionErrorCode(String message) {
+    if (message == null || message.isBlank()) {
+      return "INVALID_ARGUMENT";
+    }
+    for (String prefix :
+        List.of(
+            "INVALID_ARGUMENT",
+            "INVALID_VERSION_STATE",
+            "DRAFT_WRITE_CONFLICT",
+            "UNRESOLVED_REFERENCE",
+            "OUT_OF_SYNC",
+            "UNSUPPORTED_SCOPE")) {
+      if (message.startsWith(prefix)) {
+        return prefix;
+      }
     }
     return "INVALID_ARGUMENT";
   }

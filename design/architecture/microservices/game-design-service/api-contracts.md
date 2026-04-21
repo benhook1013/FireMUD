@@ -12,7 +12,7 @@ The release-attestation, launch-resolution, version-state, settings, and asset-p
 
 ## gRPC APIs
 
-- `SaveRevision` – persists a new or updated design asset.
+- `SaveRevision` – persists a version-scoped design revision and can optionally apply a typed World Management design mutation in the same control-plane path.
 - `PublishVersion` – freezes a set of revisions and notifies downstream services.
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
 - `UploadPluginBundle` – stores a signed plugin bundle, verifies archive safety and signatures, extracts indexed manifest metadata, and records the pre-publication design-time status.
@@ -53,7 +53,7 @@ Detailed request and response schemas are defined in the [OpenAPI specification]
 ### gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_design_service.proto`](../../../../protos/game-design/v1/game_design_service.proto).
-- `SaveRevision(SaveRevisionRequest) returns (SaveRevisionResponse)` – persists a design change.
+- `SaveRevision(SaveRevisionRequest) returns (SaveRevisionResponse)` – persists a version-scoped design change and can return the typed result of an applied world-design mutation when the request carries `worldDesignMutation`.
 - `PublishVersion(PublishVersionRequest) returns (PublishVersionResponse)` – publishes a frozen version.
 - `PublishScriptPatchVersion(PublishScriptPatchVersionRequest) returns (PublishScriptPatchVersionResponse)` – publishes a script-only patch version.
 - `ListVersions(ListVersionsRequest) returns (ListVersionsResponse)` – lists available versions.

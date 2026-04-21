@@ -8,10 +8,12 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.gamedesign.dto.AppliedWorldDesignMutationDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
+import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
@@ -40,8 +42,14 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
+import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
+import net.firedevops.firemud.gamedesign.v1.SaveRevisionResponse;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsResponse;
+import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
@@ -68,6 +76,55 @@ class GameDesignGrpcServiceTest {
           versionAssetArtifactService,
           settingsAuthorityService,
           new SimpleMeterRegistry());
+
+  @Test
+  void saveRevisionReturnsAppliedWorldMutation() {
+    Mockito.when(revisionService.saveRevision(Mockito.any()))
+        .thenReturn(
+            new RevisionDto(
+                21L,
+                "tenant-1",
+                7L,
+                9L,
+                "{\"kind\":\"world\"}",
+                "WORLD_DESIGN_MUTATION",
+                "rev-1",
+                null,
+                new AppliedWorldDesignMutationDto(
+                    "WORLD_DESIGN_MUTATION_RESULT_APPLIED", "44", 2L, 5L),
+                LocalDateTime.parse("2026-04-22T09:00:00")));
+
+    AtomicReference<SaveRevisionResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.saveRevision(
+          SaveRevisionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .setAuthorAccountId(9L)
+              .setRevisionKind("WORLD_DESIGN_MUTATION")
+              .setData("{\"kind\":\"world\"}")
+              .setWorldDesignMutation(
+                  net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision.newBuilder()
+                      .setLogicalRevisionId("rev-1")
+                      .setCommitId("commit-1")
+                      .setOperation(
+                          WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
+                      .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+                      .setAggregateId("44")
+                      .setExpectedDraftRevisionEpoch(1L)
+                      .setRegion(RegionDesignMutation.newBuilder().setName("Region A").build())
+                      .build())
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals(21L, ref.get().getRevisionId());
+    assertEquals(
+        WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_APPLIED,
+        ref.get().getAppliedWorldDesignMutation().getResult());
+    assertEquals("44", ref.get().getAppliedWorldDesignMutation().getAggregateId());
+  }
 
   @Test
   void getPublishedReleaseBundleReturnsCanonicalAttestation() {
@@ -524,8 +581,7 @@ class GameDesignGrpcServiceTest {
     assertEquals("wf-1", ref.get().getArtifactState().getLastWorkflowId());
   }
 
-  private static StreamObserver<GetPublishedReleaseBundleResponse> observerFor(
-      AtomicReference<GetPublishedReleaseBundleResponse> ref) {
+  private static <T> StreamObserver<T> observerFor(AtomicReference<T> ref) {
     return new GenericObserver<>(ref);
   }
 
