@@ -24,6 +24,7 @@ The current branch state is materially ahead of the original `06` plan:
 - replay-safe gameplay mutation requests now also thread durable `effectId` plus attested gameplay `sessionId` into those transfer-audit rows, so operator audit history can line up with the first live Entity Management replay guard and the owning player session instead of treating durability and item audit as separate tracks.
 - WebSocket cross-service coverage now proves `LOGIN` / `PLAY` / `LOOK` / `INV HERE` / `GET` / `INVENTORY` / `DROP` / `INV HERE` through the live Game Session command path, including parser preservation of `INV HERE`, room-ground state changes, inventory refreshes, Entity Management request context, quantity, and nonblank durable effect ids.
 - WebSocket cross-service coverage also proves a carried-item equipment loop with `EQUIPMENT` / `WEAR` / `EQUIPMENT` / `REMOVE` / `EQUIPMENT`, plus a representative `SLOT_INCOMPATIBLE` failure, including Entity Management equipment request context and nonblank durable effect ids.
+- Telnet cross-service coverage now proves the same player-visible item/equipment command surface through TCP Proxy and Gateway, including `LOOK`, room-ground pickup/drop, equipment bind/unbind, incompatible equipment failure, and Entity Management request/effect-id assertions.
 - the authored stackability/fungibility follow-up is now tracked explicitly in `06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md`.
 
 The most important remaining design work in this slice family is:
@@ -159,7 +160,7 @@ Current implementation note:
 ## 7. Cross-Service End-to-End Coverage
 
 - [x] Add a WebSocket cross-service regression that performs `LOGIN` / `PLAY` / `LOOK`, picks up an item from the room-ground container, verifies `INVENTORY`, drops the item, and verifies room state again.
-- [ ] Add a Telnet-focused variant through TCP Proxy and Gateway covering the same path and asserting transcript parity with WebSocket up to framing differences.
+- [x] Add a Telnet-focused variant through TCP Proxy and Gateway covering the same path and asserting transcript parity with WebSocket up to framing differences.
 - [x] Add at least one equipment-focused cross-service regression showing a successful bind to a configurable slot and a representative failure case such as incompatible slot/body-layout.
 - [ ] Assert the item path traverses the intended service boundary (Game Session -> Game Logic -> Entity Management, with World Management room identity where relevant) using logs, metrics, or interceptors similar to the existing LOOK/SAY/movement slices.
 - [ ] Ensure the regression coverage also proves the audit trail is written for successful transfer/equip operations.

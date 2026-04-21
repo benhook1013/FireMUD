@@ -333,6 +333,112 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
+  void telnetItemAndEquipmentLoopMatchesWebSocketCommandSurface() throws Exception {
+    ensureTestServicesStarted();
+    ENTITY_STUB.resetRoomEntities();
+    ENTITY_STUB.resetItemState();
+
+    String roomInventoryBeforePickup;
+    String pickupResponse;
+    String dropResponse;
+    String roomInventoryAfterDrop;
+    String emptyEquipmentResponse;
+    String wearResponse;
+    String equipmentResponse;
+    String removeResponse;
+    String incompatibleResponse;
+    try (Socket socket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter writer =
+            new PrintWriter(
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader reader =
+            new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(reader);
+      writer.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      writer.println("PLAY demo");
+      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
+      writer.println("LOOK");
+      assertThat(readBlockAfterContainsOrTimeout(reader, "OK LOOK"))
+          .contains("Candle-lit Antechamber");
+
+      writer.println("INV HERE");
+      roomInventoryBeforePickup = readBlockAfterContains(reader, "Room Inventory:");
+      writer.println("GET Torch");
+      pickupResponse = readBlockAfterContains(reader, "You pick up Torch.");
+      writer.println("DROP Torch");
+      dropResponse = readBlockAfterContains(reader, "You drop Torch.");
+      writer.println("INV HERE");
+      roomInventoryAfterDrop = readBlockAfterContains(reader, "Room Inventory:");
+
+      writer.println("EQUIPMENT");
+      emptyEquipmentResponse = readBlockAfterContains(reader, "You have nothing equipped.");
+      writer.println("WEAR Leather Cap");
+      wearResponse = readLineAfterContains(reader, "You wear Leather Cap.");
+      writer.println("EQUIPMENT");
+      equipmentResponse = readBlockAfterContains(reader, "Equipment:");
+      writer.println("REMOVE HEAD");
+      removeResponse = readLineAfterContains(reader, "You remove Leather Cap.");
+      writer.println("WEAR Iron Boots");
+      incompatibleResponse = readLineAfterContains(reader, "ERROR SLOT_INCOMPATIBLE");
+    }
+
+    assertThat(roomInventoryBeforePickup).contains("- Torch [torch#1] (A small torch)");
+    assertThat(pickupResponse)
+        .contains("You pick up Torch.")
+        .contains("Inventory:")
+        .contains("- Torch [torch#1] (A small torch)");
+    assertThat(dropResponse).contains("You drop Torch.");
+    assertThat(roomInventoryAfterDrop).contains("- Torch [torch#1] (A small torch)");
+    assertThat(emptyEquipmentResponse).contains("You have nothing equipped.");
+    assertThat(wearResponse).contains("You wear Leather Cap.");
+    assertThat(equipmentResponse).contains("- HEAD: Leather Cap [cap#1] (A small cap)");
+    assertThat(removeResponse).contains("You remove Leather Cap.");
+    assertThat(incompatibleResponse)
+        .contains("ERROR SLOT_INCOMPATIBLE")
+        .contains("Iron Boots cannot be worn by this body layout.");
+    assertThat(ENTITY_STUB.lastPickupRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+              assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+              assertThat(request.getRoomInstanceId()).isEqualTo(LookTestFixtures.ROOM_ID);
+              assertThat(request.getItemId()).isEqualTo("torch");
+              assertThat(request.getEffectId()).isNotBlank();
+            });
+    assertThat(ENTITY_STUB.lastDropRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+              assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+              assertThat(request.getRoomInstanceId()).isEqualTo(LookTestFixtures.ROOM_ID);
+              assertThat(request.getItemId()).isEqualTo("torch");
+              assertThat(request.getEffectId()).isNotBlank();
+            });
+    assertThat(ENTITY_STUB.lastRemoveRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+              assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+              assertThat(request.getSlot()).isEqualTo("HEAD");
+              assertThat(request.getEffectId()).isNotBlank();
+            });
+    assertThat(ENTITY_STUB.lastWearRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+              assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+              assertThat(request.getItemId()).isEqualTo("iron-boots");
+              assertThat(request.getEffectId()).isNotBlank();
+            });
+  }
+
+  @Test
   void telnetReconnectAfterRevocationFailsClosed() throws Exception {
     ensureTestServicesStarted();
     try (Socket firstSocket = new Socket("localhost", telnetServer.getPort());

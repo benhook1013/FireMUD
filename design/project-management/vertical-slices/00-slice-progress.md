@@ -50,7 +50,7 @@ These are already partly real in code and should continue after the immediate ru
 7. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
    Remaining: grow the first account-scoped friend presence seam, now consumed by REST, gRPC, and gameplay `FRIENDS`, into later social consumers and later privacy refinement without reopening `WHO`.
 8. [06 Task List Inventory, Containers, Equipment](./06-task-list-inventory-containers-equipment-vertical-slice.md)
-   Remaining: holder-transfer safety, canonical transfer-audit persistence with attested session/effect correlation, and the first WebSocket cross-service room-ground plus equipment happy/failure paths are now live; the main remaining work is Telnet parity, the `06.3` follow-through, and later authored stackability.
+   Remaining: holder-transfer safety, canonical transfer-audit persistence with attested session/effect correlation, and WebSocket plus Telnet cross-service room-ground/equipment happy/failure paths are now live; the main remaining work is the `06.3` follow-through and later authored stackability.
 9. [06.3.1 Stable Item Instance Visible Ref Allocation](./06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
 10. [06.3.2 Authored Stackability and Fungibility](./06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)

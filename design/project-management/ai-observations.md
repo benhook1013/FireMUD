@@ -45,3 +45,8 @@ Entry format:
   - Context: preview/auth/formatting fixes kept surfacing additional issues remotely because local validation used narrower commands than the actual CI jobs, or skipped the canonical Docker-inclusive smoke proof after repeated failures.
   - Observation: once a branch has already shown multiple remote-only failures, continuing to push after targeted local checks wastes time and review bandwidth.
   - Expected pattern: after repeated remote failures, default immediately to CI-mirroring local validation for the touched service (`:<service>:check -PfullCheck`) and run the canonical Docker smoke/bootstrap proof for runtime-sensitive paths before pushing again.
+
+- `2026-04-21`: TCP Proxy cross-service shutdown still emits noisy async disconnect warnings
+  - Context: running `:tcp-proxy-service:check -PfullCheck` after adding the Telnet item/equipment parity proof.
+  - Observation: the suite passes, but shutdown can still log `CANCELLED: Channel is forcefully shutdown` from async disconnect notifications after the nested Game Session channel has already closed, which makes successful test output look suspicious.
+  - Expected pattern: cross-service teardown should drain or suppress expected post-shutdown disconnect notifications so warnings remain actionable.
