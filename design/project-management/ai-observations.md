@@ -40,3 +40,8 @@ Entry format:
   - Context: shared auth cleanup across common middleware, service interceptors, and gameplay-domain delegation.
   - Observation: shared role names are now centralized, but the deeper cross-service contract still spans JWT caller identity, privileged roles, tenant-scoped roles, and Game Session-issued `SessionAttestation` for gameplay delegation.
   - Expected pattern: keep shared auth contract tests broad enough to validate role-name acceptance/rejection and delegated gameplay identity rules before new slices extend these seams.
+
+- `2026-04-21`: After repeated CI-only failures, switch from narrow local checks to CI-mirroring proof
+  - Context: preview/auth/formatting fixes kept surfacing additional issues remotely because local validation used narrower commands than the actual CI jobs, or skipped the canonical Docker-inclusive smoke proof after repeated failures.
+  - Observation: once a branch has already shown multiple remote-only failures, continuing to push after targeted local checks wastes time and review bandwidth.
+  - Expected pattern: after repeated remote failures, default immediately to CI-mirroring local validation for the touched service (`:<service>:check -PfullCheck`) and run the canonical Docker smoke/bootstrap proof for runtime-sensitive paths before pushing again.

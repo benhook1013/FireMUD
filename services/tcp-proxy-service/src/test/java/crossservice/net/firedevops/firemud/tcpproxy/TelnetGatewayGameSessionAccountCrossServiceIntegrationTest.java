@@ -96,7 +96,9 @@ import reactor.core.publisher.Mono;
     classes = TcpProxyServiceApplication.class)
 class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
-  private static final Duration COMMAND_WAIT = Duration.ofSeconds(5);
+  // This suite boots multiple real service contexts and backing stores, so allow slower
+  // round-trips than the lighter isolated telnet seam tests.
+  private static final Duration COMMAND_WAIT = Duration.ofSeconds(15);
   private static final String CROSS_SERVICE_TEST_JWT_SECRET =
       "stub-secret-key-for-tests-1234567890";
   private static final long TENANT_ID = 1L;
@@ -222,6 +224,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(reader);
       writer.println("LOGIN demo@example.com swordfish");
       telnetLoginResponse = readBlockAfterContains(reader, "Logged in as demo@example.com");
       assertThat(telnetLoginResponse).contains("Logged in as demo@example.com");
@@ -254,6 +257,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(firstSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       firstSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(firstReader);
       firstWriter.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(firstReader, "Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
@@ -274,6 +278,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 new InputStreamReader(
                     secondSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       secondSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(secondReader);
       secondWriter.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(secondReader, "Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
@@ -300,6 +305,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(reader);
       writer.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
@@ -338,6 +344,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(firstSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       firstSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(firstReader);
       firstWriter.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(firstReader, "Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
@@ -361,6 +368,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 new InputStreamReader(
                     secondSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       secondSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(secondReader);
       secondWriter.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(secondReader, "Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
@@ -386,6 +394,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(reader);
       writer.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
@@ -405,6 +414,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(reader);
       writer.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
@@ -446,6 +456,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(reader);
       writer.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
@@ -473,6 +484,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(reader);
       writer.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
@@ -516,6 +528,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                     secondSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       firstSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
       secondSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(firstReader);
+      assertInitialGuidance(secondReader);
 
       firstWriter.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(firstReader, "Logged in as demo@example.com"))
@@ -560,6 +574,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(reader);
       writer.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
@@ -625,6 +640,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       actorSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
       targetSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
       observerSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(actorReader);
+      assertInitialGuidance(targetReader);
+      assertInitialGuidance(observerReader);
 
       actorWriter.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(actorReader, "Logged in as demo@example.com"))
@@ -702,6 +720,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                     targetSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       actorSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
       targetSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(actorReader);
+      assertInitialGuidance(targetReader);
 
       actorWriter.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(actorReader, "Logged in as demo@example.com"))
@@ -933,16 +953,34 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       throws IOException {
     StringBuilder builder = new StringBuilder();
     boolean matched = false;
-    String line;
-    while ((line = reader.readLine()) != null) {
+    while (true) {
+      String line;
+      try {
+        line = reader.readLine();
+      } catch (java.net.SocketTimeoutException ex) {
+        if (matched) {
+          return builder.toString();
+        }
+        throw ex;
+      }
+      if (line == null) {
+        return builder.toString();
+      }
       builder.append(line).append("\n");
       if (!matched && line.contains(expectedSubstring)) {
         matched = true;
       } else if (matched && line.isEmpty()) {
-        break;
+        return builder.toString();
       }
     }
-    return builder.toString();
+  }
+
+  private static void assertInitialGuidance(BufferedReader reader) throws IOException {
+    assertThat(reader.readLine()).isEqualTo("OK CONNECTED");
+    assertThat(reader.readLine()).isEqualTo("Type WORLDS to list available worlds.");
+    assertThat(reader.readLine()).isEqualTo("Type LOGIN <email> <password> to authenticate.");
+    assertThat(reader.readLine()).isEqualTo("Type PLAY <world> after LOGIN to enter a world.");
+    assertThat(reader.readLine()).isEqualTo("Type HELP for commands.");
   }
 
   private static String readLineAfterContains(BufferedReader reader, String expectedSubstring)
