@@ -83,7 +83,7 @@ Initial-slice delivery expectation:
 - The first live implementation cut now uses `PrepareWorldInstance`, `ActivatePreparedWorldInstance`, and `FailPreparedWorldInstance` to persist `world_instance`, starter `region_instance`, and runtime `zone_instance` / `room_instance` / `room_instance_exit` rows with fenced `lifecycle_epoch` transitions.
 - Broader activation/cutover consumers and later runtime world-state families remain follow-on work on the same lifecycle seam rather than a separate activation model.
 
-- The first implementation slice must implement steps 1, 2, and 4.
+- The current live implementation cut implements steps 1, 2, and 4 through the activation lifecycle seam; future work should extend the same workflow-state model rather than introducing a second activation path.
 - Step 3 is optional for the initial slice unless the launched version actually requires expansive-world terrain generation or instance-scoped population schedule materialization.
 - When step 3 is omitted for an initial-slice launch, the same launch descriptor and activation invariants still apply; the workflow simply records that no runtime generation/materialization step was required for that `gameInstanceId`.
 

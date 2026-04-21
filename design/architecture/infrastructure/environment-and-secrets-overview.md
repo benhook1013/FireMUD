@@ -22,14 +22,14 @@ This section summarizes the **most important environment variables and rotation 
 
 ### Implementation Notes
 
-This document describes the canonical environment and secret target state. Current implementation is still catching up in several deployment-critical places:
+This document describes the canonical environment and secret target state. The first implementation pass now covers the highest-risk deployment-critical pieces:
 
-- Player-facing JWT signing material is required to come from `FIREMUD_AUTH_JWT_SECRET_PATH`, but current shared security bootstrap still requires inline `firemud.auth.jwt-secret` before it loads the file in non-dev profiles. Treat this as an implementation gap, not a relaxation of the player-facing file-mounted secret contract.
-- The Account Service target state is to serve JWKS from the environment-provided `jwt-jwks` resource. Current code still serves the JWKS endpoint from a packaged classpath resource, so mounted JWKS Secret/ConfigMap consumption and rotation remain implementation work.
-- Hosted `pr-preview` target state requires preview-unique JWT signing material and JWKS data per namespace. The current Helm preview values still use static inline JWT secret material unless the workflow or operator overrides it, so preview JWT/JWKS isolation is not yet proven by the checked-in default path.
-- Player-facing expected-binding manifests exist under `design/operations/environments/`, but the current preflight implementation does not yet consume them and the manifests still need the full schema required by `system-architecture-deploy-preflight-policy.md`.
+- Player-facing JWT signing material can come from `FIREMUD_AUTH_JWT_SECRET_PATH` without requiring inline `firemud.auth.jwt-secret` in non-dev profiles.
+- Account Service can serve JWKS from the environment-provided `jwt-jwks` resource while preserving the packaged classpath fallback for local/dev.
+- Hosted `pr-preview` rendering produces preview-unique JWT signing material and matching JWKS data per namespace instead of relying on one shared inline JWT secret.
+- `dev-tools/deploy/preflight.sh` consumes player-facing expected-binding manifests under `design/operations/environments/`, emits `expectedBindingsRef`, and validates the first required binding fields and policy IDs.
 
-Do not interpret these implementation gaps as alternative supported behavior for staging, production, or hobby/self-hosted traffic. They should be closed before first player-facing deployment or called out as blockers in deployment evidence.
+Remaining deployment evidence work is narrower: the traffic-open backup gates validate the first evidence shape, but real environment evidence files still need to be produced by operators or automation before first live traffic; expected-binding validation should also become stricter as richer Kubernetes live-state checks become available. Do not interpret those remaining gaps as alternative supported behavior for staging, production, or hobby/self-hosted traffic.
 
 ### Core Profiles
 
