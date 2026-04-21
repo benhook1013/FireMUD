@@ -621,6 +621,7 @@ jobs:
           PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
           PREVIEW_TELNET_PORT: ${{ steps.telnet-port.outputs.telnet_port }}
           PREVIEW_DEPLOY_OUTCOME: ${{ steps.deploy-release.outcome }}
+          PREVIEW_JOB_STATUS: ${{ job.status }}
           PREVIEW_FAILURE_STAGE: ${{ env.PREVIEW_STAGE }}
         with:
           script: |
@@ -632,8 +633,7 @@ jobs:
               return;
             }
 
-            const mode =
-              process.env.PREVIEW_DEPLOY_OUTCOME === "success" ? "success" : "failure";
+            const mode = process.env.PREVIEW_JOB_STATUS === "success" ? "success" : "failure";
             const failureStage =
               process.env.PREVIEW_FAILURE_STAGE && process.env.PREVIEW_FAILURE_STAGE.trim().length > 0
                 ? process.env.PREVIEW_FAILURE_STAGE.trim()
