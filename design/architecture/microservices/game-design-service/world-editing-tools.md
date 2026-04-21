@@ -72,10 +72,19 @@ Initial-slice concurrency contract:
   - containing `commitId`;
   - the target `(tenantId, versionId)`;
   - an `expectedDraftRevisionEpoch` (or equivalent monotonic aggregate version) for the aggregate being edited.
+- World topology edits and generation revisions that can touch more than one room use an explicit scope aggregate keyed by `(tenantId, versionId, scopeType, scopeId)`, for example `REGION_SUBTREE:<regionTemplateId>` or `ZONE_SUBTREE:<zoneTemplateId>`. Manual edits inside that scope and generation revisions targeting that scope must check and advance the same `draftScopeRevisionEpoch`.
+- The scope epoch is the canonical conflict boundary for subtree generation. A room-level edit may still carry a room aggregate epoch for precise UI conflict messages, but it must also validate the containing scope epoch whenever the edit changes topology or publish-visible room semantics inside a generation-addressable scope.
 - World Management and Entity Management design APIs must reject the write with a conflict error if the expected epoch does not match the current Draft aggregate state.
 - Replays of the same `revisionId` remain idempotent; a duplicate delivery with the same already-applied revision must no-op rather than fail conflict.
 - Game Design must surface the conflict to the editor as a Draft-write concurrency failure, not silently overwrite the newer state.
 - Publish reconciliation replays commits in commit order and revision order within the commit. It must not reorder concurrent conflicting edits into a synthetic merged result.
+
+Generation-specific conflict rules:
+
+- `REPLACE_SCOPE` requires the request to carry the current `expectedDraftScopeRevisionEpoch` for the declared target scope. If the scope advanced since the editor preview or generation planning read, World Management must reject the revision as `DRAFT_WRITE_CONFLICT` rather than replacing newer manual edits.
+- `SEED_APPEND_ONLY` also checks the same scope epoch. If deterministic replay would require rewriting or deleting rows already present in the scope, World Management must reject the revision as `OUT_OF_SYNC` or a more specific generation conflict instead of erasing authored content.
+- A generation revision that targets a newly created empty container initializes that container's scope epoch in the same transaction that records the generated topology. Later manual edits and later generation revisions for that scope must use that epoch.
+- A future multi-branch merge workflow may introduce richer scope reconciliation, but the initial-slice rule is one optimistic scope epoch, deterministic replay order, and fail-closed conflicts.
 
 Illustrative request/response shapes:
 
@@ -282,6 +291,8 @@ World and entity templates owned by domain services must reference each other us
 - World layouts refer to NPCs, items, equipment, and other entities only via stable identifiers exposed by the Entity Management Service (for example `entity_template_id` or equivalent), always scoped and versioned by `(tenantId, versionId)`.
 - Population rules and other design-time bindings between world regions/rooms and entity templates are stored via normalized join tables (for example `world_entity_template` or generation binding tables) owned by the relevant domain services, not inferred from partial JSON in Game Design payloads.
 - Scripts and automation hooks are likewise referenced via explicit identifiers or normalized relations defined by the Automation & Scripting Service, rather than embedded directly in Game Design configuration blobs as canonical data.
+- Design-time population generation may create only declarative World-owned spawn/population binding rows under `(tenantId, versionId)`. Automation & Scripting may validate or later consume those bindings, but it must not persist template topology, spawn bindings, or live entities as a side effect of a design-time generation revision.
+- Runtime population is separate: after a game instance is prepared or during later runtime instancing, Automation & Scripting may emit runtime commands through the canonical tick/workflow handoff. Those commands act on `RoomInstanceRef` and entity/runtime state, not on Draft template rows.
 
 Game Design Service may carry references to these identifiers in its revision history, branches, and commits, but canonical ownership of the underlying world, entity, and script schemas and identifiers always remains with the corresponding domain services.
 

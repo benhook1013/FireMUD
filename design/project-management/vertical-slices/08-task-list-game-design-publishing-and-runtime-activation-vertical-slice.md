@@ -11,6 +11,7 @@ This domain is heavily designed already, but still under-sliced relative to its 
 - asset lifecycle rules, manifest integrity, tombstoning, repair, and purge safety are documented in detail.
 - launch resolution and activation preflight are already specified around normalized template references, resolved launch descriptors, and attested release validation.
 - script-only patch and plugin publication are already intentionally separate from runtime pinning and activation, but that separation is not yet represented as dedicated slice planning.
+- design-time world mutation is now intentionally represented as `08.5` so editor saves, procedural generation revisions, and spawn-binding authoring converge on one typed World Management API surface rather than leaking into opaque Game Design revision JSON or ad hoc World endpoints.
 
 The problem is not missing architecture. The problem is that the architecture still lacks a coherent vertical-slice family, which makes implementation planning look thinner than the real target-state contract.
 
@@ -45,6 +46,7 @@ This family is the canonical home for that work.
 - [08.2-task-list-published-asset-manifest-and-purge-lifecycle-vertical-slice.md](./08.2-task-list-published-asset-manifest-and-purge-lifecycle-vertical-slice.md)
 - [08.3-task-list-launch-descriptor-and-activation-preflight-vertical-slice.md](./08.3-task-list-launch-descriptor-and-activation-preflight-vertical-slice.md)
 - [08.4-task-list-script-patch-and-plugin-publication-boundaries-vertical-slice.md](./08.4-task-list-script-patch-and-plugin-publication-boundaries-vertical-slice.md)
+- [08.5-task-list-world-design-mutation-api-surface-vertical-slice.md](./08.5-task-list-world-design-mutation-api-surface-vertical-slice.md)
 
 ## Validation
 
