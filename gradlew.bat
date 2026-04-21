@@ -34,9 +34,12 @@ set APP_HOME=%DIRNAME%
 
 @rem Resolve any "." and ".." in APP_HOME to make it shorter.
 for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
+for %%i in ("%APP_HOME%") do set FIREMUD_REPO_NAME=%%~nxi
+
+if "%FIREMUD_GRADLE_PROJECT_CACHE_DIR%"=="" set FIREMUD_GRADLE_PROJECT_CACHE_DIR=%USERPROFILE%\.firemud-gradle\project-cache\%FIREMUD_REPO_NAME%
 
 @rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
-set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
+set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m" "-Dorg.gradle.projectcachedir=%FIREMUD_GRADLE_PROJECT_CACHE_DIR%"
 
 @rem Find java.exe
 if defined JAVA_HOME goto findJavaFromJavaHome

@@ -55,3 +55,8 @@ Entry format:
   - Context: extending the local fresh-bootstrap smoke proof exposed that `docker compose up --build` rebuilt images from stale `build/libs/*bootJar` artifacts, so the supposedly current source-built stack was still running an old World Management jar without runtime room-instance migrations.
   - Observation: rebuilding Docker layers is not enough when service Dockerfiles copy prebuilt Gradle jars; the local proof can look fresh while silently testing old application code.
   - Expected pattern: canonical source-built Docker smoke scripts should run the service `bootJar` tasks before `docker compose ... --build`, and AI workflows should treat stale packaged artifacts as a runtime/bootstrap risk.
+
+- `2026-04-21`: Repo-local Gradle project caches interfere with Docker Desktop build contexts
+  - Context: tightening source-built Docker image rebuilds exposed intermittent `Access is denied` failures while Docker Desktop walked the repo `.gradle/configuration-cache` tree on WSL-backed builds.
+  - Observation: keeping the Gradle project cache under the checkout creates needless Docker context noise, can trip host/filesystem permission quirks, and makes local build behavior depend on generated repo state unrelated to the image inputs.
+  - Expected pattern: set the Gradle project cache outside the repository by default, and keep repo-local Docker contexts free of Gradle project-cache churn.

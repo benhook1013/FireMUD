@@ -88,6 +88,10 @@ APP_BASE_NAME=${0##*/}
 # Discard cd standard output in case $CDPATH is set (https://github.com/gradle/gradle/issues/25036)
 APP_HOME=$( cd -P "${APP_HOME:-./}" > /dev/null && printf '%s\n' "$PWD" ) || exit
 
+if [ -z "${FIREMUD_GRADLE_PROJECT_CACHE_DIR:-}" ] ; then
+    FIREMUD_GRADLE_PROJECT_CACHE_DIR="$HOME/.firemud-gradle/project-cache/${APP_HOME##*/}"
+fi
+
 # Use the maximum available, or set MAX_FD != -1 to use that value.
 MAX_FD=maximum
 
@@ -171,6 +175,7 @@ fi
 # For Cygwin or MSYS, switch paths to Windows format before running java
 if "$cygwin" || "$msys" ; then
     APP_HOME=$( cygpath --path --mixed "$APP_HOME" )
+    FIREMUD_GRADLE_PROJECT_CACHE_DIR=$( cygpath --path --mixed "$FIREMUD_GRADLE_PROJECT_CACHE_DIR" )
 
     JAVACMD=$( cygpath --unix "$JAVACMD" )
 
@@ -201,6 +206,7 @@ fi
 
 # Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
 DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
+DEFAULT_JVM_OPTS="$DEFAULT_JVM_OPTS \"-Dorg.gradle.projectcachedir=$FIREMUD_GRADLE_PROJECT_CACHE_DIR\""
 
 # Collect all arguments for the java command:
 #   * DEFAULT_JVM_OPTS, JAVA_OPTS, and optsEnvironmentVar are not allowed to contain shell fragments,
