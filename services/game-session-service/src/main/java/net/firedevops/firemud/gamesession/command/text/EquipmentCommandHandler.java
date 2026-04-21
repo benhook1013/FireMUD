@@ -10,7 +10,7 @@ import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
-import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -21,11 +21,11 @@ import org.springframework.util.StringUtils;
 /** Handles the first equipment command surface in the text session layer. */
 @Component
 public class EquipmentCommandHandler {
-  private final EntityManagementClient entityManagementClient;
+  private final GameLogicClient gameLogicClient;
 
-  public EquipmentCommandHandler(EntityManagementClient entityManagementClient) {
-    this.entityManagementClient =
-        Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
+  public EquipmentCommandHandler(GameLogicClient gameLogicClient) {
+    this.gameLogicClient =
+        Objects.requireNonNull(gameLogicClient, "gameLogicClient must not be null");
   }
 
   @Timed(value = "gamesession.command.equipment")
@@ -55,7 +55,7 @@ public class EquipmentCommandHandler {
   }
 
   private TextCommandInterpretationResult describeEquipment(SessionContext context) {
-    ListEquipmentResponse equipment = entityManagementClient.listEquipment(context);
+    ListEquipmentResponse equipment = gameLogicClient.listEquipment(context);
     if (equipment.hasError()) {
       return equipmentUnavailable(equipment.getError().getMessage());
     }
@@ -97,9 +97,9 @@ public class EquipmentCommandHandler {
     InventoryItem carried = resolution.item().orElseThrow();
     WearEquipmentItemResponse response =
         StringUtils.hasText(effectId)
-            ? entityManagementClient.wearEquipment(
+            ? gameLogicClient.wearEquipment(
                 context, carried.getItemId(), carried.getItemInstanceId(), effectId)
-            : entityManagementClient.wearEquipment(
+            : gameLogicClient.wearEquipment(
                 context, carried.getItemId(), carried.getItemInstanceId());
     if (response.hasError()) {
       return equipmentFailure(response.getError().getCode(), response.getError().getMessage());
@@ -127,7 +127,7 @@ public class EquipmentCommandHandler {
     if (itemReference.quantity() != 1) {
       return equipmentInvalidArgument("REMOVE", "REMOVE takes a single equipped item at a time");
     }
-    ListEquipmentResponse equipment = entityManagementClient.listEquipment(context);
+    ListEquipmentResponse equipment = gameLogicClient.listEquipment(context);
     if (equipment.hasError()) {
       return equipmentUnavailable(equipment.getError().getMessage());
     }
@@ -140,8 +140,8 @@ public class EquipmentCommandHandler {
     EquipmentItem worn = resolved.orElseThrow();
     RemoveEquipmentResponse response =
         StringUtils.hasText(effectId)
-            ? entityManagementClient.removeEquipment(context, worn.getSlot(), effectId)
-            : entityManagementClient.removeEquipment(context, worn.getSlot());
+            ? gameLogicClient.removeEquipment(context, worn.getSlot(), effectId)
+            : gameLogicClient.removeEquipment(context, worn.getSlot());
     if (response.hasError()) {
       return equipmentFailure(response.getError().getCode(), response.getError().getMessage());
     }
@@ -186,7 +186,7 @@ public class EquipmentCommandHandler {
   }
 
   private EquipmentResolution resolveCarriedItem(SessionContext context, String reference) {
-    var inventory = entityManagementClient.queryInventory(context);
+    var inventory = gameLogicClient.queryInventory(context);
     if (inventory.hasError()) {
       return EquipmentResolution.unavailable(
           StringUtils.hasText(inventory.getError().getMessage())

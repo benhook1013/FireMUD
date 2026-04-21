@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.health;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.util.LinkedHashMap;
@@ -28,7 +29,12 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
   private static final String PROBE_ROOM_ID = "1";
 
   private final AccountClient accountClient;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected gRPC clients are framework-managed singletons and only stored")
   private final GameLogicClient gameLogicClient;
+
   private final GameplayLocalPathReadinessProbe gameplayLocalPathReadinessProbe;
   private final ReadinessTransitionTracker readinessTransitionTracker;
 

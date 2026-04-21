@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.StatusRuntimeException;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -31,9 +30,6 @@ public class InstanceCutoverCompatibilityServiceImpl
   private final WorldManagementClient worldManagementClient;
   private final EntityManagementClient entityManagementClient;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Injected gRPC clients and repositories are framework-managed")
   public InstanceCutoverCompatibilityServiceImpl(
       GameInstanceRepository gameInstanceRepository,
       GameDesignClient gameDesignClient,

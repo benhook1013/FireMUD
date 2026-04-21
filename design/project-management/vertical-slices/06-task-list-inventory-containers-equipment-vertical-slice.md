@@ -27,7 +27,7 @@ The current branch state is materially ahead of the original `06` plan:
 - Telnet cross-service coverage now proves the same player-visible item/equipment command surface through TCP Proxy and Gateway, including `LOOK`, room-ground pickup/drop, equipment bind/unbind, incompatible equipment failure, and Entity Management request/effect-id assertions.
 - Game Session now records central item-command invocation/failure metrics through `gamesession.command.item.*` with `type` and `error` tags, so operators can distinguish expected player mistakes from backend or validation failures consistently across inventory, equipment, and container verbs.
 - The developer smoke guide and player playtest checklist now include the WebSocket/Telnet item-equipment extension: `INV HERE`, `GET`, `INVENTORY`, `DROP`, `EQUIPMENT`, `WEAR`, `REMOVE`, and an incompatible-equipment error check where the fixture exists.
-- Service-status docs now call out the current service-boundary reality explicitly: `LOOK`, communication, and movement go through Game Logic, while the first item/container/equipment command implementation still calls Entity Management directly from Game Session. Moving item interactions behind gameplay-oriented Game Logic RPCs remains the main open service-boundary follow-through for this slice.
+- Game Logic now exposes the first item/container/equipment runtime RPC seam, so Game Session text handlers dispatch `INVENTORY`, `INV HERE`, `GET`, `DROP`, `CONTAINER`, `PUT`, `TAKE`, `EQUIPMENT`, `WEAR`, and `REMOVE` through Game Logic before Entity Management persistence is touched.
 - the authored stackability/fungibility follow-up is now tracked explicitly in `06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md`.
 
 The most important remaining design work in this slice family is:
@@ -131,14 +131,14 @@ Current implementation note:
 ## 5. Game Logic Service: Item Interaction Resolution
 
 - [ ] Before changing this service for the slice, run `./gradlew :game-logic-service:test` and stabilize the baseline if necessary.
-- [ ] Introduce or refine gameplay-oriented RPCs for the first inventory actions, for example:
+- [x] Introduce or refine gameplay-oriented RPCs for the first inventory actions, for example:
   - `QueryVisibleInventory` / `QueryContainerContents`;
   - `PickupItem`;
   - `DropItem`;
   - `EquipItem`;
   - `UnequipItem`.
-- [ ] Prefer landing room-ground pickup/drop orchestration before broader container semantics so the first player-visible loop is narrow and auditable.
-- [ ] Keep the Game Logic layer responsible for gameplay-facing validation and orchestration, while Entity Management remains authoritative for item/container/equipment persistence.
+- [x] Prefer landing room-ground pickup/drop orchestration before broader container semantics so the first player-visible loop is narrow and auditable.
+- [x] Keep the Game Logic layer responsible for gameplay-facing validation and orchestration, while Entity Management remains authoritative for item/container/equipment persistence.
 - [ ] Ensure Game Logic can combine room visibility, room-ground container identity, session/character identity, and item-filter/query semantics into stable player-facing results.
 - [ ] Add unit tests covering successful pickup/drop/equip flows, invalid item names/selectors, incompatible slots, inaccessible containers, and backend error propagation.
 
@@ -165,7 +165,7 @@ Current implementation note:
 - [x] Add a WebSocket cross-service regression that performs `LOGIN` / `PLAY` / `LOOK`, picks up an item from the room-ground container, verifies `INVENTORY`, drops the item, and verifies room state again.
 - [x] Add a Telnet-focused variant through TCP Proxy and Gateway covering the same path and asserting transcript parity with WebSocket up to framing differences.
 - [x] Add at least one equipment-focused cross-service regression showing a successful bind to a configurable slot and a representative failure case such as incompatible slot/body-layout.
-- [ ] Assert the item path traverses the intended service boundary (Game Session -> Game Logic -> Entity Management, with World Management room identity where relevant) using logs, metrics, or interceptors similar to the existing LOOK/SAY/movement slices.
+- [x] Assert the item path traverses the intended service boundary (Game Session -> Game Logic -> Entity Management, with World Management room identity where relevant) using logs, metrics, or interceptors similar to the existing LOOK/SAY/movement slices.
 - [ ] Ensure the regression coverage also proves the audit trail is written for successful transfer/equip operations.
 
 ## 8. Developer Workflows, Docs, and Examples

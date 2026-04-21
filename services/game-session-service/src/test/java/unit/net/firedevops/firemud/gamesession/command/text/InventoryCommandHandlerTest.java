@@ -10,7 +10,7 @@ import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRespons
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
-import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -21,17 +21,15 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class InventoryCommandHandlerTest {
-  private final EntityManagementClient entityManagementClient =
-      Mockito.mock(EntityManagementClient.class);
-  private final InventoryCommandHandler handler =
-      new InventoryCommandHandler(entityManagementClient);
+  private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
+  private final InventoryCommandHandler handler = new InventoryCommandHandler(gameLogicClient);
   private final SessionContext context =
       new SessionContext(
           1L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 77L, "room-7", "jwt-token");
 
   @Test
   void inventoryReturnsStructuredViewFromRuntimeContract() {
-    when(entityManagementClient.queryInventory(context))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -56,7 +54,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void inventoryShowsDuplicateNonStackableItemsAsSeparateEntries() {
-    when(entityManagementClient.queryInventory(context))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -89,7 +87,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void inventoryHereReturnsRoomGroundItemsWithVisibleRefs() {
-    when(entityManagementClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -116,7 +114,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void inventoryHereReturnsStackedRoomGroundItemsWithStackRefs() {
-    when(entityManagementClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -141,7 +139,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void inventoryHereReturnsEmptyStateWhenNoRoomGroundItemsExist() {
-    when(entityManagementClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
         .thenReturn(ListRoomGroundInventoryResponse.newBuilder().build());
 
     InventoryCommandHandlingResult result =
@@ -166,7 +164,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getWithItemReferenceCallsPickupMutation() {
-    when(entityManagementClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -176,7 +174,7 @@ class InventoryCommandHandlerTest {
                         .setItemName("Rough Iron Key")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom(context, "room-7", "7", null, "", null, 1))
+    when(gameLogicClient.pickupItemFromRoom(context, "room-7", "7", null, "", null, 1))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -187,7 +185,7 @@ class InventoryCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.queryInventory(context))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -215,7 +213,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getWithQuantityCallsPickupMutation() {
-    when(entityManagementClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -233,7 +231,7 @@ class InventoryCommandHandlerTest {
                         .setItemName("Torch")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom(context, "room-7", "7", null, "", null, 2))
+    when(gameLogicClient.pickupItemFromRoom(context, "room-7", "7", null, "", null, 2))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -244,7 +242,7 @@ class InventoryCommandHandlerTest {
                         .setQuantity(2)
                         .build())
                 .build());
-    when(entityManagementClient.queryInventory(context))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -271,7 +269,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getWithQuantityMatchesStackedRoomGroundEntryWithoutExplicitRef() {
-    when(entityManagementClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -283,7 +281,7 @@ class InventoryCommandHandlerTest {
                         .setVisibleRef("ammo/iron")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom(context, "room-7", "7", null, "", null, 3))
+    when(gameLogicClient.pickupItemFromRoom(context, "room-7", "7", null, "", null, 3))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -294,7 +292,7 @@ class InventoryCommandHandlerTest {
                         .setQuantity(3)
                         .build())
                 .build());
-    when(entityManagementClient.queryInventory(context))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -321,7 +319,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getWithExplicitStackReferenceAllowsQuantitySelection() {
-    when(entityManagementClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -333,8 +331,7 @@ class InventoryCommandHandlerTest {
                         .setVisibleRef("ammo/iron")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom(
-            context, "room-7", "7", null, "", "ammo/iron", 3))
+    when(gameLogicClient.pickupItemFromRoom(context, "room-7", "7", null, "", "ammo/iron", 3))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -346,7 +343,7 @@ class InventoryCommandHandlerTest {
                         .setVisibleRef("ammo/iron")
                         .build())
                 .build());
-    when(entityManagementClient.queryInventory(context))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -370,7 +367,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getWithExplicitReferenceRejectsQuantityGreaterThanOne() {
-    when(entityManagementClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -394,7 +391,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getMatchesExplicitRoomItemReference() {
-    when(entityManagementClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -404,8 +401,7 @@ class InventoryCommandHandlerTest {
                         .setItemName("Torch")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom(
-            context, "room-7", "ITEM-009", "ITEM-009", "", null, 1))
+    when(gameLogicClient.pickupItemFromRoom(context, "room-7", "ITEM-009", "ITEM-009", "", null, 1))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -416,7 +412,7 @@ class InventoryCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.queryInventory(context))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -437,7 +433,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void dropWithItemReferenceCallsDropMutation() {
-    when(entityManagementClient.queryInventory(context))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -450,7 +446,7 @@ class InventoryCommandHandlerTest {
                         .build())
                 .build(),
             QueryInventoryResponse.newBuilder().build());
-    when(entityManagementClient.dropItemToRoom(context, "room-7", "7", null, "7", null, 1))
+    when(gameLogicClient.dropItemToRoom(context, "room-7", "7", null, "7", null, 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -479,7 +475,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void dropWithQuantityCallsDropMutation() {
-    when(entityManagementClient.queryInventory(context))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -510,7 +506,7 @@ class InventoryCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.dropItemToRoom(context, "room-7", "7", null, "7", null, 2))
+    when(gameLogicClient.dropItemToRoom(context, "room-7", "7", null, "7", null, 2))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -537,7 +533,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void dropWithExplicitReferenceRejectsQuantityGreaterThanOne() {
-    when(entityManagementClient.queryInventory(context))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -564,7 +560,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void dropWithExplicitStackReferenceAllowsQuantitySelection() {
-    when(entityManagementClient.queryInventory(context))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -577,7 +573,7 @@ class InventoryCommandHandlerTest {
                         .build())
                 .build(),
             QueryInventoryResponse.newBuilder().build());
-    when(entityManagementClient.dropItemToRoom(context, "room-7", "7", null, "7", "ammo/iron", 3))
+    when(gameLogicClient.dropItemToRoom(context, "room-7", "7", null, "7", "ammo/iron", 3))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -601,7 +597,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void dropAllowsNonEmptyCarriedContainerWhenBackendPreservesIdentity() {
-    when(entityManagementClient.queryInventory(context))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -624,8 +620,7 @@ class InventoryCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.dropItemToRoom(
-            context, "room-7", "10", null, "container-10", null, 1))
+    when(gameLogicClient.dropItemToRoom(context, "room-7", "10", null, "container-10", null, 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -650,7 +645,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void dropWithItemReferenceReportsRuntimeError() {
-    when(entityManagementClient.queryInventory(context))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -662,7 +657,7 @@ class InventoryCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.dropItemToRoom(context, "room-7", "7", null, "7", null, 1))
+    when(gameLogicClient.dropItemToRoom(context, "room-7", "7", null, "7", null, 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setError(

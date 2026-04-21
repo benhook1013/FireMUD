@@ -97,11 +97,11 @@ class TextCommandInterpreterTest {
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
   private final InventoryCommandHandler inventoryHandler =
-      new InventoryCommandHandler(entityManagementClient);
+      new InventoryCommandHandler(gameLogicClient);
   private final EquipmentCommandHandler equipmentHandler =
-      new EquipmentCommandHandler(entityManagementClient);
+      new EquipmentCommandHandler(gameLogicClient);
   private final ContainerCommandHandler containerHandler =
-      new ContainerCommandHandler(entityManagementClient);
+      new ContainerCommandHandler(gameLogicClient);
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
@@ -159,7 +159,7 @@ class TextCommandInterpreterTest {
                 .setTenantBillingSequence(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
-    when(entityManagementClient.queryInventory(Mockito.any(SessionContext.class)))
+    when(gameLogicClient.queryInventory(Mockito.any(SessionContext.class)))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -170,7 +170,7 @@ class TextCommandInterpreterTest {
                         .setQuantity(2)
                         .build())
                 .build());
-    when(entityManagementClient.listRoomGroundInventory(
+    when(gameLogicClient.listRoomGroundInventory(
             Mockito.any(SessionContext.class), Mockito.anyString()))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
@@ -181,7 +181,7 @@ class TextCommandInterpreterTest {
                         .setItemName("Torch")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom(
+    when(gameLogicClient.pickupItemFromRoom(
             Mockito.any(SessionContext.class),
             Mockito.anyString(),
             Mockito.anyString(),
@@ -199,7 +199,7 @@ class TextCommandInterpreterTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.dropItemToRoom(
+    when(gameLogicClient.dropItemToRoom(
             Mockito.any(SessionContext.class),
             Mockito.anyString(),
             Mockito.anyString(),
@@ -217,7 +217,7 @@ class TextCommandInterpreterTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.listEquipment(Mockito.any(SessionContext.class)))
+    when(gameLogicClient.listEquipment(Mockito.any(SessionContext.class)))
         .thenReturn(
             ListEquipmentResponse.newBuilder()
                 .addItems(
@@ -228,7 +228,7 @@ class TextCommandInterpreterTest {
                         .setItemDescription("A small torch")
                         .build())
                 .build());
-    when(entityManagementClient.wearEquipment(
+    when(gameLogicClient.wearEquipment(
             Mockito.any(SessionContext.class), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             WearEquipmentItemResponse.newBuilder()
@@ -240,8 +240,7 @@ class TextCommandInterpreterTest {
                         .setItemDescription("A small torch")
                         .build())
                 .build());
-    when(entityManagementClient.removeEquipment(
-            Mockito.any(SessionContext.class), Mockito.anyString()))
+    when(gameLogicClient.removeEquipment(Mockito.any(SessionContext.class), Mockito.anyString()))
         .thenReturn(
             RemoveEquipmentResponse.newBuilder()
                 .setEquipmentItem(
@@ -252,7 +251,7 @@ class TextCommandInterpreterTest {
                         .setItemDescription("A small torch")
                         .build())
                 .build());
-    when(entityManagementClient.listContainerContents(
+    when(gameLogicClient.listContainerContents(
             Mockito.any(SessionContext.class), Mockito.anyString()))
         .thenReturn(
             ListContainerContentsResponse.newBuilder()
@@ -265,17 +264,19 @@ class TextCommandInterpreterTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.putItemIntoContainer(
+    when(gameLogicClient.putItemIntoContainer(
             Mockito.any(SessionContext.class),
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.any(),
+            Mockito.any(),
             Mockito.anyInt()))
         .thenReturn(PutItemIntoContainerResponse.newBuilder().build());
-    when(entityManagementClient.takeItemFromContainer(
+    when(gameLogicClient.takeItemFromContainer(
             Mockito.any(SessionContext.class),
             Mockito.anyString(),
             Mockito.anyString(),
+            Mockito.any(),
             Mockito.any(),
             Mockito.anyInt()))
         .thenReturn(
@@ -619,7 +620,7 @@ class TextCommandInterpreterTest {
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals("demo> ", renderedResponse("WEAR Torch", interpretation));
     verify(commandService).enqueue("1", "WEAR Torch", false);
-    verify(entityManagementClient, never())
+    verify(gameLogicClient, never())
         .wearEquipment(Mockito.any(SessionContext.class), Mockito.anyString(), Mockito.anyString());
   }
 
@@ -637,7 +638,7 @@ class TextCommandInterpreterTest {
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals("demo> ", renderedResponse("REMOVE Torch", interpretation));
     verify(commandService).enqueue("1", "REMOVE Torch", false);
-    verify(entityManagementClient, never())
+    verify(gameLogicClient, never())
         .removeEquipment(Mockito.any(SessionContext.class), Mockito.anyString());
   }
 
@@ -654,7 +655,7 @@ class TextCommandInterpreterTest {
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals("demo> ", renderedResponse("GET Torch", interpretation));
     verify(commandService).enqueue("1", "GET Torch", false);
-    verify(entityManagementClient, never())
+    verify(gameLogicClient, never())
         .pickupItemFromRoom(
             Mockito.any(SessionContext.class),
             Mockito.anyString(),
@@ -679,7 +680,7 @@ class TextCommandInterpreterTest {
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals("demo> ", renderedResponse("DROP Torch", interpretation));
     verify(commandService).enqueue("1", "DROP Torch", false);
-    verify(entityManagementClient, never())
+    verify(gameLogicClient, never())
         .dropItemToRoom(
             Mockito.any(SessionContext.class),
             Mockito.anyString(),
@@ -704,7 +705,7 @@ class TextCommandInterpreterTest {
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals("demo> ", renderedResponse("PUT Ration INTO Torch", interpretation));
     verify(commandService).enqueue("1", "PUT Ration INTO Torch", false);
-    verify(entityManagementClient, never())
+    verify(gameLogicClient, never())
         .putItemIntoContainer(
             Mockito.any(SessionContext.class),
             Mockito.anyString(),
@@ -728,7 +729,7 @@ class TextCommandInterpreterTest {
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals("demo> ", renderedResponse("TAKE Ration FROM Torch", interpretation));
     verify(commandService).enqueue("1", "TAKE Ration FROM Torch", false);
-    verify(entityManagementClient, never())
+    verify(gameLogicClient, never())
         .takeItemFromContainer(
             Mockito.any(SessionContext.class),
             Mockito.anyString(),

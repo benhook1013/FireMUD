@@ -17,7 +17,7 @@
 
 ## Current Role In The Platform
 
-- Owns gameplay session ingress, session binding, and command dispatch. `LOOK`, communication, and movement currently go through Game Logic; the first item/container/equipment command surface calls Entity Management directly while the larger Game Logic item-orchestration seam remains tracked in slice `06`.
+- Owns gameplay session ingress, session binding, and command dispatch. `LOOK`, communication, movement, and the first item/container/equipment command surface now go through Game Logic rather than binding text-session handlers directly to Entity Management.
 - Owns gameplay admission semantics and the distinction between account authentication (`LOGIN`) and gameplay binding (`PLAY`).
 - Maintains gameplay session state and coordination responsibilities in Redis.
 - Fronts Account authentication for gameplay login and bridges player input into the runtime.

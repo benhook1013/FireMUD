@@ -10,7 +10,7 @@ import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
-import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -25,11 +25,11 @@ import org.springframework.util.StringUtils;
 public class ContainerCommandHandler {
   private static final Logger LOG = LoggerFactory.getLogger(ContainerCommandHandler.class);
 
-  private final EntityManagementClient entityManagementClient;
+  private final GameLogicClient gameLogicClient;
 
-  public ContainerCommandHandler(EntityManagementClient entityManagementClient) {
-    this.entityManagementClient =
-        Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
+  public ContainerCommandHandler(GameLogicClient gameLogicClient) {
+    this.gameLogicClient =
+        Objects.requireNonNull(gameLogicClient, "gameLogicClient must not be null");
   }
 
   @Timed(value = "gamesession.command.container")
@@ -137,7 +137,7 @@ public class ContainerCommandHandler {
           ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow());
       var response =
           StringUtils.hasText(effectId)
-              ? entityManagementClient.putItemIntoContainer(
+              ? gameLogicClient.putItemIntoContainer(
                   context,
                   containerInstanceId,
                   inventoryItem.getItemId(),
@@ -145,7 +145,7 @@ public class ContainerCommandHandler {
                   selectedStackFamilyKey,
                   transfer.quantity(),
                   effectId)
-              : entityManagementClient.putItemIntoContainer(
+              : gameLogicClient.putItemIntoContainer(
                   context,
                   containerInstanceId,
                   inventoryItem.getItemId(),
@@ -211,7 +211,7 @@ public class ContainerCommandHandler {
       }
 
       ListContainerContentsResponse contents =
-          entityManagementClient.listContainerContents(
+          gameLogicClient.listContainerContents(
               context,
               ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()));
       if (contents.hasError()) {
@@ -244,7 +244,7 @@ public class ContainerCommandHandler {
           ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow());
       var response =
           StringUtils.hasText(effectId)
-              ? entityManagementClient.takeItemFromContainer(
+              ? gameLogicClient.takeItemFromContainer(
                   context,
                   containerInstanceId,
                   containerItem.getItemId(),
@@ -252,7 +252,7 @@ public class ContainerCommandHandler {
                   selectedStackFamilyKey,
                   transfer.quantity(),
                   effectId)
-              : entityManagementClient.takeItemFromContainer(
+              : gameLogicClient.takeItemFromContainer(
                   context,
                   containerInstanceId,
                   containerItem.getItemId(),
@@ -296,7 +296,7 @@ public class ContainerCommandHandler {
   private TextCommandInterpretationResult describeResolvedContainer(
       SessionContext context, InventoryItem containerItem) {
     ListContainerContentsResponse response =
-        entityManagementClient.listContainerContents(
+        gameLogicClient.listContainerContents(
             context, ContainerIdentitySupport.resolveContainerInstanceId(containerItem));
     if (response.hasError()) {
       return containerFailure(
@@ -318,7 +318,7 @@ public class ContainerCommandHandler {
   }
 
   private InventoryResolution loadInventory(SessionContext context) {
-    QueryInventoryResponse inventory = entityManagementClient.queryInventory(context);
+    QueryInventoryResponse inventory = gameLogicClient.queryInventory(context);
     if (inventory.hasError()) {
       return InventoryResolution.unavailable(
           StringUtils.hasText(inventory.getError().getMessage())

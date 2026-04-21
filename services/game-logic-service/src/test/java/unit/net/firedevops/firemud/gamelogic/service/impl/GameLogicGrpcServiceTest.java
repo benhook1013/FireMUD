@@ -11,6 +11,9 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
+import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.gamelogic.logic.command.DefaultCommandParser;
 import net.firedevops.firemud.gamelogic.logic.command.SimpleCommandProcessor;
 import net.firedevops.firemud.gamelogic.logic.event.EventDispatcher;
@@ -18,6 +21,7 @@ import net.firedevops.firemud.gamelogic.logic.script.NoOpScriptingHook;
 import net.firedevops.firemud.gamelogic.logic.service.CommandServiceImpl;
 import net.firedevops.firemud.gamelogic.service.CommunicationAggregationService;
 import net.firedevops.firemud.gamelogic.service.GameLogicDraftDesignDigestService;
+import net.firedevops.firemud.gamelogic.service.ItemRuntimeService;
 import net.firedevops.firemud.gamelogic.service.LookAggregationService;
 import net.firedevops.firemud.gamelogic.service.MoveAggregationService;
 import net.firedevops.firemud.gamelogic.service.PingService;
@@ -63,6 +67,7 @@ class GameLogicGrpcServiceTest {
             lookAggregationService,
             communicationAggregationService,
             moveAggregationService,
+            Mockito.mock(ItemRuntimeService.class),
             digestService,
             mockAttestationService(),
             new SimpleMeterRegistry());
@@ -108,6 +113,7 @@ class GameLogicGrpcServiceTest {
             lookAggregationService,
             communicationAggregationService,
             moveAggregationService,
+            Mockito.mock(ItemRuntimeService.class),
             digestService,
             mockAttestationService(),
             new SimpleMeterRegistry());
@@ -155,6 +161,7 @@ class GameLogicGrpcServiceTest {
             lookAggregationService,
             communicationAggregationService,
             moveAggregationService,
+            Mockito.mock(ItemRuntimeService.class),
             digestService,
             mockAttestationService(),
             new SimpleMeterRegistry());
@@ -203,6 +210,7 @@ class GameLogicGrpcServiceTest {
             lookAggregationService,
             communicationAggregationService,
             moveAggregationService,
+            Mockito.mock(ItemRuntimeService.class),
             digestService,
             mockAttestationService(),
             new SimpleMeterRegistry());
@@ -251,6 +259,7 @@ class GameLogicGrpcServiceTest {
             lookAggregationService,
             communicationAggregationService,
             moveAggregationService,
+            Mockito.mock(ItemRuntimeService.class),
             digestService,
             mockAttestationService(),
             new SimpleMeterRegistry());
@@ -281,5 +290,56 @@ class GameLogicGrpcServiceTest {
     assertTrue(holder.get().hasError());
     assertEquals("WORLD_UNAVAILABLE", holder.get().getError().getCode());
     assertTrue(holder.get().getError().getMessage().contains("down"));
+  }
+
+  @Test
+  void queryInventoryDelegatesToItemRuntimeService() {
+    PingService pingService = new PingServiceImpl();
+    var dispatcher = new EventDispatcher();
+    var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
+    var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
+    ItemRuntimeService itemRuntimeService = Mockito.mock(ItemRuntimeService.class);
+    QueryInventoryRequest request =
+        QueryInventoryRequest.newBuilder()
+            .setTenantId("22")
+            .setCharacterId("911")
+            .setSessionAttestation("attestation")
+            .build();
+    Mockito.when(itemRuntimeService.queryInventory(request))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(InventoryItem.newBuilder().setItemId("7").setItemName("Torch").build())
+                .build());
+    GameLogicGrpcService service =
+        new GameLogicGrpcService(
+            pingService,
+            commandService,
+            Mockito.mock(LookAggregationService.class),
+            Mockito.mock(CommunicationAggregationService.class),
+            Mockito.mock(MoveAggregationService.class),
+            itemRuntimeService,
+            mockDigestService(),
+            mockAttestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<QueryInventoryResponse> holder = new AtomicReference<>();
+    service.queryInventory(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryInventoryResponse value) {
+            holder.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("Torch", holder.get().getItems(0).getItemName());
   }
 }

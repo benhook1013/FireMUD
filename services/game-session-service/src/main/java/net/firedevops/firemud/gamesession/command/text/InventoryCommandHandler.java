@@ -10,7 +10,7 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
-import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -25,7 +25,7 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class InventoryCommandHandler {
   private static final Logger LOG = LoggerFactory.getLogger(InventoryCommandHandler.class);
-  private final EntityManagementClient entityManagementClient;
+  private final GameLogicClient gameLogicClient;
 
   @Timed(value = "gamesession.command.inventory")
   public InventoryCommandHandlingResult handle(SessionContext context, TextCommand command) {
@@ -63,7 +63,7 @@ public class InventoryCommandHandler {
 
   private InventoryCommandHandlingResult describeInventory(SessionContext context) {
     try {
-      var response = entityManagementClient.queryInventory(context);
+      var response = gameLogicClient.queryInventory(context);
       if (response.hasError()) {
         return inventoryUnavailable(
             StringUtils.hasText(response.getError().getMessage())
@@ -86,8 +86,7 @@ public class InventoryCommandHandler {
 
   private InventoryCommandHandlingResult describeRoomInventory(SessionContext context) {
     try {
-      var response =
-          entityManagementClient.listRoomGroundInventory(context, context.roomInstanceId());
+      var response = gameLogicClient.listRoomGroundInventory(context, context.roomInstanceId());
       if (response.hasError()) {
         return inventoryUnavailable(
             StringUtils.hasText(response.getError().getMessage())
@@ -177,7 +176,7 @@ public class InventoryCommandHandler {
     try {
       if (pickup) {
         var roomEntities =
-            entityManagementClient.listRoomGroundInventory(context, context.roomInstanceId());
+            gameLogicClient.listRoomGroundInventory(context, context.roomInstanceId());
         if (roomEntities.hasError()) {
           return inventoryUnavailable(
               StringUtils.hasText(roomEntities.getError().getMessage())
@@ -201,7 +200,7 @@ public class InventoryCommandHandler {
         }
         var response =
             StringUtils.hasText(effectId)
-                ? entityManagementClient.pickupItemFromRoom(
+                ? gameLogicClient.pickupItemFromRoom(
                     context,
                     context.roomInstanceId(),
                     item.itemId(),
@@ -210,7 +209,7 @@ public class InventoryCommandHandler {
                     item.stackFamilyKey(),
                     itemReference.quantity(),
                     effectId)
-                : entityManagementClient.pickupItemFromRoom(
+                : gameLogicClient.pickupItemFromRoom(
                     context,
                     context.roomInstanceId(),
                     item.itemId(),
@@ -234,7 +233,7 @@ public class InventoryCommandHandler {
             itemReference.quantity());
       }
 
-      var inventoryResponse = entityManagementClient.queryInventory(context);
+      var inventoryResponse = gameLogicClient.queryInventory(context);
       if (inventoryResponse.hasError()) {
         return inventoryUnavailable(
             StringUtils.hasText(inventoryResponse.getError().getMessage())
@@ -258,7 +257,7 @@ public class InventoryCommandHandler {
       }
       var response =
           StringUtils.hasText(effectId)
-              ? entityManagementClient.dropItemToRoom(
+              ? gameLogicClient.dropItemToRoom(
                   context,
                   context.roomInstanceId(),
                   item.itemId(),
@@ -267,7 +266,7 @@ public class InventoryCommandHandler {
                   item.stackFamilyKey(),
                   itemReference.quantity(),
                   effectId)
-              : entityManagementClient.dropItemToRoom(
+              : gameLogicClient.dropItemToRoom(
                   context,
                   context.roomInstanceId(),
                   item.itemId(),
