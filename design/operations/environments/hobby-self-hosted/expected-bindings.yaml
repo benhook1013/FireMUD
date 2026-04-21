@@ -13,14 +13,20 @@ internalBindings:
     jwksRef: secret://firemud/jwt-jwks
   certificates:
     issuerRef: cert-manager://firemud/clusterissuers/firemud-hobby
+    workloadMtlsRef: cert-manager://firemud/hobby-workload-mtls
+    gatewayInternalWsListenerRef: cert-manager://firemud/hobby-gateway-internal-ws
+    tcpProxyBridgeClientRef: cert-manager://firemud/hobby-tcp-proxy-bridge
+    backupControlPlaneClientRef: cert-manager://firemud/hobby-backup-control-plane
   registry:
     imagePullSecretRef: secret://firemud/ghcr-pull-hobby
 backupStorage:
   bucket: firemud-hobby-backups
   endpoint: https://minio.hobby.internal
+  bindingRef: secret://firemud/hobby-backup-object-store
 assetStorage:
   bucket: firemud-hobby-assets
   endpoint: https://minio.hobby.internal
+  bindingRef: secret://firemud/hobby-asset-object-store
 outboundComms:
   smtpHost: smtp.hobby.internal
   webhookTargets:

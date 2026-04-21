@@ -13,13 +13,19 @@ internalBindings:
     jwksRef: secret://firemud/jwt-jwks
   certificates:
     issuerRef: cert-manager://firemud/clusterissuers/firemud-production
+    workloadMtlsRef: cert-manager://firemud/production-workload-mtls
+    gatewayInternalWsListenerRef: cert-manager://firemud/production-gateway-internal-ws
+    tcpProxyBridgeClientRef: cert-manager://firemud/production-tcp-proxy-bridge
+    backupControlPlaneClientRef: cert-manager://firemud/production-backup-control-plane
   registry:
     imagePullSecretRef: secret://firemud/ghcr-pull-production
 backupStorage:
   bucket: firemud-production-backups
+  bindingRef: secret://firemud/production-backup-object-store
 assetStorage:
   bucket: firemud-production-assets
   endpoint: https://minio.production.internal
+  bindingRef: secret://firemud/production-asset-object-store
 outboundComms:
   smtpHost: smtp.production.internal
   webhookTargets:

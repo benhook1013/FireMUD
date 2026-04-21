@@ -131,12 +131,22 @@ public class CommonSecurityAutoConfiguration {
     if (secret != null && !secret.isBlank()) {
       return secret;
     }
+    String secretPath = props.getJwtSecretPath();
+    if (secretPath != null && !secretPath.isBlank()) {
+      try {
+        return Files.readString(Path.of(secretPath)).trim();
+      } catch (IOException ex) {
+        throw new IllegalStateException(
+            "firemud.auth.jwt-secret-path could not be read: " + secretPath, ex);
+      }
+    }
     boolean devLike =
         Arrays.stream(environment.getActiveProfiles())
             .map(String::toLowerCase)
             .anyMatch(profile -> profile.equals("dev") || profile.equals("test"));
     if (!devLike) {
-      throw new IllegalStateException("firemud.auth.jwt-secret must be set");
+      throw new IllegalStateException(
+          "firemud.auth.jwt-secret or firemud.auth.jwt-secret-path must be set");
     }
     String generated =
         UUID.randomUUID().toString().replace("-", "")

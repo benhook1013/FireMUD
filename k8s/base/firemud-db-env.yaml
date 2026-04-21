@@ -12,6 +12,8 @@ data:
   FIREMUD_REDIS_COORD_PORT: "6379"
   FIREMUD_REDIS_CACHE_HOST: redis-cache
   FIREMUD_REDIS_CACHE_PORT: "6379"
+  FIREMUD_AUTH_JWT_SECRET_PATH: /var/run/secrets/firemud/jwt/current.key
+  FIREMUD_AUTH_JWKS_PATH: /var/run/secrets/firemud/jwks/jwks.json
   OTEL_ENDPOINT: http://otel-collector:4317
   FLUENT_ELASTICSEARCH_HOST: elasticsearch
   FLUENT_ELASTICSEARCH_PORT: "9200"
@@ -20,8 +22,25 @@ apiVersion: v1
 kind: Secret
 metadata:
   namespace: firemud
-  name: firemud-secret
+  name: postgres-credentials
 data:
   FIREMUD_POSTGRES_USER: ZmlyZW11ZA==
   FIREMUD_POSTGRES_PASSWORD: ZmlyZW11ZA==
-  FIREMUD_AUTH_JWT_SECRET: Y2hhbmdlaXQtY2hhbmdlaXQtY2hhbmdlaXQtY2hhbmdlaXQ=
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: firemud
+  name: jwt-signing-keys
+type: Opaque
+stringData:
+  current.key: changeit-changeit-changeit-changeit
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: firemud
+  name: jwt-jwks
+type: Opaque
+stringData:
+  jwks.json: '{"keys":[]}'

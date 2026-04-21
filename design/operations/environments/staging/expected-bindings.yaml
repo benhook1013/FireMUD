@@ -13,14 +13,20 @@ internalBindings:
     jwksRef: secret://firemud/jwt-jwks
   certificates:
     issuerRef: cert-manager://firemud/clusterissuers/firemud-staging
+    workloadMtlsRef: cert-manager://firemud/staging-workload-mtls
+    gatewayInternalWsListenerRef: cert-manager://firemud/staging-gateway-internal-ws
+    tcpProxyBridgeClientRef: cert-manager://firemud/staging-tcp-proxy-bridge
+    backupControlPlaneClientRef: cert-manager://firemud/staging-backup-control-plane
   registry:
     imagePullSecretRef: secret://firemud/ghcr-pull-staging
 backupStorage:
   bucket: firemud-staging-backups
   endpoint: https://minio.staging.internal
+  bindingRef: secret://firemud/staging-backup-object-store
 assetStorage:
   bucket: firemud-staging-assets
   endpoint: https://minio.staging.internal
+  bindingRef: secret://firemud/staging-asset-object-store
 outboundComms:
   smtpHost: smtp.staging.internal
   webhookTargets:

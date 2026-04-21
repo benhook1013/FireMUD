@@ -33,6 +33,12 @@ case "$CONTEXT" in
   *) echo "Invalid FIREMUD_PREFLIGHT_CONTEXT: $CONTEXT" >&2; exit 1 ;;
 esac
 DEPLOYMENT_REF="${FIREMUD_DEPLOYMENT_REF:-$(git rev-parse --short=12 HEAD)}"
+EXPECTED_BINDINGS_REF="design/operations/environments/$ENV_CLASS/expected-bindings.yaml"
+EXPECTED_BINDINGS_PATH="$ROOT_DIR/$EXPECTED_BINDINGS_REF"
+if [ ! -f "$EXPECTED_BINDINGS_PATH" ]; then
+  echo "Expected-bindings manifest not found: $EXPECTED_BINDINGS_PATH" >&2
+  exit 1
+fi
 
 RENDERED=""
 if [ "$ENV_CLASS" = "hobby-self-hosted" ]; then
@@ -57,6 +63,30 @@ else
   OVERLAY_PATH="$ROOT_DIR/k8s/overlays/${ENV_CLASS/staging/stage}"
   RENDERED="$(kubectl kustomize "$OVERLAY_PATH")"
 fi
+RENDERED_PATH="$(mktemp)"
+trap 'rm -f "$RENDERED_PATH"' EXIT
+printf '%s\n' "$RENDERED" >"$RENDERED_PATH"
+
+rendered_has_resource() {
+  local kind="$1"
+  local name="$2"
+  python3 - <<'PY' "$RENDERED_PATH" "$kind" "$name"
+import pathlib
+import sys
+import yaml
+
+path = pathlib.Path(sys.argv[1])
+kind = sys.argv[2]
+name = sys.argv[3]
+for document in yaml.safe_load_all(path.read_text(encoding="utf-8")):
+    if not isinstance(document, dict):
+        continue
+    metadata = document.get("metadata") or {}
+    if document.get("kind") == kind and metadata.get("name") == name:
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
 
 WAIVER_PATH="${FIREMUD_PREFLIGHT_WAIVER:-}"
 WAIVED_IDS=""
@@ -120,6 +150,135 @@ append_result() {
     "$(json_escape "$message")")"
 }
 
+EXPECTED_BINDING_RESULTS="$(python3 - <<'PY' "$EXPECTED_BINDINGS_PATH" "$EXPECTED_BINDINGS_REF" "$ENV_CLASS" "$RENDERED_PATH" "$CONTEXT"
+import pathlib
+import re
+import sys
+
+try:
+    import yaml
+except Exception as exc:
+    print(f"PREFLIGHT-SECRETS-002\ttrue\tfail\tPyYAML is required to validate expected bindings: {exc}")
+    raise SystemExit(0)
+
+path = pathlib.Path(sys.argv[1])
+ref = sys.argv[2]
+env_class = sys.argv[3]
+rendered = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
+context = sys.argv[5]
+
+def result(policy_id, required, status, message):
+    print(f"{policy_id}\t{str(required).lower()}\t{status}\t{message}")
+
+def get(data, dotted):
+    cur = data
+    for part in dotted.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+try:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+except Exception as exc:
+    result("PREFLIGHT-SECRETS-002", True, "fail", f"Expected-bindings manifest is unreadable: {exc}")
+    result("PREFLIGHT-BOOTSTRAP-001", True, "fail", "Expected-bindings manifest is unreadable")
+    result("PREFLIGHT-EXTERNAL-001", True, "fail", "Expected-bindings manifest is unreadable")
+    result("PREFLIGHT-SERVICES-001", True, "fail", "Expected-bindings manifest is unreadable")
+    raise SystemExit(0)
+
+if data.get("environment") != env_class:
+    result("PREFLIGHT-SECRETS-002", True, "fail", f"Expected-bindings environment mismatch in {ref}")
+else:
+    required_internal = [
+        "internalBindings.postgres.endpoint",
+        "internalBindings.postgres.credentialsRef",
+        "internalBindings.redis.coordination.endpoint",
+        "internalBindings.redis.cache.endpoint",
+        "internalBindings.jwt.signingKeysRef",
+        "internalBindings.jwt.jwksRef",
+        "internalBindings.certificates.issuerRef",
+        "internalBindings.certificates.workloadMtlsRef",
+        "internalBindings.certificates.gatewayInternalWsListenerRef",
+        "internalBindings.certificates.tcpProxyBridgeClientRef",
+        "internalBindings.certificates.backupControlPlaneClientRef",
+        "internalBindings.registry.imagePullSecretRef",
+    ]
+    missing = [key for key in required_internal if not get(data, key)]
+    secret_refs = [
+        get(data, "internalBindings.postgres.credentialsRef"),
+        get(data, "internalBindings.jwt.signingKeysRef"),
+        get(data, "internalBindings.jwt.jwksRef"),
+    ]
+    missing_rendered = []
+    for ref_value in secret_refs:
+        if isinstance(ref_value, str) and ref_value.startswith("secret://"):
+            name = ref_value.rstrip("/").split("/")[-1]
+            if not re.search(rf"name:\s*{re.escape(name)}(\s|$)", rendered):
+                missing_rendered.append(name)
+    if missing:
+        result("PREFLIGHT-SECRETS-002", True, "fail", "Expected-bindings missing internal keys: " + ", ".join(missing))
+    elif missing_rendered:
+        result("PREFLIGHT-SECRETS-002", True, "fail", "Rendered manifests missing expected Secret bindings: " + ", ".join(missing_rendered))
+    else:
+        result("PREFLIGHT-SECRETS-002", True, "pass", f"Internal state/trust bindings match {ref}")
+
+bootstrap_names = ["postgres-credentials", "jwt-signing-keys", "jwt-jwks"]
+missing_bootstrap = [name for name in bootstrap_names if not re.search(rf"name:\s*{re.escape(name)}(\s|$)", rendered)]
+if missing_bootstrap:
+    result("PREFLIGHT-BOOTSTRAP-001", True, "fail", "Rendered manifests missing bootstrap resources: " + ", ".join(missing_bootstrap))
+else:
+    result("PREFLIGHT-BOOTSTRAP-001", True, "pass", "Minimum bootstrap secret/trust resources are present")
+
+external_requirements = [
+    ("backupStorage.bucket", None),
+    ("backupStorage.bindingRef", "backupStorage.fingerprint"),
+    ("assetStorage.bucket", None),
+    ("assetStorage.endpoint", None),
+    ("assetStorage.bindingRef", "assetStorage.fingerprint"),
+    ("operatorCredentials.bindingRef", "operatorCredentials.fingerprint"),
+]
+missing_external = []
+for primary, alternate in external_requirements:
+    if not get(data, primary) and (alternate is None or not get(data, alternate)):
+        missing_external.append(primary if alternate is None else f"{primary} or {alternate}")
+if missing_external:
+    result("PREFLIGHT-EXTERNAL-001", True, "fail", "Expected-bindings missing external binding keys: " + ", ".join(missing_external))
+else:
+    values = [
+        str(get(data, "backupStorage.bucket")),
+        str(get(data, "assetStorage.bucket")),
+        str(get(data, "operatorCredentials.bindingRef") or get(data, "operatorCredentials.fingerprint")),
+    ]
+    env_tokens = [env_class]
+    if env_class == "hobby-self-hosted":
+        env_tokens.append("hobby")
+    if any(not any(token in value for token in env_tokens) for value in values):
+        result("PREFLIGHT-EXTERNAL-001", True, "fail", "External binding values do not consistently identify the target environment")
+    else:
+        result("PREFLIGHT-EXTERNAL-001", True, "pass", f"External bindings are environment-scoped in {ref}")
+
+mode = get(data, "serviceDiscovery.mode")
+override_lines = re.findall(r"FIREMUD_SERVICES_[A-Z0-9_]+:\s*([^\n]+)", rendered)
+if mode == "kubernetes-dns-default" and override_lines:
+    result("PREFLIGHT-SERVICES-001", True, "fail", "Rendered manifests contain FIREMUD_SERVICES_* overrides while expected bindings require Kubernetes DNS defaults")
+elif mode == "explicit-overrides":
+    allowed = get(data, "serviceDiscovery.allowedOverrides")
+    if not isinstance(allowed, dict) or not allowed:
+        result("PREFLIGHT-SERVICES-001", True, "fail", "serviceDiscovery.allowedOverrides is required for explicit-overrides mode")
+    else:
+        result("PREFLIGHT-SERVICES-001", True, "pass", "Explicit service-discovery overrides are declared in expected bindings")
+elif mode == "kubernetes-dns-default":
+    result("PREFLIGHT-SERVICES-001", True, "pass", "Rendered manifests use default in-environment service discovery")
+else:
+    result("PREFLIGHT-SERVICES-001", True, "fail", "serviceDiscovery.mode must be kubernetes-dns-default or explicit-overrides")
+PY
+)"
+while IFS=$'\t' read -r policy_id required status message; do
+  [ -z "$policy_id" ] && continue
+  append_result "$policy_id" "$required" "$status" "$message"
+done <<<"$EXPECTED_BINDING_RESULTS"
+
 # PREFLIGHT-DIGEST-001 / PREFLIGHT-DIGEST-002
 SERVICE_IMAGES="$(printf '%s\n' "$RENDERED" | grep -E '^[[:space:]]*image:[[:space:]]*ghcr\.io/benhook1013/.+-service' | sed -E 's/^[[:space:]]*image:[[:space:]]*//' | awk '{print $1}' | sort -u || true)"
 if [ "$ENV_CLASS" = "hobby-self-hosted" ]; then
@@ -145,7 +304,7 @@ fi
 # PREFLIGHT-SECRETS-001
 secret_check_failed=0
 for secret_name in postgres-credentials jwt-signing-keys jwt-jwks; do
-  if ! printf '%s\n' "$RENDERED" | grep -Eq "kind:[[:space:]]*Secret" || ! printf '%s\n' "$RENDERED" | grep -Eq "name:[[:space:]]*$secret_name([[:space:]]|$)"; then
+  if ! rendered_has_resource Secret "$secret_name"; then
     append_result "PREFLIGHT-SECRETS-001" "true" "fail" "Missing required Secret in rendered manifests: $secret_name"
     secret_check_failed=1
     break
@@ -165,9 +324,9 @@ else
 fi
 
 # PREFLIGHT-JWKS-001
-if printf '%s\n' "$RENDERED" | grep -Eq 'kind:[[:space:]]*ConfigMap' && printf '%s\n' "$RENDERED" | grep -Eq 'name:[[:space:]]*jwt-jwks([[:space:]]|$)'; then
+if rendered_has_resource ConfigMap jwt-jwks; then
   append_result "PREFLIGHT-JWKS-001" "true" "fail" "jwt-jwks is configured as a ConfigMap in player-facing context"
-elif printf '%s\n' "$RENDERED" | grep -Eq 'kind:[[:space:]]*Secret' && printf '%s\n' "$RENDERED" | grep -Eq 'name:[[:space:]]*jwt-jwks([[:space:]]|$)'; then
+elif rendered_has_resource Secret jwt-jwks; then
   append_result "PREFLIGHT-JWKS-001" "true" "pass" "jwt-jwks Secret contract is satisfied"
 else
   append_result "PREFLIGHT-JWKS-001" "true" "fail" "No jwt-jwks Secret found in rendered manifests"
@@ -469,7 +628,7 @@ mkdir -p "$(dirname "$OUTPUT_PATH")"
 
 CHECKS_JSON="[$(printf '%s\n' "$CHECK_RESULTS" | paste -sd ',' -)]"
 
-python3 - <<'PY' "$OUTPUT_PATH" "$ENV_CLASS" "$DEPLOYMENT_REF" "$STARTED_AT" "$COMPLETED_AT" "$CHECKS_JSON" "$CONTEXT" "$WAIVER_PATH"
+python3 - <<'PY' "$OUTPUT_PATH" "$ENV_CLASS" "$DEPLOYMENT_REF" "$STARTED_AT" "$COMPLETED_AT" "$CHECKS_JSON" "$CONTEXT" "$WAIVER_PATH" "$EXPECTED_BINDINGS_REF"
 import json,sys,pathlib
 out=pathlib.Path(sys.argv[1])
 env_class = sys.argv[2]
@@ -484,6 +643,7 @@ report={
   "startedAt": sys.argv[4],
   "completedAt": sys.argv[5],
   "checkResults": json.loads(sys.argv[6]),
+  "expectedBindingsRef": sys.argv[9],
   "toolVersion": "preflight.sh-v1",
   "context": sys.argv[7],
 }

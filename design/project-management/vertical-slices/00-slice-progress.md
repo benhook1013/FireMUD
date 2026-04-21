@@ -30,6 +30,8 @@ These are narrow enough to implement now and unblock the current runtime/platfor
    Remaining: the first ledger-side `effectKey`, deterministic `effectId`, movement-backed replay/no-op seam, Game Session communication/activity replay guard, Social Groups communication replay guard, Entity Management item mutation response replay guard, transfer-audit `effectId` plus session correlation, and first apply/replay metrics are now live; the next gap is later domain guard consumers.
 10. [02.18.11 Migrate Live Gameplay Commands Onto the Durable Execution Path](./02.18.11-task-list-migrate-live-gameplay-commands-onto-durable-execution-path-vertical-slice.md)
    Remaining: movement, `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, `REMOVE`, `SAY`, `WHISPER`, `TELL`, and `AFK` are now migrated durable command families with Game Session-owned replay guards plus the first downstream Entity Management and Social Groups replay guards; the next gap is any later state-changing command family and its owning service guard.
+11. [02.15.8 Environment Preflight and Secret-Binding Convergence](./02.15.8-task-list-environment-preflight-and-secret-binding-convergence-vertical-slice.md)
+   Remaining: build on the now-live JWT secret-path startup, mounted JWKS serving, base Kubernetes JWT/JWKS mounts, expected-binding manifest schema expansion, `expectedBindingsRef` report output, and first `PREFLIGHT-SECRETS-002` / `PREFLIGHT-BOOTSTRAP-001` / `PREFLIGHT-EXTERNAL-001` / `PREFLIGHT-SERVICES-001` enforcement by adding preview-unique JWT/JWKS generation and executable traffic-open backup evidence gates.
 
 ### 2. Active architecture follow-through
 
