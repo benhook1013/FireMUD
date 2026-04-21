@@ -51,6 +51,7 @@ import net.firedevops.firemud.worldmanagement.v1.UpgradeValidationResult;
 import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsRequest;
 import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
+import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
@@ -730,7 +731,8 @@ public class WorldManagementGrpcService
         request.hasZone() ? toDto(request.getZone()) : null,
         request.hasRoom() ? toDto(request.getRoom()) : null,
         request.hasRoomExit() ? toDto(request.getRoomExit()) : null,
-        request.hasGenerationRule() ? toDto(request.getGenerationRule()) : null);
+        request.hasGenerationRule() ? toDto(request.getGenerationRule()) : null,
+        request.hasWorldEntitySpawnBinding() ? toDto(request.getWorldEntitySpawnBinding()) : null);
   }
 
   private String operationName(ApplyWorldDesignMutationRequest request) {
@@ -748,6 +750,7 @@ public class WorldManagementGrpcService
       case WORLD_DESIGN_AGGREGATE_TYPE_ROOM -> "ROOM";
       case WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT -> "ROOM_EXIT";
       case WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE -> "GENERATION_RULE";
+      case WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING -> "WORLD_ENTITY_SPAWN_BINDING";
       default -> "";
     };
   }
@@ -789,6 +792,16 @@ public class WorldManagementGrpcService
       GenerationRuleDesignMutation mutation) {
     return new WorldDesignMutationRequestDto.GenerationRuleMutationDto(
         mutation.getName(), mutation.getValue());
+  }
+
+  private WorldDesignMutationRequestDto.WorldEntitySpawnBindingMutationDto toDto(
+      WorldEntitySpawnBindingDesignMutation mutation) {
+    return new WorldDesignMutationRequestDto.WorldEntitySpawnBindingMutationDto(
+        mutation.getRoomId(),
+        mutation.getEntityTemplateType().name().replace("ENTITY_TEMPLATE_REFERENCE_TYPE_", ""),
+        mutation.getEntityTemplateId(),
+        mutation.getSpawnCount(),
+        mutation.getRespawnDelaySeconds());
   }
 
   private WorldDesignMutationResult toProtoMutationResult(String result) {

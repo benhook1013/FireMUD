@@ -9,6 +9,8 @@ import org.springframework.stereotype.Repository;
 public interface ItemRepository extends JpaRepository<Item, Long> {
   Optional<Item> findByIdAndTenantId(Long id, Long tenantId);
 
+  Optional<Item> findByTenantIdAndVersionIdAndId(Long tenantId, Long versionId, Long id);
+
   Optional<Item> findByTenantIdAndNameIgnoreCase(Long tenantId, String name);
 
   java.util.List<Item> findByTenantIdOrderByIdAsc(Long tenantId);

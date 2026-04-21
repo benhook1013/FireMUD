@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement.service.impl;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationRequestDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationResultDto;
@@ -13,6 +14,7 @@ import net.firedevops.firemud.worldmanagement.entity.RoomExit;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignAggregateEpoch;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignRevisionLedger;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignScopeEpoch;
+import net.firedevops.firemud.worldmanagement.entity.WorldEntitySpawnBinding;
 import net.firedevops.firemud.worldmanagement.entity.Zone;
 import net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository;
 import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
@@ -21,6 +23,7 @@ import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldDesignAggregateEpochRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldDesignRevisionLedgerRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldDesignScopeEpochRepository;
+import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldDesignMutationService;
 import org.springframework.stereotype.Service;
@@ -40,10 +43,12 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
   private final RoomRepository roomRepository;
   private final RoomExitRepository roomExitRepository;
   private final GenerationRuleRepository generationRuleRepository;
+  private final WorldEntitySpawnBindingRepository worldEntitySpawnBindingRepository;
   private final WorldDesignRevisionLedgerRepository ledgerRepository;
   private final WorldDesignAggregateEpochRepository aggregateEpochRepository;
   private final WorldDesignScopeEpochRepository scopeEpochRepository;
   private final GameDesignClient gameDesignClient;
+  private final EntityManagementClient entityManagementClient;
 
   @Override
   @Transactional
@@ -123,6 +128,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
       case "ROOM" -> applyRoom(request);
       case "ROOM_EXIT" -> applyRoomExit(request);
       case "GENERATION_RULE" -> applyGenerationRule(request);
+      case "WORLD_ENTITY_SPAWN_BINDING" -> applyWorldEntitySpawnBinding(request);
       default -> throw appError("UNSUPPORTED_SCOPE", "unsupported aggregate type");
     };
   }
@@ -256,6 +262,51 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     return generationRuleRepository.save(rule).getId();
   }
 
+  private Long applyWorldEntitySpawnBinding(WorldDesignMutationRequestDto request) {
+    if (OPERATION_DELETE.equals(request.operationType())) {
+      WorldEntitySpawnBinding binding = existingWorldEntitySpawnBinding(request);
+      worldEntitySpawnBindingRepository.delete(binding);
+      return binding.getId();
+    }
+    var payload = request.worldEntitySpawnBinding();
+    if (payload == null) {
+      throw appError("INVALID_ARGUMENT", "world_entity_spawn_binding payload is required");
+    }
+    long roomId = parseId(payload.roomId(), "world_entity_spawn_binding.room_id");
+    Room room =
+        roomRepository
+            .findByTenantIdAndVersionIdAndId(request.tenantId(), request.versionId(), roomId)
+            .orElseThrow(() -> appError("UNRESOLVED_REFERENCE", "room not found"));
+    String entityTemplateType =
+        requireText(
+            payload.entityTemplateType(), "world_entity_spawn_binding.entity_template_type");
+    long entityTemplateId =
+        parseId(payload.entityTemplateId(), "world_entity_spawn_binding.entity_template_id");
+    if (!entityManagementClient.validateEntityTemplateReference(
+        request.tenantId(), request.versionId(), entityTemplateType, entityTemplateId)) {
+      throw appError("UNRESOLVED_REFERENCE", "entity template not found");
+    }
+    WorldEntitySpawnBinding binding =
+        StringUtils.hasText(request.aggregateId())
+            ? existingWorldEntitySpawnBinding(request)
+            : worldEntitySpawnBindingRepository
+                .findByTenantIdAndVersionIdAndRoomIdAndEntityTemplateTypeAndEntityTemplateId(
+                    request.tenantId(),
+                    request.versionId(),
+                    roomId,
+                    entityTemplateType,
+                    entityTemplateId)
+                .orElseGet(WorldEntitySpawnBinding::new);
+    binding.setTenantId(request.tenantId());
+    binding.setVersionId(request.versionId());
+    binding.setRoom(room);
+    binding.setEntityTemplateType(entityTemplateType);
+    binding.setEntityTemplateId(entityTemplateId);
+    binding.setSpawnCount(payload.spawnCount() <= 0 ? 1 : payload.spawnCount());
+    binding.setRespawnDelaySeconds(Math.max(payload.respawnDelaySeconds(), 0));
+    return worldEntitySpawnBindingRepository.save(binding).getId();
+  }
+
   private Long advanceScopeEpoch(WorldDesignMutationRequestDto request) {
     if (!StringUtils.hasText(request.scopeType()) && !StringUtils.hasText(request.scopeId())) {
       return null;
@@ -361,6 +412,14 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
         .findByTenantIdAndVersionIdAndId(
             request.tenantId(), request.versionId(), parseId(request.aggregateId(), "aggregate_id"))
         .orElseThrow(() -> appError("NOT_FOUND", "generation rule not found"));
+  }
+
+  private WorldEntitySpawnBinding existingWorldEntitySpawnBinding(
+      WorldDesignMutationRequestDto request) {
+    return worldEntitySpawnBindingRepository
+        .findByTenantIdAndVersionIdAndId(
+            request.tenantId(), request.versionId(), parseId(request.aggregateId(), "aggregate_id"))
+        .orElseThrow(() -> appError("NOT_FOUND", "world entity spawn binding not found"));
   }
 
   private String requireText(String value, String field) {

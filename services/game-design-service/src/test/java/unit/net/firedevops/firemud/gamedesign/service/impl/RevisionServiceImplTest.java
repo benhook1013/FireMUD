@@ -111,6 +111,7 @@ class RevisionServiceImplTest {
                 null,
                 null,
                 null,
+                null,
                 null),
             null,
             null);

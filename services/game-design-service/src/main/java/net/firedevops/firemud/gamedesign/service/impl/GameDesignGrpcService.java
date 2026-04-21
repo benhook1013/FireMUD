@@ -1237,6 +1237,15 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
             ? new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
                 .GenerationRuleMutationDto(
                 request.getGenerationRule().getName(), request.getGenerationRule().getValue())
+            : null,
+        request.hasWorldEntitySpawnBinding()
+            ? new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                .WorldEntitySpawnBindingMutationDto(
+                request.getWorldEntitySpawnBinding().getRoomId(),
+                request.getWorldEntitySpawnBinding().getEntityTemplateType().name(),
+                request.getWorldEntitySpawnBinding().getEntityTemplateId(),
+                request.getWorldEntitySpawnBinding().getSpawnCount(),
+                request.getWorldEntitySpawnBinding().getRespawnDelaySeconds())
             : null);
   }
 

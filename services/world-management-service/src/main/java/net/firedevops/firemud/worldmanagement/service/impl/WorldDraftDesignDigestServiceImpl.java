@@ -8,6 +8,7 @@ import net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepositor
 import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
+import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import org.springframework.stereotype.Service;
@@ -22,6 +23,7 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
   private final RoomRepository roomRepository;
   private final RoomExitRepository roomExitRepository;
   private final GenerationRuleRepository generationRuleRepository;
+  private final WorldEntitySpawnBindingRepository worldEntitySpawnBindingRepository;
   private final ObjectMapper objectMapper;
 
   public WorldDraftDesignDigestServiceImpl(
@@ -30,12 +32,14 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
       RoomRepository roomRepository,
       RoomExitRepository roomExitRepository,
       GenerationRuleRepository generationRuleRepository,
+      WorldEntitySpawnBindingRepository worldEntitySpawnBindingRepository,
       ObjectMapper objectMapper) {
     this.regionRepository = regionRepository;
     this.zoneRepository = zoneRepository;
     this.roomRepository = roomRepository;
     this.roomExitRepository = roomExitRepository;
     this.generationRuleRepository = generationRuleRepository;
+    this.worldEntitySpawnBindingRepository = worldEntitySpawnBindingRepository;
     this.objectMapper = objectMapper;
   }
 
@@ -116,6 +120,20 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
                                   "id", rule.getId(),
                                   "name", rule.getName(),
                                   "value", value(rule.getValue())))
+                      .toList(),
+                  "worldEntitySpawnBindings",
+                  worldEntitySpawnBindingRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
+                      .map(
+                          binding ->
+                              Map.<String, Object>of(
+                                  "id", binding.getId(),
+                                  "roomId", binding.getRoom().getId(),
+                                  "entityTemplateType", binding.getEntityTemplateType(),
+                                  "entityTemplateId", binding.getEntityTemplateId(),
+                                  "spawnCount", binding.getSpawnCount(),
+                                  "respawnDelaySeconds", binding.getRespawnDelaySeconds()))
                       .toList()));
       return new WorldDraftDesignDigest(
           tenantId,

@@ -11,9 +11,11 @@ import java.util.Optional;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
+import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationRequestDto;
 import net.firedevops.firemud.worldmanagement.entity.Region;
+import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignAggregateEpoch;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignRevisionLedger;
 import net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository;
@@ -23,6 +25,7 @@ import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldDesignAggregateEpochRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldDesignRevisionLedgerRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldDesignScopeEpochRepository;
+import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,10 +38,12 @@ class WorldDesignMutationServiceImplTest {
   @Mock private RoomRepository roomRepository;
   @Mock private RoomExitRepository roomExitRepository;
   @Mock private GenerationRuleRepository generationRuleRepository;
+  @Mock private WorldEntitySpawnBindingRepository worldEntitySpawnBindingRepository;
   @Mock private WorldDesignRevisionLedgerRepository ledgerRepository;
   @Mock private WorldDesignAggregateEpochRepository aggregateEpochRepository;
   @Mock private WorldDesignScopeEpochRepository scopeEpochRepository;
   @Mock private GameDesignClient gameDesignClient;
+  @Mock private EntityManagementClient entityManagementClient;
 
   private WorldDesignMutationServiceImpl service;
 
@@ -52,10 +57,12 @@ class WorldDesignMutationServiceImplTest {
             roomRepository,
             roomExitRepository,
             generationRuleRepository,
+            worldEntitySpawnBindingRepository,
             ledgerRepository,
             aggregateEpochRepository,
             scopeEpochRepository,
-            gameDesignClient);
+            gameDesignClient,
+            entityManagementClient);
     when(gameDesignClient.getVersionState(1L, 7L))
         .thenReturn(versionState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT));
     when(ledgerRepository
@@ -65,6 +72,8 @@ class WorldDesignMutationServiceImplTest {
     when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
             1L, 7L, "REGION", 44L))
         .thenReturn(Optional.empty());
+    when(entityManagementClient.validateEntityTemplateReference(1L, 7L, "NPC", 55L))
+        .thenReturn(true);
     when(regionRepository.save(any(Region.class)))
         .thenAnswer(
             invocation -> {
@@ -146,6 +155,27 @@ class WorldDesignMutationServiceImplTest {
     verify(regionRepository, never()).save(any(Region.class));
   }
 
+  @Test
+  void spawnBindingRejectsMissingEntityTemplate() {
+    Room room = new Room();
+    room.setId(12L);
+    room.setTenantId(1L);
+    room.setVersionId(7L);
+    when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L)).thenReturn(Optional.of(room));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-2", "revision-2", "UPSERT", "WORLD_ENTITY_SPAWN_BINDING", ""))
+        .thenReturn(Optional.empty());
+    when(entityManagementClient.validateEntityTemplateReference(1L, 7L, "NPC", 55L))
+        .thenReturn(false);
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.applyMutation(spawnBindingRequest()));
+
+    assertEquals(true, ex.getMessage().startsWith("UNRESOLVED_REFERENCE:"));
+  }
+
   private WorldDesignMutationRequestDto regionCreateRequest() {
     return new WorldDesignMutationRequestDto(
         1L,
@@ -161,6 +191,7 @@ class WorldDesignMutationServiceImplTest {
         0L,
         new WorldDesignMutationRequestDto.RegionMutationDto(
             "North", "rain", 0, 123L, "ROOM_GRAPH", "{}", 1.0d),
+        null,
         null,
         null,
         null,
@@ -185,7 +216,30 @@ class WorldDesignMutationServiceImplTest {
         null,
         null,
         null,
+        null,
         null);
+  }
+
+  private WorldDesignMutationRequestDto spawnBindingRequest() {
+    return new WorldDesignMutationRequestDto(
+        1L,
+        7L,
+        "commit-2",
+        "revision-2",
+        "UPSERT",
+        "WORLD_ENTITY_SPAWN_BINDING",
+        "",
+        0L,
+        "",
+        "",
+        0L,
+        null,
+        null,
+        null,
+        null,
+        null,
+        new WorldDesignMutationRequestDto.WorldEntitySpawnBindingMutationDto(
+            "12", "NPC", "55", 2, 30));
   }
 
   private GetVersionStateResponse versionState(VersionLifecycleState state) {

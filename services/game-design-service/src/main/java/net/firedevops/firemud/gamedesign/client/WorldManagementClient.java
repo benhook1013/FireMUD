@@ -17,6 +17,7 @@ import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.springframework.stereotype.Component;
@@ -162,6 +163,19 @@ public class WorldManagementClient
               .setValue(defaultString(mutation.generationRule().value()))
               .build());
     }
+    if (mutation.worldEntitySpawnBinding() != null) {
+      return builder.setWorldEntitySpawnBinding(
+          WorldEntitySpawnBindingDesignMutation.newBuilder()
+              .setRoomId(defaultString(mutation.worldEntitySpawnBinding().roomId()))
+              .setEntityTemplateTypeValue(
+                  enumValue(mutation.worldEntitySpawnBinding().entityTemplateType()))
+              .setEntityTemplateId(
+                  defaultString(mutation.worldEntitySpawnBinding().entityTemplateId()))
+              .setSpawnCount(defaultInt(mutation.worldEntitySpawnBinding().spawnCount()))
+              .setRespawnDelaySeconds(
+                  defaultInt(mutation.worldEntitySpawnBinding().respawnDelaySeconds()))
+              .build());
+    }
     return builder;
   }
 
@@ -177,6 +191,9 @@ public class WorldManagementClient
       case "WORLD_DESIGN_AGGREGATE_TYPE_ROOM" -> 3;
       case "WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT" -> 4;
       case "WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE" -> 5;
+      case "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING" -> 6;
+      case "ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM" -> 1;
+      case "ENTITY_TEMPLATE_REFERENCE_TYPE_NPC" -> 2;
       default -> 0;
     };
   }

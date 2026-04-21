@@ -7,6 +7,7 @@ import net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepositor
 import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
+import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -21,6 +22,8 @@ class WorldDraftDesignDigestServiceImplTest {
     RoomExitRepository roomExitRepository = Mockito.mock(RoomExitRepository.class);
     GenerationRuleRepository generationRuleRepository =
         Mockito.mock(GenerationRuleRepository.class);
+    WorldEntitySpawnBindingRepository worldEntitySpawnBindingRepository =
+        Mockito.mock(WorldEntitySpawnBindingRepository.class);
     Mockito.when(regionRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
         .thenReturn(List.of());
     Mockito.when(zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
@@ -31,6 +34,8 @@ class WorldDraftDesignDigestServiceImplTest {
         .thenReturn(List.of());
     Mockito.when(generationRuleRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
         .thenReturn(List.of());
+    Mockito.when(worldEntitySpawnBindingRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of());
     WorldDraftDesignDigestServiceImpl service =
         new WorldDraftDesignDigestServiceImpl(
             regionRepository,
@@ -38,6 +43,7 @@ class WorldDraftDesignDigestServiceImplTest {
             roomRepository,
             roomExitRepository,
             generationRuleRepository,
+            worldEntitySpawnBindingRepository,
             new ObjectMapper());
 
     var digest = service.getDraftDesignDigest("1", "7");

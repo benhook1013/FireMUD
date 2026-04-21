@@ -273,6 +273,7 @@ enum WorldDesignAggregateType {
   WORLD_DESIGN_AGGREGATE_TYPE_ROOM = 3;
   WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT = 4;
   WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE = 5;
+  WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING = 6;
 }
 
 enum WorldDesignMutationResult {
@@ -299,6 +300,7 @@ message ApplyWorldDesignMutationRequest {
     RoomDesignMutation room = 22;
     RoomExitDesignMutation room_exit = 23;
     GenerationRuleDesignMutation generation_rule = 24;
+    WorldEntitySpawnBindingDesignMutation world_entity_spawn_binding = 25;
   }
 }
 
@@ -335,6 +337,20 @@ message RoomExitDesignMutation {
 message GenerationRuleDesignMutation {
   string name = 1;
   string value = 2;
+}
+
+enum EntityTemplateReferenceType {
+  ENTITY_TEMPLATE_REFERENCE_TYPE_UNSPECIFIED = 0;
+  ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM = 1;
+  ENTITY_TEMPLATE_REFERENCE_TYPE_NPC = 2;
+}
+
+message WorldEntitySpawnBindingDesignMutation {
+  string room_id = 1;
+  EntityTemplateReferenceType entity_template_type = 2;
+  string entity_template_id = 3;
+  int32 spawn_count = 4;
+  int32 respawn_delay_seconds = 5;
 }
 
 message ApplyWorldDesignMutationResponse {

@@ -28,6 +28,8 @@ service EntityManagementService {
   rpc ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse);
   rpc CleanupRuntimeInstance(CleanupRuntimeInstanceRequest) returns (CleanupRuntimeInstanceResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
+  rpc ValidateEntityTemplateReference(ValidateEntityTemplateReferenceRequest)
+      returns (ValidateEntityTemplateReferenceResponse);
   rpc ValidateEntityUpgradeMappings(ValidateEntityUpgradeMappingsRequest)
       returns (ValidateEntityUpgradeMappingsResponse);
 }
@@ -364,6 +366,24 @@ message GetDraftDesignDigestResponse {
   string content_digest = 4;
   int32 digest_schema_version = 5;
   shared.v1.ErrorDetail error = 6;
+}
+
+enum EntityTemplateReferenceType {
+  ENTITY_TEMPLATE_REFERENCE_TYPE_UNSPECIFIED = 0;
+  ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM = 1;
+  ENTITY_TEMPLATE_REFERENCE_TYPE_NPC = 2;
+}
+
+message ValidateEntityTemplateReferenceRequest {
+  string tenant_id = 1;
+  string version_id = 2;
+  EntityTemplateReferenceType template_type = 3;
+  string template_id = 4;
+}
+
+message ValidateEntityTemplateReferenceResponse {
+  bool exists = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 enum UpgradeValidationResult {

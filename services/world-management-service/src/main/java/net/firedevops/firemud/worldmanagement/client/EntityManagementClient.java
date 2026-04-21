@@ -11,6 +11,8 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceRequest;
 import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.EntityTemplateReferenceType;
+import net.firedevops.firemud.entitymanagement.v1.ValidateEntityTemplateReferenceRequest;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -56,5 +58,31 @@ public class EntityManagementClient
                 .setGameInstanceId(Long.toString(gameInstanceId))
                 .setTerminationRequestId(terminationRequestId)
                 .build());
+  }
+
+  public boolean validateEntityTemplateReference(
+      long tenantId, long versionId, String templateType, long templateId) {
+    var response =
+        stub()
+            .validateEntityTemplateReference(
+                ValidateEntityTemplateReferenceRequest.newBuilder()
+                    .setTenantId(Long.toString(tenantId))
+                    .setVersionId(Long.toString(versionId))
+                    .setTemplateType(templateType(templateType))
+                    .setTemplateId(Long.toString(templateId))
+                    .build());
+    if (response.hasError() && !response.getError().getCode().isBlank()) {
+      throw new IllegalArgumentException(
+          response.getError().getCode() + ": " + response.getError().getMessage());
+    }
+    return response.getExists();
+  }
+
+  private EntityTemplateReferenceType templateType(String templateType) {
+    return switch (templateType) {
+      case "ITEM" -> EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM;
+      case "NPC" -> EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC;
+      default -> throw new IllegalArgumentException("unsupported templateType " + templateType);
+    };
   }
 }

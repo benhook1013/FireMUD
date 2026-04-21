@@ -17,6 +17,7 @@ import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
+import net.firedevops.firemud.entitymanagement.service.EntityTemplateReferenceService;
 import net.firedevops.firemud.entitymanagement.service.EntityUpgradeValidationService;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.EquipmentSlotIncompatibleException;
@@ -33,6 +34,7 @@ import net.firedevops.firemud.entitymanagement.v1.CreateCharacterResponse;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.EntityTemplateReferenceType;
 import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
@@ -67,6 +69,8 @@ import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityRequest;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse;
 import net.firedevops.firemud.entitymanagement.v1.UpgradeValidationResult;
+import net.firedevops.firemud.entitymanagement.v1.ValidateEntityTemplateReferenceRequest;
+import net.firedevops.firemud.entitymanagement.v1.ValidateEntityTemplateReferenceResponse;
 import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsRequest;
 import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
@@ -113,6 +117,7 @@ public class EntityManagementGrpcService
   private final RuntimeInstanceCleanupService runtimeInstanceCleanupService;
   private final EntityMutationEffectReplayService entityMutationEffectReplayService;
   private final EntityUpgradeValidationService entityUpgradeValidationService;
+  private final EntityTemplateReferenceService entityTemplateReferenceService;
 
   EntityManagementGrpcService(
       PingService pingService,
@@ -125,6 +130,7 @@ public class EntityManagementGrpcService
       RuntimeInstanceCleanupService runtimeInstanceCleanupService,
       EntityMutationEffectReplayService entityMutationEffectReplayService,
       EntityUpgradeValidationService entityUpgradeValidationService,
+      EntityTemplateReferenceService entityTemplateReferenceService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
@@ -137,11 +143,43 @@ public class EntityManagementGrpcService
     this.runtimeInstanceCleanupService = runtimeInstanceCleanupService;
     this.entityMutationEffectReplayService = entityMutationEffectReplayService;
     this.entityUpgradeValidationService = entityUpgradeValidationService;
+    this.entityTemplateReferenceService = entityTemplateReferenceService;
     this.gameplaySessionAttestationService = gameplaySessionAttestationService;
     this.meterRegistry = meterRegistry;
   }
 
   @Autowired
+  public EntityManagementGrpcService(
+      PingService pingService,
+      CharacterService characterService,
+      EntityDraftDesignDigestService entityDraftDesignDigestService,
+      EquipmentService equipmentService,
+      InventoryService inventoryService,
+      ContainerService containerService,
+      RoomEntityService roomEntityService,
+      EntityMutationEffectReplayService entityMutationEffectReplayService,
+      EntityUpgradeValidationService entityUpgradeValidationService,
+      EntityTemplateReferenceService entityTemplateReferenceService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
+      MeterRegistry meterRegistry) {
+    this(
+        pingService,
+        characterService,
+        entityDraftDesignDigestService,
+        equipmentService,
+        inventoryService,
+        containerService,
+        roomEntityService,
+        (tenantId, gameInstanceId, terminationRequestId) ->
+            new net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto(
+                0L, 0L, 0L, 0L),
+        entityMutationEffectReplayService,
+        entityUpgradeValidationService,
+        entityTemplateReferenceService,
+        gameplaySessionAttestationService,
+        meterRegistry);
+  }
+
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
@@ -162,11 +200,9 @@ public class EntityManagementGrpcService
         inventoryService,
         containerService,
         roomEntityService,
-        (tenantId, gameInstanceId, terminationRequestId) ->
-            new net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto(
-                0L, 0L, 0L, 0L),
         entityMutationEffectReplayService,
         entityUpgradeValidationService,
+        (tenantId, versionId, templateType, templateId) -> false,
         gameplaySessionAttestationService,
         meterRegistry);
   }
@@ -219,6 +255,48 @@ public class EntityManagementGrpcService
       responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()
               .setError(GrpcAppErrors.internal(meterRegistry, logger, "GetDraftDesignDigest", ex))
+              .build());
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.validateEntityTemplateReference")
+  public void validateEntityTemplateReference(
+      ValidateEntityTemplateReferenceRequest request,
+      StreamObserver<ValidateEntityTemplateReferenceResponse> responseObserver) {
+    try {
+      if (request.getTemplateType()
+          == EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_UNSPECIFIED) {
+        throw new IllegalArgumentException("template_type is required");
+      }
+      boolean exists =
+          entityTemplateReferenceService.exists(
+              request.getTenantId(),
+              request.getVersionId(),
+              templateTypeName(request.getTemplateType()),
+              request.getTemplateId());
+      responseObserver.onNext(
+          ValidateEntityTemplateReferenceResponse.newBuilder().setExists(exists).build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          ValidateEntityTemplateReferenceResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ValidateEntityTemplateReference",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onNext(
+          ValidateEntityTemplateReferenceResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.internal(
+                      meterRegistry, logger, "ValidateEntityTemplateReference", ex))
               .build());
       responseObserver.onCompleted();
     }
@@ -1682,5 +1760,13 @@ public class EntityManagementGrpcService
       throw new GameplaySessionAttestationException(
           "SESSION_ATTESTATION_INVALID", "Gameplay entity RPCs require internal service identity");
     }
+  }
+
+  private String templateTypeName(EntityTemplateReferenceType templateType) {
+    return switch (templateType) {
+      case ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM -> "ITEM";
+      case ENTITY_TEMPLATE_REFERENCE_TYPE_NPC -> "NPC";
+      default -> throw new IllegalArgumentException("unsupported template_type");
+    };
   }
 }

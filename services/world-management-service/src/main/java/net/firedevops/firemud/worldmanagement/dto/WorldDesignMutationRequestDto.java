@@ -16,7 +16,8 @@ public record WorldDesignMutationRequestDto(
     ZoneMutationDto zone,
     RoomMutationDto room,
     RoomExitMutationDto roomExit,
-    GenerationRuleMutationDto generationRule) {
+    GenerationRuleMutationDto generationRule,
+    WorldEntitySpawnBindingMutationDto worldEntitySpawnBinding) {
   public record RegionMutationDto(
       String name,
       String weather,
@@ -39,4 +40,11 @@ public record WorldDesignMutationRequestDto(
       String fromRoomId, String toRoomId, String direction, int cost) {}
 
   public record GenerationRuleMutationDto(String name, String value) {}
+
+  public record WorldEntitySpawnBindingMutationDto(
+      String roomId,
+      String entityTemplateType,
+      String entityTemplateId,
+      int spawnCount,
+      int respawnDelaySeconds) {}
 }

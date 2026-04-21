@@ -126,12 +126,13 @@ World Management is a required publish-gate participant and maintains a stable d
 Implementation Notes:
 
 - The current implementation computes the digest from version-scoped world-template rows for the requested `(tenantId, versionId)` and returns synthetic `appliedCommitId = "version:<versionId>"` until the later applied-revision ledger lands.
-- Current version-scoped digest inputs include `region`, `zone`, `room`, `room_exit`, and `generation_rule`; later topology, spawn, and generation-template families must join this same `(tenantId, versionId)` digest contract when introduced.
+- Current version-scoped digest inputs include `region`, `zone`, `room`, `room_exit`, `generation_rule`, and `world_entity_spawn_binding`; later topology and generation-template families must join this same `(tenantId, versionId)` digest contract when introduced.
 - Current concrete `region` digest fields include `id`, `shardId`, `name`, `weather`, `generationSeed`, `generatorType`, `generatorParams`, and `spacingMultiplier`.
 - Current concrete `zone` digest fields include `id`, `regionId`, and `name`.
 - Current concrete `room` digest fields include `id`, `zoneId`, `name`, `description`, `nameLocalizedVariantsJson`, and `descriptionLocalizedVariantsJson`.
 - Current concrete `room_exit` digest fields include `id`, `fromRoomId`, `toRoomId`, `direction`, and `cost`.
 - Current concrete `generation_rule` digest fields include `id`, `name`, and `value`.
+- Current concrete `world_entity_spawn_binding` digest fields include `id`, `roomId`, `entityTemplateType`, `entityTemplateId`, `spawnCount`, and `respawnDelaySeconds`.
 
 - Included objects:
   - version-scoped topology tables such as `region_template`, `zone_template`, `room_template`, `terrain_template`, `room_exit_template`, and equivalent normalized topology relations;
@@ -147,7 +148,7 @@ Implementation Notes:
   - stable table ordering;
   - primary-key ordering within each table;
   - deterministic encoding for included semantic fields.
-- Current implementation note: the concrete first-slice table order is `regions`, `zones`, `rooms`, `roomExits`, then `generationRules`, each ordered by ascending primary key. Null string values are canonicalized as empty strings before hashing.
+- Current implementation note: the concrete first-slice table order is `regions`, `zones`, `rooms`, `roomExits`, `generationRules`, then `worldEntitySpawnBindings`, each ordered by ascending primary key. Null string values are canonicalized as empty strings before hashing.
 - `digestSchemaVersion` must increment whenever included tables, field-selection rules, or canonical serialization semantics change.
 
 Publish gating fails closed if World Management cannot attest a digest consistent with this manifest.
