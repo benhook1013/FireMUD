@@ -9,14 +9,15 @@
   - `PLAY`
   - gameplay commands after admitted gameplay scope
 - Stage-aware `LOGIN_REQUIRED` / `PLAY_REQUIRED` guidance is implemented for wrong-stage input instead of older backend-flavored errors.
-- `LOOK`, `SAY`, `WHISPER`, and `TELL` are implemented through the current gameplay slices.
+- `LOOK`, `SAY`, `WHISPER`, `TELL`, `INVENTORY`, `INV HERE`, `GET`, `DROP`, `CONTAINER`, `PUT`, `TAKE`, `EQUIPMENT`, `WEAR`, and `REMOVE` are implemented through the current gameplay slices.
+- Item command invocation/failure metrics are emitted through `gamesession.command.item.*` with command type and error tags.
 - Redis-backed session context, command queuing, tick-oriented coordination, feature flags, gRPC surfaces, and WebSocket handling exist in the service.
 - Reconnection/session-takeover concepts are partially implemented at the current slice level.
 - The `02.14` runtime-identity/logging baseline is live here, and the highest-value gameplay command paths already enrich logs with `tenantId`, `gameInstanceId`, and `characterId` when that context is known.
 
 ## Current Role In The Platform
 
-- Owns gameplay session ingress, session binding, and command dispatch into Game Logic.
+- Owns gameplay session ingress, session binding, and command dispatch. `LOOK`, communication, and movement currently go through Game Logic; the first item/container/equipment command surface calls Entity Management directly while the larger Game Logic item-orchestration seam remains tracked in slice `06`.
 - Owns gameplay admission semantics and the distinction between account authentication (`LOGIN`) and gameplay binding (`PLAY`).
 - Maintains gameplay session state and coordination responsibilities in Redis.
 - Fronts Account authentication for gameplay login and bridges player input into the runtime.

@@ -2,8 +2,10 @@
 
 ## Current Coverage
 
-- Character, NPC, item, inventory, crafting, and room-entity query surfaces are implemented.
+- Character, NPC, item, inventory, equipment, container, crafting, and room-entity query surfaces are implemented.
 - The data-driven `LOOK` slice is wired to entity visibility data through the service’s gRPC surface.
+- Runtime item/equipment/container mutation RPCs now carry session/effect context, use the current replay guard for duplicate effect delivery, and persist `item_transfer_audits` for successful holder movement.
+- Item instances have stable visible refs for management views and exact targeting, and explicitly stackable item definitions merge through holder-local stack records instead of collapsing ordinary item-instance identity.
 - Cross-game character listing and crafting-oriented domain structures exist in the current codebase.
 
 ## Current Role In The Platform

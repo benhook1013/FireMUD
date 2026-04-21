@@ -27,6 +27,7 @@ The current branch state is materially ahead of the original `06` plan:
 - Telnet cross-service coverage now proves the same player-visible item/equipment command surface through TCP Proxy and Gateway, including `LOOK`, room-ground pickup/drop, equipment bind/unbind, incompatible equipment failure, and Entity Management request/effect-id assertions.
 - Game Session now records central item-command invocation/failure metrics through `gamesession.command.item.*` with `type` and `error` tags, so operators can distinguish expected player mistakes from backend or validation failures consistently across inventory, equipment, and container verbs.
 - The developer smoke guide and player playtest checklist now include the WebSocket/Telnet item-equipment extension: `INV HERE`, `GET`, `INVENTORY`, `DROP`, `EQUIPMENT`, `WEAR`, `REMOVE`, and an incompatible-equipment error check where the fixture exists.
+- Service-status docs now call out the current service-boundary reality explicitly: `LOOK`, communication, and movement go through Game Logic, while the first item/container/equipment command implementation still calls Entity Management directly from Game Session. Moving item interactions behind gameplay-oriented Game Logic RPCs remains the main open service-boundary follow-through for this slice.
 - the authored stackability/fungibility follow-up is now tracked explicitly in `06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md`.
 
 The most important remaining design work in this slice family is:
@@ -60,42 +61,42 @@ This ordering is now historical context rather than future plan:
 
 ## 1. Design Alignment for Containment, Equipment, and Audit
 
-- [ ] Re-read the [Entity Management Service](../../architecture/microservices/entity-management-service/README.md), [Entity Management runtime/data model](../../architecture/microservices/entity-management-service/runtime-and-data.md), [World Management Service](../../architecture/microservices/world-management-service/README.md), and [Game Logic Service](../../architecture/microservices/game-logic-service/README.md) docs to confirm the ownership split for room identity, room-ground containers, item instances, hidden inventory containers, and equipment bindings.
-- [ ] Update the inventory- and item-related design docs so they describe one canonical target-state model:
+- [x] Re-read the [Entity Management Service](../../architecture/microservices/entity-management-service/README.md), [Entity Management runtime/data model](../../architecture/microservices/entity-management-service/runtime-and-data.md), [World Management Service](../../architecture/microservices/world-management-service/README.md), and [Game Logic Service](../../architecture/microservices/game-logic-service/README.md) docs to confirm the ownership split for room identity, room-ground containers, item instances, hidden inventory containers, and equipment bindings.
+- [x] Update the inventory- and item-related design docs so they describe one canonical target-state model:
   - character/NPC inventory is a hidden container owned by that runtime entity;
   - room-ground inventory is a room-attached container identified from authoritative room instance identity;
   - equipped items use first-class equipment bindings rather than "bag position with a flag";
   - slot definitions and body layouts are game-configured rather than platform-global enums.
-- [ ] Keep the design explicit that inventory, equipment, room-ground, and container contents are all holder kinds within one transfer model, not different item ontologies or unrelated command subsystems.
-- [ ] Decide and document the minimum player-facing protocol surface for the first inventory slice, including at least `INVENTORY`, `GET <item>`, `DROP <item>`, and one equipment action such as `WEAR` / `EQUIP` or `REMOVE`.
-- [ ] Explicitly document that the first MVP command loop is expected to land as:
+- [x] Keep the design explicit that inventory, equipment, room-ground, and container contents are all holder kinds within one transfer model, not different item ontologies or unrelated command subsystems.
+- [x] Decide and document the minimum player-facing protocol surface for the first inventory slice, including at least `INVENTORY`, `GET <item>`, `DROP <item>`, and one equipment action such as `WEAR` / `EQUIP` or `REMOVE`.
+- [x] Explicitly document that the first MVP command loop is expected to land as:
   - `INVENTORY`
   - `GET <item>`
   - `DROP <item>`
   and that named containers plus richer equip/unequip flows may remain one bounded follow-up if they jeopardize the first transfer proof.
-- [ ] Document the canonical success and failure transcript shapes for both WebSocket and Telnet, including at least one successful pickup from room ground, one successful drop to room ground, one successful equipment change, and one failure such as `ERROR ITEM_NOT_FOUND` or `ERROR SLOT_INCOMPATIBLE`.
-- [ ] Document the canonical audit requirement for inventory/equipment mutation so future implementation treats item movement as an auditable core invariant rather than optional observability.
+- [x] Document the canonical success and failure transcript shapes for both WebSocket and Telnet, including at least one successful pickup from room ground, one successful drop to room ground, one successful equipment change, and one failure such as `ERROR ITEM_NOT_FOUND` or `ERROR SLOT_INCOMPATIBLE`.
+- [x] Document the canonical audit requirement for inventory/equipment mutation so future implementation treats item movement as an auditable core invariant rather than optional observability.
 
 ## 2. Entity Management Service: Runtime Containment and Query Contract
 
 - [ ] Before changing this service for the slice, run `./gradlew :entity-management-service:test` and stabilize the baseline if necessary.
-- [ ] Replace or extend the current weak inventory-facing contract (`QueryInventory -> item_ids[]`) with a richer inventory query shape that can return item instance metadata, container/equipped state, quantity, and game-defined type/tag information needed for gameplay and future GUIs.
-- [ ] Treat this authoritative runtime contract as the real starting point for `06`; do not begin by adding command text without first landing the inventory/query/transfer model that the command path will call.
-- [ ] Introduce or refine explicit runtime records for:
+- [x] Replace or extend the current weak inventory-facing contract (`QueryInventory -> item_ids[]`) with a richer inventory query shape that can return item instance metadata, container/equipped state, quantity, and game-defined type/tag information needed for gameplay and future GUIs.
+- [x] Treat this authoritative runtime contract as the real starting point for `06`; do not begin by adding command text without first landing the inventory/query/transfer model that the command path will call.
+- [x] Introduce or refine explicit runtime records for:
   - containers;
   - containment entries;
   - equipment bindings;
   - room-ground containers attached to `(tenantId, gameInstanceId, roomInstanceId)`.
-- [ ] Keep hidden/internal inventory containers implementation-owned in the first pass rather than directly player-addressable.
-- [ ] Ensure equipped items are not simultaneously represented as normal inventory-container members while equipped unless the design is deliberately revised and documented. The default target state is one authoritative location/binding per item instance.
-- [ ] Define the first mutation contract(s) needed for the slice, such as transfer item between container and room-ground container, bind item to equipment slot, and unbind item back to inventory container.
-- [ ] Add or refine validation rules for:
+- [x] Keep hidden/internal inventory containers implementation-owned in the first pass rather than directly player-addressable.
+- [x] Ensure equipped items are not simultaneously represented as normal inventory-container members while equipped unless the design is deliberately revised and documented. The default target state is one authoritative location/binding per item instance.
+- [x] Define the first mutation contract(s) needed for the slice, such as transfer item between container and room-ground container, bind item to equipment slot, and unbind item back to inventory container.
+- [x] Add or refine validation rules for:
   - missing item instance;
   - inaccessible source/destination container;
   - invalid or full slot/body-layout incompatibility;
   - room/instance mismatch;
   - stack split/merge invariants if stacking is in scope for MVP.
-- [ ] Add unit/integration tests for hidden inventory containers, room-ground containers, equipment bindings, and basic query filtering behavior.
+- [x] Add unit/integration tests for hidden inventory containers, room-ground containers, equipment bindings, and basic query filtering behavior.
 
 ## 3. Entity Management Service: Inventory Transfer Audit
 
@@ -143,21 +144,21 @@ Current implementation note:
 
 ## 6. Game Session Service: Text Command Wiring and UX
 
-- [ ] Before changing this service for the slice, run `./gradlew :game-session-service:test` and stabilize the baseline if necessary.
-- [ ] Extend the text command interpreter so the first inventory commands are authenticated gameplay commands using the same session/context guard already used by `LOOK`, `SAY`, and movement.
-- [ ] Add handlers for the initial item command set, mapping structured Game Logic results into canonical text/WebSocket responses without inventing a second competing inventory format.
-- [ ] Keep the first parser/handler surface intentionally narrow:
+- [x] Before changing this service for the slice, run `./gradlew :game-session-service:test` and stabilize the baseline if necessary.
+- [x] Extend the text command interpreter so the first inventory commands are authenticated gameplay commands using the same session/context guard already used by `LOOK`, `SAY`, and movement.
+- [x] Add handlers for the initial item command set, mapping structured runtime results into canonical text/WebSocket responses without inventing a second competing inventory format.
+- [x] Keep the first parser/handler surface intentionally narrow:
   - `INVENTORY`
   - `GET <item>`
   - `DROP <item>`
   and only add broader container/equipment verbs once the underlying runtime path is stable.
-- [ ] Decide and document how players refer to items in the MVP:
+- [x] Decide and document how players refer to items in the MVP:
   - simple name matching;
   - stable item selectors;
   - ordinal disambiguation such as `GET 2.SWORD`;
   - or another explicit pattern.
 - [x] Emit item-command metrics/logs with high-level error tags so operators can distinguish player mistakes (`ITEM_NOT_FOUND`, `SLOT_INCOMPATIBLE`) from backend failures.
-- [ ] Add unit/integration tests covering successful `INVENTORY`, `GET`, `DROP`, one equip/unequip action, unauthenticated access, and representative failure responses.
+- [x] Add unit/integration tests covering successful `INVENTORY`, `GET`, `DROP`, one equip/unequip action, unauthenticated access, and representative failure responses.
 
 ## 7. Cross-Service End-to-End Coverage
 
@@ -171,7 +172,7 @@ Current implementation note:
 
 - [x] Add or update a smoke/manual verification sequence demonstrating `LOGIN` / `PLAY` / `LOOK` / `GET` / `INVENTORY` / `DROP` over WebSocket.
 - [x] Add a second Telnet-oriented example with the same flow and at least one equipment action.
-- [ ] Update the Entity Management, Game Logic, Game Session, and Game Design docs with short implementation-status notes once the slice starts landing so readers can tell what is live versus deferred.
+- [x] Update the Entity Management, Game Logic, Game Session, and Game Design docs with short implementation-status notes once the slice starts landing so readers can tell what is live versus deferred.
 - [ ] Update any user-journey or gameplay examples that currently imply rooms only show static descriptions; after this slice they should also reflect visible room items, carrying state, and basic equipment state where relevant.
 
 ## 9. Final QA Checklist

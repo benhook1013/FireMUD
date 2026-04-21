@@ -5,6 +5,7 @@
 - Versioned design-time ownership, publish workflow, asset-storage rules, plugin/modding contracts, and creator-facing responsibilities are documented in depth.
 - The service’s architecture docs now clearly separate API contracts, runtime/data responsibilities, operations, configuration, templates, assets, and modding concerns.
 - The repo already reflects substantial design-time workflow modeling for templates, publishing, runtime flags, script patches, and plugin lifecycle.
+- The target item/equipment design model is documented, including game-configured slot/body-layout concepts and authored stackability/compatibility controls, but broader creator-facing editors for those concepts remain future application work.
 
 ## Current Role In The Platform
 
