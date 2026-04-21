@@ -13,13 +13,13 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
 
 ## Implementation Notes
 
-This runbook describes the required deployment flow. Current automation is partial:
+This runbook describes the required deployment flow. Current automation is executable for the canonical preflight policy-ID set, expected-binding report reference, mounted JWT/JWKS contract, and traffic-open backup gates, but some evidence production remains operator- or future-automation-owned:
 
-- `./dev-tools/deploy/preflight.sh` does not yet emit or enforce every target-state policy ID required by `design/architecture/system-architecture-deploy-preflight-policy.md`.
-- Expected-binding manifests exist but are not yet consumed by preflight or restore validation as the single source of truth.
-- The production `roll-forward-only` backup-readiness path has partial script support, but first-live and traffic-reopen gates for production and hobby/self-hosted are not yet enforced by the canonical preflight entrypoint.
+- Fresh-boundary restore bootstrap and post-restore secret-compliance refresh are canonical requirements, but current restore scripts do not yet automate the full evidence chain.
+- Production release digest manifests are canonical release-lineage evidence, but current overlay CI does not yet enforce their presence or schema.
+- Expected-binding validation is first-pass repository/render validation. Real first-live and reopen decisions still require current environment evidence files produced by operators or automation.
 
-Until those implementation gaps are closed, operators must treat missing preflight policy results as failed checks and supply explicit manual evidence before any first player-facing deployment or traffic-open event. A successful current script run is not sufficient by itself when the report omits a policy ID that this runbook requires.
+Operators must treat missing real-environment evidence as a blocker even when static preflight policy IDs are present. A successful static report without the required traffic-open, restore, release-manifest, and secret-compliance evidence is not enough to open player-facing traffic.
 
 ## Environment Bootstrap (First Deployment Only)
 
