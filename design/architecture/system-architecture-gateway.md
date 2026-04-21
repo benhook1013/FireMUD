@@ -299,8 +299,9 @@ This section is the canonical source of truth for connect-token enforcement and 
   - Audience is the gateway gameplay route (`/ws/game/**`) and must not be accepted on unrelated routes.
   - Gateway validates signatures against the issuer's published verification key set with explicit `kid` selection and overlap handling during rotation.
 - **Transport location**
-  - Sent in a dedicated handshake header (`X-Firemud-Connect-Token`) on `/ws/game/**`.
-  - Gateway must not accept connect tokens from query parameters in player-facing environments.
+  - Server-side and non-browser clients may send the connect token in the dedicated handshake header (`X-Firemud-Connect-Token`) on `/ws/game/**`.
+  - First-party browser clients cannot rely on arbitrary custom WebSocket headers and must use a gateway-approved browser-safe carrier, such as cookies or WebSocket subprotocol, that feeds the same validation, replay, and context-handoff pipeline.
+  - Gateway must not accept connect tokens from query parameters in player-facing environments unless a future security review explicitly changes this rule and documents the resulting logging, referrer, and replay implications.
 - **Required claims**
   - `accountId`
   - `tenantId`

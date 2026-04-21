@@ -38,9 +38,11 @@ Default ports: REST on `8080`, gRPC on `6565`.
 ### REST
 
 - `GET /ping` – basic health check returning `"pong"`.
-- `POST /assets` – upload a binary asset for a tenant; the service streams bytes to object storage and persists asset metadata in PostgreSQL.
-- `POST /templates` – create a new game template.
+- `POST /assets` – upload a binary asset for a tenant; the service streams bytes to object storage and persists asset metadata in PostgreSQL. This is a bypass-safe Game Design creator write when routed externally through Gateway because it is tenant-scoped, domain-local to Game Design, guarded by tenant access checks, and does not depend on Logging & Admin-owned policy or cross-domain write orchestration.
+- `POST /templates` – create a new game template. This is a bypass-safe Game Design creator write when routed externally through Gateway because it is tenant-scoped, domain-local to Game Design, guarded by tenant access checks, and does not depend on Logging & Admin-owned policy or cross-domain write orchestration.
 - `GET /templates` – list templates for a tenant.
+
+Externally routed Game Design REST paths use the Gateway allowlist prefix (for example `/api/design/assets` and `/api/design/templates`) and are stripped to the service-local paths above before reaching Game Design. Game Design owns validation and domain audit behavior for these creator workflows. Operator writes for moderation, quota overrides, runtime feature-flag overrides, and tick remediation remain Logging & Admin ingress only and are not part of this bypass-safe creator-write class.
 
 ```bash
 curl http://localhost:8080/ping

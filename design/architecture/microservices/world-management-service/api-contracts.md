@@ -135,8 +135,8 @@ Game Logic may memoize snapshots for the duration of a tick but must refresh the
 
 Cross-service LOOK read consistency is fence-based:
 
-- Game Logic must send the same `asOfTickId` fence token from `GetRoomSnapshot` when calling Entity Management `ListRoomEntities`.
-- Entity Management must either answer using the same fence token or return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`.
+- Game Logic must compare the `worldSnapshotId` fence token from `GetRoomSnapshot` with the `entitySnapshotId` returned by Entity Management `ListRoomEntities` for the same room scope.
+- Entity Management must either answer with a matching same-scope fence token or return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`.
 - If fences do not match, Game Logic retries composition instead of returning mixed-state output.
 
 Illustrative `GetRoomSnapshot` fragments:
@@ -146,8 +146,7 @@ Illustrative `GetRoomSnapshot` fragments:
   "tenantId": "t1",
   "gameInstanceId": "g1",
   "roomInstanceId": "room-antechamber",
-  "worldSnapshotId": "worldsnap-184",
-  "asOfTickId": 184,
+  "worldSnapshotId": "t1:g1:room-antechamber",
   "roomName": "Candle-lit Antechamber"
 }
 ```

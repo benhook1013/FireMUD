@@ -57,7 +57,7 @@ For v1, the creator lifecycle is:
 
 1. **Create a Draft Tenant** – A creator can create and edit a tenant before paying for production gameplay. Draft tenants support authoring and internal setup but do not expose a public production realm.
 2. **Assign Roles** – `designer` authors content and publishes versions. `tenantAdmin` owns tenant runtime lifecycle for that tenant: launching the production realm, creating playtest forks, pinning script patches, initiating cutovers, and rolling back. `platformAdmin` can override these actions for platform incidents or support.
-3. **Go-Live Readiness** – Before the first public production realm is started, the tenant must satisfy plan/entitlement requirements and have at least one published version ready to launch.
+3. **Resolve Billing and Go-Live Readiness** – Before the first public production realm is started, the tenant must satisfy plan/entitlement requirements and have at least one published version ready to launch. The Account Service owns the runtime entitlement source of truth consumed by launch and admission; the creator-facing UX must expose enough billing-safe controls for `tenantAdmin` users to choose or repair a hosting plan, view high-level entitlement status, and understand why launch is blocked without requiring operator intervention.
 
 ```plaintext
 Account Service (user) → Game Design Service (new game)
@@ -108,6 +108,8 @@ Once the world is ready:
 3. **Check Entitlements** – Launch fails closed unless billing and plan entitlements permit gameplay for the tenant.
 4. **Open Player Admission** – Once the realm is healthy, it becomes the default production realm surfaced to players in `WORLDS` / `REALMS` / `PLAY`. In v1, this production realm is also the only realm that may be publicly discoverable to authenticated players who do not already hold tenant membership.
 5. **Emergency Override** – `platformAdmin` can perform the same launch path during incident response, but creators do not depend on operators for routine tenant launches.
+
+If launch fails for billing or entitlement reasons, the creator remains in the control plane and sees a billing-safe recovery path rather than a generic launch failure. Minimum recovery actions are: inspect the tenant's high-level entitlement state, update or create the hosting subscription/payment method through the Account Service billing surface, acknowledge any account-shared payment-instrument impact when required, then retry launch after the entitlement snapshot reports gameplay availability. Starting or editing live gameplay configuration is not billing-safe and remains blocked while the tenant is `suspended` or `canceled`.
 
 ```plaintext
 Game Design Service (publish) → Tenant Admin / Platform Admin → Game Session Service (launch realm)
@@ -169,7 +171,7 @@ Before launch or after major updates, creators validate changes with **forked pl
 2. **Choose the Target Build** – The fork may run the same version as production for reproduction, or a newer `versionId` / `scriptPatchVersion` for validation against realistic state.
 3. **Invite Testers** – Access is explicit. The fork uses the same platform accounts as production, but only authorized testers, creators, and operators see it in `REALMS <world>`. In v1, `tenantAdmin` manages these explicit access grants for the fork, while `platformAdmin` remains break-glass override only.
    - Example fork/playtest realms in this document assume the caller already has the required explicit realm-access grant; they are not meant to imply public discoverability for non-production realms.
-   - The minimum access-grant record is `{tenantId, realmSlug, accountId, grantedByAccountId, grantedAt, expiresAt?}`.
+   - The target minimum access-grant record is `{tenantId, realmSlug, accountId, grantedByAccountId, grantedAt, expiresAt?}`. The current backend substrate already centralizes grant authority in Account Service and enforces grants during bootstrap/connect-token/admission; expiry and creator-facing list/search/management UX remain follow-through for the tenant-admin surface.
    - Revoking the grant removes future realm visibility and admission for that account without deleting the fork itself.
    - Revocation is forward-looking for live sessions: already connected testers may finish the current fork session, but the next `PLAY`, reconnect, or fresh discovery/auth bootstrap must fail unless a new grant exists.
 4. **Collect Feedback** – Feedback is collected per the [Playtesting & Feedback](../project-management/slice-support/playtesting-feedback.md) flow and correlated with the fork realm in analytics.

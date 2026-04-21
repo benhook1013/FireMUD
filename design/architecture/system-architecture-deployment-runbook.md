@@ -11,6 +11,16 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
 - Redis, PostgreSQL, and core infrastructure components (Gateway, TCP Proxy, Observability stack) are healthy.
 - The operator has `kubectl` access and a kubeconfig for the target Kubernetes cluster (staging, production, or hobby-self-hosted) from a secure admin workstation or bastion host.
 
+## Implementation Notes
+
+This runbook describes the required deployment flow. Current automation is partial:
+
+- `./dev-tools/deploy/preflight.sh` does not yet emit or enforce every target-state policy ID required by `design/architecture/system-architecture-deploy-preflight-policy.md`.
+- Expected-binding manifests exist but are not yet consumed by preflight or restore validation as the single source of truth.
+- The production `roll-forward-only` backup-readiness path has partial script support, but first-live and traffic-reopen gates for production and hobby/self-hosted are not yet enforced by the canonical preflight entrypoint.
+
+Until those implementation gaps are closed, operators must treat missing preflight policy results as failed checks and supply explicit manual evidence before any first player-facing deployment or traffic-open event. A successful current script run is not sufficient by itself when the report omits a policy ID that this runbook requires.
+
 ## Environment Bootstrap (First Deployment Only)
 
 Before the first player-facing deployment into `hobby-self-hosted`, `staging`, or `production`, operators must complete a bootstrap step that creates the minimum environment trust and secret set before any workload apply:

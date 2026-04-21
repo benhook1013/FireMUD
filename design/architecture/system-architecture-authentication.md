@@ -222,7 +222,7 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
   - `connectScopeId` is an opaque server-issued selector for one caller-visible realm target, not a durable public identifier. Clients may cache it only as a short-lived convenience token for reconnect/bootstrap flows and must be prepared to discard it when discovery, pointer version, or visibility state changes.
   - Discovery responses are snapshot proofs, not durable reservations. `evaluatedAt` and `connectScopeExpiresAt` describe the freshness window for the selector that was returned; they do not promise the realm remains admissible until gameplay starts.
   - `connectScopeId` must not outlive the routing truth it was derived from. If the realm's `pointerVersion`, visibility, or entitlement posture changes such that the previously discovered target is no longer admissible, `POST /auth/connect-token` must reject the stale selector rather than silently translating it to a newer target.
-  - For non-public realms such as playtest forks, visibility is controlled by an explicit realm-access grant. The minimum grant record is `{tenantId, realmSlug, accountId, grantedByAccountId, grantedAt, expiresAt?}`.
+  - For non-public realms such as playtest forks, visibility is controlled by an explicit realm-access grant. The target minimum grant record is `{tenantId, realmSlug, accountId, grantedByAccountId, grantedAt, expiresAt?}`. The current first implementation centralizes Account Service grant authority and runtime reads, but expiry and tenant-admin management UX remain product/control-plane follow-through.
   - Realm-access grants are owned by Account Service. Account Service is the sole writer and read authority for grant visibility decisions; Game Session and frontend callers consume grant-filtered results and must not maintain independent grant stores.
   - `tenantAdmin` is the routine owner of creating and revoking realm-access grants for that tenant through Account Service-owned admin surfaces. `platformAdmin` may do the same only as break-glass support.
   - Required internal read contract: Account Service must expose a caller-bound runtime lookup for realm visibility/admission, for example `GetRealmAccessGrant(accountId, tenantId, realmSlug)` or a batch/list equivalent consumed by bootstrap discovery, in-band `REALMS`, `POST /auth/connect-token`, and `PLAY`.
@@ -242,7 +242,7 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
   - First-party clients may request connect tokens only for realm targets returned by the canonical bootstrap-discovery contract for that caller; hidden or unauthorized realms must not be inferable by probing connect-token issuance directly.
   - If the realm was only caller-visible through an explicit non-public access grant, connect-token issuance must re-check that grant at issuance time rather than trusting earlier discovery alone.
   - Missing required request/response fields are contract violations and must fail closed rather than being defaulted by callers.
-- Transport: `X-Firemud-Connect-Token` header on `/ws/game/**` handshake.
+- Transport: connect-token carriage on `/ws/game/**` handshake. Server-side and non-browser clients may use the dedicated `X-Firemud-Connect-Token` handshake header. Browser first-party clients must use a gateway-approved browser-safe carrier that preserves the same token semantics and replay checks; query-string carriage is not allowed in player-facing environments unless a future security review explicitly changes that rule.
 - Required claims: `accountId`, `tenantId`, `gameInstanceId`, `exp`, `jti`.
 - Lifetime: short-lived (target <= 30 seconds).
 - Signing and verification: token is signed by the Account/authentication control-plane key set and verified only at Gateway for `/ws/game/**` policy decisions.
@@ -328,7 +328,7 @@ Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-123" }
 -> { connectToken, accountId, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production", expiresAt }
 
-GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+GET /ws/game/** with browser-compatible connect token carriage
 
 LOGIN
 OK LOGIN Logged in
@@ -391,6 +391,7 @@ Canonical character-creation contract for this flow:
 - Entity Management owns the underlying `CreateCharacter` semantics and persistence contract; Account Service/authentication docs define the admission prerequisites for when this route may be called.
 - `POST /characters` is allowed only after bootstrap discovery has selected a caller-visible realm target and before `POST /auth/connect-token` / gameplay `PLAY` succeed for that new character.
 - The route must reject requests for realms that are not currently visible/admissible to the bootstrap-authenticated account.
+- The current realm-scoped backend creation substrate carries `{tenantId, accountId, name, gameInstanceId, playableStateScope}` into Entity Management. The richer player-facing descriptor for template/race/class/options is still a required product contract before first-party clients can render nontrivial character creation without game-specific assumptions.
 
 Example first-party browser sequence for a playtest fork:
 
@@ -468,7 +469,7 @@ After `LOGIN` succeeds, the Game Session Service requires an explicit lobby sele
 - `CHARS <world> [realm]` – list characters for the selected world and optional realm.
 - `PLAY <world> [realm] [character]` – enter gameplay by selecting a world, an optional realm, and an optional character.
 
-`public_production_onboarding` is the first-party lobby route class for the default public production realm. Brand-new authenticated accounts may see that realm before a tenant membership row exists, but the first successful `PLAY` must still atomically create the caller's `player` membership before gameplay binding is committed.
+`public_production_onboarding` is the lobby route class for the default public production realm. Brand-new authenticated accounts may see that realm before a tenant membership row exists. First-party bootstrap clients create the caller's `player` membership during `POST /auth/connect-token` before socket admission, while credential-bearing text clients use the same Account Service writer boundary during `PLAY` before gameplay binding is committed.
 
 Realm discovery and routing contract:
 

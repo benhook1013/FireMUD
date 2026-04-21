@@ -4,6 +4,15 @@ This document describes how FireMUD collects logs, metrics, and traces across al
 
 For the canonical definition of environment classes and which ones are considered player-facing or prod-like, see [Deployment Environments](./infrastructure/deployment-environments.md#terms) and [Deployment Environments](./infrastructure/deployment-environments.md#canonical-environment-classes). In this document, “prod-like” means `hobby-self-hosted`, `staging`, and `production` unless a section explicitly narrows the requirement further.
 
+## Implementation Notes
+
+The current implemented baseline is narrower than the full target-state observability contract:
+
+- Runtime identity, startup logging, shared HTTP/gRPC request logging, bounded WebSocket/Telnet handler logging, `grpc.app_error`, and the first bounded gameplay command counters are implemented.
+- Raw runtime or gameplay identifiers such as `serviceInstanceId`, `tenantId`, `sessionId`, `characterId`, and `script_patch_version` are not approved as ordinary Prometheus metric labels. These identifiers belong in structured logs and traces unless a future architecture update records a narrow low-cardinality exception.
+- The player-experience SLI catalog below is a target-state metric contract. It describes the operator-visible SLO surface FireMUD wants, but it is not fully implemented by the current services. Before implementing any metric that needs tenant or region scoping, reconcile the label shape with the cardinality policy, for example through a bounded environment-specific scope label or an explicitly documented exception.
+- Synthetic player-flow canaries, the independent deadman/heartbeat mirror, and the related canonical canary alert families are target-state prod-like requirements. The current shared Prometheus rules include entry-path blackbox alert examples, but the canary/deadman contract is not yet implemented end to end in this repository.
+
 ---
 
 ## Logging Pipeline
@@ -141,12 +150,13 @@ Runtime identity should be exposed consistently enough that operators and admin 
 
 FireMUD’s metrics are designed around low- and medium-cardinality labels so dashboards and alerts remain reliable even at scale. To keep this consistent:
 
-- Allowed labels typically include `service`, `job`, `grpc_method`, `status`, `code`, `tenantId`, `regionId`, `redis_role`, `effect_type`, `outcome`, and other explicitly documented dimensions in the Redis, tick, and gRPC architecture docs.
-- Disallowed labels include per-request or per-entity identifiers such as `traceId`, `spanId`, `characterId`, `sessionId`, and arbitrary error messages or stack traces. These belong in logs and traces, not in metric label sets.
+- Allowed labels typically include bounded values such as `service`, `job`, `grpc_method`, `status`, `code`, `redis_role`, `effect_type`, `outcome`, `type`, `reason`, and other explicitly documented bounded dimensions in the Redis, tick, and gRPC architecture docs.
+- Disallowed labels include raw runtime, tenant, request, session, player, or entity identifiers such as `serviceInstanceId`, `tenantId`, `regionId`, `traceId`, `spanId`, `characterId`, `sessionId`, `gameInstanceId`, `script_patch_version`, and arbitrary error messages or stack traces. These belong in logs and traces, not in ordinary metric label sets.
+- If an SLO truly needs tenant or region drilldown, use an explicitly documented bounded scope label or record a narrow approved exception here before adding raw identifiers to producers, dashboards, or alerts.
 - When in doubt, prefer coarser labels (for example `error_code` from a bounded enum or small string set) and aggregate multiple rare values into an `other` bucket rather than exposing them as unbounded labels.
 - New metrics must document their label sets in the relevant architecture or service README and confirm that they conform to these guardrails before being added to dashboards or alerts.
 
-### Player Experience SLIs and SLOs
+### Player Experience SLIs and SLOs (Target-State Contract)
 
 In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines, FireMUD tracks a small set of player-centric SLIs. These are expressed as Prometheus metrics with environment-specific SLO targets:
 
