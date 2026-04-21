@@ -724,7 +724,11 @@ public class WorldManagementGrpcService
         aggregateTypeName(request),
         request.getAggregateId(),
         request.getExpectedDraftRevisionEpoch(),
-        request.getScopeType(),
+        request.getScopeType()
+                == net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType
+                    .WORLD_DESIGN_SCOPE_TYPE_UNSPECIFIED
+            ? ""
+            : request.getScopeType().name().replace("WORLD_DESIGN_SCOPE_TYPE_", ""),
         request.getScopeId(),
         request.getExpectedDraftScopeRevisionEpoch(),
         request.getScopeMutationPolicy()

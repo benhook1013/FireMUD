@@ -39,6 +39,9 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
   private static final String OPERATION_DELETE = "DELETE";
   private static final String SCOPE_POLICY_REPLACE_SCOPE = "REPLACE_SCOPE";
   private static final String SCOPE_POLICY_SEED_APPEND_ONLY = "SEED_APPEND_ONLY";
+  private static final String SCOPE_TYPE_REGION_SUBTREE = "REGION_SUBTREE";
+  private static final String SCOPE_TYPE_ZONE_SUBTREE = "ZONE_SUBTREE";
+  private static final String SCOPE_TYPE_NEW_EMPTY_REGION = "NEW_EMPTY_REGION";
 
   private final RegionRepository regionRepository;
   private final ZoneRepository zoneRepository;
@@ -369,10 +372,19 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
       throw appError("INVALID_ARGUMENT", "unsupported operation");
     }
     requireText(request.aggregateType(), "aggregate_type");
+    if (StringUtils.hasText(request.scopeType())
+        && !SCOPE_TYPE_REGION_SUBTREE.equals(request.scopeType())
+        && !SCOPE_TYPE_ZONE_SUBTREE.equals(request.scopeType())
+        && !SCOPE_TYPE_NEW_EMPTY_REGION.equals(request.scopeType())) {
+      throw appError("INVALID_ARGUMENT", "unsupported scope_type");
+    }
     if (StringUtils.hasText(request.scopeMutationPolicy())
         && !SCOPE_POLICY_REPLACE_SCOPE.equals(request.scopeMutationPolicy())
         && !SCOPE_POLICY_SEED_APPEND_ONLY.equals(request.scopeMutationPolicy())) {
       throw appError("INVALID_ARGUMENT", "unsupported scope_mutation_policy");
+    }
+    if (StringUtils.hasText(request.scopeType()) != StringUtils.hasText(request.scopeId())) {
+      throw appError("INVALID_ARGUMENT", "scope_type and scope_id must be set together");
     }
     if (StringUtils.hasText(request.scopeMutationPolicy())
         && (!StringUtils.hasText(request.scopeType()) || !StringUtils.hasText(request.scopeId()))) {

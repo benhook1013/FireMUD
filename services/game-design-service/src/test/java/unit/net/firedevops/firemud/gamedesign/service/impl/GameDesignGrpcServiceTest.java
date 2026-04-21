@@ -50,6 +50,7 @@ import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
@@ -112,6 +113,8 @@ class GameDesignGrpcServiceTest {
                       .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
                       .setAggregateId("44")
                       .setExpectedDraftRevisionEpoch(1L)
+                      .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
+                      .setScopeId("44")
                       .setRegion(RegionDesignMutation.newBuilder().setName("Region A").build())
                       .build())
               .build(),

@@ -37,6 +37,7 @@ import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsRes
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import tools.jackson.databind.ObjectMapper;
@@ -160,6 +161,8 @@ class WorldManagementGrpcServiceTest {
             .setRevisionId("revision-1")
             .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
             .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+            .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
+            .setScopeId("44")
             .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
             .build(),
         new StreamObserver<>() {

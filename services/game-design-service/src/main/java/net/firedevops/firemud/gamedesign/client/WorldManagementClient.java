@@ -112,7 +112,7 @@ public class WorldManagementClient
             .setAggregateTypeValue(enumValue(mutation.aggregateType()))
             .setAggregateId(mutation.aggregateId())
             .setExpectedDraftRevisionEpoch(defaultLong(mutation.expectedDraftRevisionEpoch()))
-            .setScopeType(defaultString(mutation.scopeType()))
+            .setScopeTypeValue(enumValue(mutation.scopeType()))
             .setScopeId(defaultString(mutation.scopeId()))
             .setExpectedDraftScopeRevisionEpoch(
                 defaultLong(mutation.expectedDraftScopeRevisionEpoch()))
@@ -195,6 +195,9 @@ public class WorldManagementClient
       case "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING" -> 6;
       case "ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM" -> 1;
       case "ENTITY_TEMPLATE_REFERENCE_TYPE_NPC" -> 2;
+      case "WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE" -> 1;
+      case "WORLD_DESIGN_SCOPE_TYPE_ZONE_SUBTREE" -> 2;
+      case "WORLD_DESIGN_SCOPE_TYPE_NEW_EMPTY_REGION" -> 3;
       case "WORLD_DESIGN_SCOPE_MUTATION_POLICY_REPLACE_SCOPE" -> 1;
       case "WORLD_DESIGN_SCOPE_MUTATION_POLICY_SEED_APPEND_ONLY" -> 2;
       default -> 0;

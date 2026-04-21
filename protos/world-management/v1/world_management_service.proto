@@ -288,6 +288,13 @@ enum WorldDesignScopeMutationPolicy {
   WORLD_DESIGN_SCOPE_MUTATION_POLICY_SEED_APPEND_ONLY = 2;
 }
 
+enum WorldDesignScopeType {
+  WORLD_DESIGN_SCOPE_TYPE_UNSPECIFIED = 0;
+  WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE = 1;
+  WORLD_DESIGN_SCOPE_TYPE_ZONE_SUBTREE = 2;
+  WORLD_DESIGN_SCOPE_TYPE_NEW_EMPTY_REGION = 3;
+}
+
 message ApplyWorldDesignMutationRequest {
   string tenant_id = 1;
   string version_id = 2;
@@ -297,7 +304,7 @@ message ApplyWorldDesignMutationRequest {
   WorldDesignAggregateType aggregate_type = 6;
   string aggregate_id = 7;
   int64 expected_draft_revision_epoch = 8;
-  string scope_type = 9;
+  WorldDesignScopeType scope_type = 9;
   string scope_id = 10;
   int64 expected_draft_scope_revision_epoch = 11;
   WorldDesignScopeMutationPolicy scope_mutation_policy = 12;

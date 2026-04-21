@@ -74,7 +74,7 @@ message WorldDesignMutationRevision {
   world_management.v1.WorldDesignAggregateType aggregate_type = 4;
   string aggregate_id = 5;
   int64 expected_draft_revision_epoch = 6;
-  string scope_type = 7;
+  world_management.v1.WorldDesignScopeType scope_type = 7;
   string scope_id = 8;
   int64 expected_draft_scope_revision_epoch = 9;
   world_management.v1.WorldDesignScopeMutationPolicy scope_mutation_policy = 10;

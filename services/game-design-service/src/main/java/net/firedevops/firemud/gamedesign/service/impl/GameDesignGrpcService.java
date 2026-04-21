@@ -1198,7 +1198,11 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         request.getAggregateType().name(),
         request.getAggregateId(),
         request.getExpectedDraftRevisionEpoch(),
-        request.getScopeType(),
+        request.getScopeType()
+                == net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType
+                    .WORLD_DESIGN_SCOPE_TYPE_UNSPECIFIED
+            ? ""
+            : request.getScopeType().name(),
         request.getScopeId(),
         request.getExpectedDraftScopeRevisionEpoch(),
         request.getScopeMutationPolicy()
