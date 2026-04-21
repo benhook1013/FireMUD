@@ -12,7 +12,7 @@
 - `readiness` is traffic-admission safety for new Telnet sessions. The service is ready only when:
   - the Telnet listener is bound;
   - the proxy can reach Spring Cloud Gateway’s readiness surface for the gameplay route; and
-  - the current downstream gameplay admission path is safe for `connect -> LOGIN -> first LOOK`.
+  - the current downstream gameplay admission path is safe for `connect -> LOGIN -> PLAY -> first LOOK`.
 - While unready, the proxy must reject new Telnet sessions immediately with an explicit startup or unavailable message and close the connection. It must not silently accept the socket and let the first gameplay command discover startup races later.
 - Loss of downstream readiness after a session is already established blocks new sessions but does not by itself imply that the proxy process is dead.
 - Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency names `telnetListener` and `gatewayGameplayPath`.

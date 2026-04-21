@@ -140,7 +140,7 @@ Admin and creator API exposure on the `external admin/creator API plane` is inte
 
 Within the Game Session layer, the stable `/ws/game/**` edge surface maps to a session front-end pod plus lease-owner execution model: the connected pod owns socket I/O, per-session sequencing, and the current execution-region pointer, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner and may be reached through internal gRPC forwarding. The separate nodes in the diagram represent runtime roles, not separate products or independently exposed edge surfaces. See [System Architecture Overview](./system-architecture-overview.md#session-sharding--routing).
 
-The `Gateway -> SessionFE` arrow represents both gameplay socket admission on `/ws/game/**` for the `player traffic plane` and the separate allowlisted Game Session admin/control routes on the `external admin/creator API plane` described in the overview and context docs.
+The `Gateway -> SessionFE` arrow represents both gameplay socket admission on `/ws/game/**` for the `player traffic plane` and the separate allowlisted Game Session admin/control routes on the `external admin/creator API plane` described in the overview and context docs. Admin/control requests terminate on the stable Game Session service surface; target-state region-scoped mutations must be forwarded to the current lease owner under a fenced internal contract rather than treating the session front-end as the owner of region coordination state.
 
 The `SessionFE -> DB` and `SessionExec -> DB` arrows share Game Session-owned PostgreSQL infrastructure but do not imply overlapping write authority. The session front-end writes connection-scoped control metadata such as disconnect dedupe, session recovery markers, and front-end-owned operator bookkeeping. The lease owner / executor writes region-owned runtime control metadata such as remediation state, fenced coordination health records, and region-scoped cutover or lease-transition bookkeeping. When a record can be touched by both roles, the owning service contract must define a single-writer or fenced compare-and-swap rule rather than allowing last-writer-wins behavior.
 
@@ -160,7 +160,7 @@ The diagram covers every microservice in the repository:
 - **[Game Design Service](./microservices/game-design-service/README.md)** – Provides authoring tools for game data and feature flags with version publishing copy steps and a web-based editor.
 - **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)** – Executes AI behaviors and custom scripts.
 - **[Social & Groups Service](./microservices/social-groups-service/README.md)** – Manages chat, guilds, and social networking.
-- **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools with dashboards built from Elasticsearch logs, Prometheus metrics, and Jaeger traces to support moderation.
+- **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools; owns moderation policy and audit state while using Elasticsearch, Prometheus, and Jaeger for supplemental investigation dashboards.
 
 Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. Admin and creator tools always connect to **Logging & Admin Service and other domain services via the Gateway**; Logging & Admin is not exposed directly at the edge. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) and [System Architecture Overview](./system-architecture-overview.md#admin-entry-points-and-control-plane) for details.
 
@@ -168,7 +168,7 @@ All internal synchronous communication from the **Game Session Service** to down
 
 Coordination Redis arrows in this diagram follow ownership boundaries from ADR 0009: Game Session owns gameplay coordination prefixes (for example `session:game:*`, `tick:*`, `timer:*`, `retry:*`, and `tick-executor-lease:*`), Account owns `session:auth:*`, Automation & Scripting owns `automation:*`, and non-owner services (for example Entity) participate only through approved shared-helper contracts rather than ad hoc key ownership.
 
-Canonical room-state assembly is intentionally not shown as a direct World-to-Entity join: Game Session mints the read fence for gameplay-driven room views, and World Management plus Entity Management must each satisfy that same fence or reject the read so mixed-tick room state is never composed as canonical output.
+Canonical room-state assembly is intentionally not shown as a direct World-to-Entity join: World Management emits the room-read fence for gameplay-driven room views, Entity Management returns a matching same-scope entity fence, and Game Logic composes only when the two fences match so mixed-tick room state is never emitted as canonical output.
 
 ## Datastore Layer
 
@@ -189,7 +189,7 @@ All datastores are shared across games. Tenant-scoped tables include a `tenantId
 ## Observability Components
 
 Fluent Bit, Prometheus, and the OpenTelemetry Collector work together so logs, metrics, and traces share the same `traceId`. This makes it easy to correlate game events across Kibana, Grafana, and Jaeger dashboards.
-The Logging & Admin Service queries Elasticsearch, Prometheus, and Jaeger and consumes Alertmanager notifications. It also embeds Kibana and Grafana dashboards via their APIs to power moderation workflows.
+The Logging & Admin Service queries Elasticsearch, Prometheus, and Jaeger and consumes Alertmanager notifications for observability-backed investigation. It may embed Kibana and Grafana dashboards, but moderation policy writes, audit capture, feature-flag requests, quota overrides, and tick-remediation controls must remain available when those observability backends are degraded.
 
 The diagram also illustrates the monitoring stack shared by every service:
 

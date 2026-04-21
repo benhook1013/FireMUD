@@ -210,11 +210,14 @@ The detailed scripting rules and categories (region-lease scripts, session-only 
 
 ## Session Keys and Gameplay Binding
 
-Redis stores transient gameplay session state for each connected player under keys of the form:
+Game Session uses Redis for two related but distinct session concerns:
+
+- **Bootstrap/pre-auth transport context** is created when a socket connects and before gameplay authentication completes. Current Game Session implementations store this context under the `sessionctx:*` key family, such as `sessionctx:session:<sessionId>:context` and `sessionctx:<tenantId>:<sessionId>:context`, with unauthenticated fields such as `accountId = 0`, no `authTokenHash`, no `membershipVersion`, and only bootstrap scope such as tenant, locale, or initial game-instance hints. Gameplay commands must treat these entries as unauthenticated until `LOGIN` succeeds.
+- **Authenticated gameplay session state** is created or promoted after successful `LOGIN` and `PLAY`. The canonical target key family for this state is:
 
 - `session:game:<tenantId>:<gameInstanceId>:<sessionId>`
 
-These keys capture:
+Authenticated gameplay session keys capture:
 
 - Socket binding metadata and transport details.
 - Active `characterId` / `tenantId` context.
@@ -222,6 +225,8 @@ These keys capture:
 - Authoritative tenant membership freshness metadata (for example `membershipVersion`) so reconnect/resume can verify that gameplay admission authority still exists before rebinding.
 - Tick-region participation metadata (for example active region bindings and reconnect context). Per-entity command queues remain under `tick:{tenantRegionTag}:queue:<entityId>` and are reset-tolerant coordination state, not durable session payload.
 - Session-local coordination metadata (for example reconnect state, transport-level pacing, and other per-connection ephemeral fields).
+
+The pre-auth `sessionctx:*` family is a bootstrap/session-context implementation surface, not region-local gameplay authority. It must not be used to admit commands, route tick participation, or bypass the authenticated `session:game:*` / `tick:{tenantRegionTag}:session-binding:<entityId>` contract. When the implementation converges key names, the same semantic split remains: pre-auth transport context may exist before `LOGIN`, but authenticated gameplay binding semantics begin only after successful authentication and gameplay admission.
 
 ### Session and Region-Binding Contract
 
@@ -239,6 +244,11 @@ Session and region participation updates are intentionally **two-phase and monot
 4. Disconnect/takeover reconciliation is generation-based:
    - If `session:game:*` says a newer generation is active, any older `tick:{tenantRegionTag}:session-binding:<entityId>` entry is stale and must be ignored or cleaned up by the next region-lease script.
    - If a region binding survives after the session key is deleted or expires, the next lease-holder treats it as stale and removes it as part of region-local cleanup.
+5. Region reset reconciliation is also generation-based:
+   - A region-scoped coordination reset clears the region-local binding keys for the affected `tick:{tenantRegionTag}:*` family but preserves `session:game:*` and bootstrap `sessionctx:*` entries by default.
+   - Before normal command intake resumes for the affected region, Game Session must run a bounded rebind phase for preserved sessions that still intend to participate in that region. The rebind phase reads authenticated session context, validates current account/membership/revocation state, increments or verifies `binding_generation`, and invokes the same region-lease bridge script that normal `PLAY` / reconnect uses.
+   - Until the rebind succeeds, gameplay admission for that entity/region must return a stage-aware non-applied outcome such as `"REGION_REBIND_REQUIRED"` or require the client to re-`PLAY`; it must not fall back to advisory `session:game:*` or `sessionctx:*` fields as gameplay authority.
+   - If preserved session state cannot be validated during the rebind phase, the session remains connected but is no longer admitted to that region until fresh `LOGIN` / `PLAY` succeeds.
 
 This contract keeps region-local correctness shard-safe while still letting reconnect and takeover flows carry session-wide intent. It also means the system tolerates brief mismatches between `session:game:*` and region-local bindings: the region-local binding key is authoritative for gameplay, while `session:game:*` remains authoritative for reconnect semantics.
 

@@ -55,8 +55,9 @@ World Management exposes design-time APIs used by Game Design to write Draft tem
 
 World Management also exposes a read-only design-time synchronization surface so Game Design can validate convergence before publish:
 
-- `GetDraftDesignDigest(GetDraftDesignDigestRequest)` returns `{tenantId, scope, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion}`.
+- `GetDraftDesignDigest(GetDraftDesignDigestRequest)` returns `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}`.
 - `appliedCommitId` means the highest Game Design commit whose complete revision set has been durably applied to the target Draft world scope.
+- Revision-level ledgers may exist for replay and diagnostics, but they are not part of the publish-gate response. World Management must not expose `lastAppliedRevisionId` as a substitute convergence token for multi-revision commits.
 - `contentDigest` must cover only version-scoped template/binding rows and must exclude runtime/instance rows and audit metadata.
 
 Digest input manifest rules live in [`runtime-and-data.md`](./runtime-and-data.md#digest-input-manifest), while generation-input ownership lives in [`procedural-generation-control.md`](./procedural-generation-control.md).

@@ -1,9 +1,7 @@
 # Asset Storage Setup
 
 Game assets such as icons or sound files are uploaded through the Game Design
-Service at design time. Draft and published asset bytes live in object storage;
-the Game Design database stores only metadata, hashes, references, and
-lifecycle state for those objects. When a version is published, the service uploads or promotes these assets to
+Service at design time. In the current first implementation slice, ordinary uploaded asset bytes are persisted in the Game Design database as `game_assets.data`; that row is the immutable repair source for ordinary binary assets referenced by a Published/Active release. Published asset bytes live in object storage alongside the version manifest. A future metadata-only draft asset model may move draft bytes out of PostgreSQL, but it must first introduce an equivalent immutable repair source, such as a retained object version plus content digest, before removing `game_assets.data` as the exact-bytes repair source. When a version is published, the service uploads or promotes these assets to
 tenant- and version-scoped object storage (e.g., S3, MinIO, or a CDN) and
 generates a `manifest.json` that maps asset keys to public URLs. A manifest is
 produced for every published version, even if no assets are present. The manifest is
@@ -205,16 +203,16 @@ Fail-closed reader rule:
 
 ## Table Structure
 
-The `game_assets` table stores metadata for design-time uploads. Columns include:
+The `game_assets` table stores ordinary design-time upload records. In the current first implementation slice it also stores the uploaded bytes used as the exact-bytes repair source. Columns include:
 
 - `id` – primary key
 - `tenant_id` – identifies the owning game as a UUID string stored in `VARCHAR(36)`
 - `file_name` – original file name
 - `content_type` – MIME type
-- `storage_key` – object-store key for the canonical draft asset bytes
-- `content_hash` – immutable content digest of the uploaded bytes
-- `size_bytes` – stored object size
+- `data` – immutable uploaded bytes for the ordinary binary asset in the current first slice; this is the canonical repair source for object-store republish/repair until a future metadata-only storage model introduces an equivalent retained immutable source
 - `created_at` – upload timestamp
+
+Future metadata-only storage may replace `data` with fields such as `storage_key`, `content_hash`, and `size_bytes`, but only if the new schema preserves the same repair invariant: Published/Active releases must be exactly reproducible for as long as their assets remain non-Retired or design-history reachable.
 
 To associate assets with specific published versions while still allowing reuse across
 versions, the Game Design Service maintains a separate mapping table:
@@ -350,9 +348,9 @@ Transition enforcement contract:
 - For each `(tenantId, versionId)` the Saga runs an `ExportAssets` step that:
   - Selects assets by joining `version_asset` to `game_assets` for the target
     `(tenantId, versionId)`; assets not referenced via `version_asset` are **never**
-    exported for that version.
-  - Copies or promotes the selected objects referenced by `game_assets.storage_key` into a deterministic published prefix such as
-    `<tenantId>/<versionId>/` in object storage.
+    exported for that version. In the current first slice, export selects all tenant `game_assets` rows until the normalized `version_asset` mapping table is fully enforced.
+  - Copies the selected ordinary asset bytes from `game_assets.data` into a deterministic published prefix such as
+    `<tenantId>/<versionId>/` in object storage. Future metadata-only storage may instead copy/promote from an immutable source referenced by asset metadata, but not from mutable draft keys.
   - Writes or overwrites the version-scoped `manifest.json` in the same prefix.
   - Updates version metadata with the manifest location.
   - Transitions `version_asset_artifact` from `STAGED` to `EXPORTED_UNATTESTED`.
@@ -387,6 +385,8 @@ Exact-bytes repair rule:
 
 - Repair of a Published/Active version must begin by reading `GetPublishedReleaseBundle(tenantId, versionId)`.
 - Repair must also read `GetVersionAssetArtifactState(tenantId, versionId)` and prove the expected `artifactState`, `stateEpoch`, and `manifestHash` before any bytes are rewritten.
+- For ordinary binary assets in the current first slice, the repair workflow regenerates object-store bytes from the immutable `game_assets.data` rows selected for the attested version export. Those rows must not be modified in place after they are referenced by a Published/Active release.
+- If a future storage model replaces `game_assets.data` with metadata plus object-store handles, the replacement repair source must be immutable and retained for every non-Retired or design-history-reachable release. A mutable draft object key by itself is not a valid repair source.
 - The repair workflow may only regenerate object-store bytes that hash to the existing attested `manifestHash` (and optional per-asset hashes if recorded).
 - If regenerated bytes would change the attestation payload, the workflow must fail closed and require a new `versionId` rather than mutating the published release in place.
 

@@ -54,6 +54,7 @@ Membership-change event delivery semantics are required, not best-effort folklor
 FireMUD deliberately distinguishes between several types of sessions so that identity, gameplay continuity, and auth token lifetimes can evolve independently:
 
 - **Auth token sessions** – Represented by `session:auth:<scope>:<tokenHash>` entries in Coordination Redis, backing internal JWTs used for meta/control APIs.
+- **Bootstrap transport session contexts** – Current Game Session implementations store pre-auth socket context under the `sessionctx:*` key family. These records may exist before `LOGIN`, may have no account or membership authority, and are used only for bootstrap scope, locale, and reconnect lookup plumbing.
 - **Gameplay sessions** – Tenant-scoped bindings between a connected socket (or reconnect token) and a character in a specific tenant, backed by gameplay Redis keys.
 - **Control-plane UI sessions** – Browser or desktop admin/creator sessions that hold short-lived JWTs client-side and rely on auth token sessions on the server.
 
@@ -79,6 +80,11 @@ FireMUD uses distinct lifetimes and invariants for each session type:
   - Keys: tenant-scoped session keys described in [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding), storing `accountId`, `tenantId`, `characterId`, and tick-region context.
   - Purpose: bind a connected socket or reconnect token to a character in a specific tenant, enforce one session per character, and support reconnect flows.
   - Lifetime: sliding TTL refreshed while the player remains active. When the TTL elapses, the session is considered abandoned and is eligible for cleanup.
+
+- **Bootstrap/pre-auth session contexts**
+  - Keys: current implementation-local `sessionctx:*` entries described in the Game Session runtime docs.
+  - Purpose: remember transport-level bootstrap context before gameplay authentication completes.
+  - Lifetime: bounded by the same session-expiration family for cleanup, but these entries are not logically resumable gameplay sessions until `LOGIN` and `PLAY` have established authenticated gameplay scope.
 
 Game Session must also maintain bounded authoritative secondary indexes for gameplay bindings so takeover, reconnect, and revocation do not require scans:
 

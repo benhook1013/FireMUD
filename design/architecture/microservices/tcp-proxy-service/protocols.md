@@ -58,6 +58,26 @@ For already-established Telnet sessions, the proxy uses an explicit per-connecti
 
 This state machine is distinct from the proxy-wide open/half-open/closed admission breaker and defines deterministic behavior for active Telnet sockets during upstream loss. Hidden bridge reattachment behind an already-open client TCP socket is not part of the design.
 
+## Telnet Disconnect Line Format
+
+When the proxy can write a final player-visible disconnect line before closing the socket, it uses this exact line format:
+
+```text
+DISCONNECT <reason-token> <human-message>\n
+```
+
+`<reason-token>` is one non-whitespace token from the unified disconnect taxonomy (`logout`, `idle_timeout`, `policy_violation`, `internal_error`, or `backend_unavailable`). When bounded subreason context is available, it is appended to the reason token as `;subreason=<value>`, for example `logout;subreason=gateway_restart` or `policy_violation;subreason=edge_backpressure`. `<human-message>` is advisory display text for people and must not be parsed for retry policy.
+
+Examples:
+
+```text
+DISCONNECT backend_unavailable Gateway link dropped; please reconnect\n
+DISCONNECT logout;subreason=takeover Gameplay session ended; please reconnect\n
+DISCONNECT policy_violation;subreason=edge_backpressure Gameplay connection closed due to policy violation\n
+```
+
+The proxy writes this line best-effort and then closes the TCP connection. If the transport drops before the line is received, clients must treat the event as abnormal transport loss and use the reconnection policy in [Reconnection Strategy](../../system-architecture-reconnection.md).
+
 ## Hidden Attach Metadata
 
 Typed `SESSION` gameplay lines are no longer part of the Telnet contract. If advanced smart clients need attach hints in the future, those hints should travel through hidden MCP metadata rather than through visible player input.

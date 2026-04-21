@@ -298,6 +298,7 @@ Lifecycle rules:
 
 - The deployment record is the canonical answer to “what is currently deployed and promotable for this environment.”
 - Preflight artifacts, secret-compliance snapshots, smoke evidence, and live-state verification are supporting evidence linked from the deployment record rather than parallel sources of truth.
+- Current promotion trust is repository-reviewed evidence with immutable artifact references. CI treats the in-repo deployment record and production attestation as the deterministic promotion index, then verifies digest equality, live-state evidence shape, and immutable secret-compliance references. Detached signatures are not required in the current single-admin/operator model.
 - Re-applying the same overlay commit does not create a second competing promotion record; operators update the same deployment record with a new apply event timestamp, new live-state evidence, and the outcome of the latest smoke checks.
 - A promotion attestation is valid only if its referenced staging deployment record remains the latest successful apply record for that staging overlay commit.
 - Rollback uses the deployment record and original attestation lineage for the digest set being restored.
@@ -325,10 +326,18 @@ Illustrative deployment record shape:
     "game-session-service": "ghcr.io/example/game-session-service@sha256:..."
   },
   "preflightReportPath": "design/operations/deployments/staging/preflight/<git-sha>.json",
-  "liveStateEvidence": [
-    "namespace annotation firemud.io/overlay-sha=<git-sha>",
-    "rollout digests matched reviewed overlay"
-  ],
+  "liveStateEvidence": {
+    "status": "pass",
+    "observedOverlaySha": "<git-sha>",
+    "observedDigests": {
+      "spring-cloud-gateway": "ghcr.io/example/spring-cloud-gateway@sha256:...",
+      "game-session-service": "ghcr.io/example/game-session-service@sha256:..."
+    },
+    "evidenceRefs": [
+      "namespace annotation firemud.io/overlay-sha=<git-sha>",
+      "rollout digests matched reviewed overlay"
+    ]
+  },
   "secretComplianceStatus": "pass",
   "secretComplianceEvidenceRef": "design/operations/secret-compliance/staging.yaml",
   "smokeEvidence": [

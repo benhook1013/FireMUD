@@ -13,7 +13,7 @@ The service runtime model assumes replaceable workers, not authoritative in-proc
 - PostgreSQL stores `game_instances`, `game_manifest`, pinned runtime-version/script-patch selections, active runtime feature-flag overrides, and audit-relevant disconnect/remediation metadata.
 - Redis stores gameplay session bindings, tick queues, timers, retries, and region leases.
 - Game Session uses PostgreSQL for durable control-plane metadata and Redis as the coordination plane for gameplay-session bindings, tick queues, timers, retries, and region leases.
-- Session objects are created as soon as a client connects. They remain unauthenticated until Account Service verifies credentials and issues a token.
+- Bootstrap session-context records are created as soon as a client connects. They remain unauthenticated until Account Service verifies credentials and issues a token, and gameplay commands must reject them as `LOGIN_REQUIRED` until `LOGIN` promotes the context to authenticated account scope.
 - Game Session relies on the shared libraries for DTO definitions, logging interceptors, Micrometer metrics, and shared saga helpers rather than reimplementing those surfaces locally.
 - Brute-force defense remains delegated to Account Service, which owns login-attempt monitoring, per-IP/account throttling, blacklisting, and notification behavior. Game Session consumes the resulting auth outcomes when binding gameplay sessions but does not implement separate credential-abuse logic.
 - No single Game Session process may become the hidden source of truth for reconnectable gameplay state. If the service needs a value to survive non-edge restart or permit same-type takeover, that value must live in Redis or PostgreSQL-backed coordination rather than only in process memory.
@@ -62,6 +62,14 @@ When Redis becomes slow or unavailable, Game Session applies the graceful degrad
 Every gameplay session record includes a `tenantId` identifying the owning tenant and, through associated records, the `gameInstanceId` for the running world instance. Redis keys and database tables prefix this value so sessions from different games remain isolated. The platform may enforce per-tenant resource quotas at this level so one tenant cannot exhaust cluster capacity. See [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 
 Session state needed for reconnect recovery is stored under `session:game:<tenantId>:<gameInstanceId>:<sessionId>`. These per-session keys, including session-scoped command queues or metadata, are removed when the corresponding session stops or expires.
+
+Current Game Session code also maintains a `sessionctx:*` Redis-backed session-context family for bootstrap and implementation-local lookup indexes:
+
+- `sessionctx:session:<sessionId>:context` maps a transport session id to its current context.
+- `sessionctx:<tenantId>:<sessionId>:context` stores tenant-scoped session context.
+- `sessionctx:<tenantId>:identity:<gameInstanceId>:<characterId>:context` and `sessionctx:<tenantId>:identity:<gameInstanceId>:name:<characterName>:context` support current takeover and reconnect lookups.
+
+Unauthenticated `sessionctx:*` entries may exist before `LOGIN`; they are bootstrap context only and must not authorize gameplay commands. Authenticated gameplay semantics still follow the `session:game:*` / region-binding contract in the Redis architecture docs. If this implementation-local key family is renamed or collapsed into `session:game:*`, the pre-auth vs authenticated distinction remains mandatory.
 
 Game Session must also maintain the bounded authoritative indexes defined in the authentication architecture so takeover, reconnect, and revocation do not require scans:
 
@@ -141,6 +149,16 @@ The first migrated command families are movement plus the first item/equipment/c
 - read-only item views such as `INVENTORY`, `EQUIPMENT`, and `CONTAINER` remain direct view commands because they do not mutate authoritative gameplay state.
 
 Other command families still need to migrate onto this same durable seam. Pure view/meta commands may remain direct until there is a concrete reason to queue them, but state-changing gameplay families should not introduce new synchronous bypasses. The next durability gap is pushing the same effect-idempotent replay/no-op pattern through later domain mutation boundaries, not merely routing more commands through the Game Session ledger.
+
+### Automation Command Admission
+
+Fairness-critical automation enters gameplay through the same durable command/admission boundary as player commands, not through direct Automation & Scripting writes to `tick:*` Redis keys.
+
+- Automation & Scripting calls Game Session with a stable `automationDispatchId`, target `(tenantId, gameInstanceId, regionId, regionEpoch, dueTickId)`, target `entityId`, and deterministic command payload.
+- Game Session records or reads a durable admission row keyed by `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)` before mutating Redis. The row stores the due tick, entity, command kind/payload hash, and current admission outcome.
+- Duplicate requests for the same key return replay/no-op outcomes from the durable row. Conflicting payloads for the same key are validation failures and must not enqueue.
+- Only after durable admission succeeds does Game Session invoke the region-lease Redis script that materializes the command into `tick:{tenantRegionTag}:queue:<entityId>`.
+- If Redis enqueue fails after durable admission, Game Session retries materialization from the durable row or converges the row to a terminal non-applied outcome under the command-status rules. Redis queue contents are never the sole proof that the automation action existed.
 
 ## Saga Participation
 

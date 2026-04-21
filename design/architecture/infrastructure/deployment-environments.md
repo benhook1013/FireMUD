@@ -22,6 +22,16 @@ This document outlines how FireMUD is deployed across environments including loc
 - Use **`pr-preview`** for reviewer-accessible pull-request environments that must expose the full stack over HTTPS for the lifetime of the PR.
 - Prefer **staging** for playtests that should mirror production routing, TLS, and Redis/Postgres topologies before promoting changes. `pr-preview` is for isolated PR validation, not for canonical creator playtests or promotion evidence.
 
+## Implementation Notes
+
+The environment matrix below is the canonical target state. Current repository implementation has partial support only for several deployment gates:
+
+- `./dev-tools/deploy/preflight.sh` is the intended entrypoint, but it does not yet enforce every player-facing policy listed in `system-architecture-deploy-preflight-policy.md`; missing enforcement remains a blocker for first player-facing deployment and traffic-open events.
+- The player-facing expected-binding manifests under `design/operations/environments/` currently describe the intended shape but are not yet complete authoritative inputs for preflight or restore validation.
+- Hosted `pr-preview` and `dev-demo-cluster` currently reuse the preview Helm values path, which still contains static inline JWT secret material by default. That does not satisfy the preview-unique JWT/JWKS target state until the workflow generates or injects per-namespace material and the JWKS resource path is wired end to end.
+
+When this document says an environment “must” satisfy a gate, that is a target-state requirement. If the current tooling cannot prove the gate yet, the deployment remains blocked or requires explicit manual evidence recorded outside the incomplete tool output.
+
 ## Terms
 
 - `player-facing`: any environment that may accept real player traffic or is used to validate player-visible operational correctness. In FireMUD this includes `hobby-self-hosted`, `staging`, and `production`.

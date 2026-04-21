@@ -155,7 +155,7 @@ Command recovery must converge just like effect recovery:
 
 - Any accepted command that is still `RECEIVED` or `ENQUEUED` when a reset or tail-loss reconcile occurs and that is not durably tied to a surviving `tick_batch_id` must be marked `TERMINAL` with explicit status fields:
   - `executionOutcome = LOST_BEFORE_STAGING`
-  - `gameplayResult` set by the command type's documented terminal mapping (for the shared default, `FAILED` unless a more specific command contract says otherwise)
+  - `gameplayResult` set by the command type's documented terminal mapping (for the shared default, `NOT_APPLIED` unless a more specific command contract says otherwise)
 - Commands that are `BOUND_TO_BATCH` follow the batch/effect replay path and converge based on the batch's terminal command status mapping.
   - For commands, this means they converge to terminal command status fields (`executionOutcome`, `gameplayResult`) based on the documented command mapping for those batch-bound effects; do not collapse command status into effect-ledger status names alone.
 - Reconciliation of command records is part of the same operational scope as ledger replay/reset tooling; operators must not need a separate ad-hoc command repair path just to clear dedupe rows stranded before staging.
@@ -184,6 +184,7 @@ Minimum command-status surface for operators and clients:
   - `PARTIAL`
   - `FAILED`
   - `TIMEOUT`
+  - `NOT_APPLIED`
 - `LOST_BEFORE_STAGING` is a first-class terminal execution outcome, not an internal-only repair code.
 - Durable storage rule:
   - The authoritative status surface must persist both `executionOutcome` and `gameplayResult`, either on the command-ingress row itself or in a durable outcome projection keyed by `(tenantId, gameInstanceId, commandId)`.
@@ -270,7 +271,7 @@ Common scenarios and invariants:
     - Metrics and dashboards surface gaps or stuck regions.
     - Operators treat serious tail-loss as a trigger to run the **ledger replay controller** (and, where appropriate, the scoped reset/reconcile flows) for the affected `(tenantId, regionId, region_epoch)` combinations.
     - The controller drives any lingering `SCHEDULED` effects in the tail-loss window to terminal `APPLIED` or `ABANDONED` outcomes based on idempotent domain state. It does **not** attempt to re-stage older ticks through the normal tick-staging Lua scripts; any need to move effects across epochs or tick ranges is handled only by dedicated maintenance tooling that understands ledger state.
-    - The same reconcile scope also converges accepted-but-unbound command records to terminal command status fields (for example `executionOutcome = LOST_BEFORE_STAGING` with default `gameplayResult = FAILED`) so ingress dedupe state does not strand commands indefinitely after coordination loss.
+    - The same reconcile scope also converges accepted-but-unbound command records to terminal command status fields (for example `executionOutcome = LOST_BEFORE_STAGING` with default `gameplayResult = NOT_APPLIED`) so ingress dedupe state does not strand commands indefinitely after coordination loss.
 - **GC pause > `lock_ttl_ms` but < `lease_ttl_ms`**
   - Redis: locks may expire and be reacquired; `pending` remains; lease still held by original executor.
   - PostgreSQL: any effects applied before the pause remain consistent; replays of the same `(tenantId, regionId, region_epoch, tickId, effectKey)` are treated as no-ops by idempotent handlers.
@@ -434,7 +435,8 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
 - **Region-scoped reset**
   - Timeline impact:
     - For the affected `<tenantId, regionId>`, region-scoped tick coordination keys for the current `region_epoch` (for example `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`) are dropped according to the reset policy matrix.
-    - Tenant-scoped coordination such as `session:game:<tenantId>:<gameInstanceId>:<sessionId>` remains in place unless a broader tenant- or cluster-scoped reset is explicitly invoked; region resets are not expected to evict sessions.
+    - Tenant-scoped coordination such as `session:game:<tenantId>:<gameInstanceId>:<sessionId>` and current `sessionctx:*` context remains in place unless a broader tenant- or cluster-scoped reset is explicitly invoked; region resets are not expected to evict sessions.
+    - Region-authoritative `tick:{tenantRegionTag}:session-binding:*` keys are still region-scoped and are dropped with the rest of `tick:{tenantRegionTag}:*`; preserved sessions must be rebound through the session-to-region bridge before normal command intake resumes.
     - A new `region_epoch` is established; subsequent ticks for that region advance on the **new (bumped) `region_epoch`** starting at `tickId=0` on the coordination timeline described in `system-architecture-redis.md`.
   - Ledger behavior:
     - Tick effect ledger rows with `status = SCHEDULED` for the affected `<tenantId, regionId, region_epoch>` must not remain indefinitely pending.

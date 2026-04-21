@@ -2,6 +2,16 @@
 
 This document expands on the access control and operational guardrails described in `system-architecture-redis.md`. It focuses on how human operators and maintenance tooling are allowed to interact with **coordination prefixes** and how those tools participate in the [Coordination Reset Model](./system-architecture-redis-reset-and-recovery.md#coordination-reset-model).
 
+## Implementation Notes
+
+The target control-plane and CLI contract in this document is ahead of the currently shipped runtime surface:
+
+- Game Session currently ships `PauseTicksForScope` / `ResumeTicksForScope` plus `GetRuntimeOwnershipStatus` on the control-plane gRPC surface.
+- The live implementation supports the current `{tenantId, gameInstanceId}` queue boundary; `region_id` is present in the proto contract but is currently rejected by the service implementation.
+- The documented `GetRegionTickStatus(scope)` surface and the `coordination-maintenance ...` CLI verbs remain the intended target-state operator contract, not a description of fully implemented repo-local tooling today.
+
+Use this doc as the canonical target-state contract for later reset/replay tooling, but do not assume every verb below is already available in the running codebase.
+
 ## Default Operator Surface
 
 - Using the **read-only ops user** for inspection and the **application user** (via supported tooling) for any coordination writes.
@@ -114,6 +124,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `ReconcileTickLedger(scope, oldRegionEpoch)`
   - `ConvergeCommandRecords(scope, oldRegionEpoch)`
   - `InitializeRegionMeta(scope, regionEpoch, currentTickId)`
+  - `RebindRegionSessions(scope, regionEpoch)`
   - `RunPostResetSmokeCheck(scope)`
 - Required CLI verbs:
   - `coordination-maintenance pause`
@@ -122,12 +133,21 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `coordination-maintenance reconcile-ledger`
   - `coordination-maintenance converge-commands`
   - `coordination-maintenance init-meta`
+  - `coordination-maintenance rebind-sessions`
   - `coordination-maintenance smoke-check`
   - `coordination-maintenance resume`
 - Scope grammar:
   - `--scope region --tenant <tenantId> --region <regionId>`
   - `--scope tenant --tenant <tenantId>`
   - `--scope cluster`
+- Scope inventory source:
+  - The authoritative affected-region set comes from the durable Game Session control/status store, not Redis key enumeration.
+  - The first fully region-scoped implementation must use a PostgreSQL-backed `RegionStatus` or equivalent runtime ownership table as the inventory source for every tenant and cluster operation.
+  - The affected-region snapshot is taken after `pause` blocks new command intake, batch allocation, and region creation for the selected scope; later-created regions are rejected or queued until the maintenance operation completes.
+  - Tenant scope includes every active, paused, degraded, stalled, or draining region owned by that tenant at the inventory snapshot.
+  - Cluster scope includes every active, paused, degraded, stalled, or draining region assigned to the Coordination Redis deployment at the inventory snapshot.
+  - Redis `SCAN` is used only to enumerate keys for deletion/inspection after the durable scope has been established; it must not decide which regions exist.
+  - Commands that auto-discover epoch maps must derive them from the same durable affected-region snapshot and emit that snapshot in audit output.
 - Required argument contract:
   - `coordination-maintenance pause`
     - accepts only the scope grammar above.
@@ -215,7 +235,7 @@ Minimum audit output for any command that auto-discovers or consumes an epoch ma
 
 ### Pause/Status/Resume State Contract
 
-`PauseTicks`, `GetRegionTickStatus`, and `ResumeTicks` are the control-plane safety boundary for all reset, failover-repair, and topology-change flows. First implementation must expose one shared state model rather than per-runbook interpretations.
+`PauseTicks`, `GetRegionTickStatus`, and `ResumeTicks` are the control-plane safety boundary for all reset, failover-recovery, and topology-change flows. First implementation must expose one shared state model rather than per-runbook interpretations.
 
 - Canonical per-region states:
   - `RUNNING`
@@ -278,7 +298,7 @@ Direct `redis-cli` writes to coordination prefixes are reserved for **break-glas
 - Any break-glass write that mutates `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, or `tick-executor-lease:*` must be followed by a reset/cleanup scope that actually covers the mutated prefix before normal tick processing resumes:
   - For region-scoped families (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`), run a region- or tenant-scoped coordination reset as appropriate.
   - For tenant-scoped `remote:*`, run a tenant-scoped reset or an explicit tenant-scoped `remote:<tenantId>:*` cleanup workflow (with audit trail), not a region-only reset.
-  - For session prefixes, follow session reset policy (region resets preserve `session:game:*` by default; tenant resets always invalidate `session:auth:*` and preserve `session:game:*` only when an explicit `--preserve-sessions` option is invoked; cluster resets invalidate both by default).
+  - For session prefixes, follow session reset policy (region resets preserve `session:game:*` and current `sessionctx:*` bootstrap/session-context keys by default; tenant resets always invalidate `session:auth:*` and preserve gameplay/session-context keys only when an explicit `--preserve-sessions` option is invoked; cluster resets invalidate both by default).
 - Operators must treat such writes as equivalent to “coordination state may be inconsistent” and use the Coordination Reset Model to bring the region/tenant/cluster back to a known-good state, rather than leaving ad-hoc edits in place as a permanent fix.
 - Break-glass flows should go through a small wrapper (CLI or Logging & Admin action) that:
   - Executes the minimal required Redis mutation.
@@ -310,10 +330,10 @@ This ensures that operators use the same abstractions as application code and re
 
 - The coordination maintenance CLI is shipped as part of the normal build/release pipeline under the canonical command name `coordination-maintenance`; environment packaging may wrap that command in a Gradle task, container entrypoint, or `dev-tools/` script, but runbooks and Helm hooks should reference the canonical command/verb names above so operators do not need to guess how to invoke it.
 - Operators must only use a CLI version that matches the deployed services and Lua registry:
-  - If the CLI build version does **not** match the image tag or Git commit used for the running deployment, do not attempt coordination repairs; instead, run the CLI from the same artifact version that produced the deployment or perform a coordinated upgrade.
+  - If the CLI build version does **not** match the image tag or Git commit used for the running deployment, do not attempt coordination recovery actions; instead, run the CLI from the same artifact version that produced the deployment or perform a coordinated upgrade.
   - Break-glass or manual `redis-cli` operations are not an acceptable substitute for a mismatched maintenance CLI; they still require a scoped coordination reset afterwards and should be treated as incident-only paths.
 
-Runbooks that reference coordination repairs or resets should always call the maintenance CLI entrypoint explicitly and avoid embedding raw Redis commands.
+Runbooks that reference coordination recovery or resets should always call the maintenance CLI entrypoint explicitly and avoid embedding raw Redis commands.
 
 ## Static Checks for Ops Scripts
 

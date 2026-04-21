@@ -21,7 +21,7 @@ Use the following patterns to answer common operational questions:
   - Use `automation_script_skips_total{reason="priority_throttled"}` and compare `automation_script_triggers_total` broken out by `priorityTag` to confirm that background work is yielding capacity to high-priority scripts as configured.
 
 - **"Are reloads or version issues causing skips?"**
-  - Inspect `automation_script_triggers_total{outcome="skipped_reloading"}`, `automation_script_triggers_total{outcome="skipped_rollback_pause"}`, and `automation_script_triggers_dropped_total{reason="version_unavailable"}` (paired with `script_event_audit.finalStage=ADMISSION` and `finalOutcome=skipped_reloading` / `skipped_rollback_pause` / `version_unavailable`) to distinguish reload pauses, rollback pauses, and missing or failed script versions.
+  - Inspect `automation_script_triggers_total{outcome="skipped_reloading"}`, `automation_script_triggers_total{outcome="skipped_rollback_pause"}`, and `automation_script_triggers_dropped_total{reason="version_unavailable"}`. Pair these with event-scope ingress audit records for pre-resolution denials and with `script_event_audit.finalStage=ADMISSION` for handler-scoped denials to distinguish reload pauses, rollback pauses, and missing or failed script versions.
   - For stale control-plane pin visibility, inspect admissions with `finalOutcome=pin_state_unavailable` and corresponding drop metrics keyed by the bounded `finalReason`.
 
 ### Tuning Playbook: Misbehaving Scripts

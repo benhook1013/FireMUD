@@ -12,8 +12,9 @@ The authoritative REST schema source lives in [../../../../services/account-serv
 - `Authenticate` – verifies credentials and issues a Service JWT (internal token profile) backed by `session:auth:*` allowlist entries for meta/control APIs.
 - `GetProfile` – retrieves profile information for the current account.
 - `UpdateProfile` – modifies profile fields and triggers notification emails.
-- `ExportAccount` – exports all account and profile data.
-- `DeleteAccount` – permanently removes an account.
+- `ExportAccount` – account-scoped export of portable account-owned data across all tenants visible to the authenticated subject.
+- `ExportTenantData` – tenant-scoped billing-safe export for one tenant, available to `tenantAdmin` while gameplay is billing-blocked and limited to that tenant's exportable game/billing records.
+- `DeleteAccount` – begins or completes global account deletion according to the account lifecycle state machine; it is not a tenant-scoped membership deletion.
 - `RequestPasswordReset` – initiate a password reset email.
 - `CompletePasswordReset` – update the password using a token.
 - `LinkExternalAccount` – attach a Google, Discord, or Steam ID.
@@ -63,6 +64,7 @@ The authoritative REST schema source lives in [../../../../services/account-serv
 | `GET` | `/accounts/{accountId}/export` | Export account data |
 | `DELETE` | `/accounts/{accountId}` | Delete an account |
 | `POST` | `/accounts/{accountId}/external` | Link external account |
+| `GET` | `/tenants/{tenantId}/export` | Tenant-scoped billing-safe export for the authenticated tenant admin |
 | `POST` | `/auth/player-bootstrap` | Authenticate a first-party player account and return a short-lived `player-bootstrap` token for gameplay bootstrap only |
 | `GET` | `/auth/bootstrap/worlds` | List caller-visible worlds for first-party gameplay bootstrap |
 | `GET` | `/auth/bootstrap/worlds/{world}/realms` | List caller-visible realms for a selected world during first-party gameplay bootstrap |
@@ -110,7 +112,7 @@ Error responses use the standard `shared.v1.ErrorDetail` structure and `Authenti
 | Public auth/bootstrap | `/auth/login`, `/auth/request-password-reset`, `/auth/complete-password-reset`, `/auth/request-email-verification`, `/auth/verify-email`, `/auth/recover-username`, `/.well-known/jwks.json` | No pre-existing user JWT; endpoint-specific validation and abuse controls | Intended for initial auth/bootstrap flows. |
 | Player bootstrap issuance | `/auth/player-bootstrap` | First-party player account authentication bootstrap | Issues the `player-bootstrap` token profile only; must not return a control-plane Browser JWT or perform tenant-scoped admission checks. |
 | Player bootstrap | `/auth/bootstrap/worlds`, `/auth/bootstrap/worlds/{world}/realms`, `/auth/bootstrap/worlds/{world}/realms/{realm}/characters`, `/auth/connect-token` | Short-lived, memory-only `player-bootstrap` token in `Authorization: Bearer ...` | Caller identity is derived from bootstrap auth context; discovery endpoints must apply the same membership, realm-visibility, and entitlement filtering as the in-band lobby discovery surfaces and return only caller-visible worlds/realms/characters plus a canonical `connectScopeId`. `/auth/connect-token` must not accept arbitrary `accountId` and must perform live membership/public-admission, runtime entitlement, and admission-pointer checks for the discovery-selected target. |
-| Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}` | JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, and tenant/global role checks. |
+| Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/accounts/*`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}`, `/tenants/{tenantId}/export` | JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, and tenant/global role checks. |
 | Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantMembershipForRuntime`, `GetTenantEntitlementsForRuntime`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
 
 ## Runtime Membership and Entitlement Response Shapes
@@ -188,10 +190,13 @@ Required semantics:
 
 ## Subject-Binding Rules (Normative)
 
-- `GET /profiles/{accountId}`, `PUT /profiles/{accountId}`, `GET /accounts/{accountId}/export`, `DELETE /accounts/{accountId}`, and `POST /accounts/{accountId}/external` are subject-bound routes:
+- `GET /profiles/{accountId}`, `PUT /profiles/{accountId}`, `GET /accounts/{accountId}/export`, `DELETE /accounts/{accountId}`, and `POST /accounts/{accountId}/external` are subject-bound account routes:
   - Default rule: `path accountId` must equal authenticated `accountId` from JWT (`sub`/`accountId` claim).
   - Exception: cross-account access is allowed only for explicitly authorized global roles (`platformAdmin`) on routes that explicitly document this override.
   - On mismatch without eligible role, return canonical authorization failure (`AUTH_FORBIDDEN_SUBJECT_MISMATCH` or service-equivalent).
+- `GET /accounts/{accountId}/export` is the full account export route. It must not require a caller-selected `tenantId`, and it must not be treated as the billing-safe recovery export for a suspended tenant.
+- `GET /tenants/{tenantId}/export` is the tenant-scoped billing-safe export route. It requires caller-bound `tenantAdmin` membership via `GetCallerTenantMembership(tenantId)`, remains reachable when the tenant is `suspended` or `canceled`, and returns only data scoped to that tenant.
+- `DELETE /accounts/{accountId}` is global account deletion. It must reject deletion with canonical error `ACCOUNT_DELETE_ACTIVE_BILLING_OWNER` if the account owns any nonterminal subscription (`trialing`, `active`, `past_due`, `grace`, or `suspended`) in any tenant, and the response should include the affected tenant IDs when safe to disclose to the caller. Platform-admin deletion uses the same billing-owner precondition unless an explicit break-glass compliance workflow is documented separately.
 - `GET /tenants/{tenantId}/memberships/me` must ignore any caller-supplied account identifier and always bind subject from authenticated caller context.
 - `GET /tenants/{tenantId}/memberships/{accountId}` is cross-subject by design and is restricted to `billingAdmin`/`platformAdmin`; every call must be audit-logged with caller identity and target `{tenantId, accountId}`.
 
@@ -238,6 +243,7 @@ Canonical non-login authorization/entitlement errors:
 - `MEMBERSHIP_AUTH_UNAVAILABLE` - authoritative membership/role lookup is unavailable for a billing-safe mutation; callers must fail closed.
 - `BILLING_SHARED_INSTRUMENT_ACK_REQUIRED` - a tenant-scoped billing-safe mutation attempted to modify an account-shared payment instrument without explicit caller acknowledgement of cross-tenant impact; callers must re-submit only after the acknowledgement field is set.
 - `ENTITLEMENT_UNAVAILABLE` - authoritative entitlement snapshot could not be produced at required freshness/sequence guarantees.
+- `ACCOUNT_DELETE_ACTIVE_BILLING_OWNER` - account deletion was requested for an account that still owns at least one nonterminal tenant subscription; callers must cancel terminally or transfer billing ownership before retrying deletion.
 
 ## Examples
 

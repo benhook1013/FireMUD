@@ -122,7 +122,7 @@ Telnet clients receive final disconnect messages from the TCP Proxy Service when
 
 The authoritative cross-layer translation table and precedence rules for WebSocket and Telnet close outcomes live in [Gateway Architecture](./system-architecture-gateway.md#canonical-close-translation-matrix). This document defines the Telnet taxonomy and must remain consistent with that table.
 
-The exact Telnet disconnect line format is defined in the TCP Proxy Service design, but every player-visible disconnect must include one of these reason tokens so that:
+The exact Telnet disconnect line format is defined in the TCP Proxy Service design as `DISCONNECT <reason-token> <human-message>\n`. Every player-visible disconnect must include one of these reason tokens so that:
 
 - Client authors can treat `policy_violation` as non-retriable (or much longer backoff) and the others as retriable with the backoff rules in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour), except when wire-visible disconnect metadata explicitly indicates edge backpressure (for example WebSocket `1008/policy_violation;subreason=edge_backpressure` or Telnet `policy_violation;subreason=edge_backpressure`), which should follow retriable backend-pressure policy. If this metadata is absent, default to non-retriable `policy_violation`.
 - Operators can aggregate disconnect metrics by reason category in a way that lines up with WebSocket close-code dashboards.

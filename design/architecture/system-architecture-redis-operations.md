@@ -191,13 +191,24 @@ Default runbooks should still prefer fixing deployments and relying on TTL over 
 
 ## Maintenance Job Coordination
 
-Redis maintenance flows such as session cleanup, scoped resets, normalization migrations, unknown-prefix scanning, and split-brain recovery can place non-trivial load on Coordination Redis. To keep behavior predictable:
+Redis maintenance flows such as session cleanup, scoped resets, normalization migrations, unknown-prefix scanning, and split-brain recovery can place non-trivial load on Coordination Redis. Other operations such as coordinated backups, restore coordination recovery, and topology-changing scaling use the same pause/status/epoch control plane and can invalidate each other if they overlap. To keep behavior predictable:
 
-- one control-plane actor orchestrates Redis-heavy maintenance per deployment
-- only one Redis-intensive maintenance job should run at a time per deployment
+- one control-plane actor orchestrates heavy maintenance per deployment
+- one deployment-wide maintenance lock serializes incompatible backup, restore, reset, cleanup, migration, and topology-changing scale operations
+- coordinated backup jobs must acquire this lock before pausing ticks and must fail closed if an incompatible maintenance operation is already active
+- restore coordination recovery, scoped resets, normalization migrations, split-brain recovery, session cleanup, and topology-changing scale changes must acquire this lock before they pause or mutate coordination state
+- read-only low-impact scanners may run only when they are declared compatible with the active operation and still back off on Redis health degradation
 - dashboards and health endpoints should expose a simple “maintenance in progress” signal while such a job is active
-- fine-grained locks such as `session-cleanup-lock:<tenantId>` and `coord-reset:{tenantRegionTag}` should still be used inside the broader “one heavy job at a time” rule
+- fine-grained locks such as `session-cleanup-lock:<tenantId>` and `coord-reset:{tenantRegionTag}` should still be used inside the broader deployment-wide rule, but they do not replace it
 - maintenance jobs must back off or abort when Redis health signals show elevated latency, `used_cpu_sys`, `used_memory`, or elevated error rates
+
+Canonical maintenance-lock behavior:
+
+- lock identity: one active record per Coordination Redis deployment / gameplay environment boundary
+- minimum fields: `operation`, `scope_type`, `tenantId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference
+- acquisition is fail-closed for incompatible operations; operators may only break the lock with an explicit stale-lock or break-glass evidence record
+- backup CronJobs treat lock-acquisition failure as a skipped/failed backup attempt and emit the normal backup freshness metrics instead of running without the lock
+- restore recovery and reset tooling must refresh or complete the lock before TTL expiry so another actor cannot start a conflicting pause/reset sequence mid-flow
 
 Canonical maintenance-active signal:
 
@@ -240,7 +251,9 @@ Goal: change how `tenantId` / `regionId` normalization and hash tags are formed 
 
 ### Runbook: In-Place Normalization Migration
 
-This is an advanced option when dropping all coordination state is unacceptable:
+In-place normalization migration is not a first-implementation operator path. Use the reset-based migration above until a future slice ships dedicated rewrite tooling with scope inventory, follow-up handling, audit output, and post-migration verification.
+
+This remains a future advanced option when dropping all coordination state is unacceptable:
 
 1. freeze topology
 2. pause or drain ticks and new commands for affected scope

@@ -48,8 +48,9 @@ Concrete per-effect required writes and reconciliation rules live in [Spatial an
 
 ### Cache/Rate-Limit Redis usage
 
-- World Management uses Cache/Rate-Limit Redis to cache hot room and topology slices for active sessions under prefixes such as `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` and `world-dynamic:<tenantId>:<aggregateId>`.
+- World Management uses Cache/Rate-Limit Redis to cache hot room and topology slices for active sessions under prefixes such as `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` and `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>`.
 - These caches are derived from PostgreSQL tables and are treated as versioned, Class A caches where version fields exist. Consumers compare versions to authoritative values before reuse and recompute on mismatch.
+- `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` is specifically the room-scoped dynamic-state cache validated against `roomDynamicVersion`; additional dynamic world aggregates must use separately registered prefixes rather than overloading `world-dynamic:*` with a generic aggregate id.
 - Simpler read-mostly slices may use TTL-only Class B caches only when the design explicitly says occasional staleness is acceptable and the prefixes are separately registered in the central cache catalog. `room:*` and `world-dynamic:*` remain reserved for versioned Class A aggregates; any TTL-only world caches must use distinct prefixes and be added to the central cache catalog before implementation.
 - Domain events for room changes, region version activations, or world updates drive explicit deletion or refresh of affected `room:*` / `world-dynamic:*` keys.
 - TTL acts as a safety valve and memory control, not the primary correctness mechanism for Class A caches.
@@ -86,6 +87,9 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
 - `generation_rule_template`, or equivalent version-scoped tables, stores publish-affecting procedural-generation inputs keyed by `(tenantId, versionId)` for Draft/Published design data.
 - A separate tenant-scoped `generation_runtime_default` table may hold operational-only runtime knobs that do not affect publishable template output and must never be consulted when deriving a published version’s `generationConfigRevision`.
 - Published versions carry a frozen `generationConfigRevision` or equivalent hash derived from the version-scoped design inputs committed at publish time.
+- Implementation Notes:
+  - The current first-slice implementation derives `generationConfigRevision` from the release identity as `genrev:<tenantId>:<versionId>:<manifestHash>` after digest gates and asset export complete. This is a current implementation seam, not permission for activation to read mutable generation defaults.
+  - As richer version-scoped generation-input tables land, they must either be covered by the World digest manifest below or by a dedicated generation-config hash that remains frozen into `published_release_bundle` before launch.
 - `generation_run`, or equivalent, persists deterministic generation artifacts for replay-safe publish and reconciliation.
 - Runtime-instance `generation_run` rows tied to instance creation are diagnostic/runtime provenance only and are not cutover payload rows.
 - `world_event` stores timed runtime changes such as weather updates and is keyed by `(tenantId, gameInstanceId)` with optional `region_instance` scope.
@@ -123,6 +127,11 @@ Implementation Notes:
 
 - The current implementation computes the digest from version-scoped world-template rows for the requested `(tenantId, versionId)` and returns synthetic `appliedCommitId = "version:<versionId>"` until the later applied-revision ledger lands.
 - Current version-scoped digest inputs include `region`, `zone`, `room`, `room_exit`, and `generation_rule`; later topology, spawn, and generation-template families must join this same `(tenantId, versionId)` digest contract when introduced.
+- Current concrete `region` digest fields include `id`, `shardId`, `name`, `weather`, `generationSeed`, `generatorType`, `generatorParams`, and `spacingMultiplier`.
+- Current concrete `zone` digest fields include `id`, `regionId`, and `name`.
+- Current concrete `room` digest fields include `id`, `zoneId`, `name`, `description`, `nameLocalizedVariantsJson`, and `descriptionLocalizedVariantsJson`.
+- Current concrete `room_exit` digest fields include `id`, `fromRoomId`, `toRoomId`, `direction`, and `cost`.
+- Current concrete `generation_rule` digest fields include `id`, `name`, and `value`.
 
 - Included objects:
   - version-scoped topology tables such as `region_template`, `zone_template`, `room_template`, `terrain_template`, `room_exit_template`, and equivalent normalized topology relations;
@@ -138,6 +147,7 @@ Implementation Notes:
   - stable table ordering;
   - primary-key ordering within each table;
   - deterministic encoding for included semantic fields.
+- Current implementation note: the concrete first-slice table order is `regions`, `zones`, `rooms`, `roomExits`, then `generationRules`, each ordered by ascending primary key. Null string values are canonicalized as empty strings before hashing.
 - `digestSchemaVersion` must increment whenever included tables, field-selection rules, or canonical serialization semantics change.
 
 Publish gating fails closed if World Management cannot attest a digest consistent with this manifest.

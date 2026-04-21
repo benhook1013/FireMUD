@@ -147,7 +147,8 @@ See the Automation & Scripting Service README and service protos for the full, u
   - `onLoad` triggers are enqueued only while the patch is tracked as `pendingPatchVersion` with lifecycle `ONLOAD_RUNNING`; `activePatchVersion` remains on the previous patch until all `onLoad` handlers succeed and the lifecycle transitions to `READY`. Scripts never run `onLoad` against a patch that is already the active `scriptPatchVersion` for a tenant.
   - Tenant readiness allows only **one pending patch per tenant** at a time. If Game Design publishes a newer patch while an older patch is still `PENDING_VALIDATION` or `ONLOAD_RUNNING`, the older patch is transitioned deterministically to `SUPERSEDED` with a bounded reason such as `superseded_by_newer_patch`, any not-yet-started `onLoad` work for that older patch is canceled, and any in-flight `onLoad` executions for it must be prevented from later advancing the patch to `READY`.
   - A `SUPERSEDED` patch is terminal for readiness purposes: it remains queryable for audit/history, but it is no longer eligible for pinning and must not emit further `onLoad` work after the superseding publish is accepted.
-- Like other events, each `onLoad` trigger is recorded in `script_event_audit` with `eventType=onLoad`, `tenantId`, `scriptId`, the target `scriptPatchVersion`, and stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`, plus any per-stage breakdown) so operators can verify that initialization ran for a given script and patch and see exactly where it failed (admission vs DSL eval vs persistence vs tick handoff).
+- Each `onLoad` trigger uses the tenant-readiness identity defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`: `<tenantId, scriptId, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>`, with no `gameInstanceId`, `regionId`, `regionEpoch`, or `entityId`. Automation & Scripting generates `scriptEventId` deterministically from that tuple and reuses it for bounded infrastructure retries.
+- Each `onLoad` trigger is recorded in `script_event_audit` with `eventType=onLoad`, `tenantId`, `scriptId`, the target `scriptPatchVersion`, and stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`, plus any per-stage breakdown) so operators can verify that initialization ran for a given script and patch and see exactly where it failed. Because `onLoad` must not persist gameplay effects or hand off tick commands, successful readiness is represented by patch lifecycle state (`READY`) rather than by `finalOutcome=success`.
 
 Concrete supersession example:
 
@@ -175,7 +176,7 @@ When an event fires, the Automation & Scripting Service evaluates bound handlers
 
 1. `orderIndex ASC`
 2. `handlerType ASC` (`SCRIPT` before `PLUGIN` unless policy overrides are explicitly configured and documented)
-3. `handlerId ASC` (`scriptId` or `pluginId`)
+3. `handlerId ASC` (`scriptId` for core scripts, `(pluginId, bindingId)` for plugin bindings)
 
 This ordering is stable across deployments so that the same binding set produces the same command sequence for a given event.
 
@@ -184,7 +185,7 @@ Failures are isolated per handler by default. If one handler fails (for example,
 Ingress admission and handler execution are intentionally distinct:
 
 - A single inbound event-ingress request (for example `TriggerScriptEvent`) receives exactly one **event-scope** admission decision that covers only ingress-time fences such as auth, pin visibility, patch/plugin availability, and rollback/reload backpressure.
-- Once the request is accepted for handler resolution, the Automation & Scripting Service creates zero or more **handler-scoped** Trigger Identities, one per resolved `<scriptId>` or plugin handler. These handler-scoped identities are the units used for dedupe, `script_event_audit`, quotas, and downstream execution.
+- Once the request is accepted for handler resolution, the Automation & Scripting Service creates zero or more **handler-scoped** Trigger Identities, one per resolved `<scriptId>` or plugin binding. Plugin handler identities must include `pluginId`, `pluginVersionId`, and `bindingId` because one plugin version can contribute multiple handlers to the same event. These handler-scoped identities are the units used for dedupe, `script_event_audit`, quotas, and downstream execution.
 - An event-scope `admitted=true` result therefore does **not** mean every resolved handler will succeed. Some handlers may still end with `quota_denied`, `sandbox_error`, `script_disabled`, or exclusivity-policy outcomes while sibling handlers succeed.
 - Caller retries are defined only by the event-scope admission result. Per-handler outcomes are observed asynchronously via `script_event_audit` rows and related status/event surfaces, not by reinterpreting the unary ingress response.
 
@@ -209,7 +210,8 @@ Custom events must follow the same determinism and idempotency rules as built-in
 
 Custom events also require an explicit trust and ownership contract:
 
-- Every custom `eventType` must be registered in a canonical event registry that defines the owning service, payload schema/version, required identity fields, allowed producer principals/services, quota class, and replay semantics.
+- Every custom `eventType` must be registered in a canonical event registry that defines the owning service, payload schema/version, required identity fields, allowed producer principals/services, quota class, replay semantics, snapshot authority, and consistency class.
+- Snapshot authority must state whether the producer supplies a `readSnapshotToken`, Automation & Scripting captures the latest committed snapshot at admission, or the event is explicitly non-authoritative and may run without a gameplay snapshot. For authoritative gameplay-affecting events, the registry must identify the source timeline and required token fields, such as `gameInstanceId`, `regionId`, `regionEpoch`, and `tickId` or an equivalent immutable read version.
 - Event ingress must authenticate producer identity via the service-to-service auth layer and reject unregistered or unauthorized `eventType` values deterministically at admission.
 - `script_event_audit` must record the producing service identity (for example `sourceService`) for custom events so operators can diagnose spoofing, routing errors, and unexpected fan-out.
 - The Game Design Service may expose only event types present in this registry for the selected game/runtime scope; an event being "enabled" must be backed by a concrete contract, not just UI configuration.
@@ -362,9 +364,9 @@ Automation & Scripting exposes this lifecycle to other services via:
 When a trigger arrives at the Automation & Scripting Service:
 
 - If the supplied `scriptPatchVersion` is `READY` for the tenant, the service must additionally compare it to a fresh-enough observed pin for `<tenantId, gameInstanceId>`. Admission proceeds only when the request patch matches the observed pinned patch for that instance.
-- If pin visibility for the instance is stale beyond its configured max age and fresh control-plane state cannot be obtained, admission fails closed with `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and a bounded `finalReason`.
-- If the supplied `scriptPatchVersion` is `READY` for the tenant but does not match the observed pinned patch for `<tenantId, gameInstanceId>`, admission is rejected at `finalStage=ADMISSION` with `finalOutcome=version_unavailable` and a bounded mismatch reason such as `pin_state_mismatch_requested_vs_observed`. Automation & Scripting must not speculate or silently substitute either version.
-- If the patch is unknown or in a non-ready state (for example, `PENDING_VALIDATION`, `ONLOAD_RUNNING`, `FAILED`), the trigger is rejected at admission: `script_event_audit.finalStage=ADMISSION` with `finalOutcome=version_unavailable` (or a more specific variant such as `onload_failed`) and an explicit `finalReason`. A drop metric like `automation_script_triggers_dropped_total{reason="version_unavailable"}` is incremented.
+- If pin visibility for the instance is stale beyond its configured max age and fresh control-plane state cannot be obtained, admission fails closed with `pin_state_unavailable` and a bounded reason in the event-scope ingress audit record. If the failure happens after handler resolution, the handler-scoped `script_event_audit` row uses `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`.
+- If the supplied `scriptPatchVersion` is `READY` for the tenant but does not match the observed pinned patch for `<tenantId, gameInstanceId>`, admission is rejected with `version_unavailable` and a bounded mismatch reason such as `pin_state_mismatch_requested_vs_observed`. Automation & Scripting must not speculate or silently substitute either version.
+- If the patch is unknown or in a non-ready state (for example, `PENDING_VALIDATION`, `ONLOAD_RUNNING`, `FAILED`), the trigger is rejected at admission with `version_unavailable` (or a specific bounded reason such as `onload_failed`). Pre-resolution rejections are recorded in ingress audit; handler-scoped rejections use `script_event_audit.finalStage=ADMISSION`. A drop metric like `automation_script_triggers_dropped_total{reason="version_unavailable"}` is incremented.
 - Automation & Scripting never silently falls back to an older patch for that trigger; callers must fix the pinned version, repin explicitly, or republish.
 
 ---
@@ -391,6 +393,7 @@ Determinism depends not only on stable RNG/time, but also on a stable **read sna
 - If the runtime exposes cross-region, tenant-global, or non-tick-owned data to scripts, the component contract must declare the consistency class explicitly. Data that can materially change authoritative gameplay decisions must either:
   - be versioned by the same run snapshot token, or
   - carry its own immutable version/read token captured at admission and reused for the whole run.
+- For custom and service-specific events, the event registry is the source of truth for snapshot authority and consistency class. Ingress must reject an event whose payload omits a registry-required snapshot token or whose token scope does not match the required Trigger Identity fields.
 - Eventually consistent or best-effort operational views may be exposed only to components whose outputs are non-authoritative (for example logging/diagnostics) or whose contract explicitly states that they do not affect gameplay branching.
 - `onLoad` and dry-run/test execution must also declare their snapshot source. In the first implementation slice:
   - `onLoad` may read only configuration/runtime metadata and recomputable caches using a tenant-scoped readiness snapshot, not mutable gameplay state.

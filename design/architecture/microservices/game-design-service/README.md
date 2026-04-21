@@ -86,6 +86,14 @@ Compatibility contract requirement:
 - Plugin publication must persist a canonical signed manifest contract that includes at least `pluginId`, `pluginVersionId`, exact `baseVersionId`, exact `abilitySchemaDigest`, declared entrypoints, and declared bindings. Runtime services must consume those signed fields as the activation source of truth.
 - Plugin versions use a separate Game Design lifecycle from runtime activation. Publication status answers whether a bundle is accepted into immutable authoring history; instance activation status answers whether a published plugin version is active for a given running game instance.
 
+### Canonical Authoring Boundary
+
+The initial supported authoring package for first-party game content is the Game Design Service's own revision and commit model, not a filesystem project format. Designers edit through the web UI and service-owned APIs; Game Design persists revisions, applies them to domain-owned Draft templates, and publishes immutable versions or script-only patches from that canonical history.
+
+Implementations must not introduce ad hoc import/export, Git checkout, or local package semantics for first-party content. Any future external authoring package must be specified as a separate contract before it is exposed, including stable ID preservation, cross-service reference validation, asset inclusion, plugin inclusion, conflict handling, and mapping back into Game Design revisions and commits. Until that contract exists, "version control integration" means Game Design's database-backed branches, commits, provenance, and optional synchronization hooks described in [Version Control for Design Assets](version-control.md), not a second source of truth.
+
+Plugin bundles are the only supported file-based content package in the initial slice. They are independently signed, immutable artifacts governed by [modding-framework.md](./modding-framework.md), and they do not replace or extend the first-party revision package format.
+
 ## Key Features
 
 - Web-based visual interface for worlds, items, actions, and scripts.
@@ -116,7 +124,7 @@ Compatibility contract requirement:
 - [`runtime_flag` table](feature-flags.md) manages feature flag definitions and
   corresponding APIs expose these records.
 - `game_assets` table stores asset metadata for uploaded binary files such as icons or sound effects; canonical bytes live in object storage referenced by this metadata.
-- Plugin bundle metadata must be persisted as indexed design-time records keyed by `(tenantId, pluginId, pluginVersionId)` and include signed-manifest fields, signer verification status, publication status, and validation outcomes. The bundle bytes remain in object storage, but plugin activation metadata must be queryable without unpacking archives on routine reads.
+- Plugin bundle metadata must be persisted as indexed design-time records keyed by `(tenantId, pluginId, pluginVersionId)` and include signed-manifest fields, signer verification status, publication status, validation outcomes, `bundleDigest`, and plugin asset distribution manifest fields when `assetRefs[]` are present. The bundle bytes remain in object storage, but plugin activation metadata must be queryable without unpacking archives on routine reads.
 
 Design-time tables (such as `revision`, `version`, `game_templates`,
 `runtime_flag`, asset metadata tables, and release-attestation tables) are the

@@ -20,6 +20,17 @@ For the full catalog of environment variables (including defaults and detailed r
 
 This section summarizes the **most important environment variables and rotation behaviors** for on‑call operators. Refer to the catalog document for the full list of variables and detailed defaults.
 
+### Implementation Notes
+
+This document describes the canonical environment and secret target state. Current implementation is still catching up in several deployment-critical places:
+
+- Player-facing JWT signing material is required to come from `FIREMUD_AUTH_JWT_SECRET_PATH`, but current shared security bootstrap still requires inline `firemud.auth.jwt-secret` before it loads the file in non-dev profiles. Treat this as an implementation gap, not a relaxation of the player-facing file-mounted secret contract.
+- The Account Service target state is to serve JWKS from the environment-provided `jwt-jwks` resource. Current code still serves the JWKS endpoint from a packaged classpath resource, so mounted JWKS Secret/ConfigMap consumption and rotation remain implementation work.
+- Hosted `pr-preview` target state requires preview-unique JWT signing material and JWKS data per namespace. The current Helm preview values still use static inline JWT secret material unless the workflow or operator overrides it, so preview JWT/JWKS isolation is not yet proven by the checked-in default path.
+- Player-facing expected-binding manifests exist under `design/operations/environments/`, but the current preflight implementation does not yet consume them and the manifests still need the full schema required by `system-architecture-deploy-preflight-policy.md`.
+
+Do not interpret these implementation gaps as alternative supported behavior for staging, production, or hobby/self-hosted traffic. They should be closed before first player-facing deployment or called out as blockers in deployment evidence.
+
 ### Core Profiles
 
 | Variable | Purpose | Notes |

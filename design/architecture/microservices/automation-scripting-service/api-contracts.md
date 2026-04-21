@@ -82,7 +82,7 @@ In addition to live event handling, the service exposes a non-committing test pa
 
 - Test runs execute handlers in the same sandbox and with the same loop-safety and resource limits as production runs.
 - Instead of persisting and indexing work items or handing off to tick queues, test runs return the would-be commands to the caller for inspection.
-- Test executions are recorded in `script_event_audit` with `isDryRun=true` and the normal `eventType` for the event being exercised.
+- Test executions are recorded in `script_event_audit` with `isDryRun=true` and the normal `eventType` for the event being exercised. Successful test executions use the dry-run terminal outcome from the normative tables (`finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`) and must not claim `TICK_HANDOFF` or live `success`.
 - Dry-run and test requests must use an idempotency namespace separate from live traffic so test calls cannot dedupe, suppress, or overwrite live trigger records.
 - Dry-run and test APIs should use server-generated `scriptEventId` values by default. If tooling passes a caller-supplied value, the service must enforce namespace validation and reject identity collisions deterministically.
 - By default, dry runs do not consume `ScriptQuotaService` windows or tenant automation budgets and must not increment live-traffic error counters.
@@ -101,13 +101,13 @@ During `reloadState=RELOADING`, event ingress must return explicit backpressure 
 - `TriggerScriptEventResponse.admissionReason="reloading"` or equivalent
 - `retryAfterMs` should be populated so callers can avoid thundering-herd retries during reload
 
-The service must also record `script_event_audit.finalStage=ADMISSION` with `finalOutcome=skipped_reloading` and `finalReason=reloading`.
+The service must also record the event-scope ingress decision in the ingress audit/logging surface with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING` and bounded reason `reloading`. A handler-scoped `script_event_audit` row is written only if handler resolution has already produced a concrete Trigger Identity.
 
-During operator rollback pause (`PAUSED_FOR_ROLLBACK`), ingress must return an explicit rollback backpressure outcome and audit record:
+During operator rollback pause (`PAUSED_FOR_ROLLBACK`), ingress must return an explicit rollback backpressure outcome and ingress audit record:
 
-- `script_event_audit.finalStage=ADMISSION`
-- `script_event_audit.finalOutcome=skipped_rollback_pause`
-- `script_event_audit.finalReason=rollback_pause`
+- `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK_PAUSE`
+- `admissionReason=rollback_pause`
+- event-scope identity fields from the request, without inventing a synthetic `scriptId`
 
 These ingress response fields are event-scope only. A successful ingress admission means the request was accepted for handler resolution; it does not mean every resolved script or plugin handler later succeeded. Per-handler outcomes remain authoritative in `script_event_audit`.
 

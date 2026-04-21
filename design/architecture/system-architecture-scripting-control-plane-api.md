@@ -117,10 +117,13 @@ Inputs:
 Outputs:
 
 - `tenantId`, `pluginId`, `pluginVersionId`
-- `designStatus` (`UPLOADED`, `SIGNATURE_VERIFIED`, `VALIDATION_FAILED_DESIGN`, `PUBLISHED`, `REVOKED_DESIGN`)
+- `designStatus` (`DRAFT`, `UPLOAD_REJECTED`, `SIGNATURE_VERIFIED`, `VALIDATION_FAILED_DESIGN`, `PUBLISHED`, `SUPERSEDED`, `REVOKED_DESIGN`)
 - `baseVersionId`
 - `abilitySchemaDigest`
+- `bundleDigest`
 - `signerKeyId`
+- `distributionManifestHash` (nullable; required when the signed plugin manifest declares runtime-consumable `assetRefs[]`)
+- `distributionManifestPath` (nullable; required when the signed plugin manifest declares runtime-consumable `assetRefs[]`)
 - `publishedAt` (nullable; required when `designStatus=PUBLISHED`)
 - `statusReason` (optional; required for deterministic design-time failures or revocation)
 
@@ -129,6 +132,7 @@ Contract rules:
 - `designStatus=PUBLISHED` means the immutable plugin bundle is signed, validated, and eligible for runtime activation. It does not imply that any instance has activated it.
 - Runtime activation and drain/disable state remain the responsibility of Automation & Scripting via `GetPluginStatus`; callers must not infer `ENABLED` or `DISABLED` from Game Design publication state.
 - A plugin version that is not `PUBLISHED` must be rejected by runtime activation APIs with deterministic application errors rather than being partially loaded and then downgraded later.
+- `distributionManifestHash` and `distributionManifestPath` describe the plugin-version-scoped asset distribution manifest owned by Game Design. They must not point into or mutate the base version's `published_release_bundle`.
 
 ### Game Session: Patch Pinning
 

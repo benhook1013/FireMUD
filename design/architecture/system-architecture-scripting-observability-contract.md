@@ -10,22 +10,31 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 - `scriptEventId` must not be used as a Prometheus metric label (or any other high-cardinality metric dimension).
 - Metrics may include lower-cardinality identifiers such as `tenantId`, `scriptId`, `pluginId`, `pluginVersionId`, and `eventType` as documented below.
 
+## Ingress Audit vs Handler Audit
+
+Event-scope ingress decisions and handler-scoped execution outcomes are separate observability facts.
+
+- Event-scope ingress audit/logging records pre-resolution decisions for the incoming event, such as auth failure, reload backpressure, rollback pause, pin-state unavailability, or version unavailability. These records are keyed by the event-scope identity in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields` and must not invent a synthetic `scriptId`.
+- `script_event_audit` records handler-scoped, scheduler/timer-scoped, tenant-readiness `onLoad`, and dry-run/test executions after a concrete script or plugin handler identity exists.
+- A successful event-scope ingress record means the event was accepted for handler resolution. It is not a summary of every handler outcome.
+- If ingress is accepted and resolves three handlers, tooling should expect one event-scope ingress record and up to three handler-scoped `script_event_audit` records, one per resolved Trigger Identity.
+
 ## `script_event_audit` (Required Fields)
 
-Each observed trigger (admitted or rejected at admission) must write (or update) a single audit record keyed by the trigger identity described in `design/architecture/system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe`.
+Each observed handler-scoped trigger, scheduler/timer trigger, tenant-readiness `onLoad` trigger, or dry-run/test execution must write (or update) a single audit record keyed by the trigger identity described in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`.
 
 Write behavior requirements:
 
 - Storage must enforce uniqueness for full Trigger Identity so retries and duplicate deliveries update one logical record.
 - Audit writers must be idempotent and stage-monotonic; `finalStage` must never move backwards.
 - Conflicting concurrent writes for the same Trigger Identity must converge on a single row with deterministic precedence (higher stage wins).
-- Admission rejections and backpressure outcomes (for example `quota_denied`, `skipped_reloading`, `skipped_rollback_pause`) must still produce the row for that Trigger Identity with `finalStage=ADMISSION`.
+- Handler-scoped admission rejections and backpressure outcomes (for example `quota_denied`, `script_disabled`, or timer-scope `skipped_reloading`) must still produce the row for that Trigger Identity with `finalStage=ADMISSION`. Pre-resolution event-scope denials belong in the ingress audit/logging surface described above.
 
 Audit records must include at least:
 
 - Identity and versioning
   - `tenantId`
-  - `gameInstanceId`
+  - `gameInstanceId` (absent for tenant-readiness `onLoad`)
   - `regionId`
   - `regionEpoch` (required for gameplay/runtime and scheduler triggers; exceptions must be explicitly documented in the normative Trigger Identity table)
   - `entityId` (for entity-scoped events)
@@ -71,11 +80,12 @@ Stages:
 - `ADMISSION` – the trigger was accepted/rejected before any DSL evaluation (quotas, reload backpressure, disabled scripts, invalid version, policy enforcement).
 - `DSL_EVAL` – the DSL graph was evaluated in the sandbox (validation, loop safety, runtime guards).
 - `WORK_ITEM_PERSIST` – the resulting script work item was persisted durably (for example, into a Postgres outbox) before being indexed for automation ticks.
-- `TICK_HANDOFF` – the work item was handed off to Game Session and accepted into tick queues (the point at which `finalOutcome=success` is allowed).
+- `TICK_HANDOFF` – the work item was handed off to Game Session and accepted into tick queues (the point at which live `finalOutcome=success` is allowed).
+- `DRY_RUN_RESULT` – a non-committing dry-run/test execution completed after DSL evaluation and returned the would-be commands to the authorized caller without persisting a work item or handing off to tick queues.
 
 Required fields:
 
-- `finalStage` must be one of the stages above and must match the last stage attempted for the trigger.
+- `finalStage` must be one of the stages above and must match the last stage attempted for the trigger. Live executions must not use `DRY_RUN_RESULT`; dry-run/test executions must not use `WORK_ITEM_PERSIST` or `TICK_HANDOFF`.
 - `finalOutcome` / `finalReason` must describe what happened at `finalStage`.
 
 Recommended (strongly preferred) structured representation:
@@ -90,6 +100,7 @@ If a structured `stages` array is not used, equivalent per-stage fields must exi
 Stage semantics:
 
 - `finalOutcome=success` must imply `finalStage=TICK_HANDOFF` (commands were accepted into tick queues). “DSL evaluated successfully but handoff failed” is not success.
+- `finalOutcome=dry_run_success` must imply `finalStage=DRY_RUN_RESULT` and `isDryRun=true`. It means only that the non-committing test evaluation completed and returned inspectable would-be commands.
 - Backpressure outcomes like `skipped_reloading` must use `finalStage=ADMISSION`.
 - Rollback pause backpressure `skipped_rollback_pause` must use `finalStage=ADMISSION`.
 - Quota denials must use `finalStage=ADMISSION` unless quotas are evaluated inside the DSL runtime for a given trigger (rare; avoid mixing).

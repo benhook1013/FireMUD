@@ -6,6 +6,10 @@ The protobuf service definitions under [../../../../protos/game-design/v1](../..
 
 For REST endpoints, the authoritative request/response schema source is [openapi.yaml](../../../../services/game-design-service/src/main/resources/openapi.yaml). Design-doc examples should be updated to match when those schemas evolve.
 
+## Implementation Status
+
+The release-attestation, launch-resolution, version-state, settings, and asset-purge APIs are live in the current proto/service path. Plugin publication APIs (`UploadPluginBundle`, `PublishPluginVersion`, `GetPublishedPluginVersion`, and `ListPluginVersionStatuses`) are target-state contracts defined for the modding slice and must be added to the proto/service implementation before clients depend on them as live wire contracts.
+
 ## gRPC APIs
 
 - `SaveRevision` – persists a new or updated design asset.
@@ -13,7 +17,7 @@ For REST endpoints, the authoritative request/response schema source is [openapi
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
 - `UploadPluginBundle` – stores a signed plugin bundle, verifies archive safety and signatures, extracts indexed manifest metadata, and records the pre-publication design-time status.
 - `PublishPluginVersion` – runs design-time validation for an uploaded plugin bundle version and transitions it into immutable publication history when validation succeeds.
-- `GetPluginVersionStatus` / `ListPluginVersionStatuses` – authoritative design-time read APIs for plugin publication lifecycle, signer verification status, and validation outcomes.
+- `GetPublishedPluginVersion` / `ListPluginVersionStatuses` – authoritative design-time read APIs for plugin publication lifecycle, signer verification status, and validation outcomes.
 - `ListVersions` – enumerates published versions for selection when creating a game instance.
 - `GetVersionState` / `CompareAndSetVersionState` – authoritative control-plane version lifecycle reads and CAS transitions. These APIs are now live in the proto/service path and are the canonical owner for `versionStateEpoch`.
 - `GetDesignControlPlaneDigest` – digest surface for publish gating over normalized metadata.

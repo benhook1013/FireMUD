@@ -7,6 +7,14 @@ For the full design and invariants, see:
 - `design/architecture/system-architecture-redis.md`
 - `design/architecture/system-architecture-redis-operations.md` (including the Redis Metrics Catalog section for metric names and alerting guidance)
 
+## Implementation Notes
+
+The incident flows below describe the target operator model. In the current implementation:
+
+- Game Session already exposes durable command-status lookup and current-boundary runtime ownership inspection through the control-plane gRPC surface.
+- Accepted-but-unstaged commands already converge to `LOST_BEFORE_STAGING` during startup recovery, so command status is no longer purely transient Redis state.
+- The full `coordination-maintenance` replay/reset orchestration referenced below is not yet shipped as a complete repo-local CLI/control-plane surface; where the runbook names those verbs, read them as target-state recovery tooling rather than a claim that every step is already available today.
+
 ## Incident Types
 
 - **Coordination Redis outage or high latency**
@@ -23,7 +31,7 @@ For the full design and invariants, see:
 2. **Stabilize**
    - Reduce incoming player load if necessary (rate-limit new sessions).
    - Pause non-critical background scripts that depend heavily on Coordination Redis.
-3. **Repair**
+3. **Recover**
    - Follow cluster or node failover procedures documented in `design/architecture/system-architecture-redis-operations.md`.
    - If a reset is required, use the coordination reset model and key enumeration strategy from `design/architecture/system-architecture-redis-reset-and-recovery.md` to clear affected prefixes safely.
 4. **Inspect durable command outcomes**
@@ -40,7 +48,7 @@ When Coordination Redis recovers after an outage or severe degradation:
   - If `pending` survives for a region, the next executor correlates it to the durable `tick_batch_id` and then replays the tick as described in the tick system design.
   - If `pending` is missing (for example due to AOF tail loss), treat this as “coordination state may have been partially lost” rather than silently skipping work:
     - Advance to the next `tickId` only after running the tick effect ledger replay controller / reconcile tooling for the affected scope so any lingering `SCHEDULED` effects converge to `APPLIED` or `ABANDONED` with an explicit tail-loss reason.
-    - Converge accepted command records that were never durably bound to a surviving batch to terminal command status fields such as `executionOutcome = LOST_BEFORE_STAGING` and the command-type-appropriate `gameplayResult` (shared default `FAILED`); do not leave dedupe-only command records stranded. See `system-architecture-tick-execution-flows.md` under `Canonical Command Terminal Mapping Table` for the canonical shared mapping.
+    - Converge accepted command records that were never durably bound to a surviving batch to terminal command status fields such as `executionOutcome = LOST_BEFORE_STAGING` and the command-type-appropriate `gameplayResult` (shared default `NOT_APPLIED`); do not leave dedupe-only command records stranded. See `system-architecture-tick-execution-flows.md` under `Canonical Command Terminal Mapping Table` for the canonical shared mapping.
     - Use the resulting ledger outcomes plus service-level idempotency guards to validate that no effect remains indefinitely half-applied.
 - **Leases**
   - Discard any in-memory lease tokens; executors must reacquire `tick-executor-lease:{tenantRegionTag}` in Redis and treat previously held leases as invalid.
@@ -55,7 +63,7 @@ When Coordination Redis recovers after an outage or severe degradation:
 2. **Stabilize**
    - Throttle non-essential cache usage or temporarily reduce cache TTLs if documented.
    - Confirm that coordination keys are not co-located with caches.
-3. **Repair**
+3. **Recover**
    - Scale the cache deployment or provision additional nodes.
    - Flush or reset specific cache prefixes if needed; do not reset coordination prefixes from the cache deployment.
 
@@ -108,13 +116,15 @@ The following Redis-focused incident flows build on the general recovery steps a
 3. **Act**
    1. If the chosen mode is `replay_first`:
       - Run `coordination-maintenance reconcile-ledger ...` for the affected scope without bumping `region_epoch`; this is the canonical operator entrypoint for the replay controller / maintenance API path.
+      - Run `coordination-maintenance converge-commands ...` for the same scope unless the status surface proves that no accepted command records in the affected scope are unbound or non-terminal. This is a required replay-first step, not an optional reset-only cleanup.
       - Watch `tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_slo_breached`, and command convergence for one emitted replay-convergence budget window. Verify that command outcomes settle into the canonical terminal vocabulary described in `system-architecture-tick-execution-flows.md` rather than inventing a replay-only local interpretation.
       - Escalate to `reset_first` immediately if replay cannot make bounded progress, if inconsistent-state signals appear, or if the region transitions to `STALLED`.
       - Worked example:
         1. Region `(T1, R7)` remains on `region_epoch = 13`, `tick_effects_pending_oldest_age_seconds` exceeds budget, and there is no evidence of mixed-epoch state or duplicate durable batches.
         2. Operator runs `coordination-maintenance reconcile-ledger --scope region --tenant T1 --region R7`.
-        3. The replay controller converges lingering epoch-13 `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `region_epoch`.
-        4. If pending age and stalled signals recover within one emitted budget window, the region stays on epoch `13`; otherwise the operator escalates to `reset_first`.
+        3. Operator runs `coordination-maintenance converge-commands --scope region --tenant T1 --region R7` unless command-status inspection proves there is no affected non-terminal command work.
+        4. The replay controller converges lingering epoch-13 `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `region_epoch`, and command records converge to the canonical terminal vocabulary.
+        5. If pending age and stalled signals recover within one emitted budget window, the region stays on epoch `13`; otherwise the operator escalates to `reset_first`.
    2. If the chosen mode is `reset_first`:
       - Execute the canonical coordination reset workflow for the same scope via `coordination-maintenance`:
         - `pause`

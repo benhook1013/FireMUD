@@ -21,12 +21,13 @@
 
 ## WebSocket Close and Handshake Classification
 
-- Non-`101` `/ws/game/**` handshake failures must emit the canonical bounded error class through the gateway response/logging path so clients and operators can distinguish retry classes such as `CONNECT_TOKEN_REJECTED`, `POLICY_DENY`, `BACKEND_UNAVAILABLE`, and `REPLAY_CHECK_UNAVAILABLE`.
+- Non-`101` `/ws/game/**` handshake failures must emit the canonical bounded error class through the gateway response/logging path so clients and operators can distinguish retry classes such as `CONNECT_TOKEN_REJECTED`, `POLICY_DENY`, `BACKEND_UNAVAILABLE`, and `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`.
 - First-party gameplay handshake failures should use the more specific bounded classes now implemented at the gateway edge where applicable:
   - `CONNECT_TOKEN_MISSING`
   - `CONNECT_TOKEN_EXPIRED`
   - `CONNECT_TOKEN_REPLAYED`
   - `CONNECT_SCOPE_MISMATCH`
+  - `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`
   - `CONNECT_TOKEN_REJECTED` for malformed or otherwise rejected tokens outside the narrower classes above
 - A concrete wire-level example remains the `X-Firemud-Handshake-Error-Class` response header paired with matching structured-log fields; downstream clients and operator tooling may rely on that bounded header/value surface rather than parsing free-form text.
 - The gateway observability contract requires `gateway.websocket.closes{reason,subreason}`, `gateway.websocket.handshake.rejected`, and `gateway.websocket.slow_client_closes`.

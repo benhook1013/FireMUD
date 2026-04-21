@@ -30,7 +30,7 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 
 - **Account Service** – Verifies credentials (including OTP), issues JWTs, and publishes JWKS for validation.
 - **Game Session Service** – Fronts the `LOGIN` command, stores gameplay session context in Redis, and rebinds sockets on reconnect.
-- **Spring Cloud Gateway** – Pass-through for gameplay login and admin/meta flows; enforces auth header presence on protected routes but does not validate tokens.
+- **Spring Cloud Gateway** – Pass-through for gameplay login and admin/meta flows; enforces auth header presence on protected control-plane routes but does not validate control-plane JWTs. The deliberate exception is `/ws/game/**` edge admission: Gateway validates short-lived gameplay connect tokens, performs replay checks, and emits a signed connect context for Game Session as specified in [Gateway Architecture](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake).
 
 Admin and moderator accounts can optionally enable **two-factor authentication**. When a `two_factor_secret` is present, the Account Service expects a one-time TOTP code during login. The `/auth/login` REST endpoint and the `Authenticate` gRPC call both accept an `otp` field for this purpose. The Game Session Service forwards this OTP when a player logs in.
 
@@ -211,6 +211,7 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
 
 - Bootstrap issuance API: Account Service endpoint (for example `POST /auth/player-bootstrap`) that authenticates the player account for first-party gameplay bootstrap only and returns one short-lived bootstrap token plus expiry metadata.
 - Issuer: Account/authentication control-plane only, after direct player-account authentication. Tenant membership and entitlement checks do not occur here because no gameplay tenant has been selected yet.
+- First-party bootstrap ownership: Account Service owns `POST /auth/player-bootstrap`, bootstrap discovery, `POST /auth/connect-token`, and public-production first-join membership creation. Game Session owns the in-socket `LOGIN`/`PLAY` binding steps and consumes the gateway-signed connect context; it does not own the public first-party bootstrap HTTP surface.
 - Bootstrap-discovery APIs: authenticated first-party HTTP endpoints (for example `GET /auth/bootstrap/worlds`, `GET /auth/bootstrap/worlds/{world}/realms`, `GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters`) that accept only the `player-bootstrap` token profile and return the canonical lobby discovery data used to choose a target before socket open.
   - These endpoints are the canonical pre-socket discovery path for first-party clients.
   - They must apply the same caller-bound membership, realm visibility, and entitlement filtering rules as in-band `WORLDS` / `REALMS` / `CHARS`.
@@ -493,7 +494,7 @@ Lobby discovery source-of-truth contract:
 Lobby command classification contract:
 
 - `WORLDS` is an authenticated **pre-tenant discovery** operation, not a normal tenant-scoped route. It runs after account authentication but before a single `tenantId` has been selected.
-- `REALMS <world>`, `CHARS <world> [realm]`, and `PLAY <world> [realm] [character]` participate in `public_production_onboarding` when the selected realm is the default public production realm. Brand-new authenticated accounts may discover that realm without a pre-existing membership row, but the first successful `PLAY` must atomically create the caller's `player` membership before gameplay binding is committed.
+- `REALMS <world>`, `CHARS <world> [realm]`, and `PLAY <world> [realm] [character]` participate in `public_production_onboarding` when the selected realm is the default public production realm. Brand-new authenticated accounts may discover that realm without a pre-existing membership row. For first-party bootstrap clients, `POST /auth/connect-token` creates the caller's `player` membership through the Account Service writer boundary before socket admission. For credential-bearing text clients that do not use connect-token bootstrap, `PLAY` invokes the same writer boundary before gameplay binding is committed.
 - `REALMS <world>` remains a tenant-scoped discovery operation after `<world>` resolves to a canonical `tenantId`, but before the client is bound to one `gameInstanceId`.
 - `CHARS <world> [realm]` and `PLAY <world> [realm] [character]` become tenant/realm-scoped only after `<world>` and optional `[realm]` are resolved server-side to canonical `{tenantId, gameInstanceId}`.
 - Shared auth middleware and route-matrix entries must not model all lobby commands as one undifferentiated tenant-scoped surface.
@@ -503,7 +504,7 @@ The `PLAY` flow:
 - Resolves `<world>` to a canonical `tenantId` and validates it exists.
 - Resolves optional `[realm]` to a canonical realm for that tenant. If no realm is supplied, the tenant's default production realm is selected.
 - Verifies that the account is authorized to play in that `tenantId` using caller-bound gameplay membership authority or the canonical public-production admission policy for the default production realm. Global roles alone must not satisfy gameplay admission.
-- If admission is proceeding through public-production discovery rather than an existing membership row, the first successful `PLAY` must atomically create the caller's `player` membership before gameplay binding is committed. Failed admissions must not leave behind a partial membership grant.
+- If admission is proceeding through public-production discovery rather than an existing membership row, membership creation must go through the Account Service writer boundary before gameplay binding is committed. First-party bootstrap clients normally complete this during `POST /auth/connect-token`; credential-bearing text clients and any non-bootstrap admission path invoke the same boundary during `PLAY`. Failed admissions must not leave behind a partial membership grant.
   - Membership creation writer authority: Account Service only. Game Session must not write membership rows directly.
   - Required API: `EnsurePublicProductionPlayerMembership(accountId, tenantId, realmSlug, requestId)` or protocol-equivalent, owned by Account Service.
   - This API is valid only for the tenant's default production realm under the canonical public-production admission policy; it must fail closed for non-production realms or callers that are not eligible for public admission.

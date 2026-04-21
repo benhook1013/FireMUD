@@ -15,7 +15,7 @@ Gateway Architecture requires the following observability surfaces for gameplay 
 - `gateway.websocket.handshake.rejected`
 - `gateway.websocket.slow_client_closes`
 
-Non-`101` `/ws/game/**` handshake failures must emit the canonical bounded handshake error class in the gateway response and structured logs so clients and operators can distinguish `CONNECT_TOKEN_REJECTED`, `POLICY_DENY`, `BACKEND_UNAVAILABLE`, `REPLAY_CHECK_UNAVAILABLE`, and other documented retry classes. A canonical wire-level surface is the `X-Firemud-Handshake-Error-Class` response header paired with matching structured-log fields.
+Non-`101` `/ws/game/**` handshake failures must emit the canonical bounded handshake error class in the gateway response and structured logs so clients and operators can distinguish `CONNECT_TOKEN_REJECTED`, `POLICY_DENY`, `BACKEND_UNAVAILABLE`, `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`, and other documented retry classes. A canonical wire-level surface is the `X-Firemud-Handshake-Error-Class` response header paired with matching structured-log fields.
 
 Readiness transition observability follows the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md):
 

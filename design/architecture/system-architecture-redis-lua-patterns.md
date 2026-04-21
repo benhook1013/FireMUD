@@ -227,6 +227,7 @@ Automation-related Lua scripts follow stricter cluster slotting rules to avoid `
   - Automation scripts **never** perform multi-key operations that span both `automation:*` and `tick:*` prefixes in one `EVAL`/`EVALSHA` call.
   - Automation work is staged under `automation:queue:*` and `automation:tick:*` and handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes.
   - Fairness-critical automation handoff is idempotent on a durable dispatch identity (for example `(scheduleId, gameInstanceId, regionEpoch, dueTickId, entityId, commandKind)` or an equivalent derived `automationDispatchId`) and must not depend on Redis queue contents as the sole dedupe record.
+  - Before invoking the Redis enqueue script, Game Session must insert or confirm a durable admission row keyed by `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)` in its command/admission ledger. Redis enqueue scripts may treat the dispatch identity as an idempotent member key for hot-path dedupe, but the durable admission row is the authority used after resets, gRPC retries, and failover.
 
 CI must reject automation Lua scripts that:
 
@@ -237,7 +238,7 @@ From a correctness perspective, `automation:queue:*` and related automation cach
 
 - Scripts and callers must assume that queued items can be lost, duplicated, or reordered within the bounds described in the Redis hub doc.
 - Any automation contract that requires “exactly once” semantics or durable ordering must record its authoritative state in PostgreSQL or another durable store and use `automation:queue:*` only as a convenience layer for scheduling, not as the sole record of work.
-- For gameplay-equivalent automation, the authoritative handoff record is a durable PostgreSQL trigger-instance or outbox row keyed by the dispatch identity. Game Session treats the same identity as the dedupe key when enqueueing into `tick:{tenantRegionTag}:queue:<entityId>`.
+- For gameplay-equivalent automation, Automation & Scripting's authoritative due-work record is a durable PostgreSQL trigger-instance or outbox row keyed by the dispatch identity. Game Session's authoritative admission record is its own durable command/admission row keyed by the same `automationDispatchId` plus the target runtime timeline. Game Session treats the same identity as the Redis member-level dedupe key when enqueueing into `tick:{tenantRegionTag}:queue:<entityId>`, but Redis is only the materialized coordination buffer.
 - The Redis operations docs and metrics catalog should name stale automation-dispatch outcomes explicitly (for example duplicate-dispatch no-op, stale epoch rejection, stale due-tick rejection) so on-call operators can separate healthy idempotent suppression from broken automation admission.
 
 ### Script Complexity and Runtime Limits
@@ -252,7 +253,7 @@ Enforcing these limits prevents future scripts from violating hash-slot assumpti
 
 Bulk key-walking is reserved for **offline maintenance tooling**, not tick execution:
 
-- Long-running maintenance tasks that need to inspect or repair many keys (for example, cleaning up old locks, timers, or mis-shaped coordination keys) should:
+- Long-running maintenance tasks that need to inspect many keys or perform future supported cleanup flows (for example, old locks, timers, or mis-shaped coordination keys) should:
   - Live in dedicated maintenance scripts and dev-tools jobs, not in the hot tick/session loop.
   - Use `SCAN` with strict prefix filters, small batch sizes, and explicit rate limiting or sleeps between batches.
   - Operate on well-scoped prefixes (for example, a single `{tenantRegionTag}` or tenant) rather than scanning the entire keyspace.

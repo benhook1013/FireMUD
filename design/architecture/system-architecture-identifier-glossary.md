@@ -43,12 +43,12 @@ Tick-driven, cross-service mutations are at-least-once and must be idempotent.
 
 Cross-service read composition (for example `LOOK` world + entity joins) must use a shared fence token to prevent mixed-tick snapshots:
 
-- `asOfTickId` – canonical read-fence token emitted by the authoritative source read (typically World Management snapshot APIs), then propagated unchanged to downstream participant reads.
-- Scope: `asOfTickId` is valid only within `(tenantId, gameInstanceId, roomInstanceId)` scope for room-composition APIs such as `LOOK`, and must not be compared across scopes.
-- Monotonicity: values must be non-decreasing for a given scope as observed by a caller.
+- Read-fence token – canonical room-read fence emitted by the authoritative source read, currently World Management `worldSnapshotId` / `world_snapshot_id`, and compared with the participant fence returned by Entity Management as `entitySnapshotId` / `entity_snapshot_id`.
+- Scope: the read-fence token is valid only within `(tenantId, gameInstanceId, roomInstanceId)` scope for room-composition APIs such as `LOOK`, and must not be compared across scopes.
+- Monotonicity: future tick-ledger-backed values must be non-decreasing for a given scope as observed by a caller; the current live snapshot-id fence is an equality token for same-scope composition.
 - Comparison contract:
-  - Downstream services must either serve data materialized at the same `asOfTickId`, or
-  - Fail with `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE`.
+  - Downstream services must either return a matching same-scope fence, or
+  - Fail with `READ_FENCE_MISMATCH`, `STALE_READ_FENCE`, or `READ_FENCE_UNAVAILABLE`.
 - Composition contract: callers must reject mixed-fence payloads; retries must preserve requested scope and fence semantics.
 
 ## Saga Workflow Identity

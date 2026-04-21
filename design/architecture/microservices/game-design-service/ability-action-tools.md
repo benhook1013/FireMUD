@@ -13,6 +13,12 @@ Game creators build complex combat systems without modifying the core engine. Al
 
 The web-based editor described in [Web-Based Visual Design Interface](web-visual-interface.md) serves as the front end for these tools.
 
+## Canonical Ability References
+
+Published ability and action references use stable design identifiers, not display names. Ability definitions must expose an `abilityId` stable within `(tenantId, versionId)`, and action sequences must expose an `actionSequenceId` stable within the same scope. Designer-facing names may change across revisions, but scripts, plugins, and validation records must store the stable identifiers.
+
+Any script or plugin field that references an ability must use a typed selector such as `{"abilityId":"abilityId:<stable-id>"}`; action sequence references must use `{"actionSequenceId":"actionSequenceId:<stable-id>"}`. Game Design validates these selectors against the exact `baseVersionId` and its recorded `abilitySchemaDigest` during `PublishVersion`, `PublishScriptPatchVersion`, and `PublishPluginVersion`. Runtime services must not reinterpret display names or aliases as ability identities.
+
 ## Integration with the Scripting DSL
 
 Abilities and actions defined through these tools can participate in scripted behavior:

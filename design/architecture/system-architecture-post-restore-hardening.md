@@ -10,9 +10,13 @@ Required quarantine actions:
 
 - scale Gateway and TCP Proxy workloads to zero, or detach their external `LoadBalancer` / Ingress exposure
 - prevent DNS or traffic-manager cutover to the restored environment
+- disable or scale down normal background processors, automation workers, schedulers, notification senders, webhooks, asset publishing workers, and any other workload that can create external or player-visible side effects
+- keep Game Session tick executors and command intake stopped or under an enforced restore-safe startup gate until the coordination recovery mode is proven
 - keep quarantine in place until post-restore hardening, external credential validation, required sanitization evidence, and smoke checks all succeed
 
 It is not sufficient to rely on “operators will not send traffic yet” as a procedural control. The restored environment must be technically unable to accept player-facing traffic until the hardening sequence is complete.
+
+Restore quarantine is a full restore-safe mode, not only an ingress block. Restored workloads must not be able to process queued work, emit outbound communications, publish assets, run gameplay automation, or create new Coordination Redis state with snapshot-era credentials before the hardening and coordination gates complete. Maintenance Jobs required for recovery may run, but they must use narrowly scoped service accounts and write evidence into the recovery record.
 
 ## Post-Restore Secret Hardening
 
@@ -98,7 +102,7 @@ For staging restores sourced from production-origin snapshots, `SANITIZATION_EVI
 
 ## Post-Restore Coordination Recovery Gate
 
-After PostgreSQL is restored, but before quarantine is lifted, the restore workflow must prove that Coordination Redis is operating in exactly one approved recovery mode:
+After PostgreSQL is restored, but before normal application startup and before quarantine is lifted, the restore workflow must prove that Coordination Redis is operating in exactly one approved recovery mode:
 
 ### `cold_start_restore`
 
@@ -118,14 +122,15 @@ Recovery automation must fail closed if the restore event cannot be classified i
 
 Runbooks should treat `post-restore-secret-hardening` as a mandatory step in any player-facing disaster recovery:
 
-1. Enter restore quarantine by removing or disabling external traffic paths to Gateway and TCP Proxy.
-2. Restore PostgreSQL and Kubernetes manifests.
-3. Run `post-restore-secret-hardening` in the target namespace and wait for success.
-4. Confirm workload, bridge, and operator leaf certificates have been reissued and peers converged.
-5. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values.
-6. For staging restores from production-origin data, ensure sanitization evidence exists and is referenced.
-7. Confirm application health checks, login/session flows, and JWT validation.
-8. Only then remove quarantine and route external or player traffic to the restored cluster.
+1. Enter restore-safe quarantine by disabling external traffic paths to Gateway and TCP Proxy and by stopping or restore-safe-fencing background processors, outbound integrations, automation workers, and Game Session tick executors.
+2. Restore PostgreSQL and Kubernetes manifests with normal application workloads held at zero replicas or behind a restore-safe startup gate.
+3. Select and prove exactly one coordination recovery mode (`cold_start_restore` or `scoped_reset_restore`) before normal Game Session or automation startup can create fresh coordination state.
+4. Run `post-restore-secret-hardening` in the target namespace and wait for success.
+5. Confirm workload, bridge, and operator leaf certificates have been reissued and peers converged.
+6. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values.
+7. For staging restores from production-origin data, ensure sanitization evidence exists and is referenced.
+8. Start normal workloads in a controlled order and confirm application health checks, login/session flows, gameplay smoke, and JWT validation while ingress remains quarantined.
+9. Only then remove quarantine and route external or player traffic to the restored cluster.
 
 For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run equivalent one-shot restore-hardening automation that performs the same four control groups and writes the canonical recovery record before reopening player traffic.
 

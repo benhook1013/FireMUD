@@ -49,14 +49,7 @@ Within a region’s tick, each command proceeds through several phases:
        - Writers must persist `target_region_epoch` and `due_tick_id` from the same status read so retries and failover cannot shift eligibility non-deterministically.
      - Optionally writes a best-effort Redis hint marker such as `remote:<tenantId>:<entityId>` (for the target entity) to reduce latency when the target region drains follow-ups.
      - If the command needs to wait for remote completion, the origin region creates or updates a separate durable cross-region coordinator record. This waiting state is **not** kept as a non-terminal row inside the origin tick batch.
-       - Minimum coordinator fields:
-         - coordinator identity (`tenantId`, `gameInstanceId`, `commandId`)
-         - origin scope (`originRegionId`, `originRegionEpoch`, `originTickId`)
-         - target scope (`targetRegionId`, `targetRegionEpoch`, `dueTickId`)
-         - lifecycle state (`PENDING_REMOTE`, `REMOTE_APPLIED`, `REMOTE_ABANDONED`, `REMOTE_TIMEOUT_ABANDONED`, `LATE_RESULT_IGNORED`, `LATE_RESULT_RECONCILED`)
-         - `remote_deadline_tick_id`
-         - final player-facing/result-facing projection fields when applicable (`executionOutcome`, `gameplayResult`)
-         - `updatedAt`
+       - Minimum coordinator fields include coordinator identity (`tenantId`, `gameInstanceId`, `commandId`), origin scope (`originRegionId`, `originRegionEpoch`, `originTickId`), target scope (`targetRegionId`, `targetRegionEpoch`, `dueTickId`), lifecycle state (`PENDING_REMOTE`, `REMOTE_APPLIED`, `REMOTE_ABANDONED`, `REMOTE_TIMEOUT_ABANDONED`, `LATE_RESULT_IGNORED`, `LATE_RESULT_RECONCILED`), origin-timeline deadline (`originDeadlineRegionEpoch`, `originDeadlineTickId`; storage may use names such as `remote_deadline_region_epoch` / `remote_deadline_tick_id`), final player-facing/result-facing projection fields when applicable (`executionOutcome`, `gameplayResult`), and `updatedAt`.
    - The target region later drains these follow-ups into its own tick pipeline and applies them under its lease and locks.
 5. **Completion / Finalization (optional)**
    - Many commands do not need global awareness of “all regions finished”; origin and target regions can operate independently with eventual consistency.
@@ -121,7 +114,7 @@ Command outcome convergence must be externally observable through one canonical 
   - `executionOutcome = ABANDONED` – command reached a terminal execution failure after being durably bound to a batch.
   - `executionOutcome = LOST_BEFORE_STAGING` – command never became batch-bound and was terminated by reconcile/reset handling.
   - `gameplayResult` is a separate player-facing/result-facing projection derived from the command type’s documented semantics:
-    - Minimum shared vocabulary: `SUCCESS`, `PARTIAL`, `FAILED`, `TIMEOUT`.
+    - Minimum shared vocabulary: `SUCCESS`, `PARTIAL`, `FAILED`, `TIMEOUT`, `NOT_APPLIED`.
     - `gameplayResult` may remain `null` until the command reaches terminal state.
     - `gameplayResult` must not be inferred solely from `executionOutcome`; cross-region and multi-leg commands may legitimately end as `executionOutcome = APPLIED` with `gameplayResult = PARTIAL`.
 - Delivery rules:
@@ -149,7 +142,7 @@ Worked examples:
   - `gameplayResult = TIMEOUT`
 - Lost before staging during reset/tail-loss reconcile:
   - `executionOutcome = LOST_BEFORE_STAGING`
-  - `gameplayResult = FAILED`
+  - `gameplayResult = NOT_APPLIED`
 
 #### Canonical Command Terminal Mapping Table
 
@@ -163,7 +156,7 @@ operations docs should link here instead of restating partial mappings in prose.
 | Batch-bound local or same-region failure | `ABANDONED` | `FAILED` |
 | Cross-region partial success | `APPLIED` | `PARTIAL` |
 | Cross-region timeout before any successful remote leg | `ABANDONED` | `TIMEOUT` |
-| Lost before staging during reset/tail-loss reconcile | `LOST_BEFORE_STAGING` | `FAILED` |
+| Lost before staging during reset/tail-loss reconcile | `LOST_BEFORE_STAGING` | `NOT_APPLIED` |
 
 #### Ingress Deduplication Store (Required)
 
@@ -210,7 +203,7 @@ At each tick for a `<tenantId, regionId>`, the executor:
 1. Collects work:
    - Pulls at most one queued command per active entity into the per-entity worklist.
    - Pulls a bounded number of due timers and retries (up to configured caps per tick).
-   - Optionally includes a bounded “remote follow-up drain” step (see below); drained remote follow-ups are enqueued into the same per-entity queues as local commands at the target region.
+   - Optionally includes a bounded “remote follow-up drain” step (see below); due remote follow-up rows are durably claimed for the target tick batch and then mapped into the same per-entity worklist as local commands at the target region. Redis queue entries or `remote:*` markers may wake the region, but they are not the source of truth for remote follow-up ownership.
    - Selection alone does **not** make work exclusive yet. Until the tick batch and durable claims exist, the selected work remains recoverable from its source queues/indexes.
 2. Orders fairly:
    - Aggregates all candidate work items per entity (queued commands, due timers, retries, and remote follow-ups) and selects **at most one** work item per entity for the current tick; any additional due work for that entity is deferred to future ticks according to the retry/timer scheduling rules.
@@ -268,7 +261,7 @@ Conceptually, tick commit proceeds through these phases:
      - Winner rule:
        - The winner is the transaction that successfully creates the unique `(tenantId, regionId, region_epoch, tickId)` row while holding the currently valid Redis lease and the latest durable `executorFence`.
        - If a competing executor finds the existing row carries the same current `executorFence`, it must reuse that row as authoritative state for replay/continuation.
-       - If a competing executor finds the existing row carries an older or newer `executorFence`, it must not continue that batch unless reconcile explicitly authorizes it. Recovery/reconcile decides whether the earlier batch is continued or abandoned.
+       - If a competing executor finds the existing row carries an older or newer `executorFence`, it must not continue that batch on the hot path. The first implementation abandons stale-owner unfinished batches and requeues still-unapplied commands for a fresh fenced batch; any future in-place adoption of an old-fence batch requires a dedicated reconcile transaction that explicitly transfers ownership before work continues.
    - The tick-batch record stores at minimum:
      - `tick_batch_id`
      - `executor_fence`
@@ -313,9 +306,9 @@ Conceptually, tick commit proceeds through these phases:
    - Worked allocation-race example:
      - Executor `E1` and executor `E2` both attempt `(tenantId=T1, regionId=R7, region_epoch=13, tickId=42)`.
      - `E1` successfully inserts the unique batch row while holding Redis lease token `L9001` and durable `executorFence=27`; that row becomes the only valid durable batch for `(T1, R7, 13, 42)`.
-     - `E2` then reads the existing row:
-       - if `E2` is acting under the same current `executorFence=27`, it may continue/replay from that row;
-       - if `E2` now holds a later lease acquisition with `executorFence=28`, it must stop and treat the existing row as belonging to an older ownership generation until recovery explicitly reconciles it.
+     - `E2` then reads the existing row.
+       - If `E2` is acting under the same current `executorFence=27`, it may continue/replay from that row.
+       - If `E2` now holds a later lease acquisition with `executorFence=28`, it must stop and treat the existing row as belonging to an older ownership generation. First implementation recovery abandons stale-owner unfinished work and requeues unapplied commands rather than continuing that batch in place.
      - `E2` must not overwrite the manifest, create a second batch row, or select different work for tick `42`.
      - If storage ever reveals two durable rows for `(T1, R7, 13, 42)`, the region pauses immediately and reconcile tooling chooses the survivor before any later tick runs.
    - Canonical fence/write sequence (normative):
@@ -389,6 +382,7 @@ Remote follow-ups (work created in one region but owned by entities in another) 
   - A per-entity cap such as `MAX_REMOTE_FOLLOWUPS_PER_ENTITY_PER_TICK` prevents one hot entity from consuming the entire budget.
 - Selection favors oldest-due follow-ups while avoiding starvation:
   - Queries or claim updates use database-side concurrency control (for example, `FOR UPDATE SKIP LOCKED` or equivalent) so multiple executors do not drain the same follow-up.
+  - Claiming is a durable PostgreSQL state transition that records the target tick batch (or a durable claim row tied to that batch) before the follow-up is removed from the due set or treated as runnable. Redis `remote:*` hints and any per-entity queue projections are latency hints only; a crash before the durable claim leaves the follow-up due in PostgreSQL, and a crash after the claim replays from the batch manifest rather than from Redis.
   - Intake per entity per tick is limited so other entities with due work still make progress.
 - When remote follow-up queues grow:
   - If due follow-ups exceed a threshold, the region is marked `DEGRADED` and emits metrics such as:
@@ -427,7 +421,8 @@ To avoid ambiguity around timeouts and late replies, every cross-region command 
 
 Required policy defaults:
 
-- Deadlines are tick-based and recorded durably with the origin coordinating effect (`remote_deadline_tick_id`), not inferred from wall-clock timers.
+- Deadlines are tick-based on the origin region timeline and recorded durably with the origin coordinating effect (`originDeadlineRegionEpoch`, `originDeadlineTickId`; storage may use names such as `remote_deadline_region_epoch` / `remote_deadline_tick_id`), not inferred from wall-clock timers.
+- The origin region is the only clock that evaluates remote completion timeouts. Target-region `dueTickId` controls when the remote leg first becomes eligible to run; it does not define when the origin gives up waiting for the result.
 - The coordinator lifecycle above is outside the committing origin tick batch:
   - The origin tick that creates the remote follow-up still commits normally once its own batch rows are terminal.
   - Later remote results or timeouts enqueue subsequent origin-region work or update the separate coordinator record; they do not retroactively keep the original tick non-terminal.

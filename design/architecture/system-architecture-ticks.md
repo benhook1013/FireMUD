@@ -258,11 +258,14 @@ Region split/merge operations interact directly with tick idempotency, Redis key
    - Wait for any in-flight `tick:{tenantRegionTag}:pending` work to commit or be recovered to a terminal state.
 2. **Converge durable outcomes**
    - Run the tick effect ledger replay controller/reconcile tooling for the affected scope so any lingering `SCHEDULED` effects converge to `APPLIED` or `ABANDONED` before moving queues or entities.
+   - Accepted command records that never became durably tied to a surviving `tick_batch_id` converge to terminal command status (`executionOutcome = LOST_BEFORE_STAGING`, default `gameplayResult = NOT_APPLIED`) as part of the same reset/topology scope; do not leave old-epoch dedupe rows stranded in pre-batch states.
 3. **Sever the old timeline for any mapping change (required)**
    - If the operation changes region boundaries or re-homes entities to a different region mapping, bump `regionEpoch` for all affected `<tenantId, regionId>` pairs as part of the topology change (the same epoch-severing mechanism used by scoped coordination resets).
    - Only topology operations that preserve entity-to-region ownership exactly may skip an epoch bump, and those exceptions must be explicitly documented and audited in the maintenance record.
-4. **Migrate coordination state using shared key builders**
-   - Move only reset-tolerant, purely coordination structures (queues, timers, retry metadata) using versioned tooling that uses the shared key builders and Lua Script Registry descriptors.
+4. **Reset or migrate coordination state using shared key builders**
+   - First implementation resets/rebuilds coordination state from durable PostgreSQL state after the epoch bump instead of moving live Redis keys.
+   - Future in-place migration may move only reset-tolerant, purely coordination structures (queues, timers, retry metadata) using versioned tooling that uses the shared key builders and Lua Script Registry descriptors.
+   - Queue entries, timers, and retry records that are purely coordination state are not reconstructed from old Redis keys unless dedicated migration tooling re-derives them from durable intent under the new mapping. The default fate for accepted-but-unbound queued commands is the explicit command outcome above, not silent replay on the new epoch.
    - Do not hand-edit `tick:*`, `timer:*`, `retry:*`, or lease/lock keys.
 5. **Handle cross-region follow-ups explicitly**
    - Durable follow-up rows in PostgreSQL are the source of truth for cross-region work. Topology changes must ensure follow-ups are either:

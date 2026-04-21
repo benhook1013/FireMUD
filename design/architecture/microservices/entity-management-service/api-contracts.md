@@ -82,14 +82,14 @@ Game Logic treats `entitySnapshotId` as the canonical cache key for LOOK-relevan
 - `worldSnapshotId` from World Management’s `GetRoomSnapshot`; and
 - `entitySnapshotId` from `ListRoomEntities`,
 
-then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId + ":" + asOfTickId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically.
+then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically.
 
 Room-entity data is derived from runtime entity state plus authoritative world location. Ground items are discovered by querying items contained by the synthetic room-ground container for the target `RoomInstanceRef`. Characters and NPCs are included when their current location (owned by World Management) matches the target `RoomInstanceRef`:
 
-- The caller obtains the authoritative occupant `entityId` set and read fence from World Management before invoking `ListRoomEntities`.
-- `ListRoomEntities` joins those caller-supplied occupant `entityId` values to its own runtime entity rows to materialize display data plus room-ground inventory state owned by Entity Management.
-- `ListRoomEntities` must accept caller-supplied occupancy references together with the World Management read fence token (`asOfTickId`); when Entity Management cannot serve the same fence it must return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` instead of returning mixed-tick data.
-- The read fence is satisfied only by durable post-commit state. Redis-staged containment changes that have not yet committed the effect guard and container/item row updates for that fence are not eligible to satisfy `asOfTickId`.
+- The caller obtains the authoritative room snapshot and read fence from World Management before invoking `ListRoomEntities`.
+- `ListRoomEntities` materializes display data plus room-ground inventory state owned by Entity Management for the same `RoomInstanceRef`.
+- `ListRoomEntities` must return an Entity Management read fence (`entitySnapshotId`) for the same room scope; when Game Logic cannot align it with the World Management `worldSnapshotId`, composition must fail instead of returning mixed-tick data.
+- The read fence is satisfied only by durable post-commit state. Redis-staged containment changes that have not yet committed the effect guard and container/item row updates for that fence are not eligible to satisfy the room-read fence.
 
 Illustrative `ListRoomEntities` fragments:
 
@@ -100,8 +100,7 @@ Illustrative `ListRoomEntities` fragments:
   "tenantId": "t1",
   "gameInstanceId": "g1",
   "roomInstanceId": "room-antechamber",
-  "entitySnapshotId": "entitysnap-184",
-  "asOfTickId": 184,
+  "entitySnapshotId": "t1:g1:room-antechamber",
   "entities": [
     {
       "entityId": "char-mara",
@@ -117,8 +116,8 @@ Illustrative `ListRoomEntities` fragments:
 ```json
 {
   "error": {
-    "code": "STALE_READ_FENCE",
-    "message": "Entity state is not yet available for the requested room read fence."
+    "code": "READ_FENCE_MISMATCH",
+    "message": "Entity state did not align with the requested room read fence."
   }
 }
 ```

@@ -206,7 +206,7 @@ Per-trigger output is also part of the quota model even when the run itself was 
 
 - Each admitted script/plugin run must be constrained by explicit output ceilings such as `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes`.
 - Output-budget failures must be surfaced as stage-aware non-success outcomes and must not be treated as successful handoff merely because the DSL graph began evaluating.
-- Game Design validation should reject graphs whose conservatively bounded worst-case fan-out cannot fit within those runtime ceilings.
+- Game Design validation must reject graphs whose conservatively bounded worst-case fan-out cannot fit within those runtime ceilings, using the static output cost contract in `design/architecture/system-architecture-scripting-runtime-execution.md#static-output-cost-contract`.
 
 ---
 
@@ -275,7 +275,7 @@ Metrics such as:
 
 are updated throughout the scripting pipeline so operators can monitor how often scripts fire, how many are skipped by policy, and how much automation work is being handed to the tick system. See `design/architecture/system-architecture-logging-monitoring.md` for broader metrics and alerting guidance. For dry-runs specifically:
 
-- `automation_script_test_runs_total{tenantId, scriptId, pluginId, eventType, result}` – counts non-committing test executions, tagged with a `result` dimension (for example, `result="success"`, `result="denied_quota"`, `result="error"`).
+- `automation_script_test_runs_total{tenantId, scriptId, pluginId, eventType, result}` – counts non-committing test executions, tagged with a low-cardinality `result` dimension (for example, `result="success"`, `result="denied_quota"`, `result="error"`). This metric `result` is test-only aggregation shorthand; the corresponding audit outcome for a successful dry-run is `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`, not live `finalOutcome=success`.
 - `automation_script_test_runtime_seconds{tenantId, scriptId, pluginId, eventType}` – measures runtime for dry-run/test executions, separate from live traffic.
 
 Additional queue-health metrics help detect automation backlogs that are not draining into ticks as expected:

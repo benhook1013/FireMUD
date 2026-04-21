@@ -140,6 +140,8 @@ In Kubernetes deployments the certificates are mounted at `/tls`, and the enviro
 
 JWT tokens secure internal service calls. Production keys are provided via Kubernetes Secrets and mounted key files, while development instances may generate random secrets. When `FIREMUD_AUTH_JWT_SECRET_PATH` is set, the service watches the file for changes using `JwtSecretWatcher` so keys can be rotated without restarts. Certificate and secret watching is described in `../system-architecture-security.md#key-and-certificate-rotation` and `../system-architecture-security.md#jwt-key--jwks-rotation-workflow`.
 
+Implementation note: the file-mounted JWT contract below is the player-facing target state. Current shared security auto-configuration still initializes from inline `firemud.auth.jwt-secret` before loading `firemud.auth.jwt-secret-path` in non-dev profiles, and Account Service currently serves JWKS from a packaged classpath resource rather than a mounted `jwt-jwks` resource. Those are implementation gaps to close before first player-facing deployment; they do not make inline JWT secrets or packaged JWKS compliant for `hobby-self-hosted`, staging, or production.
+
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `FIREMUD_AUTH_JWT_SECRET` | Inline JWT signing key material for local/dev and ephemeral stacks only (legacy compatibility mode) | *(none)* |

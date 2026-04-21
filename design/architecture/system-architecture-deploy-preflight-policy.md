@@ -8,6 +8,17 @@ This document defines the authoritative preflight policy gate for staging and pr
 - Ensure secret contracts, digest pinning, and bridge/security invariants are enforced before apply.
 - Produce a reusable pass/fail artifact for deployment evidence.
 
+## Implementation Notes
+
+The policy in this document is the target-state deployment gate. The current `./dev-tools/deploy/preflight.sh` implementation is partial and must not be treated as complete evidence for first player-facing deployment or traffic-open decisions until the gaps below are closed:
+
+- The script currently checks digest pinning, basic Secret presence, JWT file-path shape, JWKS resource shape, `GATEWAY_WS_URL` shape, Redis endpoint split, production promotion attestation, and production `roll-forward-only` backup-readiness evidence.
+- The script does not yet consume `design/operations/environments/<environment>/expected-bindings.yaml`, does not emit `expectedBindingsRef`, and does not validate the binding identity fields required by this contract.
+- The script does not yet emit or enforce `PREFLIGHT-SECRETS-002`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, `PREFLIGHT-SERVICES-001`, `PREFLIGHT-BACKUP-002`, or `PREFLIGHT-BACKUP-003`.
+- The checked-in player-facing `expected-bindings.yaml` files are placeholders for the intended environment-isolation contract and still need the full required schema before they can be used as authoritative preflight inputs, including storage binding identity fields and concrete workload/bridge/control-plane certificate bindings.
+
+Until the implementation catches up, operators must treat these missing checks as manual blockers rather than assuming a successful script run proves the full policy. Do not open player-facing traffic or declare a first-live environment deployable solely from the current script output when any target-state required policy ID is absent from the report.
+
 ## Bootstrap Contract
 
 For a brand-new player-facing environment (`hobby-self-hosted`, `staging`, or `production`), preflight must verify the baseline trust and secret set before any workload apply. The minimum bootstrap set is:

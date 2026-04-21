@@ -55,8 +55,24 @@ Contract rules:
 - `baseVersionId` compatibility is exact, not fuzzy. A plugin version targets one published game version only.
 - `abilitySchemaDigest` must match the immutable digest attested for that `baseVersionId`; it is recorded in Game Design metadata and re-checked at activation time.
 - Game Design must persist indexed metadata from the signed manifest (`pluginId`, `pluginVersionId`, `baseVersionId`, `abilitySchemaDigest`, signer identity, validation status) so UIs and control-plane APIs do not need to unpack bundles for routine reads.
+- When `assetRefs[]` is non-empty, Game Design must also persist `distributionManifestHash` and `distributionManifestPath` for the plugin-version distribution manifest it writes during `PublishPluginVersion`.
 - Automation & Scripting must treat the signed manifest as the source of truth for runtime activation metadata. It may cache extracted fields, but it must not trust mutable side-channel metadata over the signed manifest.
 - If `assetRefs[]` are runtime-consumable, runtime discovery must flow through the signed manifest metadata that Game Design publishes and, where instance/runtime consumers need object-store access, through the attested release/distribution metadata derived from that manifest rather than undocumented bucket key conventions.
+
+### Plugin Asset Distribution
+
+Plugin assets are distributed through a plugin-version-scoped manifest, not through the base game version's `published_release_bundle`. A plugin version targets one already published `baseVersionId`, but publishing the plugin must not mutate the immutable release attestation for that base version.
+
+When `assetRefs[]` is empty, no plugin distribution manifest is required. When `assetRefs[]` is non-empty, `PublishPluginVersion` must write a `plugin-distribution-manifest.json` under a Game Design-owned object-store prefix scoped to `(tenantId, pluginId, pluginVersionId)`, persist its hash in indexed plugin metadata, and expose it through `GetPublishedPluginVersion` / `ListPluginVersionStatuses`. Runtime consumers resolve plugin assets only through that metadata and the signed `assetRefs[]`; they must not construct object-store paths from tenant or plugin identifiers.
+
+The distribution manifest must include:
+
+- `tenantId`, `pluginId`, `pluginVersionId`, `baseVersionId`, and `abilitySchemaDigest`.
+- `manifestHash` and `manifestSchemaVersion`.
+- `bundleDigest` and `signerKeyId` from the verified signature envelope.
+- `assets[]` entries keyed by signed `assetId`, with canonical object-store URL or opaque storage key, content hash, media type, byte size, and optional localization or usage metadata.
+
+`PublishPluginVersion` must fail before `PUBLISHED` if any signed `assetRefs[]` entry is missing from the bundle, cannot be exported, has a digest mismatch, or cannot be represented in the distribution manifest. Exact-byte repair rules mirror version asset repair: a published plugin distribution manifest is immutable, and repair may only reproduce bytes that match the persisted manifest hash.
 
 ## Signing and Key Lifecycle (Required)
 
@@ -162,7 +178,7 @@ Required lifecycle semantics:
 - `UPLOAD_REJECTED` and `VALIDATION_FAILED_DESIGN` are design-time terminal failures and must not create or mutate runtime registry rows.
 - Transition into `PUBLISHED` records the indexed manifest metadata, validation results, signer metadata, and publication timestamp in Game Design.
 - Logging & Admin may inspect all design-time states, but it must not bypass them by attempting to activate a non-`PUBLISHED` plugin version.
-- Game Design must expose read surfaces such as `GetPluginVersionStatus(tenantId, pluginId, pluginVersionId)` and `ListPluginVersionStatuses(tenantId, pluginId?)`, plus a durable `PluginVersionStatusChanged` event family, so authoring UIs and operator tooling read one authoritative publication state model.
+- Game Design must expose read surfaces such as `GetPublishedPluginVersion(tenantId, pluginId, pluginVersionId)` and `ListPluginVersionStatuses(tenantId, pluginId?)`, plus a durable `PluginVersionStatusChanged` event family, so authoring UIs and operator tooling read one authoritative publication state model.
 
 Required write path:
 
@@ -209,9 +225,13 @@ This example shows the minimum signed authoring shape expected by the publicatio
   "bindings": [
     {
       "bindingId": "announce-on-enter-market",
+      "orderIndex": 100,
+      "requiresExclusiveEvent": false,
       "eventType": "onEnterRegion",
       "targetScopeType": "REGION",
-      "targetSelector": "market-square",
+      "targetSelector": {
+        "regionTemplateId": "regionTemplateId:market-square"
+      },
       "entrypointGraphId": "announce-arrival"
     }
   ],
@@ -227,9 +247,9 @@ This example shows the minimum signed authoring shape expected by the publicatio
 Expected publication behavior for this example:
 
 - `UploadPluginBundle` verifies the archive, signatures, and manifest shape, then persists indexed metadata for `town-crier-v3`.
-- `PublishPluginVersion` validates that `market-square` exists in `game-v12`, that `announce-arrival` is present and safe, and that the plugin remains compatible with `sha256:9dd1b7c2...`.
+- `PublishPluginVersion` validates that `regionTemplateId:market-square` exists in `game-v12`, that `announce-arrival` is present and safe, and that the plugin remains compatible with `sha256:9dd1b7c2...`.
 - `SetPluginActiveVersion` may later activate `town-crier-v3` only for instances whose `runtimeVersionId` is `game-v12` and whose bound ability schema digest matches the same value.
-- If `assetRefs[]` included an entry such as `"assetRefs": [{"assetId": "bell-sfx", "path": "assets/bell.ogg"}]`, Game Design would persist that signed reference as indexed bundle metadata and expose the runtime-discoverable asset only through attested release/distribution metadata derived from the signed manifest. Runtime consumers would resolve `bell-sfx` through that attested metadata, not by constructing object-store paths directly.
+- If `assetRefs[]` included an entry such as `"assetRefs": [{"assetId": "bell-sfx", "path": "assets/bell.ogg"}]`, Game Design would export that asset into the plugin-version distribution manifest, persist the manifest hash with the plugin metadata, and expose the runtime-discoverable asset only through that manifest. Runtime consumers would resolve `bell-sfx` through the published plugin metadata, not by constructing object-store paths directly.
 
 ### End-to-End Publication Sequence
 
@@ -245,7 +265,7 @@ One canonical happy path plus failure path:
 Failure example:
 
 1. `UploadPluginBundle` succeeds and leaves the version in `SIGNATURE_VERIFIED`.
-2. `PublishPluginVersion` discovers that binding target `market-square` does not exist in the plugin's exact `baseVersionId`.
+2. `PublishPluginVersion` discovers that binding target `regionTemplateId:market-square` does not exist in the plugin's exact `baseVersionId`.
 3. Game Design sets status to `VALIDATION_FAILED_DESIGN`, emits `PluginVersionStatusChanged`, and does not create or mutate runtime registry state.
 4. Any later `SetPluginActiveVersion` attempt for that `pluginVersionId` must fail deterministically because the version is not `PUBLISHED`.
 
@@ -294,18 +314,36 @@ Plugin bindings are authored as signed design-time data, not as ad hoc instance-
 - The authoritative `bindings[]` array lives in `plugin-manifest.json` and is part of the signed bundle.
 - Each binding must declare:
   - `bindingId` – stable identity within the plugin version.
+  - `orderIndex` – integer ordering key used by the shared script/plugin handler ordering contract.
+  - `requiresExclusiveEvent` – boolean exclusivity request; defaults to `false` if omitted, and `true` is valid only when operator policy explicitly allows plugin exclusivity.
   - `eventType` – the subscribed event or timer kind.
   - `targetScopeType` – one of `GLOBAL`, `REGION`, `ENTITY_TEMPLATE`, `COMMAND_ALIAS`, or another explicitly documented scope added later.
-  - `targetSelector` – the identifier or selector for that scope.
+  - `targetSelector` – the typed selector object for that scope, using the selector contracts below.
   - `entrypointGraphId` – which declared graph handles the binding.
   - Any bounded binding parameters needed for validation, such as interval cadence.
 - Binding targets must reference published base-version assets that exist under the plugin version’s exact `baseVersionId`.
 - Rebinding is a content change. Adding, removing, or retargeting any binding requires publishing a new `pluginVersionId`; instance activation only chooses among published plugin versions and does not edit bindings in place.
 - Instance-scoped enablement remains separate from binding definition: Logging & Admin chooses whether a published plugin version is active for a given game instance, but it does not rewrite the signed binding set during activation.
 
+Handler identity and ordering:
+
+- The schedulable handler identity for a plugin binding is `(tenantId, gameInstanceId, pluginId, pluginVersionId, bindingId)`. `pluginId` alone is never sufficient because one plugin version can declare multiple bindings for the same event.
+- Trigger Identity, dedupe, audit, quota attribution, timer ownership, and drain/disable cleanup must retain `bindingId` alongside `pluginId` and `pluginVersionId` whenever the unit of work is binding-scoped.
+- Runtime ordering follows the shared scripting rule: `orderIndex ASC`, `handlerType ASC`, then handler identity ASC. For plugin handlers, the final tie-breaker is `(pluginId, bindingId)`.
+- At most one binding in the resolved handler set for `{tenantId, gameInstanceId, target identity, eventType}` may have `requiresExclusiveEvent=true`. Game Design must reject conflicting plugin publication when the conflict is knowable against the target `baseVersionId`; Automation & Scripting must re-check conflicts during instance activation because active script/plugin selections are instance-scoped.
+
+Typed selector contracts:
+
+- `GLOBAL` uses `{}` and is valid only for event types whose event registry marks global bindings as legal.
+- `REGION` uses `{"regionTemplateId": "regionTemplateId:<stable-id>"}` and resolves against World Management region templates for the exact `baseVersionId`.
+- `ENTITY_TEMPLATE` uses `{"entityTemplateId": "entityTemplateId:<stable-id>"}` and resolves against Entity Management entity templates for the exact `baseVersionId`.
+- `COMMAND_ALIAS` uses `{"commandAlias": "<normalized-command-alias>"}`. Game Design must normalize command aliases using the same command registry rules used by the runtime command parser and must reject aliases that collide with reserved commands or another binding in the same target scope.
+- Future `targetScopeType` values must define their selector object, owner service, normalization rules, and exact validation API before they can appear in a signed manifest.
+
 Validation responsibilities:
 
 - Game Design validates that all declared bindings are structurally valid and resolvable against the targeted `baseVersionId`.
+- Game Design validates that `entrypointGraphId` references a declared graph, `orderIndex` is in the bounded platform range, `requiresExclusiveEvent` is allowed by policy, and the typed `targetSelector` can be resolved by the owner service under the exact `baseVersionId`.
 - Automation & Scripting consumes the validated binding set during activation and registry load; it must not invent additional bindings or infer missing targets from runtime state.
 
 ### Plugin Component Policy Management

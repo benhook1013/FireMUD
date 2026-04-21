@@ -17,7 +17,7 @@ The documents linked from this overview describe the target-state design, but th
 - **Quotas and entitlements source of truth:** Subscription entitlements and plan-driven quota values are owned by the Account Service (for example via `GetTenantEntitlements(tenantId)`). Logging & Admin provides dashboards, audit trails, and operator UX; any operator overrides must be represented as an overlay that is merged into the Account Service entitlement contract so enforcement points consume a single canonical view.
 - **Operator control-plane availability split:** Logging & Admin may depend on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, and Alertmanager for observability-heavy experiences, but core operator actions such as moderation, feature-flag requests, quota overrides, and tick-remediation controls must remain available when those backends are degraded. Logging & Admin owns the operator UX, request validation, and audit trail for these actions, while the owning domain services remain the only components allowed to mutate runtime or policy state. Readiness, resource isolation, and degradation behavior must preserve this split.
 - **Operator write ingress policy:** External operator-initiated mutating actions for moderation, runtime feature-flag overrides, quota overrides, and tick remediation must enter through Logging & Admin APIs via Gateway so validation and audit capture are uniform. Edge-routable admin APIs exposed directly by Account, Game Session, Social & Groups, and Game Design are limited to read operations plus narrowly scoped service-owned workflows that are explicitly documented as bypass-safe; absent that explicit designation, external writes must not bypass Logging & Admin.
-- **Bypass-safe workflow allowlist policy:** Service-level docs may not invent new classes of externally writable bypass-safe workflows on their own. A workflow is bypass-safe only when the overview or responsibility matrix explicitly names it as a bypass-safe class or explicitly delegates that class to a service-owned contract. Otherwise, external writes are denied by default and require an architecture-doc update in the same change.
+- **Bypass-safe workflow allowlist policy:** Service-level docs may not invent new classes of externally writable bypass-safe workflows on their own. A workflow is bypass-safe only when the overview or responsibility matrix explicitly names it as a bypass-safe class or explicitly delegates that class to a service-owned contract. Game Design creator writes for tenant-scoped assets and templates are delegated to the Game Design service contract as domain-local creator workflows. Otherwise, external writes are denied by default and require an architecture-doc update in the same change.
 - **Durable async contract:** Best-effort edge hints may use internal gRPC event sinks, but durable cross-service business events and saga updates must use the transactional outbox/background-worker pattern described in `design/architecture/system-architecture-transactions.md`. High-level docs must not imply an unspecified shared event bus.
 - **Moderation propagation contract:** Logging & Admin is the source of truth for gameplay/chat moderation policy definitions, but enforcement owners must consume a canonical versioned snapshot contract. Every propagation payload must include `{tenantId, policyScope, policyVersion, issuedAt, eventId}`, invalidation must be monotonic per `{tenantId, policyScope}`, and enforcement services must support both push invalidation and pull-on-miss refresh from Logging & Admin. `gameplay_ban` and `chat_ban` enforcement is fail-closed when no fresh policy snapshot can be obtained within the bounded staleness window; `chat_mute` may temporarily reuse the last valid snapshot within that same window but must fail closed once the window expires. The bounded staleness window is a deployment-configured maximum snapshot age sourced from one canonical environment-level configuration contract shared by all enforcement services; Game Session and Social & Groups must not use divergent values in the same environment.
   - Until a dedicated moderation-configuration contract exists, the canonical source for this deployment-level moderation staleness value is the shared environment configuration contract referenced by both enforcement services. Service READMEs may document how they consume the value, but they are not the canonical source of truth for the value itself. When a dedicated moderation-configuration contract is introduced, this fallback note must be replaced with a direct reference to that contract in the overview and any affected service READMEs.
@@ -26,7 +26,7 @@ The documents linked from this overview describe the target-state design, but th
 - **Coordination Redis ownership boundary:** Coordination Redis prefixes are owner-governed (Game Session for gameplay coordination prefixes such as `session:game:*`, `tick:*`, `timer:*`, `retry:*`, and `tick-executor-lease:*`; Account Service for `session:auth:*`; Automation & Scripting for `automation:*`), and non-owner participation is allowed only through documented shared-helper contracts. See `design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md`.
 - **TCP Proxy identity canonicalization:** For Gateway header trust on the TCP Proxy → Gateway mTLS hop, URI SAN identity is canonical in production; DNS SAN is transitional and fingerprint pinning is break-glass only. See `design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md`.
 - **Canonical room-read fence:** Canonical room-state reads that combine occupancy from World Management with containment/entity presentation from Entity Management must be served under a shared tick/read fence emitted by World Management on `GetRoomSnapshot` and propagated unchanged by Game Logic during same-fence room-view composition. World and Entity responses must echo the fence token they satisfied; if either side cannot satisfy the requested fence, Game Logic must retry with a new world snapshot or fail the room-view refresh explicitly rather than composing mixed-tick state. See [Canonical Room Runtime Contract](#canonical-room-runtime-contract).
-- **Canonical room-read fence interoperability minimum:** `LOOK` and same-fence room reads use one canonical fence token: `asOfTickId`. World Management produces it on `GetRoomSnapshot`, Game Logic propagates it unchanged to Entity Management `ListRoomEntities`, and participants must either satisfy that same fence or reject the read as `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`. Services must not silently substitute a newer or best-effort snapshot.
+- **Canonical room-read fence interoperability minimum:** `LOOK` and same-fence room reads use one logical read-fence value for the room scope. The current live proto seam carries that value as World Management `worldSnapshotId` / `world_snapshot_id` and Entity Management `entitySnapshotId` / `entity_snapshot_id`; both values must compare equal for Game Logic to compose a canonical room view. Future tick-ledger work may rename or replace this with `asOfTickId` only through a proto and architecture update that keeps the single-fence invariant. Services must not silently substitute a newer or best-effort snapshot.
 - **Game Session region-transition contract:** The session front-end owns connection-local sequencing and the character’s current execution-region pointer, while the lease owner owns region-scoped mutation rights. Cross-region actions are serialized by the session front-end under a monotonically increasing per-session sequence; region transition commits are atomic from the caller’s perspective only after the old region owner has acknowledged release, the new region owner has accepted the fenced command, and the session front-end has durably updated the execution-region pointer. Multi-region effects must designate one primary execution region or be decomposed into ordered fenced sub-operations; they must not issue concurrent unfenced writes to multiple region owners. See [Session Sharding & Routing](#session-sharding--routing).
 
 ## Core Architecture Principles
@@ -80,6 +80,7 @@ Examples:
 
 - `GET /admin/game-sessions/{id}` and `GET /admin/accounts/{id}` are bypass-safe reads.
 - `POST /admin/game-design/validation-runs/{runId}:cancel` is bypass-safe only if the owning service explicitly documents it as a domain-local operation that does not depend on Logging & Admin-owned policy or cross-domain write orchestration.
+- `POST /admin/game-design/assets` and `POST /admin/game-design/templates` are bypass-safe creator writes when implemented by Game Design as tenant-scoped domain-local asset/template workflows with Game Design-owned validation and audit behavior.
 - `POST /admin/quota-overrides` and `POST /admin/tick-remediation/pause` are not bypass-safe and must enter through Logging & Admin.
 - `POST /admin/game-sessions/{id}/feature-flags/{flagKey}:toggle` is not bypass-safe because runtime feature-flag overrides are operator writes governed by the canonical operator action contract.
 - `POST /admin/accounts/{tenantId}/entitlements/overrides` is not bypass-safe because quota and entitlement overrides must remain canonical at Account through the Logging & Admin ingress path and audit workflow.
@@ -89,6 +90,7 @@ Canonical bypass-safe workflow allowlist at the architecture layer:
 | Workflow class | Direct external bypass-safe write allowed? | Authority |
 | --- | --- | --- |
 | External admin reads on allowlisted routes | Yes | Owning service read contract |
+| Game Design tenant-scoped creator writes for assets and templates | Yes | Game Design service contract |
 | Domain-local cancellation or similar write on an allowlisted route | Only when the overview/matrix/service contract explicitly marks that workflow class as bypass-safe | Owning service contract plus architecture allowlist |
 | Moderation writes | No | Logging & Admin ingress only |
 | Runtime feature-flag overrides | No | Logging & Admin ingress only |
@@ -102,6 +104,7 @@ Canonical route-review examples:
 | Proposed route | Classification | Canonical decision | Why |
 | --- | --- | --- | --- |
 | `GET /admin/accounts/{id}` | External admin read | Allowed when Account documents the read contract | Edge-routable read on an allowlisted service |
+| `POST /admin/game-design/templates` | Game Design creator write | Allowed when Game Design documents tenant-scoped validation and audit | Domain-local creator workflow owned by Game Design |
 | `POST /admin/game-design/validation-runs/{runId}:cancel` | Domain-local write | Allowed only when Game Design explicitly documents it as bypass-safe | Can qualify only if it is domain-local and does not depend on Logging & Admin-owned policy or cross-domain orchestration |
 | `POST /admin/game-sessions/{id}/feature-flags/{flagKey}:toggle` | External operator write | Not allowed as a direct external route | Runtime feature-flag overrides must enter through Logging & Admin |
 | `POST /admin/quota-overrides` | External operator write | Not allowed as a direct external route | Quota overrides must enter through Logging & Admin and remain canonical at Account |
@@ -112,6 +115,7 @@ Canonical route-review examples:
 | Traffic category | Edge entry point | Allowed direct domain route behavior |
 | --- | --- | --- |
 | External admin reads | Gateway allowlisted domain/admin APIs | Allowed when the route is edge-routable and the owning service documents the read contract |
+| Game Design creator writes for assets and templates | Gateway allowlisted Game Design APIs | Allowed when the owning Game Design contract documents tenant access, validation, and audit behavior |
 | External operator writes for moderation, quota overrides, runtime feature flags, and tick remediation | Logging & Admin APIs via Gateway | Direct domain bypass not allowed unless a future design update explicitly amends the operator write ingress policy |
 | Internal service-to-service control APIs | Internal-only service contracts | Not an edge contract; does not traverse Gateway unless the contract is explicitly defined as Gateway-managed infrastructure control traffic |
 
@@ -160,6 +164,8 @@ Core operator actions must not rely on observability backends for write success.
 | Tick remediation (`PauseTicks`, `ResumeTicks`, scoped remediation requests) | Logging & Admin HTTP(S) APIs via Gateway | Game Session | Logging & Admin records audit and calls Game Session control APIs; direct Redis mutation is reserved for documented runbooks, not UI/API request handlers | Game Session PostgreSQL/control-plane state plus Logging & Admin PostgreSQL audit state | No |
 
 External admin tooling must not invoke alternate direct write routes for the actions in this table. If a future design allows a direct external mutation path for one of these actions, it must define equivalent audit, validation, and availability guarantees and update this table explicitly.
+
+Game Session control-plane APIs exposed behind the Gateway terminate on the stable Game Session service surface. In the current implementation they are ordinary service/control-plane handlers; in the target session-front-end plus lease-owner model, any control-plane request that mutates region-scoped coordination or tick-owned state must be forwarded to the current lease owner under the same fenced internal contract used for gameplay work. The externally routable API surface must not imply that a session front-end can directly write region-owned coordination keys.
 
 ### Authentication Modes and Boundaries
 
@@ -327,16 +333,16 @@ Minimal canonical Game Session PostgreSQL write split examples:
 - Entity Management is the sole owner of inventories, containment, and room-ground containers keyed by `RoomInstanceRef`.
 - Game Session orchestrates movement and other tick-owned actions, but it must not maintain a competing authoritative occupancy index.
 - The execution-region pointer held by the session front-end is session-local coordination metadata for fenced routing; it is not an authoritative source of room occupancy or world state.
-- World Management emits the canonical room-read fence token (`asOfTickId`) on `GetRoomSnapshot`, and Game Logic owns same-fence room-view composition for `ResolveLook`.
+- World Management emits the canonical room-read fence value on `GetRoomSnapshot`, currently as `worldSnapshotId` / `world_snapshot_id`, and Game Logic owns same-fence room-view composition for `ResolveLook`.
 - World Management and Entity Management must either serve the requested fence and echo it in their responses or reject the read as unsatisfied; they must not silently downgrade to best-effort snapshots.
 - If either dependency rejects the fence, Game Logic may retry with a fresh world snapshot when doing so preserves caller ordering semantics; otherwise it must fail the room-view refresh explicitly. Mixed-tick best-effort joins are not allowed for canonical room state.
 
 Minimal canonical room-read sequence:
 
 1. Game Session receives `LOOK` and delegates the gameplay read to Game Logic `ResolveLook`.
-2. Game Logic requests `GetRoomSnapshot` from World Management and receives `asOfTickId`.
-3. Game Logic calls Entity Management `ListRoomEntities` with the same `asOfTickId`.
-4. World Management and Entity Management either satisfy that same fence or reject with `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`.
+2. Game Logic requests `GetRoomSnapshot` from World Management and receives `worldSnapshotId`.
+3. Game Logic calls Entity Management `ListRoomEntities` for the same room scope and receives `entitySnapshotId`.
+4. World Management and Entity Management either return matching fence values or Game Logic rejects the mixed read as a room-fence failure.
 5. Game Logic composes one `LookResult` only when both downstream reads align on the same fence, then Game Session renders and caches the transcript.
 
 Rendered room-view caching is intentionally a Game Session concern rather than a World or Game Logic responsibility:
@@ -350,21 +356,21 @@ Rendered room-view caching is intentionally a Game Session concern rather than a
 
 Minimal interoperability requirements for the fence token:
 
-- `asOfTickId` is valid only within one `(tenantId, gameInstanceId, roomInstanceId)` room-read scope.
+- The current snapshot-id fence is valid only within one `(tenantId, gameInstanceId, roomInstanceId)` room-read scope.
 - World Management is the canonical producer of the fence token for room snapshots.
-- Entity Management must not mint or substitute its own fence; it either serves the requested `asOfTickId` or rejects the read.
-- `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` are the canonical rejection shapes for missed fences; services must not silently upgrade to a newer snapshot.
-- A retry obtains a fresh room snapshot and therefore a fresh `asOfTickId`; an older fence is not reused across later room-refresh attempts.
+- Entity Management must return a matching fence for the same room scope or the composition fails; it must not silently substitute unrelated snapshot state.
+- `READ_FENCE_MISMATCH`, `STALE_READ_FENCE`, or `READ_FENCE_UNAVAILABLE` are the canonical rejection shapes for missed or mixed fences; services must not silently upgrade to a newer snapshot.
+- A retry obtains a fresh room snapshot and therefore a fresh fence value; an older fence is not reused across later room-refresh attempts.
 
 Operator-facing command convergence reads must use the durable `GetCommandStatus` surface after replay/reset/remediation. Redis queue inspection is diagnostic only and must not be treated as the canonical post-remediation status answer.
 
 Minimal canonical room-read example:
 
 1. Game Session handling `LOOK` for `{tenantId=T1, gameInstanceId=G1, characterId=C7}` calls Game Logic `ResolveLook`.
-2. Game Logic calls World Management with `{tenantId:T1, gameInstanceId:G1, roomInstanceRef:R44}` and receives `asOfTickId=184`.
-3. Game Logic calls Entity Management with `{tenantId:T1, gameInstanceId:G1, roomInstanceRef:R44, asOfTickId:184, occupantEntityIds:[...]}`.
-4. Success path: both downstream reads satisfy `asOfTickId=184`, and only then may Game Logic compose canonical room state for Game Session to render.
-5. Rejection path: if Entity Management or a retried World read cannot satisfy `asOfTickId=184`, it returns `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`; Game Logic retries with a fresh world snapshot or returns an explicit room-view failure, but it must not join fence `184` data with a newer fence.
+2. Game Logic calls World Management with `{tenantId:T1, gameInstanceId:G1, roomInstanceRef:R44}` and receives `worldSnapshotId=T1:G1:R44`.
+3. Game Logic calls Entity Management with `{tenantId:T1, gameInstanceId:G1, roomInstanceRef:R44}` and receives `entitySnapshotId=T1:G1:R44`.
+4. Success path: both downstream reads return the same fence value, and only then may Game Logic compose canonical room state for Game Session to render.
+5. Rejection path: if Entity Management returns a missing or different fence, Game Logic retries with a fresh world snapshot or returns an explicit room-view failure, but it must not join one fence value with another.
 
 > 🔗 See [Redis Architecture](./system-architecture-redis.md) for key structure and durability strategies.
 
@@ -548,7 +554,7 @@ The following examples illustrate where key concepts live; the full matrix remai
 | Gameplay mechanics (combat, movement, progression) | Game Logic Service | Implements deterministic rules; no persistent ownership. |
 | Live sessions, ticks, command queues | Game Session Service | Owns Redis-backed coordination for active gameplay. |
 | Chat, groups, social graph | Social & Groups Service | Manages chat channels, guilds, friends/blocks. |
-| Moderation events, admin dashboards | Logging & Admin Service | Aggregates logs/metrics/traces and powers moderation tooling. |
+| Moderation events, admin dashboards | Logging & Admin Service | Owns moderation policy and audit state while using logs/metrics/traces for supplemental investigation and dashboards. |
 
 ### Movement and Location Consistency Contract
 
