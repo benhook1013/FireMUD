@@ -45,6 +45,10 @@ final class ItemTransferSupport {
     return new TransferAuditContext(verb, actorCharacterId, null, null, null);
   }
 
+  TransferAuditContext audit(String verb, Long actorCharacterId, String effectId) {
+    return new TransferAuditContext(verb, actorCharacterId, null, effectId, effectId);
+  }
+
   TransferAuditContext audit(
       String verb, Long actorCharacterId, String sessionId, String effectId, String correlationId) {
     return new TransferAuditContext(verb, actorCharacterId, sessionId, effectId, correlationId);

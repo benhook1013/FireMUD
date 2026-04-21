@@ -271,6 +271,50 @@ class InventoryServiceImplTest {
   }
 
   @Test
+  void dropItemCarriesEffectIdIntoAuditContext() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
+    InventoryServiceImpl service =
+        service(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            itemStackRepo,
+            visibleRefAllocator,
+            itemTransferAuditWriter);
+
+    Character character = character(1L, 1L);
+    Item item = item(2L, 1L, "Torch", false, null, false);
+    ItemInstance first = itemInstance(41L, 1L, character, item, null, null, null);
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(item));
+    when(itemInstanceRepo
+            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
+                1L, 1L, 2L))
+        .thenReturn(List.of(first));
+    when(itemInstanceRepo.save(any(ItemInstance.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1, "effect-1");
+
+    ItemTransferSupport transferSupport = new ItemTransferSupport();
+    verify(itemTransferAuditWriter)
+        .recordInstanceTransfer(
+            first,
+            transferSupport.inventory(1L, 1L),
+            transferSupport.room("GI-1", "R-1"),
+            transferSupport.audit("DROP", 1L, "effect-1"));
+  }
+
+  @Test
   void dropItemMovesStackQuantityToRoom() {
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
     ContainerInstanceRepository containerInstanceRepo =

@@ -664,7 +664,12 @@ public class EntityManagementGrpcService
               "WearEquipment",
               () -> {
                 CharacterEquipmentEntryDto dto =
-                    equipmentService.wearItem(tenantId, characterId, itemId, itemInstanceId);
+                    equipmentService.wearItem(
+                        tenantId,
+                        characterId,
+                        itemId,
+                        itemInstanceId,
+                        blankToNull(request.getEffectId()));
                 return WearEquipmentItemResponse.newBuilder()
                     .setEquipmentItem(toProto(dto))
                     .build();
@@ -735,7 +740,11 @@ public class EntityManagementGrpcService
               "RemoveEquipment",
               () -> {
                 CharacterEquipmentEntryDto dto =
-                    equipmentService.removeWornItem(tenantId, characterId, request.getSlot());
+                    equipmentService.removeWornItem(
+                        tenantId,
+                        characterId,
+                        request.getSlot(),
+                        blankToNull(request.getEffectId()));
                 return RemoveEquipmentResponse.newBuilder().setEquipmentItem(toProto(dto)).build();
               },
               RemoveEquipmentResponse::parseFrom);
@@ -907,7 +916,8 @@ public class EntityManagementGrpcService
                         itemId,
                         itemInstanceId,
                         blankToNull(request.getStackFamilyKey()),
-                        request.getQuantity());
+                        request.getQuantity(),
+                        blankToNull(request.getEffectId()));
                 return PutItemIntoContainerResponse.newBuilder()
                     .setContainerItem(toProto(dto))
                     .build();
@@ -1002,7 +1012,8 @@ public class EntityManagementGrpcService
                         itemId,
                         itemInstanceId,
                         blankToNull(request.getStackFamilyKey()),
-                        request.getQuantity());
+                        request.getQuantity(),
+                        blankToNull(request.getEffectId()));
                 return TakeItemFromContainerResponse.newBuilder()
                     .setInventoryItem(toProto(dto))
                     .build();
@@ -1183,7 +1194,8 @@ public class EntityManagementGrpcService
                             : Long.parseLong(request.getItemInstanceId()),
                         request.getContainerInstanceId(),
                         blankToNull(request.getStackFamilyKey()),
-                        quantity);
+                        quantity,
+                        blankToNull(request.getEffectId()));
                 return PickupItemFromRoomResponse.newBuilder()
                     .setInventoryItem(toProto(dto))
                     .build();
@@ -1277,7 +1289,8 @@ public class EntityManagementGrpcService
                             : Long.parseLong(request.getItemInstanceId()),
                         request.getContainerInstanceId(),
                         blankToNull(request.getStackFamilyKey()),
-                        quantity);
+                        quantity,
+                        blankToNull(request.getEffectId()));
                 return DropItemToRoomResponse.newBuilder().setRoomGroundItem(toProto(dto)).build();
               },
               DropItemToRoomResponse::parseFrom);

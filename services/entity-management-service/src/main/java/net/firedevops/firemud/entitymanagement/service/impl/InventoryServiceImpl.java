@@ -137,7 +137,8 @@ public class InventoryServiceImpl implements InventoryService {
       Long itemInstanceId,
       String containerInstanceId,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId) {
     requirePositiveQuantity(quantity);
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
     String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
@@ -152,7 +153,8 @@ public class InventoryServiceImpl implements InventoryService {
               normalizedRoomInstanceId,
               item,
               normalizeOptionalText(stackFamilyKey),
-              quantity);
+              quantity,
+              effectId);
       return roomGroundDtoForStackMutation(
           tenantId,
           normalizedGameInstanceId,
@@ -165,7 +167,7 @@ public class InventoryServiceImpl implements InventoryService {
         requireCarriedItemInstances(
             character, item, itemInstanceId, normalizeOptionalText(containerInstanceId), quantity);
     moveItemInstancesToRoom(
-        character, selected, normalizedGameInstanceId, normalizedRoomInstanceId);
+        character, selected, normalizedGameInstanceId, normalizedRoomInstanceId, effectId);
     return roomGroundDtoForMutation(selected.get(0), quantity);
   }
 
@@ -181,7 +183,8 @@ public class InventoryServiceImpl implements InventoryService {
       Long itemInstanceId,
       String containerInstanceId,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId) {
     requirePositiveQuantity(quantity);
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
     String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
@@ -196,7 +199,8 @@ public class InventoryServiceImpl implements InventoryService {
               normalizedRoomInstanceId,
               item,
               normalizeOptionalText(stackFamilyKey),
-              quantity);
+              quantity,
+              effectId);
       return inventoryDtoForStackMutation(character, item, selectedStackFamilyKey, quantity);
     }
     List<ItemInstance> selected =
@@ -208,7 +212,7 @@ public class InventoryServiceImpl implements InventoryService {
             itemInstanceId,
             normalizeOptionalText(containerInstanceId),
             quantity);
-    moveItemInstancesToInventory(character, selected);
+    moveItemInstancesToInventory(character, selected, effectId);
     return inventoryDtoForMutation(selected.get(0), quantity);
   }
 
@@ -285,7 +289,8 @@ public class InventoryServiceImpl implements InventoryService {
       String roomInstanceId,
       Item item,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId) {
     ItemStack source =
         requireSingleInventoryStackSource(
             tenantId, character.getId(), item, stackFamilyKey, "Inventory item not found");
@@ -317,7 +322,7 @@ public class InventoryServiceImpl implements InventoryService {
         source.getStackFamilyKey(),
         itemTransferSupport.inventoryHolder(tenantId, character.getId()),
         itemTransferSupport.roomHolder(tenantId, gameInstanceId, roomInstanceId),
-        itemTransferSupport.audit("DROP", character.getId()));
+        itemTransferSupport.audit("DROP", character.getId(), effectId));
     return source.getStackFamilyKey();
   }
 
@@ -328,7 +333,8 @@ public class InventoryServiceImpl implements InventoryService {
       String roomInstanceId,
       Item item,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId) {
     ItemStack source =
         requireSingleRoomStackSource(
             tenantId,
@@ -347,7 +353,7 @@ public class InventoryServiceImpl implements InventoryService {
         source.getStackFamilyKey(),
         itemTransferSupport.roomHolder(tenantId, gameInstanceId, roomInstanceId),
         itemTransferSupport.inventoryHolder(tenantId, character.getId()),
-        itemTransferSupport.audit("GET", character.getId()));
+        itemTransferSupport.audit("GET", character.getId(), effectId));
     return source.getStackFamilyKey();
   }
 
@@ -465,14 +471,15 @@ public class InventoryServiceImpl implements InventoryService {
       Character character,
       List<ItemInstance> instances,
       String gameInstanceId,
-      String roomInstanceId) {
+      String roomInstanceId,
+      String effectId) {
     for (ItemInstance instance : instances) {
       ItemTransferSupport.ExpectedSource expectedSource =
           itemTransferSupport.inventory(character.getTenantId(), character.getId());
       ItemTransferSupport.Destination destination =
           itemTransferSupport.room(gameInstanceId, roomInstanceId);
       ItemTransferSupport.TransferAuditContext auditContext =
-          itemTransferSupport.audit("DROP", character.getId());
+          itemTransferSupport.audit("DROP", character.getId(), effectId);
       itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
       itemInstanceRepository.save(instance);
       itemTransferAuditWriter.recordInstanceTransfer(
@@ -481,14 +488,15 @@ public class InventoryServiceImpl implements InventoryService {
     }
   }
 
-  private void moveItemInstancesToInventory(Character character, List<ItemInstance> instances) {
+  private void moveItemInstancesToInventory(
+      Character character, List<ItemInstance> instances, String effectId) {
     for (ItemInstance instance : instances) {
       ItemTransferSupport.ExpectedSource expectedSource =
           itemTransferSupport.room(
               character.getTenantId(), instance.getGameInstanceId(), instance.getRoomInstanceId());
       ItemTransferSupport.Destination destination = itemTransferSupport.inventory(character);
       ItemTransferSupport.TransferAuditContext auditContext =
-          itemTransferSupport.audit("GET", character.getId());
+          itemTransferSupport.audit("GET", character.getId(), effectId);
       itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
       itemInstanceRepository.save(instance);
       itemTransferAuditWriter.recordInstanceTransfer(

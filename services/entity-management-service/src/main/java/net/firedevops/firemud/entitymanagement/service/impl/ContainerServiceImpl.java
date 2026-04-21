@@ -138,7 +138,8 @@ public class ContainerServiceImpl implements ContainerService {
       Long itemId,
       Long itemInstanceId,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId) {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
@@ -149,7 +150,7 @@ public class ContainerServiceImpl implements ContainerService {
     if (stackableItemSupport.usesStackStorage(item)) {
       String selectedStackFamilyKey =
           moveInventoryStackToContainer(
-              tenantId, characterId, containerInstance, item, stackFamilyKey, quantity);
+              tenantId, characterId, containerInstance, item, stackFamilyKey, quantity, effectId);
       return toStackMutationDto(containerInstance, item, selectedStackFamilyKey, quantity);
     }
     List<ItemInstance> carried =
@@ -163,7 +164,7 @@ public class ContainerServiceImpl implements ContainerService {
       ItemTransferSupport.Destination destination =
           itemTransferSupport.container(containerInstance);
       ItemTransferSupport.TransferAuditContext auditContext =
-          itemTransferSupport.audit("PUT", characterId);
+          itemTransferSupport.audit("PUT", characterId, effectId);
       itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
       itemInstanceRepository.save(instance);
       itemTransferAuditWriter.recordInstanceTransfer(
@@ -183,7 +184,8 @@ public class ContainerServiceImpl implements ContainerService {
       Long itemId,
       Long itemInstanceId,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId) {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
@@ -193,7 +195,7 @@ public class ContainerServiceImpl implements ContainerService {
     if (stackableItemSupport.usesStackStorage(item)) {
       String selectedStackFamilyKey =
           moveContainerStackToInventory(
-              tenantId, character, containerInstance, item, stackFamilyKey, quantity);
+              tenantId, character, containerInstance, item, stackFamilyKey, quantity, effectId);
       return toInventoryStackMutationDto(character, item, selectedStackFamilyKey, quantity);
     }
     List<ItemInstance> contained =
@@ -205,7 +207,7 @@ public class ContainerServiceImpl implements ContainerService {
           itemTransferSupport.container(tenantId, containerInstance.getId());
       ItemTransferSupport.Destination destination = itemTransferSupport.inventory(character);
       ItemTransferSupport.TransferAuditContext auditContext =
-          itemTransferSupport.audit("TAKE", characterId);
+          itemTransferSupport.audit("TAKE", characterId, effectId);
       itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
       itemInstanceRepository.save(instance);
       itemTransferAuditWriter.recordInstanceTransfer(
@@ -351,7 +353,8 @@ public class ContainerServiceImpl implements ContainerService {
       ContainerInstance containerInstance,
       Item item,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId) {
     ItemStack source =
         requireSingleInventoryStackSource(
             tenantId,
@@ -386,7 +389,7 @@ public class ContainerServiceImpl implements ContainerService {
         source.getStackFamilyKey(),
         itemTransferSupport.inventoryHolder(tenantId, characterId),
         itemTransferSupport.containerHolder(tenantId, containerInstance.getId()),
-        itemTransferSupport.audit("PUT", characterId));
+        itemTransferSupport.audit("PUT", characterId, effectId));
     return source.getStackFamilyKey();
   }
 
@@ -396,7 +399,8 @@ public class ContainerServiceImpl implements ContainerService {
       ContainerInstance containerInstance,
       Item item,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId) {
     ItemStack source =
         requireSingleContainerStackSource(
             tenantId,
@@ -431,7 +435,7 @@ public class ContainerServiceImpl implements ContainerService {
         source.getStackFamilyKey(),
         itemTransferSupport.containerHolder(tenantId, containerInstance.getId()),
         itemTransferSupport.inventoryHolder(tenantId, character.getId()),
-        itemTransferSupport.audit("TAKE", character.getId()));
+        itemTransferSupport.audit("TAKE", character.getId(), effectId));
     return source.getStackFamilyKey();
   }
 
