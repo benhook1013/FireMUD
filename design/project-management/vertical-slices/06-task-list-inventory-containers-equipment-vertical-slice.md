@@ -25,6 +25,7 @@ The current branch state is materially ahead of the original `06` plan:
 - WebSocket cross-service coverage now proves `LOGIN` / `PLAY` / `LOOK` / `INV HERE` / `GET` / `INVENTORY` / `DROP` / `INV HERE` through the live Game Session command path, including parser preservation of `INV HERE`, room-ground state changes, inventory refreshes, Entity Management request context, quantity, and nonblank durable effect ids.
 - WebSocket cross-service coverage also proves a carried-item equipment loop with `EQUIPMENT` / `WEAR` / `EQUIPMENT` / `REMOVE` / `EQUIPMENT`, plus a representative `SLOT_INCOMPATIBLE` failure, including Entity Management equipment request context and nonblank durable effect ids.
 - Telnet cross-service coverage now proves the same player-visible item/equipment command surface through TCP Proxy and Gateway, including `LOOK`, room-ground pickup/drop, equipment bind/unbind, incompatible equipment failure, and Entity Management request/effect-id assertions.
+- Game Session now records central item-command invocation/failure metrics through `gamesession.command.item.*` with `type` and `error` tags, so operators can distinguish expected player mistakes from backend or validation failures consistently across inventory, equipment, and container verbs.
 - the authored stackability/fungibility follow-up is now tracked explicitly in `06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md`.
 
 The most important remaining design work in this slice family is:
@@ -154,7 +155,7 @@ Current implementation note:
   - stable item selectors;
   - ordinal disambiguation such as `GET 2.SWORD`;
   - or another explicit pattern.
-- [ ] Emit item-command metrics/logs with high-level error tags so operators can distinguish player mistakes (`ITEM_NOT_FOUND`, `SLOT_INCOMPATIBLE`) from backend failures.
+- [x] Emit item-command metrics/logs with high-level error tags so operators can distinguish player mistakes (`ITEM_NOT_FOUND`, `SLOT_INCOMPATIBLE`) from backend failures.
 - [ ] Add unit/integration tests covering successful `INVENTORY`, `GET`, `DROP`, one equip/unequip action, unauthenticated access, and representative failure responses.
 
 ## 7. Cross-Service End-to-End Coverage
