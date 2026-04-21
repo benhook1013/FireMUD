@@ -76,11 +76,18 @@ previewStack:
     ASSET_STORE_SECRET_KEY: minio123
     FIREMUD_SERVICES_GAME_LOGIC_SERVICE: game-logic-service:6565
     FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE: logging-admin-service:6565
+    FIREMUD_AUTH_JWT_SECRET_PATH: /var/run/secrets/firemud/jwt/current.key
+    FIREMUD_AUTH_JWKS_PATH: /var/run/secrets/firemud/jwks/jwks.json
 
   sharedSecret:
     FIREMUD_POSTGRES_USER: firemud
     FIREMUD_POSTGRES_PASSWORD: firemud
-    FIREMUD_AUTH_JWT_SECRET: changeit-changeit-changeit-changeit
+
+  jwt:
+    enabled: true
+    jwksResourceKind: ConfigMap
+    signingKey: changeit-changeit-changeit-changeit
+    jwksJson: '{"keys":[]}'
 
   resources:
     app:

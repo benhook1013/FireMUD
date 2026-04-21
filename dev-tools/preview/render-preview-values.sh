@@ -17,6 +17,9 @@ TELNET_PORT="$8"
 
 python3 - "$TEMPLATE_PATH" "$OUTPUT_PATH" "$PR_NUMBER" "$NAMESPACE" "$RELEASE_NAME" "$HOSTNAME" "$IMAGE_TAG" "$TELNET_PORT" <<'PY'
 from pathlib import Path
+import hashlib
+import json
+import secrets
 import sys
 
 template_path = Path(sys.argv[1])
@@ -27,6 +30,22 @@ release_name = sys.argv[5]
 hostname = sys.argv[6]
 image_tag = sys.argv[7]
 telnet_port = sys.argv[8]
+seed = f"{namespace}:{release_name}:{pr_number}:{image_tag}"
+signing_key = hashlib.sha256((seed + ":" + secrets.token_hex(32)).encode("utf-8")).hexdigest()
+jwks_json = json.dumps(
+    {
+        "keys": [
+            {
+                "kty": "oct",
+                "kid": f"{release_name}-preview",
+                "k": hashlib.sha256(signing_key.encode("utf-8")).hexdigest(),
+                "alg": "HS256",
+                "use": "sig",
+            }
+        ]
+    },
+    separators=(",", ":"),
+)
 
 text = template_path.read_text()
 text = text.replace("prNumber: 123", f"prNumber: {pr_number}")
@@ -35,6 +54,8 @@ text = text.replace("releaseName: pr-123", f"releaseName: {release_name}")
 text = text.replace("hostname: pr-123.preview.firedevops.net", f"hostname: {hostname}")
 text = text.replace("telnetPort: 32000", f"telnetPort: {telnet_port}")
 text = text.replace("defaultImageTag: pr-123-deadbeef", f"defaultImageTag: {image_tag}")
+text = text.replace("signingKey: changeit-changeit-changeit-changeit", f"signingKey: {signing_key}")
+text = text.replace("jwksJson: '{\"keys\":[]}'", "jwksJson: '" + jwks_json + "'")
 text = text.replace(
     "tlsSecretName: pr-123-preview-firedevops-net-tls",
     f"tlsSecretName: {release_name}-tls",

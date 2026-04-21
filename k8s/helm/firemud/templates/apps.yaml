@@ -78,11 +78,23 @@ spec:
             - secretRef:
                 name: firemud-secret
           {{- end }}
-          {{- if $service.mountGrpcTls }}
+          {{- if or $service.mountGrpcTls (and $.Values.previewStack.jwt.enabled $service.envFromShared) }}
           volumeMounts:
+            {{- if $service.mountGrpcTls }}
             - name: grpc-tls
               mountPath: /tls
               readOnly: true
+            {{- end }}
+            {{- if and $.Values.previewStack.jwt.enabled $service.envFromShared }}
+            - name: jwt-signing-keys
+              mountPath: /var/run/secrets/firemud/jwt
+              readOnly: true
+            {{- if eq $service.name "account-service" }}
+            - name: jwt-jwks
+              mountPath: /var/run/secrets/firemud/jwks
+              readOnly: true
+            {{- end }}
+            {{- end }}
           {{- end }}
           ports:
             {{- range $port := $service.ports }}
@@ -113,11 +125,28 @@ spec:
             limits:
               cpu: {{ default "750m" $.Values.previewStack.resources.app.limits.cpu | quote }}
               memory: {{ default "512Mi" $.Values.previewStack.resources.app.limits.memory | quote }}
-      {{- if $service.mountGrpcTls }}
+      {{- if or $service.mountGrpcTls (and $.Values.previewStack.jwt.enabled $service.envFromShared) }}
       volumes:
+        {{- if $service.mountGrpcTls }}
         - name: grpc-tls
           secret:
             secretName: {{ include "firemud.grpcSecretName" $ }}
+        {{- end }}
+        {{- if and $.Values.previewStack.jwt.enabled $service.envFromShared }}
+        - name: jwt-signing-keys
+          secret:
+            secretName: jwt-signing-keys
+        {{- if eq $service.name "account-service" }}
+        - name: jwt-jwks
+          {{- if eq (default "ConfigMap" $.Values.previewStack.jwt.jwksResourceKind) "Secret" }}
+          secret:
+            secretName: jwt-jwks
+          {{- else }}
+          configMap:
+            name: jwt-jwks
+          {{- end }}
+        {{- end }}
+        {{- end }}
       {{- end }}
 ---
 apiVersion: v1
