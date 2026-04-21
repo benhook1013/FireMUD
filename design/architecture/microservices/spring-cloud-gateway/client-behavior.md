@@ -57,6 +57,14 @@ The canonical external allowlist stops there. World Management, Entity Managemen
 
 Gateway routes strip the first two path segments before forwarding these REST families to their owning services. For example, `/api/admin/admission-pointers` is forwarded to Logging & Admin as `/admission-pointers`, and `/api/account/auth/login` is forwarded to Account as `/auth/login`. The `/assets/**` object-store route keeps its dedicated single-prefix strip behavior.
 
+These public prefixes are route families, not blanket permission to expose every service-local path under the same subtree:
+
+- owning service contracts must publish the externally allowed route inventory for their family;
+- internal-only service-local subtrees such as `/internal/**` remain internal-only even when the service has a public `/api/{service}/**` prefix; and
+- gateway config and filters must converge on deny-by-default behavior for undocumented internal subtrees instead of treating the coarse family prefix as the final exposure contract.
+
+Current route YAML still forwards coarse `/api/{service}/**` families. Treat that as an implementation gap to converge, not as permission for external clients to rely on undocumented service-local internal paths.
+
 ## Tenant and Header Trust Model
 
 - Spring Cloud Gateway remains tenant-agnostic. It forwards tenant-related headers only after applying the gateway’s header trust and canonicalization rules.
