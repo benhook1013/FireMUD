@@ -145,7 +145,7 @@ At a minimum, rollback consists of:
    - Game Session must reject any queued tick commands whose embedded `scriptPatchVersion` does not match the instance’s currently pinned version, and record the rejection so operators can diagnose rollback impact.
 4. **Resume in order**
    - Return Automation & Scripting admission to normal only after cancel/purge completes and rollback draining confirms that pre-pause executions and cancelable outbox work for the current rollback-scope `admissionEpoch` have quiesced, then resume ticks.
-   - If an old-epoch execution reaches persist or handoff checks after rollback pause has advanced the scope `admissionEpoch`, it must fail as a non-success canceled outcome rather than creating new live work. Operators should expect to see these rows in `script_event_audit` during rollback convergence and draining.
+   - If an old-epoch execution reaches persist or handoff checks after rollback pause has advanced the scope `admissionEpoch`, it must fail as `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced` rather than creating new live work. Operators should expect to see these rows in `script_event_audit` during rollback convergence and draining.
 
 Rollback orchestration should be modeled as a durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `ROLLBACK_CONVERGENCE_TIMEOUT`) keyed by `controlPlaneRequestId` so partial failures can be resumed deterministically.
 

@@ -239,7 +239,7 @@ Timer-based triggers such as `onInterval` and `onTimerExpire` are subject to the
 
 ## `onLoad` Semantics and Failure Handling
 
-The `onLoad` lifecycle event is used to initialize shared script state for scripts in a given `<tenantId, scriptPatchVersion>` before that patch becomes active:
+The `onLoad` lifecycle event is a tenant-readiness check for scripts in a given `<tenantId, scriptPatchVersion>` before that patch becomes active:
 
 - `onLoad` handlers run after static validation and compilation succeed, but before the patch is marked `READY` for a tenant.
 - Each `onLoad` execution is keyed by `<tenantId, scriptId, scriptPatchVersion>` and is treated as at-most-once.
@@ -256,5 +256,5 @@ Failure handling:
 - If the dedicated `onLoad` initialization budget is exhausted before completion, the patch must fail deterministically with an explicit bounded reason.
 - If `onLoad` fails with `infrastructure_error`, the service may optionally retry the initialization a bounded number of times using the same `scriptEventId` and idempotent operations.
 
-All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome. A successful `onLoad` contributes to patch readiness aggregation; it does not use live `finalOutcome=success`, which remains reserved for tick handoff.
+All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome. A successful `onLoad` contributes to patch readiness aggregation and must use `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`; it does not use live `finalOutcome=success`, which remains reserved for tick handoff.
 Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of all per-script `onLoad` runs; the patch becomes `READY` only after every required `onLoad` handler succeeds.

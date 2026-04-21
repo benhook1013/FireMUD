@@ -100,10 +100,12 @@ If a structured `stages` array is not used, equivalent per-stage fields must exi
 Stage semantics:
 
 - `finalOutcome=success` must imply `finalStage=TICK_HANDOFF` (commands were accepted into tick queues). “DSL evaluated successfully but handoff failed” is not success.
+- Tenant-readiness `onLoad` completion must use `finalStage=DSL_EVAL` and `finalOutcome=readiness_success`; it is not a live gameplay success signal.
 - `finalOutcome=dry_run_success` must imply `finalStage=DRY_RUN_RESULT` and `isDryRun=true`. It means only that the non-committing test evaluation completed and returned inspectable would-be commands.
 - Backpressure outcomes like `skipped_reloading` must use `finalStage=ADMISSION`.
 - Rollback pause backpressure `skipped_rollback_pause` must use `finalStage=ADMISSION`.
 - Quota denials must use `finalStage=ADMISSION` unless quotas are evaluated inside the DSL runtime for a given trigger (rare; avoid mixing).
+- Intentional rollback/control-plane fencing after admission must stay visible as `finalOutcome=canceled` at the last attempted live stage, with bounded `finalReason` values such as `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`.
 
 ### Supplementary Execution Disposition (Required When Present)
 

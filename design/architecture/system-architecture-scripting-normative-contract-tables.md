@@ -136,6 +136,11 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 | `TICK_HANDOFF` | `finalOutcome=success` is permitted only when Game Session has accepted commands into tick queues. “DSL evaluated successfully but handoff failed” must be a non-success handoff outcome. |
 | `DRY_RUN_RESULT` | `finalOutcome=dry_run_success` is permitted only for authorized `isDryRun=true` executions after DSL evaluation completes and the non-committing result has been returned or stored for inspection. It must not imply durable work-item persistence or tick handoff. |
 
+Additional non-committing terminal outcome rules:
+
+- Tenant-readiness `onLoad` completion must use `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`, and a bounded `finalReason` such as `ready_for_tenant`. It must not use live `finalOutcome=success`, because no gameplay work item or tick handoff exists for readiness-only execution.
+- Control-plane or rollback fencing that intentionally prevents an already admitted execution from persisting or handing off must use `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`.
+
 Supplementary post-handoff correlation rule:
 
 - Execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed through the same Trigger Identity via the observability contract's supplementary `executionDisposition` surface, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
@@ -151,6 +156,7 @@ Taxonomy governance rule:
 | Canonical value | Stage | Notes |
 | --- | --- | --- |
 | `success` | `TICK_HANDOFF` | Commands accepted into tick queues. |
+| `readiness_success` | `DSL_EVAL` | Tenant-readiness `onLoad` completed successfully and contributed to patch readiness. No work item or tick handoff was created. |
 | `dry_run_success` | `DRY_RUN_RESULT` | Non-committing dry-run/test execution completed and returned would-be commands for inspection. |
 | `skipped_reloading` | `ADMISSION` | Explicit reload backpressure; caller may retry with same Trigger Identity if policy allows. |
 | `skipped_rollback_pause` | `ADMISSION` | Explicit rollback backpressure while control-plane rollback pause is active. |
@@ -164,6 +170,7 @@ Taxonomy governance rule:
 | `script_disabled` | `ADMISSION` | Script disabled or draining due to operator action. |
 | `sandbox_error` | `DSL_EVAL` | Runtime or guard failure; reason required. |
 | `validation_error` | `DSL_EVAL` | Static/semantic validation failure before effect persistence. |
+| `canceled` | `WORK_ITEM_PERSIST` or `TICK_HANDOFF` | Already admitted execution was intentionally fenced before producing live work or before handoff completed. Use bounded `finalReason` values such as `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`. |
 | `infrastructure_error` | Any non-success stage | Transport/storage/runtime infrastructure failure. |
 | `disabled_due_to_errors` | `ADMISSION` | Script disabled by failure-rate policy. |
 | `rollback_convergence_timeout` | `ADMISSION` | Admission remains paused because rollback convergence timeout is active for scope. |
