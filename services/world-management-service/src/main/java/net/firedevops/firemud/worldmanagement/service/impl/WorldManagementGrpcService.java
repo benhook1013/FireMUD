@@ -14,15 +14,20 @@ import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
+import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationRequestDto;
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
+import net.firedevops.firemud.worldmanagement.service.WorldDesignMutationService;
 import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import net.firedevops.firemud.worldmanagement.service.WorldInstanceActivationService;
 import net.firedevops.firemud.worldmanagement.service.WorldUpgradeValidationService;
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationRequest;
+import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationResponse;
 import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.GenerationRuleDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomRequest;
@@ -35,6 +40,9 @@ import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.RoomExitDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceRequest;
@@ -42,9 +50,11 @@ import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.UpgradeValidationResult;
 import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsRequest;
 import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsResponse;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
+import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
@@ -65,6 +75,7 @@ public class WorldManagementGrpcService
   private final RoomService roomService;
   private final WorldInstanceActivationService worldInstanceActivationService;
   private final WorldDraftDesignDigestService worldDraftDesignDigestService;
+  private final WorldDesignMutationService worldDesignMutationService;
   private final WorldUpgradeValidationService worldUpgradeValidationService;
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
   private final MeterRegistry meterRegistry;
@@ -349,6 +360,44 @@ public class WorldManagementGrpcService
     } catch (Exception ex) {
       builder.setError(
           GrpcAppErrors.internal(meterRegistry, logger, "ValidateWorldUpgradeMappings", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "worldGrpc.applyWorldDesignMutation")
+  public void applyWorldDesignMutation(
+      ApplyWorldDesignMutationRequest request,
+      StreamObserver<ApplyWorldDesignMutationResponse> responseObserver) {
+    ApplyWorldDesignMutationResponse.Builder builder =
+        ApplyWorldDesignMutationResponse.newBuilder();
+    try {
+      var result = worldDesignMutationService.applyMutation(toDto(request));
+      builder
+          .setResult(toProtoMutationResult(result.result()))
+          .setTenantId(Long.toString(result.tenantId()))
+          .setVersionId(Long.toString(result.versionId()))
+          .setAggregateId(Long.toString(result.aggregateId()))
+          .setDraftRevisionEpoch(result.draftRevisionEpoch());
+      if (result.draftScopeRevisionEpoch() != null) {
+        builder.setDraftScopeRevisionEpoch(result.draftScopeRevisionEpoch());
+      }
+    } catch (NumberFormatException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "ApplyWorldDesignMutation", "INVALID_ARGUMENT", "invalid id"));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ApplyWorldDesignMutation",
+              errorCodeFor(ex),
+              errorMessageFor(ex)));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "ApplyWorldDesignMutation", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
@@ -641,7 +690,114 @@ public class WorldManagementGrpcService
   }
 
   private String errorCodeFor(IllegalArgumentException ex) {
-    return "Room not found".equals(ex.getMessage()) ? "NOT_FOUND" : "INVALID_ARGUMENT";
+    String message = ex.getMessage();
+    if ("Room not found".equals(message)) {
+      return "NOT_FOUND";
+    }
+    int separator = message == null ? -1 : message.indexOf(':');
+    if (separator > 0) {
+      String candidate = message.substring(0, separator);
+      if (candidate.matches("[A-Z_]+")) {
+        return candidate;
+      }
+    }
+    return "INVALID_ARGUMENT";
+  }
+
+  private String errorMessageFor(IllegalArgumentException ex) {
+    String message = ex.getMessage();
+    int separator = message == null ? -1 : message.indexOf(':');
+    if (separator > 0 && message.substring(0, separator).matches("[A-Z_]+")) {
+      return message.substring(separator + 1).trim();
+    }
+    return message;
+  }
+
+  private WorldDesignMutationRequestDto toDto(ApplyWorldDesignMutationRequest request) {
+    return new WorldDesignMutationRequestDto(
+        Long.parseLong(request.getTenantId()),
+        Long.parseLong(request.getVersionId()),
+        request.getCommitId(),
+        request.getRevisionId(),
+        operationName(request),
+        aggregateTypeName(request),
+        request.getAggregateId(),
+        request.getExpectedDraftRevisionEpoch(),
+        request.getScopeType(),
+        request.getScopeId(),
+        request.getExpectedDraftScopeRevisionEpoch(),
+        request.hasRegion() ? toDto(request.getRegion()) : null,
+        request.hasZone() ? toDto(request.getZone()) : null,
+        request.hasRoom() ? toDto(request.getRoom()) : null,
+        request.hasRoomExit() ? toDto(request.getRoomExit()) : null,
+        request.hasGenerationRule() ? toDto(request.getGenerationRule()) : null);
+  }
+
+  private String operationName(ApplyWorldDesignMutationRequest request) {
+    return switch (request.getOperation()) {
+      case WORLD_DESIGN_MUTATION_OPERATION_UPSERT -> "UPSERT";
+      case WORLD_DESIGN_MUTATION_OPERATION_DELETE -> "DELETE";
+      default -> "";
+    };
+  }
+
+  private String aggregateTypeName(ApplyWorldDesignMutationRequest request) {
+    return switch (request.getAggregateType()) {
+      case WORLD_DESIGN_AGGREGATE_TYPE_REGION -> "REGION";
+      case WORLD_DESIGN_AGGREGATE_TYPE_ZONE -> "ZONE";
+      case WORLD_DESIGN_AGGREGATE_TYPE_ROOM -> "ROOM";
+      case WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT -> "ROOM_EXIT";
+      case WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE -> "GENERATION_RULE";
+      default -> "";
+    };
+  }
+
+  private WorldDesignMutationRequestDto.RegionMutationDto toDto(RegionDesignMutation mutation) {
+    return new WorldDesignMutationRequestDto.RegionMutationDto(
+        mutation.getName(),
+        mutation.getWeather(),
+        mutation.getShardId(),
+        mutation.getGenerationSeed(),
+        mutation.getGeneratorType(),
+        mutation.getGeneratorParams(),
+        mutation.getSpacingMultiplier());
+  }
+
+  private WorldDesignMutationRequestDto.ZoneMutationDto toDto(ZoneDesignMutation mutation) {
+    return new WorldDesignMutationRequestDto.ZoneMutationDto(
+        mutation.getName(), mutation.getRegionId());
+  }
+
+  private WorldDesignMutationRequestDto.RoomMutationDto toDto(RoomDesignMutation mutation) {
+    return new WorldDesignMutationRequestDto.RoomMutationDto(
+        mutation.getName(),
+        mutation.getDescription(),
+        mutation.getZoneId(),
+        mutation.getNameLocalizedVariantsJson(),
+        mutation.getDescriptionLocalizedVariantsJson());
+  }
+
+  private WorldDesignMutationRequestDto.RoomExitMutationDto toDto(RoomExitDesignMutation mutation) {
+    return new WorldDesignMutationRequestDto.RoomExitMutationDto(
+        mutation.getFromRoomId(),
+        mutation.getToRoomId(),
+        mutation.getDirection(),
+        mutation.getCost());
+  }
+
+  private WorldDesignMutationRequestDto.GenerationRuleMutationDto toDto(
+      GenerationRuleDesignMutation mutation) {
+    return new WorldDesignMutationRequestDto.GenerationRuleMutationDto(
+        mutation.getName(), mutation.getValue());
+  }
+
+  private WorldDesignMutationResult toProtoMutationResult(String result) {
+    return switch (result) {
+      case "APPLIED" -> WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_APPLIED;
+      case "NO_OP_ALREADY_APPLIED" ->
+          WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_NO_OP_ALREADY_APPLIED;
+      default -> WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_UNSPECIFIED;
+    };
   }
 
   private UpgradeValidationResult toUpgradeValidationResult(String result) {

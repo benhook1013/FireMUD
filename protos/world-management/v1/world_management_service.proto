@@ -23,6 +23,8 @@ service WorldManagementService {
   rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
   rpc GetRoomSnapshot(GetRoomSnapshotRequest) returns (GetRoomSnapshotResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
+  rpc ApplyWorldDesignMutation(ApplyWorldDesignMutationRequest)
+      returns (ApplyWorldDesignMutationResponse);
   rpc ValidateWorldUpgradeMappings(ValidateWorldUpgradeMappingsRequest)
       returns (ValidateWorldUpgradeMappingsResponse);
   rpc ListRoomOccupants(ListRoomOccupantsRequest) returns (ListRoomOccupantsResponse);
@@ -256,6 +258,93 @@ message GetDraftDesignDigestResponse {
   string content_digest = 4;
   int32 digest_schema_version = 5;
   shared.v1.ErrorDetail error = 6;
+}
+
+enum WorldDesignMutationOperation {
+  WORLD_DESIGN_MUTATION_OPERATION_UNSPECIFIED = 0;
+  WORLD_DESIGN_MUTATION_OPERATION_UPSERT = 1;
+  WORLD_DESIGN_MUTATION_OPERATION_DELETE = 2;
+}
+
+enum WorldDesignAggregateType {
+  WORLD_DESIGN_AGGREGATE_TYPE_UNSPECIFIED = 0;
+  WORLD_DESIGN_AGGREGATE_TYPE_REGION = 1;
+  WORLD_DESIGN_AGGREGATE_TYPE_ZONE = 2;
+  WORLD_DESIGN_AGGREGATE_TYPE_ROOM = 3;
+  WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT = 4;
+  WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE = 5;
+}
+
+enum WorldDesignMutationResult {
+  WORLD_DESIGN_MUTATION_RESULT_UNSPECIFIED = 0;
+  WORLD_DESIGN_MUTATION_RESULT_APPLIED = 1;
+  WORLD_DESIGN_MUTATION_RESULT_NO_OP_ALREADY_APPLIED = 2;
+}
+
+message ApplyWorldDesignMutationRequest {
+  string tenant_id = 1;
+  string version_id = 2;
+  string commit_id = 3;
+  string revision_id = 4;
+  WorldDesignMutationOperation operation = 5;
+  WorldDesignAggregateType aggregate_type = 6;
+  string aggregate_id = 7;
+  int64 expected_draft_revision_epoch = 8;
+  string scope_type = 9;
+  string scope_id = 10;
+  int64 expected_draft_scope_revision_epoch = 11;
+  oneof payload {
+    RegionDesignMutation region = 20;
+    ZoneDesignMutation zone = 21;
+    RoomDesignMutation room = 22;
+    RoomExitDesignMutation room_exit = 23;
+    GenerationRuleDesignMutation generation_rule = 24;
+  }
+}
+
+message RegionDesignMutation {
+  string name = 1;
+  string weather = 2;
+  int32 shard_id = 3;
+  int64 generation_seed = 4;
+  string generator_type = 5;
+  string generator_params = 6;
+  double spacing_multiplier = 7;
+}
+
+message ZoneDesignMutation {
+  string name = 1;
+  string region_id = 2;
+}
+
+message RoomDesignMutation {
+  string name = 1;
+  string description = 2;
+  string zone_id = 3;
+  string name_localized_variants_json = 4;
+  string description_localized_variants_json = 5;
+}
+
+message RoomExitDesignMutation {
+  string from_room_id = 1;
+  string to_room_id = 2;
+  string direction = 3;
+  int32 cost = 4;
+}
+
+message GenerationRuleDesignMutation {
+  string name = 1;
+  string value = 2;
+}
+
+message ApplyWorldDesignMutationResponse {
+  WorldDesignMutationResult result = 1;
+  string tenant_id = 2;
+  string version_id = 3;
+  string aggregate_id = 4;
+  int64 draft_revision_epoch = 5;
+  int64 draft_scope_revision_epoch = 6;
+  shared.v1.ErrorDetail error = 7;
 }
 
 enum UpgradeValidationResult {

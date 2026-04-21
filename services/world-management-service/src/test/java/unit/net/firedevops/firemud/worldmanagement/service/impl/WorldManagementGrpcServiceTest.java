@@ -13,12 +13,16 @@ import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
+import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationResultDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
+import net.firedevops.firemud.worldmanagement.service.WorldDesignMutationService;
 import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import net.firedevops.firemud.worldmanagement.service.WorldInstanceActivationService;
 import net.firedevops.firemud.worldmanagement.service.WorldUpgradeValidationService;
+import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationRequest;
+import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
@@ -27,8 +31,12 @@ import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsRequest;
 import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsResponse;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import tools.jackson.databind.ObjectMapper;
@@ -48,6 +56,7 @@ class WorldManagementGrpcServiceTest {
         roomService,
         activationService,
         digestService,
+        Mockito.mock(WorldDesignMutationService.class),
         Mockito.mock(WorldUpgradeValidationService.class),
         attestationService,
         meterRegistry,
@@ -68,6 +77,7 @@ class WorldManagementGrpcServiceTest {
         roomService,
         activationService,
         digestService,
+        Mockito.mock(WorldDesignMutationService.class),
         Mockito.mock(WorldUpgradeValidationService.class),
         attestationService,
         meterRegistry,
@@ -92,6 +102,7 @@ class WorldManagementGrpcServiceTest {
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
             digestService,
+            Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
@@ -115,6 +126,59 @@ class WorldManagementGrpcServiceTest {
 
     assertEquals("7", ref.get().getScopeValue());
     assertEquals("version:7", ref.get().getAppliedCommitId());
+  }
+
+  @Test
+  void applyWorldDesignMutationReturnsTypedResult() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    WorldDesignMutationService mutationService = Mockito.mock(WorldDesignMutationService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    Mockito.when(mutationService.applyMutation(Mockito.any()))
+        .thenReturn(new WorldDesignMutationResultDto("APPLIED", 1L, 7L, 44L, 1L, null));
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            pingService,
+            roomService,
+            Mockito.mock(WorldInstanceActivationService.class),
+            digestService,
+            mutationService,
+            Mockito.mock(WorldUpgradeValidationService.class),
+            Mockito.mock(GameplaySessionAttestationService.class),
+            meterRegistry,
+            new ObjectMapper());
+
+    AtomicReference<ApplyWorldDesignMutationResponse> ref = new AtomicReference<>();
+    service.applyWorldDesignMutation(
+        ApplyWorldDesignMutationRequest.newBuilder()
+            .setTenantId("1")
+            .setVersionId("7")
+            .setCommitId("commit-1")
+            .setRevisionId("revision-1")
+            .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
+            .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+            .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyWorldDesignMutationResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals(
+        WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_APPLIED, ref.get().getResult());
+    assertEquals("44", ref.get().getAggregateId());
+    assertEquals(1L, ref.get().getDraftRevisionEpoch());
   }
 
   @Test
@@ -151,6 +215,7 @@ class WorldManagementGrpcServiceTest {
             roomService,
             activationService,
             digestService,
+            Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
@@ -214,6 +279,7 @@ class WorldManagementGrpcServiceTest {
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
             digestService,
+            Mockito.mock(WorldDesignMutationService.class),
             validationService,
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
@@ -493,6 +559,7 @@ class WorldManagementGrpcServiceTest {
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
             digestService,
+            Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,

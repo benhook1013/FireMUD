@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.repository;
 
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.worldmanagement.entity.RoomExit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -14,6 +15,8 @@ public interface RoomExitRepository extends JpaRepository<RoomExit, Long> {
   List<RoomExit> findByTenantIdOrderByIdAsc(Long tenantId);
 
   List<RoomExit> findByTenantIdAndVersionIdOrderByIdAsc(Long tenantId, Long versionId);
+
+  Optional<RoomExit> findByTenantIdAndVersionIdAndId(Long tenantId, Long versionId, Long id);
 
   @Query(
       "SELECT re FROM RoomExit re JOIN FETCH re.toRoom WHERE re.tenantId = :tenantId AND re.fromRoom.id = :roomId")
