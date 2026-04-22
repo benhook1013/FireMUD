@@ -1,12 +1,20 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
+import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingControlPlaneServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchRequest;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchResponse;
+import net.firedevops.firemud.automationscripting.v1.DisablePluginRequest;
+import net.firedevops.firemud.automationscripting.v1.DisablePluginResponse;
+import net.firedevops.firemud.automationscripting.v1.DrainPluginRequest;
+import net.firedevops.firemud.automationscripting.v1.DrainPluginResponse;
+import net.firedevops.firemud.automationscripting.v1.GetPluginStatusRequest;
+import net.firedevops.firemud.automationscripting.v1.GetPluginStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusRequest;
@@ -17,23 +25,32 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequ
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
 import net.firedevops.firemud.automationscripting.v1.ScriptEventDefinition;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatusEntry;
+import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionRequest;
+import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected Spring dependencies are not exposed externally")
 public final class AutomationScriptingControlPlaneGrpcService
     extends AutomationScriptingControlPlaneServiceGrpc
         .AutomationScriptingControlPlaneServiceImplBase {
 
   private final ScriptEventRegistryService eventRegistryService;
   private final ScriptWorkItemService workItemService;
+  private final PluginRuntimeStateService pluginRuntimeStateService;
 
   public AutomationScriptingControlPlaneGrpcService(
-      ScriptEventRegistryService eventRegistryService, ScriptWorkItemService workItemService) {
+      ScriptEventRegistryService eventRegistryService,
+      ScriptWorkItemService workItemService,
+      PluginRuntimeStateService pluginRuntimeStateService) {
     this.eventRegistryService = eventRegistryService;
     this.workItemService = workItemService;
+    this.pluginRuntimeStateService = pluginRuntimeStateService;
   }
 
   @Override
@@ -156,6 +173,121 @@ public final class AutomationScriptingControlPlaneGrpcService
                   request.getActorPrincipal(),
                   request.getReason()));
       response.setCanceledCount(canceled);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.getPluginStatus")
+  public void getPluginStatus(
+      GetPluginStatusRequest request, StreamObserver<GetPluginStatusResponse> responseObserver) {
+    GetPluginStatusResponse.Builder response = GetPluginStatusResponse.newBuilder();
+    try {
+      requireAdminRole();
+      pluginRuntimeStateService
+          .getStatus(request.getTenantId(), request.getGameInstanceId(), request.getPluginId())
+          .ifPresentOrElse(
+              status ->
+                  response
+                      .setActivePluginVersionId(status.activePluginVersionId())
+                      .setPendingPluginVersionId(status.pendingPluginVersionId())
+                      .setPluginState(status.pluginState())
+                      .setStatusReason(status.statusReason())
+                      .setLastChangedAtMs(status.lastChangedAtMs()),
+              () ->
+                  response.setError(notFound("GetPluginStatus", "plugin_runtime_state_not_found")));
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.setPluginActiveVersion")
+  public void setPluginActiveVersion(
+      SetPluginActiveVersionRequest request,
+      StreamObserver<SetPluginActiveVersionResponse> responseObserver) {
+    SetPluginActiveVersionResponse.Builder response = SetPluginActiveVersionResponse.newBuilder();
+    try {
+      requireAdminRole();
+      PluginRuntimeStateService.ActivationResult result =
+          pluginRuntimeStateService.setActiveVersion(
+              new PluginRuntimeStateService.ActivationCommand(
+                  request.getTenantId(),
+                  request.getGameInstanceId(),
+                  request.getPluginId(),
+                  request.getTargetPluginVersionId(),
+                  request.getControlPlaneRequestId(),
+                  request.getActorPrincipal(),
+                  request.getReason()));
+      response
+          .setPreviousPluginVersionId(result.previousPluginVersionId())
+          .setActivePluginVersionId(result.activePluginVersionId())
+          .setControlPlaneRequestId(result.controlPlaneRequestId());
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.disablePlugin")
+  public void disablePlugin(
+      DisablePluginRequest request, StreamObserver<DisablePluginResponse> responseObserver) {
+    DisablePluginResponse.Builder response = DisablePluginResponse.newBuilder();
+    try {
+      requireAdminRole();
+      boolean success =
+          pluginRuntimeStateService.disable(
+              new PluginRuntimeStateService.PluginStateCommand(
+                  request.getTenantId(),
+                  request.getGameInstanceId(),
+                  request.getPluginId(),
+                  request.getControlPlaneRequestId(),
+                  request.getActorPrincipal(),
+                  request.getReason()));
+      response.setSuccess(success);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.drainPlugin")
+  public void drainPlugin(
+      DrainPluginRequest request, StreamObserver<DrainPluginResponse> responseObserver) {
+    DrainPluginResponse.Builder response = DrainPluginResponse.newBuilder();
+    try {
+      requireAdminRole();
+      boolean success =
+          pluginRuntimeStateService.drain(
+              new PluginRuntimeStateService.PluginStateCommand(
+                  request.getTenantId(),
+                  request.getGameInstanceId(),
+                  request.getPluginId(),
+                  request.getControlPlaneRequestId(),
+                  request.getActorPrincipal(),
+                  request.getReason()));
+      response.setSuccess(success);
     } catch (IllegalArgumentException ex) {
       response.setError(
           ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));

@@ -278,6 +278,8 @@ Plugins are controlled by operators via Logging & Admin, but the runtime registr
 
 #### `GetPluginStatus`
 
+Implementation note: the current Automation & Scripting implementation persists and serves the runtime registry for `(tenantId, gameInstanceId, pluginId)`, including active version, runtime state, status reason, and last-changed timestamp. Design-time publication eligibility, signature policy, base-version compatibility, and ability-digest validation still depend on the Game Design plugin publication read surface tracked in `08.4`; until that lands, this runtime API must be treated as the activation registry, not proof that publication validation is complete.
+
 Inputs:
 
 - `tenantId`

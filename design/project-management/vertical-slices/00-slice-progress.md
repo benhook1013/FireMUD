@@ -54,7 +54,7 @@ These are already partly real in code and should continue after the immediate ru
 7. [10.3 Script Execution Budgets, Quotas, and Isolation](./10.3-task-list-script-execution-budgets-quotas-and-isolation-vertical-slice.md)
    Remaining: terminal outbox retention cleanup and serialized work-item payload-size rejection are now live from the documented knobs; the next gaps are command-count output-budget enforcement, pin/signer freshness enforcement, admission-time versus execution-time budget charging, and dry-run/test isolation.
 8. [10.5 Scripting Operator Visibility and Runtime Convergence](./10.5-task-list-scripting-operator-visibility-and-runtime-convergence-vertical-slice.md)
-   Remaining: durable work/audit/cancel/claim state, terminal cleanup, and current script-patch status summaries now exist; the next gaps are richer drain/convergence/dead-letter reads, plugin runtime activation visibility, and freshness/staleness signaling.
+   Remaining: durable work/audit/cancel/claim state, terminal cleanup, current script-patch status summaries, and Automation-owned plugin runtime state transitions now exist; the next gaps are richer drain/convergence/dead-letter reads, Game Design-backed plugin publication/compatibility validation, and freshness/staleness signaling.
 9. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: grow from the current bounded `WHO` plus explicit/auto-AFK and canonical lifecycle substrate into the fuller activity model when that work becomes active.
 10. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
