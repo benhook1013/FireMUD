@@ -1,7 +1,9 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
@@ -28,24 +30,29 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name();
   private static final String OUTCOME_REGISTRY_REJECTED =
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name();
+  private static final String OUTCOME_OUTPUT_BUDGET_EXCEEDED =
+      TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED.name();
 
   private final ScriptEventIngressAuditRepository repository;
   private final ScriptEventBindingRepository bindingRepository;
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository eventAuditRepository;
   private final ScriptEventRegistryService eventRegistryService;
+  private final ScriptOutputProperties outputProperties;
 
   public ScriptEventIngressServiceImpl(
       ScriptEventIngressAuditRepository repository,
       ScriptEventBindingRepository bindingRepository,
       ScriptWorkItemRepository workItemRepository,
       ScriptEventAuditRepository eventAuditRepository,
-      ScriptEventRegistryService eventRegistryService) {
+      ScriptEventRegistryService eventRegistryService,
+      ScriptOutputProperties outputProperties) {
     this.repository = repository;
     this.bindingRepository = bindingRepository;
     this.workItemRepository = workItemRepository;
     this.eventAuditRepository = eventAuditRepository;
     this.eventRegistryService = eventRegistryService;
+    this.outputProperties = outputProperties;
   }
 
   @Override
@@ -97,6 +104,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     requiredText(request.getEventType(), "event_type");
     requiredText(request.getScriptPatchVersion(), "script_patch_version");
     requiredText(request.getScriptEventId(), "script_event_id");
+    if (request.getPayloadJson().getBytes(StandardCharsets.UTF_8).length
+        > outputProperties.getMaxSerializedWorkItemBytes()) {
+      return new TriggerAdmission(
+          false, OUTCOME_OUTPUT_BUDGET_EXCEEDED, "work_item_size_exceeded", 0);
+    }
 
     ScriptEventRegistryService.EventDefinition definition =
         eventRegistryService.getDefinition(request.getEventType(), schemaVersion).orElse(null);

@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
@@ -68,7 +69,8 @@ class ScriptEventIngressServiceImplTest {
             bindingRepository,
             workItemRepository,
             eventAuditRepository,
-            new BuiltInScriptEventRegistryService());
+            new BuiltInScriptEventRegistryService(),
+            outputProperties());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -118,7 +120,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptEventBindingRepository.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(ScriptEventAuditRepository.class),
-            new BuiltInScriptEventRegistryService());
+            new BuiltInScriptEventRegistryService(),
+            outputProperties());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -154,7 +157,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptEventBindingRepository.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(ScriptEventAuditRepository.class),
-            new BuiltInScriptEventRegistryService());
+            new BuiltInScriptEventRegistryService(),
+            outputProperties());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -175,6 +179,46 @@ class ScriptEventIngressServiceImplTest {
         .isEqualTo(
             TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
     assertThat(admission.reason()).isEqualTo("unauthorized_producer");
+    verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
+  }
+
+  @Test
+  void rejectsOversizedPayloadBeforeWorkItemPersistence() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptOutputProperties outputProperties = outputProperties();
+    outputProperties.setMaxSerializedWorkItemBytes(4);
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            Mockito.mock(ScriptEventBindingRepository.class),
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            new BuiltInScriptEventRegistryService(),
+            outputProperties);
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            TriggerScriptEventRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-1")
+                .setPayloadJson("{\"too\":\"large\"}")
+                .build());
+
+    assertThat(admission.admitted()).isFalse();
+    assertThat(admission.outcome())
+        .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED.name());
+    assertThat(admission.reason()).isEqualTo("work_item_size_exceeded");
+    verify(workItemRepository, never()).save(Mockito.any());
     verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
   }
 
@@ -208,7 +252,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptEventBindingRepository.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(ScriptEventAuditRepository.class),
-            new BuiltInScriptEventRegistryService());
+            new BuiltInScriptEventRegistryService(),
+            outputProperties());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -239,7 +284,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptEventBindingRepository.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(ScriptEventAuditRepository.class),
-            new BuiltInScriptEventRegistryService());
+            new BuiltInScriptEventRegistryService(),
+            outputProperties());
 
     assertThrows(
         IllegalArgumentException.class,
@@ -260,5 +306,9 @@ class ScriptEventIngressServiceImplTest {
     binding.setTargetScopeId(scopeId);
     binding.setEnabled(true);
     return binding;
+  }
+
+  private static ScriptOutputProperties outputProperties() {
+    return new ScriptOutputProperties();
   }
 }
