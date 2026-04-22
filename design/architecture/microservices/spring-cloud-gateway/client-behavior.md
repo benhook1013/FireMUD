@@ -60,7 +60,7 @@ Gateway routes strip the first two path segments before forwarding these REST fa
 These public prefixes are route families, not blanket permission to expose every service-local path under the same subtree:
 
 - owning service contracts must publish the externally allowed route inventory for their family;
-- internal-only service-local subtrees such as `/internal/**` remain internal-only even when the service has a public `/api/{service}/**` prefix; and
+- internal-only service-local subtrees such as `/internal/**` remain internal-only even when the service has a public `/api/{service}/**` prefix, and the gateway now blocks `/api/{public-family}/internal/**` requests instead of forwarding them; and
 - gateway config and filters must converge on deny-by-default behavior for undocumented internal subtrees instead of treating the coarse family prefix as the final exposure contract.
 
 Current route YAML still forwards coarse `/api/{service}/**` families. Treat that as an implementation gap to converge, not as permission for external clients to rely on undocumented service-local internal paths.
