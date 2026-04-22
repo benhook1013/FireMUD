@@ -44,7 +44,7 @@ The tick system adopts the same **coordination timeline** concept as the Redis a
   - They belong to the current `region_epoch`.
   - They carry eligibility/order metadata that later maps selected work into a specific `(region_epoch, tickId)` when the tick batch is formed.
   - Reset/replay tooling must therefore distinguish “epoch-scoped source state” from “tick-scoped staged state” rather than treating every region key as already owned by one committed or in-flight tick.
-- Tenant-scoped coordination such as gameplay session keys (`session:game:<tenantId>:<gameInstanceId>:<sessionId>`) live on Coordination Redis but are **not** bound to a single region epoch; they follow the authentication/reconnection contracts and reset behavior described in the Redis hub and usage/profile docs rather than the per-region epoch model.
+- Tenant-scoped coordination such as gameplay session keys (`session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`) live on Coordination Redis but are **not** bound to a single region epoch; they follow the authentication/reconnection contracts and reset behavior described in the Redis hub and usage/profile docs rather than the per-region epoch model.
 - When a scoped coordination reset occurs (or a topology/maintenance operation explicitly severs the old region timeline), the tick control plane bumps `region_epoch` and ensures that subsequent tick work for that `<tenantId, regionId>` is scheduled only on the new timeline; survivors from older epochs in region-scoped Redis keys are treated as stale and either ignored or explicitly reconciled via the tick effect ledger and reset tooling.
 
 The main tick document contains the detailed rules and Redis key shapes behind each of these points.

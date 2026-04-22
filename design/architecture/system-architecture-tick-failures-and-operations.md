@@ -444,7 +444,7 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
 - **Region-scoped reset**
   - Timeline impact:
     - For the affected `<tenantId, regionId>`, region-scoped tick coordination keys for the current `region_epoch` (for example `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`) are dropped according to the reset policy matrix.
-    - Tenant-scoped coordination such as `session:game:<tenantId>:<gameInstanceId>:<sessionId>` and current `sessionctx:*` context remains in place unless a broader tenant- or cluster-scoped reset is explicitly invoked; region resets are not expected to evict sessions.
+    - Tenant-scoped coordination such as `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` and current `sessionctx:*` context remains in place unless a broader tenant- or cluster-scoped reset is explicitly invoked; region resets are not expected to evict sessions.
     - Region-authoritative `tick:{tenantRegionTag}:session-binding:*` keys are still region-scoped and are dropped with the rest of `tick:{tenantRegionTag}:*`; preserved sessions must be rebound through the session-to-region bridge before normal command intake resumes.
     - A new `region_epoch` is established; subsequent ticks for that region advance on the **new (bumped) `region_epoch`** starting at `tickId=0` on the coordination timeline described in `system-architecture-redis.md`.
   - Ledger behavior:

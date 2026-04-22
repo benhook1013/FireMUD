@@ -135,7 +135,7 @@ To keep Coordination Redis predictable:
   - hard safety cap around 50–100 commands per entity queue
 - `timer:{tenantRegionTag}`
   - hard safety cap around a few thousand to ten thousand timers per region depending on deployment
-- `session:game:<tenantId>:<gameInstanceId>:<sessionId>`
+- `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`
   - target serialized session value size around 16–32 KB
 
 Exceeding a budget must result in explicit logs, metrics, and controlled failure modes rather than silent degradation or unbounded growth.
