@@ -70,7 +70,6 @@ jobs:
               "gradle/",
               "protos/",
               "docker/",
-              "dev-tools/",
               "services/account-service/",
               "services/automation-scripting-service/",
               "services/common-data-runtime/",
@@ -97,6 +96,12 @@ jobs:
               ".github/workflows/smoke.yml",
               ".github/workflows/smoke-full.yml",
               ".github/workflows/runtime-images.yml",
+              "dev-tools/build-compose-service-jars.sh",
+              "dev-tools/generate-dev-certs.sh",
+              "dev-tools/verify-compose-health.sh",
+              "dev-tools/verify-fresh-bootstrap.sh",
+              "dev-tools/verify-restart-state.sh",
+              "dev-tools/verify-smoke-images.sh",
             ]);
 
             const nonDocFiles = files.filter((file) => !docsOnlyPredicate(file));

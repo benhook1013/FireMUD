@@ -3,7 +3,7 @@ kind: NetworkPolicy
 metadata:
   namespace: firemud
   name: account-service-egress
-# Release names "firemud-postgresql" and "firemud-redis" must match the
+# Release names for PostgreSQL and the two Redis roles must match the
 # corresponding Helm deployments.
 spec:
   podSelector:
@@ -22,7 +22,10 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: firemud-redis
+              app: redis-coord
+        - podSelector:
+            matchLabels:
+              app: redis-cache
       ports:
         - protocol: TCP
           port: 6379

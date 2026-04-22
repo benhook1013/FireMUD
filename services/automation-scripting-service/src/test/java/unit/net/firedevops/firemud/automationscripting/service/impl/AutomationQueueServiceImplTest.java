@@ -6,11 +6,14 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
+import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
+import net.firedevops.firemud.automationscripting.service.AutomationQueueWorkItemPointer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import tools.jackson.databind.ObjectMapper;
 
 @SuppressWarnings("unchecked")
 class AutomationQueueServiceImplTest {
@@ -23,22 +26,45 @@ class AutomationQueueServiceImplTest {
     redisTemplate = mock(RedisTemplate.class);
     listOps = mock(ListOperations.class);
     when(redisTemplate.opsForList()).thenReturn(listOps);
-    service = new AutomationQueueServiceImpl(redisTemplate, new SimpleMeterRegistry());
+    service =
+        new AutomationQueueServiceImpl(
+            redisTemplate, new SimpleMeterRegistry(), new ObjectMapper());
     ((AutomationQueueServiceImpl) service).init();
   }
 
   @Test
-  void enqueueEventPushesToRedis() {
-    service.enqueueEvent("tenant-1", "instance-1", "entity-1", "evt");
+  void enqueueWorkItemPushesVersionedPointerToRedis() {
+    ScriptWorkItem workItem = new ScriptWorkItem();
+    workItem.setId(42L);
+    workItem.setTenantId("tenant-1");
+    workItem.setGameInstanceId("instance-1");
+    workItem.setEntityId("entity-1");
+    workItem.setScriptPatchVersion("patch-1");
+    workItem.setScriptEventId("event-1");
+
+    service.enqueueWorkItem(workItem);
+
     verify(listOps)
-        .rightPush("automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1", "evt");
+        .rightPush(
+            "automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1",
+            "{\"schemaVersion\":1,\"outboxWorkItemId\":42,\"gameInstanceId\":\"instance-1\",\"scriptPatchVersion\":\"patch-1\",\"scriptEventId\":\"event-1\"}");
   }
 
   @Test
-  void drainEventsRetrievesAndDeletes() {
+  void drainWorkItemsRetrievesDeserializedPointersAndDeletesQueue() {
     when(listOps.range("automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1", 0, -1))
-        .thenReturn(List.of("evt1", "evt2"));
-    service.drainEvents("tenant-1", "instance-1", "entity-1");
+        .thenReturn(
+            List.of(
+                "{\"schemaVersion\":1,\"outboxWorkItemId\":41,\"gameInstanceId\":\"instance-1\",\"scriptPatchVersion\":\"patch-1\",\"scriptEventId\":\"event-1\"}",
+                "{\"schemaVersion\":1,\"outboxWorkItemId\":42,\"gameInstanceId\":\"instance-1\",\"scriptPatchVersion\":\"patch-2\",\"scriptEventId\":\"event-2\"}"));
+
+    List<AutomationQueueWorkItemPointer> drained =
+        service.drainWorkItems("tenant-1", "instance-1", "entity-1");
+
+    org.assertj.core.api.Assertions.assertThat(drained)
+        .containsExactly(
+            new AutomationQueueWorkItemPointer(1, 41L, "instance-1", "patch-1", "event-1"),
+            new AutomationQueueWorkItemPointer(1, 42L, "instance-1", "patch-2", "event-2"));
     verify(redisTemplate).delete("automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1");
   }
 }
