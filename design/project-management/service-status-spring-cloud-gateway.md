@@ -6,7 +6,7 @@
 - Lightweight gateway stub support exists for cross-service gameplay testing.
 - Dynamic route management surfaces and baseline route configuration are present.
 - The canonical `/api/session/**` family now routes as HTTP control-plane traffic rather than through a `ws://` upstream, keeping the live gateway config aligned with the documented `/ws/game/**` versus `/api/session/**` split.
-- Public `/api/{service}/internal/**` subtrees are now blocked at the gateway boundary instead of being forwarded by the coarse public family matcher.
+- Public `/api/{service}/internal/**` and `/api/{service}/actuator/**` subtrees are now blocked at the gateway boundary instead of being forwarded by the coarse public family matcher.
 
 ## Current Role In The Platform
 

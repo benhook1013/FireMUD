@@ -28,6 +28,19 @@ class PublicInternalRouteBlockFilterTest {
   }
 
   @Test
+  void blocksActuatorSubtreeUnderPublicApiFamily() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/session/actuator/settings/effective").build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  @Test
   void allowsNormalPublicApiRoute() {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(MockServerHttpRequest.get("/api/account/auth/login").build());

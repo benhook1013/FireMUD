@@ -16,6 +16,7 @@ import reactor.core.publisher.Mono;
 public class PublicInternalRouteBlockFilter implements WebFilter, Ordered {
   private static final Set<String> PUBLIC_FAMILIES =
       Set.of("account", "admin", "design", "session", "social");
+  private static final Set<String> BLOCKED_SERVICE_LOCAL_ROOTS = Set.of("internal", "actuator");
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
@@ -39,6 +40,6 @@ public class PublicInternalRouteBlockFilter implements WebFilter, Ordered {
     String[] segments = path.split("/");
     return segments.length >= 4
         && PUBLIC_FAMILIES.contains(segments[2])
-        && "internal".equals(segments[3]);
+        && BLOCKED_SERVICE_LOCAL_ROOTS.contains(segments[3]);
   }
 }
