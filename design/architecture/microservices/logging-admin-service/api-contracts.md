@@ -21,7 +21,7 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 - `DELETE /quota-overrides/{scopeType}/{scopeId}/{quotaKey}` – operator-facing quota override removal using the same audit and forwarding rules as creation/update.
 - `POST /tick-remediation/pause` – operator-facing scoped tick pause request that forwards to Game Session control-plane, records actor identity and reason, and never mutates Redis directly.
 - `POST /tick-remediation/resume` – operator-facing scoped tick resume request that forwards to Game Session control-plane with the same audit requirements.
-- `POST /tick-remediation/remediate` – operator-facing scoped remediation request for coordination/tick recovery. Logging & Admin owns request validation, operator intent, and audit; Game Session remains the only runtime state-mutation owner.
+- `POST /tick-remediation/remediate` – reserved future operator-facing scoped remediation request for coordination/tick recovery. This remains deferred until Game Session exposes a canonical owner-side remediation RPC; Logging & Admin must not invent direct Redis mutation or a fake remediation contract in the meantime.
 
 ```bash
 curl http://localhost:8080/ping

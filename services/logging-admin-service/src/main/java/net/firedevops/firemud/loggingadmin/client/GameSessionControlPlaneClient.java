@@ -17,8 +17,12 @@ import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
+import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
+import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
+import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
+import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import org.springframework.stereotype.Component;
@@ -87,5 +91,13 @@ public class GameSessionControlPlaneClient
   public GetPreparedVersionUpgradeResponse getPreparedVersionUpgrade(
       GetPreparedVersionUpgradeRequest request) {
     return stub().getPreparedVersionUpgrade(request);
+  }
+
+  public PauseTicksForScopeResponse pauseTicksForScope(PauseTicksForScopeRequest request) {
+    return stub().pauseTicksForScope(request);
+  }
+
+  public ResumeTicksForScopeResponse resumeTicksForScope(ResumeTicksForScopeRequest request) {
+    return stub().resumeTicksForScope(request);
   }
 }
