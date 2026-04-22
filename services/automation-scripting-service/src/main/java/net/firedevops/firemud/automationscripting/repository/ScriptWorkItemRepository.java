@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.repository;
 import java.util.Collection;
 import java.util.List;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -27,4 +28,6 @@ public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, 
 
   List<ScriptWorkItem> findByTenantIdAndScriptPatchVersionAndStatusInOrderByCreatedAtAscIdAsc(
       String tenantId, String scriptPatchVersion, Collection<String> statuses);
+
+  List<ScriptWorkItem> findByStatusOrderByCreatedAtAscIdAsc(String status, Pageable pageable);
 }

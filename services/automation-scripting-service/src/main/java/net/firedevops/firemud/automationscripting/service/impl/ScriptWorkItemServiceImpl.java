@@ -6,12 +6,16 @@ import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
-  private static final List<String> CANCELABLE_STATUSES = List.of("PENDING_EVALUATION");
+  private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
+  private static final String STATUS_EVALUATING = "EVALUATING";
+  private static final String STATUS_CANCELED = "CANCELED";
+  private static final List<String> CANCELABLE_STATUSES = List.of(STATUS_PENDING_EVALUATION);
 
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository auditRepository;
@@ -47,8 +51,26 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     return candidates.size();
   }
 
+  @Override
+  @Transactional
+  public List<ScriptWorkItem> claimPendingForEvaluation(int maxItems) {
+    if (maxItems <= 0) {
+      throw new IllegalArgumentException("max_items must be positive");
+    }
+    Instant now = Instant.now();
+    List<ScriptWorkItem> items =
+        workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
+            STATUS_PENDING_EVALUATION, PageRequest.of(0, maxItems));
+    items.forEach(
+        item -> {
+          item.setStatus(STATUS_EVALUATING);
+          item.setUpdatedAt(now);
+        });
+    return List.copyOf(workItemRepository.saveAll(items));
+  }
+
   private void cancel(ScriptWorkItem item, String reason, Instant now) {
-    item.setStatus("CANCELED");
+    item.setStatus(STATUS_CANCELED);
     item.setCancelReason(reason);
     item.setUpdatedAt(now);
     auditRepository
