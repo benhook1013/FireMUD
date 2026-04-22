@@ -8,6 +8,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.service.PingService;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
@@ -16,6 +17,8 @@ import net.firedevops.firemud.automationscripting.service.ScriptEventIngressServ
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
 import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestResponse;
+import net.firedevops.firemud.automationscripting.v1.GetScriptStatusRequest;
+import net.firedevops.firemud.automationscripting.v1.GetScriptStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.PingRequest;
 import net.firedevops.firemud.automationscripting.v1.PingResponse;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
@@ -59,6 +62,7 @@ class AutomationScriptingGrpcServiceTest {
             scriptDesignDigestService,
             versionService,
             ingressService,
+            Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
             new SimpleMeterRegistry());
 
@@ -99,6 +103,7 @@ class AutomationScriptingGrpcServiceTest {
             scriptDesignDigestService,
             versionService,
             ingressService,
+            Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
             new SimpleMeterRegistry());
 
@@ -138,6 +143,7 @@ class AutomationScriptingGrpcServiceTest {
             scriptDesignDigestService,
             versionService,
             ingressService,
+            Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
             new SimpleMeterRegistry());
 
@@ -179,6 +185,7 @@ class AutomationScriptingGrpcServiceTest {
             scriptDesignDigestService,
             versionService,
             ingressService,
+            Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
             new SimpleMeterRegistry());
 
@@ -221,6 +228,7 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptDesignDigestService.class),
             Mockito.mock(ScriptVersionService.class),
             ingressService,
+            Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
             new SimpleMeterRegistry());
 
@@ -258,5 +266,44 @@ class AutomationScriptingGrpcServiceTest {
         TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED,
         ref.get().getAdmissionOutcome());
     assertEquals(2, ref.get().getResolvedHandlerCount());
+  }
+
+  @Test
+  void getScriptStatusUsesWorkItemOutbox() {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    Mockito.when(
+            workItemRepository.existsByTenantIdAndScriptIdAndStatusIn(
+                "1", "guard-script", List.of("PENDING_EVALUATION")))
+        .thenReturn(true);
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            Mockito.mock(ScriptVersionService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            workItemRepository,
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry());
+    AtomicReference<GetScriptStatusResponse> ref = new AtomicReference<>();
+
+    service.getScriptStatus(
+        GetScriptStatusRequest.newBuilder().setTenantId("1").setScriptName("guard-script").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetScriptStatusResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(true, ref.get().getQueued());
+    assertEquals(false, ref.get().getRunning());
   }
 }

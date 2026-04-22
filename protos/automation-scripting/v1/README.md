@@ -43,12 +43,12 @@ The proto files in this directory define several RPCs consumed by domain service
   - It also exposes plugin lifecycle APIs (`GetPluginStatus`, `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`) for operator orchestration via Logging & Admin.
 - **Design-time APIs**
   - `UpdateScript` – uploads or replaces a script definition and its event bindings for later use as part of the Game Design → Automation & Scripting publish Saga.
-  - `GetScriptStatus` – queries whether a script is queued or running for a given entity.
+  - `GetScriptStatus` – queries whether a script has queued or running work in the durable script work-item outbox.
   - `NotifyScriptVersionUpdate` – informs the service that a new `script_patch_version` is available; the service reloads affected scripts, executes any required `onLoad` initialization, and updates its runtime registry.
 - **Event ingress APIs**
   - RPCs such as `TriggerScriptEvent` (or the actual event-ingress names defined here) are called by the Game Session Service and other domain services to deliver script events. Requests carry `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch` (when tick-aligned), `entityId`, `scriptEventId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `readSnapshotToken` when required by the registry, and an event payload envelope. For plugin triggers, requests also carry `pluginId` and `pluginVersionId`.
   - Event-ingress RPCs are **idempotent** with respect to Trigger Identity (including `scriptEventId`). The Automation & Scripting Service must deduplicate repeated deliveries using the rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication` and `design/architecture/system-architecture-scripting-contracts.md`.
-  - A successful event-scope admission returns `resolvedHandlerCount` so callers and smoke tests can distinguish "accepted but no handlers matched" from "accepted and fan-out found concrete script handlers"; per-handler success or failure remains asynchronous and is not summarized by the unary response.
+  - A successful event-scope admission returns `resolvedHandlerCount` so callers and smoke tests can distinguish "accepted but no handlers matched" from "accepted and fan-out found concrete script handlers"; matched handlers are materialized as durable `script_work_items` for later evaluation, and per-handler success or failure remains asynchronous rather than summarized by the unary response.
 
 For metric names, outcomes, and operational semantics of these RPCs, see:
 

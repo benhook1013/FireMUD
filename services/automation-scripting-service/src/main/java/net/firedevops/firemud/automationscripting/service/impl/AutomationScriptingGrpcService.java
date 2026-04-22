@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Objects;
 import net.firedevops.firemud.automationscripting.dto.ScriptDefinitionDto;
 import net.firedevops.firemud.automationscripting.model.FormationType;
+import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.service.PingService;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
@@ -52,6 +53,7 @@ public class AutomationScriptingGrpcService
   private final ScriptDesignDigestService scriptDesignDigestService;
   private final ScriptVersionService scriptVersionService;
   private final ScriptEventIngressService scriptEventIngressService;
+  private final ScriptWorkItemRepository workItemRepository;
   private final NpcFormationService formationService;
   private final MeterRegistry meterRegistry;
 
@@ -61,6 +63,7 @@ public class AutomationScriptingGrpcService
       ScriptDesignDigestService scriptDesignDigestService,
       ScriptVersionService scriptVersionService,
       ScriptEventIngressService scriptEventIngressService,
+      ScriptWorkItemRepository workItemRepository,
       NpcFormationService formationService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
@@ -68,6 +71,7 @@ public class AutomationScriptingGrpcService
     this.scriptDesignDigestService = scriptDesignDigestService;
     this.scriptVersionService = scriptVersionService;
     this.scriptEventIngressService = Objects.requireNonNull(scriptEventIngressService);
+    this.workItemRepository = Objects.requireNonNull(workItemRepository);
     this.formationService = Objects.requireNonNull(formationService);
     this.meterRegistry = meterRegistry;
   }
@@ -398,8 +402,13 @@ public class AutomationScriptingGrpcService
     GetScriptStatusResponse.Builder response = GetScriptStatusResponse.newBuilder();
     try {
       requireAdminRole();
-      // Placeholder implementation; scripts execute asynchronously
-      response.setQueued(false).setRunning(false);
+      response
+          .setQueued(
+              workItemRepository.existsByTenantIdAndScriptIdAndStatusIn(
+                  request.getTenantId(), request.getScriptName(), List.of("PENDING_EVALUATION")))
+          .setRunning(
+              workItemRepository.existsByTenantIdAndScriptIdAndStatusIn(
+                  request.getTenantId(), request.getScriptName(), List.of("EVALUATING")));
     } catch (AdminAuthorizationException ex) {
       response.setError(authorizationError("GetScriptStatus", ex));
     }

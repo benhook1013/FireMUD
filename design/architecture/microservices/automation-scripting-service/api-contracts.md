@@ -14,7 +14,7 @@ curl http://localhost:8080/ping
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `automation_scripting_service.proto`.
 - `UpdateScript` – bootstrap/dev-only script upload path. Not part of the production runtime publish contract; production rollout uses `PublishScriptPatchVersion` plus `NotifyScriptVersionUpdate` lifecycle gates. When used, it replaces the script definition and its event bindings for that `<tenantId, scriptPatchVersion, scriptId>` tuple in one operation.
-- `GetScriptStatus` – queries whether a script is queued or running for a given entity.
+- `GetScriptStatus` – queries whether a script has durable queued work (`PENDING_EVALUATION`) or active evaluation work (`EVALUATING`) in the script work-item outbox.
 - `NotifyScriptVersionUpdate` – informs the service that a new `script_patch_version` is available for tenant-readiness ingestion; the service validates and stages the patch for `PENDING_VALIDATION -> ONLOAD_RUNNING -> READY/FAILED/SUPERSEDED`, while running instances reload only after a later pin change to that tenant-`READY` patch.
 - Event-ingress RPCs such as `TriggerScriptEvent` or a batch equivalent deliver script events from domain services and must carry runtime scope, idempotency, and patch-selection fields as described below.
 - `GetDraftDesignDigest` – returns publish-gating digest for full publishes and script-patch publishes using a typed scope selector `oneof { versionId, scriptPatchVersion }`.
@@ -119,7 +119,7 @@ During operator rollback pause (`PAUSED_FOR_ROLLBACK`), ingress must return an e
 - `admissionReason=rollback_pause`
 - event-scope identity fields from the request, without inventing a synthetic `scriptId`
 
-These ingress response fields are event-scope only. A successful ingress admission means the request was accepted for handler resolution; it does not mean every resolved script or plugin handler later succeeded. `resolvedHandlerCount` reports only how many enabled bindings matched the admitted event scope. Per-handler outcomes remain authoritative in `script_event_audit`.
+These ingress response fields are event-scope only. A successful ingress admission means the request was accepted for handler resolution; it does not mean every resolved script or plugin handler later succeeded. `resolvedHandlerCount` reports only how many enabled bindings matched the admitted event scope and were materialized into durable `script_work_items` for later evaluation. Per-handler outcomes remain authoritative in `script_event_audit`.
 
 Event-scope admission outcomes are intentionally limited to ingress-time fences such as reload/rollback backpressure, version visibility, pin visibility, signer-policy visibility, and event-registry validation. These pre-resolution outcomes are recorded in `script_event_ingress_audit`; handler-scoped outcomes such as `quota_denied`, `script_disabled`, `plugin_disabled`, and `plugin_component_blocked` are recorded only after binding resolution in `script_event_audit`.
 

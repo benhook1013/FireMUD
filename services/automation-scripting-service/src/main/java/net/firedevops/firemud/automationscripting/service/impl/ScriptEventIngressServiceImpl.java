@@ -1,9 +1,12 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import java.util.List;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
+import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
@@ -22,14 +25,17 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private final ScriptEventIngressAuditRepository repository;
   private final ScriptEventBindingRepository bindingRepository;
+  private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventRegistryService eventRegistryService;
 
   public ScriptEventIngressServiceImpl(
       ScriptEventIngressAuditRepository repository,
       ScriptEventBindingRepository bindingRepository,
+      ScriptWorkItemRepository workItemRepository,
       ScriptEventRegistryService eventRegistryService) {
     this.repository = repository;
     this.bindingRepository = bindingRepository;
+    this.workItemRepository = workItemRepository;
     this.eventRegistryService = eventRegistryService;
   }
 
@@ -114,19 +120,52 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private TriggerAdmission admissionWithHandlers(
       TriggerScriptEventRequest request, String schemaVersion) {
     long tenantKey = Long.parseLong(request.getTenantId());
-    int handlerCount =
-        (int)
-            bindingRepository
-                .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
-                    tenantKey,
-                    request.getScriptPatchVersion(),
-                    request.getEventType(),
-                    schemaVersion)
-                .stream()
-                .filter(binding -> matchesScope(binding, request))
-                .count();
-    String reason = handlerCount == 0 ? "admitted_no_handlers" : "admitted_handlers_resolved";
-    return new TriggerAdmission(true, OUTCOME_ADMITTED, reason, handlerCount);
+    List<ScriptEventBinding> handlers =
+        bindingRepository
+            .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
+                tenantKey, request.getScriptPatchVersion(), request.getEventType(), schemaVersion)
+            .stream()
+            .filter(binding -> matchesScope(binding, request))
+            .toList();
+    handlers.forEach(binding -> persistWorkItem(request, schemaVersion, binding));
+    String reason = handlers.isEmpty() ? "admitted_no_handlers" : "admitted_handlers_resolved";
+    return new TriggerAdmission(true, OUTCOME_ADMITTED, reason, handlers.size());
+  }
+
+  private void persistWorkItem(
+      TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
+    if (workItemRepository
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            request.getTenantId(),
+            normalize(request.getGameInstanceId()),
+            normalize(request.getRegionId()),
+            request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
+            normalize(request.getEntityId()),
+            binding.getScriptId(),
+            request.getEventType(),
+            schemaVersion,
+            request.getScriptPatchVersion(),
+            request.getScriptEventId(),
+            request.getIsDryRun())) {
+      return;
+    }
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setTenantId(request.getTenantId());
+    item.setGameInstanceId(normalize(request.getGameInstanceId()));
+    item.setRegionId(normalize(request.getRegionId()));
+    item.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L);
+    item.setEntityId(normalize(request.getEntityId()));
+    item.setScriptId(binding.getScriptId());
+    item.setEventType(request.getEventType());
+    item.setEventSchemaVersion(schemaVersion);
+    item.setScriptPatchVersion(request.getScriptPatchVersion());
+    item.setScriptEventId(request.getScriptEventId());
+    item.setDryRun(request.getIsDryRun());
+    item.setSourceService(resolveSourceService());
+    item.setTriggerMode(request.getTriggerMode().name());
+    item.setReadSnapshotToken(normalize(request.getReadSnapshotToken()));
+    item.setPayloadJson(normalize(request.getPayloadJson()));
+    workItemRepository.save(item);
   }
 
   private boolean matchesScope(ScriptEventBinding binding, TriggerScriptEventRequest request) {

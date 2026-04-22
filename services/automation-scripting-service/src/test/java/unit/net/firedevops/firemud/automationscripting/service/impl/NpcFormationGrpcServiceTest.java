@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.model.FormationType;
+import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.service.PingService;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
@@ -127,6 +128,7 @@ class NpcFormationGrpcServiceTest {
         Mockito.mock(ScriptDesignDigestService.class),
         Mockito.mock(ScriptVersionService.class),
         Mockito.mock(ScriptEventIngressService.class),
+        Mockito.mock(ScriptWorkItemRepository.class),
         npcService,
         new SimpleMeterRegistry());
   }
