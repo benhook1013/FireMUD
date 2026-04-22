@@ -17,6 +17,9 @@ public interface ScriptWorkItemService {
   List<PatchStatusSummary> listPatchStatuses(
       String tenantId, ScriptPatchStatus status, long changedAfterMs, long changedBeforeMs);
 
+  List<DeadLetterSummary> listDeadLetters(
+      String tenantId, String gameInstanceId, String scriptPatchVersion, int limit);
+
   record CancelPendingForPatchCommand(
       String tenantId,
       String scriptPatchVersion,
@@ -38,4 +41,20 @@ public interface ScriptWorkItemService {
       ScriptPatchStatus status,
       String statusReason,
       long lastChangedAtMs) {}
+
+  record DeadLetterSummary(
+      String workItemId,
+      String tenantId,
+      String gameInstanceId,
+      String regionId,
+      long regionEpoch,
+      String entityId,
+      String scriptId,
+      String eventType,
+      String scriptPatchVersion,
+      String scriptEventId,
+      String status,
+      String reason,
+      long createdAtMs,
+      long updatedAtMs) {}
 }

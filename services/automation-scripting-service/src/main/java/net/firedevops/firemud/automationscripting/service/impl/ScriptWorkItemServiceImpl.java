@@ -134,6 +134,30 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         .toList();
   }
 
+  @Override
+  @Transactional(readOnly = true)
+  public List<DeadLetterSummary> listDeadLetters(
+      String tenantId, String gameInstanceId, String scriptPatchVersion, int limit) {
+    requireText(tenantId, "tenant_id");
+    int boundedLimit = Math.min(Math.max(limit <= 0 ? 50 : limit, 1), 500);
+    return workItemRepository
+        .findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
+            tenantId, STATUS_DEAD_LETTERED, PageRequest.of(0, boundedLimit))
+        .stream()
+        .filter(
+            item ->
+                gameInstanceId == null
+                    || gameInstanceId.isBlank()
+                    || item.getGameInstanceId().equals(gameInstanceId))
+        .filter(
+            item ->
+                scriptPatchVersion == null
+                    || scriptPatchVersion.isBlank()
+                    || item.getScriptPatchVersion().equals(scriptPatchVersion))
+        .map(ScriptWorkItemServiceImpl::toDeadLetterSummary)
+        .toList();
+  }
+
   private Optional<PatchStatusSummary> summarize(
       String scriptPatchVersion, List<ScriptWorkItem> workItems) {
     if (workItems.isEmpty()) {
@@ -177,6 +201,24 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       case SCRIPT_PATCH_STATUS_READY -> "runtime_work_terminal";
       default -> "runtime_status_unknown";
     };
+  }
+
+  private static DeadLetterSummary toDeadLetterSummary(ScriptWorkItem item) {
+    return new DeadLetterSummary(
+        item.getId().toString(),
+        item.getTenantId(),
+        item.getGameInstanceId(),
+        item.getRegionId(),
+        item.getRegionEpoch(),
+        item.getEntityId(),
+        item.getScriptId(),
+        item.getEventType(),
+        item.getScriptPatchVersion(),
+        item.getScriptEventId(),
+        item.getStatus(),
+        item.getCancelReason() == null ? "" : item.getCancelReason(),
+        item.getCreatedAt().toEpochMilli(),
+        item.getUpdatedAt().toEpochMilli());
   }
 
   private long deleteExcessDeadLetters() {

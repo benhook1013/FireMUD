@@ -184,6 +184,37 @@ class ScriptWorkItemServiceImplTest {
     assertThat(statuses.get(0).status()).isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
   }
 
+  @Test
+  void listsDeadLettersWithBoundedFilters() {
+    ScriptWorkItem deadLetter = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    deadLetter.setId(99L);
+    deadLetter.setTenantId("1");
+    deadLetter.setGameInstanceId("game-1");
+    deadLetter.setRegionId("region-1");
+    deadLetter.setRegionEpoch(12L);
+    deadLetter.setEntityId("entity-1");
+    deadLetter.setScriptId("script-1");
+    deadLetter.setEventType("onCommand");
+    deadLetter.setScriptEventId("event-1");
+    deadLetter.setCancelReason("STALE_TIMELINE");
+    deadLetter.setCreatedAt(Instant.ofEpochMilli(100));
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(workItemRepository.findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
+            "1", "DEAD_LETTERED", PageRequest.of(0, 25)))
+        .thenReturn(List.of(deadLetter));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, outboxProperties());
+
+    List<ScriptWorkItemService.DeadLetterSummary> deadLetters =
+        service.listDeadLetters("1", "game-1", "patch-1", 25);
+
+    assertThat(deadLetters).hasSize(1);
+    assertThat(deadLetters.get(0).workItemId()).isEqualTo("99");
+    assertThat(deadLetters.get(0).reason()).isEqualTo("STALE_TIMELINE");
+    assertThat(deadLetters.get(0).updatedAtMs()).isEqualTo(300L);
+  }
+
   private static ScriptWorkItem workItem(String patchVersion, String status, Instant updatedAt) {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setScriptPatchVersion(patchVersion);

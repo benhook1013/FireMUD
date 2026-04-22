@@ -21,6 +21,8 @@ import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionReq
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
@@ -179,6 +181,50 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getPatches(0).getScriptPatchVersion()).isEqualTo("patch-2");
     assertThat(ref.get().getPatches(0).getStatus())
         .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
+  }
+
+  @Test
+  void listsScriptDeadLettersFromWorkItemReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.listDeadLetters("1", "game-1", "patch-1", 25))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.DeadLetterSummary(
+                    "99",
+                    "1",
+                    "game-1",
+                    "region-1",
+                    12L,
+                    "entity-1",
+                    "script-1",
+                    "onCommand",
+                    "patch-1",
+                    "event-1",
+                    "DEAD_LETTERED",
+                    "STALE_TIMELINE",
+                    100L,
+                    200L)));
+    AutomationScriptingControlPlaneGrpcService service =
+        new AutomationScriptingControlPlaneGrpcService(
+            new BuiltInScriptEventRegistryService(),
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class));
+    AtomicReference<ListScriptDeadLettersResponse> ref = new AtomicReference<>();
+
+    service.listScriptDeadLetters(
+        ListScriptDeadLettersRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setLimit(25)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getDeadLettersList()).hasSize(1);
+    assertThat(ref.get().getDeadLetters(0).getWorkItemId()).isEqualTo("99");
+    assertThat(ref.get().getDeadLetters(0).getReason()).isEqualTo("STALE_TIMELINE");
   }
 
   @Test

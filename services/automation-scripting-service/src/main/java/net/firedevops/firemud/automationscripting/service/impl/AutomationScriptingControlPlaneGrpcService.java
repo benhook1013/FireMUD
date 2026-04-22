@@ -19,10 +19,13 @@ import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionReq
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
+import net.firedevops.firemud.automationscripting.v1.ScriptDeadLetterEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptEventDefinition;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatusEntry;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionRequest;
@@ -143,6 +146,33 @@ public final class AutomationScriptingControlPlaneGrpcService
           .stream()
           .map(AutomationScriptingControlPlaneGrpcService::toProto)
           .forEach(response::addPatches);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.listScriptDeadLetters")
+  public void listScriptDeadLetters(
+      ListScriptDeadLettersRequest request,
+      StreamObserver<ListScriptDeadLettersResponse> responseObserver) {
+    ListScriptDeadLettersResponse.Builder response = ListScriptDeadLettersResponse.newBuilder();
+    try {
+      requireAdminRole();
+      workItemService
+          .listDeadLetters(
+              request.getTenantId(),
+              request.getGameInstanceId(),
+              request.getScriptPatchVersion(),
+              request.getLimit())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addDeadLetters);
     } catch (IllegalArgumentException ex) {
       response.setError(
           ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
@@ -340,6 +370,25 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setStatus(summary.status())
         .setStatusReason(summary.statusReason())
         .setLastChangedAtMs(summary.lastChangedAtMs())
+        .build();
+  }
+
+  private static ScriptDeadLetterEntry toProto(ScriptWorkItemService.DeadLetterSummary summary) {
+    return ScriptDeadLetterEntry.newBuilder()
+        .setWorkItemId(summary.workItemId())
+        .setTenantId(summary.tenantId())
+        .setGameInstanceId(summary.gameInstanceId())
+        .setRegionId(summary.regionId())
+        .setRegionEpoch(summary.regionEpoch())
+        .setEntityId(summary.entityId())
+        .setScriptId(summary.scriptId())
+        .setEventType(summary.eventType())
+        .setScriptPatchVersion(summary.scriptPatchVersion())
+        .setScriptEventId(summary.scriptEventId())
+        .setStatus(summary.status())
+        .setReason(summary.reason())
+        .setCreatedAtMs(summary.createdAtMs())
+        .setUpdatedAtMs(summary.updatedAtMs())
         .build();
   }
 }

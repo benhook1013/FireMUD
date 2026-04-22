@@ -234,6 +234,24 @@ Outputs:
 
 - A list of `GetScriptPatchStatus` records.
 
+#### `ListScriptDeadLetters`
+
+Implementation note: the current Automation & Scripting API exposes this read directly from durable `script_work_items` rows with `status=DEAD_LETTERED`. It is an operator inspection surface, not a replay API.
+
+Inputs:
+
+- `tenantId`
+- Optional filters: `gameInstanceId`, `scriptPatchVersion`
+- `limit` (bounded by the service)
+
+Outputs:
+
+- Newest-first dead-letter entries containing `workItemId`, Trigger Identity fields, script/event identity, `status`, bounded failure/cancel reason, `createdAt`, and `updatedAt`.
+
+Boundary rule:
+
+- Operators use this read to decide whether a replay or manual remediation workflow is needed; replay itself remains a separate controlled operation so listing dead letters cannot accidentally mutate runtime state.
+
 #### `GetScriptPatchInstanceRolloutStatus`
 
 Inputs:
