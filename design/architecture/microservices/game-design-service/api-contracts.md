@@ -8,13 +8,14 @@ For REST endpoints, the authoritative request/response schema source is [openapi
 
 ## Implementation Status
 
-The release-attestation, launch-resolution, version-state, settings, and asset-purge APIs are live in the current proto/service path. Plugin publication APIs (`UploadPluginBundle`, `PublishPluginVersion`, `GetPublishedPluginVersion`, and `ListPluginVersionStatuses`) are target-state contracts defined for the modding slice and must be added to the proto/service implementation before clients depend on them as live wire contracts.
+The release-attestation, launch-resolution, version-state, settings, asset-purge, and script-patch publication read APIs are live in the current proto/service path. Plugin publication APIs (`UploadPluginBundle`, `PublishPluginVersion`, `GetPublishedPluginVersion`, and `ListPluginVersionStatuses`) are target-state contracts defined for the modding slice and must be added to the proto/service implementation before clients depend on them as live wire contracts.
 
 ## gRPC APIs
 
 - `SaveRevision` – persists a version-scoped design revision and can optionally apply a typed World Management design mutation in the same control-plane path.
 - `PublishVersion` – freezes a set of revisions and notifies downstream services.
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
+- `GetPublishedScriptPatchVersion` – authoritative design-time read API for script-patch publication lifecycle and digest identity.
 - `UploadPluginBundle` – stores a signed plugin bundle, verifies archive safety and signatures, extracts indexed manifest metadata, and records the pre-publication design-time status.
 - `PublishPluginVersion` – runs design-time validation for an uploaded plugin bundle version and transitions it into immutable publication history when validation succeeds.
 - `GetPublishedPluginVersion` / `ListPluginVersionStatuses` – authoritative design-time read APIs for plugin publication lifecycle, signer verification status, and validation outcomes.
@@ -56,6 +57,7 @@ Detailed request and response schemas are defined in the [OpenAPI specification]
 - `SaveRevision(SaveRevisionRequest) returns (SaveRevisionResponse)` – persists a version-scoped design change and can return the typed result of an applied world-design mutation when the request carries `worldDesignMutation`.
 - `PublishVersion(PublishVersionRequest) returns (PublishVersionResponse)` – publishes a frozen version.
 - `PublishScriptPatchVersion(PublishScriptPatchVersionRequest) returns (PublishScriptPatchVersionResponse)` – publishes a script-only patch version.
+- `GetPublishedScriptPatchVersion(GetPublishedScriptPatchVersionRequest) returns (GetPublishedScriptPatchVersionResponse)` – returns the immutable script-patch publication read model, including base version, lifecycle state, digest identity, and last-changed time.
 - `ListVersions(ListVersionsRequest) returns (ListVersionsResponse)` – lists available versions.
 - `GetVersionState(GetVersionStateRequest) returns (GetVersionStateResponse)` – reads authoritative version lifecycle state and CAS epoch.
 - `CompareAndSetVersionState(CompareAndSetVersionStateRequest) returns (CompareAndSetVersionStateResponse)` – performs CAS-guarded lifecycle transitions.

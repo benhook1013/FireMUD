@@ -14,6 +14,8 @@ public interface VersionService {
       String tenantId, Long baseVersionId, String scriptPatchVersion, String notes)
       throws Exception;
 
+  VersionDto getPublishedScriptPatchVersion(String tenantId, String scriptPatchVersion);
+
   List<VersionDto> listVersions(String tenantId);
 
   DesignControlPlaneDigestDto getDesignControlPlaneDigest(String tenantId, Long versionId);

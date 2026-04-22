@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.ZoneOffset;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
@@ -11,6 +12,7 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
+import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
@@ -45,6 +47,8 @@ import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesRequest;
 import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesResponse;
 import net.firedevops.firemud.gamedesign.v1.GetTemplateRemapSetRequest;
@@ -63,6 +67,7 @@ import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
 import net.firedevops.firemud.gamedesign.v1.PutSettingsDomainOverrideRequest;
 import net.firedevops.firemud.gamedesign.v1.PutSettingsDomainOverrideResponse;
 import net.firedevops.firemud.gamedesign.v1.RepairPublishedVersionAssetsRequest;
@@ -234,6 +239,46 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     } catch (Exception ex) {
       builder.setError(
           GrpcAppErrors.internal(meterRegistry, logger, "PublishScriptPatchVersion", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.getPublishedScriptPatchVersion")
+  public void getPublishedScriptPatchVersion(
+      GetPublishedScriptPatchVersionRequest request,
+      StreamObserver<GetPublishedScriptPatchVersionResponse> responseObserver) {
+    GetPublishedScriptPatchVersionResponse.Builder builder =
+        GetPublishedScriptPatchVersionResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      VersionDto version =
+          versionService.getPublishedScriptPatchVersion(
+              request.getTenantId(), request.getScriptPatchVersion());
+      DesignControlPlaneDigestDto digest =
+          versionService.getDesignControlPlaneDigestForScriptPatch(
+              request.getTenantId(), request.getScriptPatchVersion());
+      builder.setScriptPatch(toProtoPublishedScriptPatch(version, digest));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetPublishedScriptPatchVersion",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetPublishedScriptPatchVersion",
+              scriptPatchPublicationErrorCode(ex.getMessage()),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "GetPublishedScriptPatchVersion", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
@@ -653,6 +698,20 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         .setVersionState(toProtoVersionLifecycleState(state.versionState()))
         .setVersionStateEpoch(state.versionStateEpoch())
         .setUpdatedAt(state.updatedAt().toString())
+        .build();
+  }
+
+  private PublishedScriptPatchVersion toProtoPublishedScriptPatch(
+      VersionDto version, DesignControlPlaneDigestDto digest) {
+    return PublishedScriptPatchVersion.newBuilder()
+        .setTenantId(version.tenantId())
+        .setScriptPatchVersion(version.scriptPatchVersion())
+        .setVersionId(version.id())
+        .setBaseVersionId(version.baseVersionId() == null ? 0L : version.baseVersionId())
+        .setPublicationState(toProtoVersionLifecycleState(version.versionState()))
+        .setControlPlaneDigest(digest.contentDigest())
+        .setDigestSchemaVersion(digest.digestSchemaVersion())
+        .setLastChangedAtMs(version.updatedAt().toInstant(ZoneOffset.UTC).toEpochMilli())
         .build();
   }
 
@@ -1295,6 +1354,16 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       return "INVALID_ARGUMENT";
     }
     if (message.startsWith("NOT_FOUND:")) {
+      return "NOT_FOUND";
+    }
+    return "INVALID_ARGUMENT";
+  }
+
+  private String scriptPatchPublicationErrorCode(String message) {
+    if (message == null || message.isBlank()) {
+      return "INVALID_ARGUMENT";
+    }
+    if (message.contains("not found")) {
       return "NOT_FOUND";
     }
     return "INVALID_ARGUMENT";

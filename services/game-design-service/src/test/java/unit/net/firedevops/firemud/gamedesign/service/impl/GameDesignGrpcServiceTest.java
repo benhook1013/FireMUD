@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
+import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
@@ -34,6 +35,8 @@ import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetTemplateRemapSetRequest;
 import net.firedevops.firemud.gamedesign.v1.GetTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
@@ -166,6 +169,44 @@ class GameDesignGrpcServiceTest {
     assertEquals("genrev-1", ref.get().getBundle().getGenerationConfigRevision());
     assertEquals(2, ref.get().getBundle().getRequiredManifestAssetKeysCount());
     assertEquals(1, ref.get().getBundle().getParticipantDigestsCount());
+  }
+
+  @Test
+  void getPublishedScriptPatchVersionReturnsPublicationReadModel() {
+    Mockito.when(versionService.getPublishedScriptPatchVersion("tenant-1", "patch-1"))
+        .thenReturn(
+            new VersionDto(
+                9L,
+                "tenant-1",
+                3,
+                VersionLifecycleState.PUBLISHED,
+                2L,
+                "patch-1",
+                7L,
+                true,
+                "notes",
+                LocalDateTime.parse("2026-04-14T11:00:00"),
+                LocalDateTime.parse("2026-04-14T12:00:00")));
+    Mockito.when(versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-1"))
+        .thenReturn(
+            new DesignControlPlaneDigestDto(
+                "tenant-1", "patch-1", "script-patch:patch-1", "digest-1", 1));
+    AtomicReference<GetPublishedScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getPublishedScriptPatchVersion(
+          GetPublishedScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setScriptPatchVersion("patch-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals("patch-1", ref.get().getScriptPatch().getScriptPatchVersion());
+    assertEquals(9L, ref.get().getScriptPatch().getVersionId());
+    assertEquals(7L, ref.get().getScriptPatch().getBaseVersionId());
+    assertEquals("digest-1", ref.get().getScriptPatch().getControlPlaneDigest());
   }
 
   @Test

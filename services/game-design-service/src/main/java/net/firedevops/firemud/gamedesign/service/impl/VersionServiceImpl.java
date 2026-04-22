@@ -214,6 +214,20 @@ public class VersionServiceImpl implements VersionService {
 
   @Override
   @Transactional(readOnly = true)
+  public VersionDto getPublishedScriptPatchVersion(String tenantId, String scriptPatchVersion) {
+    if (scriptPatchVersion == null || scriptPatchVersion.isBlank()) {
+      throw new IllegalArgumentException("script patch version is required");
+    }
+    return versionMapper.toDto(
+        versionRepository
+            .findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
+                tenantId, scriptPatchVersion)
+            .filter(Version::isScriptOnly)
+            .orElseThrow(() -> new IllegalArgumentException("script patch version not found")));
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   @Timed(value = "gamedesign.version.list")
   public List<VersionDto> listVersions(String tenantId) {
     Game game =
