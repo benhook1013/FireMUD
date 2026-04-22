@@ -16,6 +16,7 @@ Staging is disposable by default, but if it is restored from production-origin d
 The main body of this document describes the target-state backup workflow. Current implementation may lag the target state in a few areas:
 
 - `PauseTicksForScope` / `ResumeTicksForScope` support pausing by `tenant_id` + `game_instance_id` today; `region_id` scoping exists in the proto contract but is not yet enforced end to end.
+- The live ownership/status read is currently `GetRuntimeOwnershipStatus` at the `{tenantId, gameInstanceId}` boundary, not the fuller target-state `GetRegionTickStatus(scope)` surface used throughout the long-term backup and reset contract.
 - Backup-related spans and metrics should still use the target-state names and units documented here so dashboards and alert rules remain stable as scope support expands.
 - Player-facing prod-like environments are not coordinated-backup-ready until automated backups invoke pause/resume with canonical `tenant_id + region_id` scope end to end.
 - Until that convergence is complete, restore-point recovery for player-facing prod-like environments is unsupported. Player-facing production releases that would depend on restore-point recovery rather than binary rollback are non-compliant for promotion.
@@ -52,14 +53,19 @@ Canonical current-state note:
 
 PostgreSQL dumps must capture a consistent view of gameplay state. Before `pg_dump` begins, Game Session exposes `PauseTicks` and `ResumeTicks`. The backup workflow:
 
-1. Calls `PauseTicks` with a reason string.
-2. Polls `GetRegionTickStatus` until every affected region reports canonical `PAUSED`, meaning `commandIntakeBlocked=true`, `batchAllocationBlocked=true`, and no executor in scope can create new coordination state under the pre-pause epoch.
+1. Calls the canonical pause entrypoint for the selected scope and backup operation:
+   - target state: `PauseTicks(scope)` / `coordination-maintenance pause --operation backup ...`
+   - current bridge-only drill path: `PauseTicksForScope(tenant_id, game_instance_id)` for non-player-facing alias-scope rehearsals only
+2. Polls the canonical status surface for the chosen path until the affected scope is quiesced:
+   - target state: `GetRegionTickStatus(scope)` reports canonical `PAUSED`, meaning `commandIntakeBlocked=true`, `batchAllocationBlocked=true`, and no executor in scope can create new coordination state under the pre-pause epoch
+   - current bridge-only drill path: `GetRuntimeOwnershipStatus` proves the alias-scoped runtime row is paused and ownership has advanced to the new durable fence timeline
 3. Starts `pg_dump` immediately once pause is confirmed.
-4. Invokes `ResumeTicks` so command intake and tick scheduling resume.
+4. Invokes the matching resume entrypoint so command intake and tick scheduling resume.
 
 Operational constraints:
 
 - Coordinated backup jobs must acquire the deployment maintenance lock described in `system-architecture-redis-operations.md#maintenance-job-coordination` before pausing ticks. If another incompatible maintenance operation is active, the backup must fail closed rather than producing a dump from an intentionally non-steady state.
+- In the canonical workflow, `coordination-maintenance pause --operation backup ...` is the lock-owning step, and the later `resume` or `release-lock` step is responsible for releasing that same lock token.
 - Tick pausing must be bounded and observable.
 - Backup and reset tooling must use the same pause/status contract.
 - Pause scope should be limited to the smallest safe blast radius.

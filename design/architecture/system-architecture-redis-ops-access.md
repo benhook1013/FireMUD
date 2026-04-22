@@ -136,6 +136,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `coordination-maintenance rebind-sessions`
   - `coordination-maintenance smoke-check`
   - `coordination-maintenance resume`
+  - `coordination-maintenance release-lock`
 - Scope grammar:
   - `--scope region --tenant <tenantId> --region <regionId>`
   - `--scope tenant --tenant <tenantId>`
@@ -151,37 +152,51 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
 - Required argument contract:
   - `coordination-maintenance pause`
     - accepts only the scope grammar above.
+    - accepts `--operation <backup|restore|reset|cleanup|migration|topology-change>` and treats that value as the canonical maintenance-lock compatibility class.
+    - is the canonical entrypoint that acquires the deployment maintenance lock for every multi-step backup, restore, reset, cleanup, migration, and topology-changing scaling workflow.
     - blocks until the scope reaches the control-plane `PAUSED` state or exits non-zero on timeout/failure.
+    - must emit a `maintenanceLockToken` plus the resolved affected-region inventory in audit output; downstream commands in the same workflow consume that token rather than reacquiring the lock independently.
   - `coordination-maintenance status`
     - accepts the scope grammar above.
     - returns the control-plane status payload defined below for every affected region.
   - `coordination-maintenance reset`
     - accepts the scope grammar above.
+    - requires `--maintenance-lock-token <token>` from the corresponding `pause` step.
     - accepts `--preserve-sessions` / `--invalidate-sessions` where session policy allows an operator choice.
     - never infers session invalidation from scope alone when the design says it is optional.
     - is the canonical operator entrypoint that performs and audits the mandatory PostgreSQL `region_epoch` bump before clearing Redis coordination state for the selected scope.
     - must emit the resulting bumped epoch per affected region in its audit output so downstream reconcile/init-meta steps consume one authoritative old/new epoch record.
   - `coordination-maintenance reconcile-ledger`
     - accepts the scope grammar above.
+    - requires `--maintenance-lock-token <token>`.
     - accepts either `--old-region-epoch <epoch>` for `--scope region` or `--old-region-epoch-map <path>` for tenant/cluster scopes.
     - is the canonical operator entrypoint for `replay_first` convergence as well as old-epoch reset convergence:
       - without an epoch bump, it drives in-epoch `SCHEDULED` ledger rows toward `APPLIED` or `ABANDONED` for the selected current-epoch scope.
       - after an epoch bump, it drives old-epoch rows toward terminal reset outcomes for the selected reset scope.
     - may support `--discover-old-epochs` as an implementation convenience, but only if it resolves epochs from PostgreSQL and emits the discovered map in its audit output.
   - `coordination-maintenance converge-commands`
+    - requires `--maintenance-lock-token <token>`.
     - accepts the same epoch arguments and discovery behavior as `reconcile-ledger`.
     - remains a distinct command in first implementation:
       - operators run `reconcile-ledger` first and `converge-commands` second when both effect-ledger and command-status convergence are required.
       - a future combined verb is intentionally out of scope for this contract unless the canonical CLI section is updated.
   - `coordination-maintenance init-meta`
     - accepts the scope grammar above.
+    - requires `--maintenance-lock-token <token>`.
     - accepts either `--region-epoch <epoch> --current-tick-id <tickId>` for `--scope region` or `--region-epoch-map <path> --current-tick-id <tickId>` for tenant/cluster scopes.
   - `coordination-maintenance smoke-check`
     - accepts the scope grammar above.
+    - requires `--maintenance-lock-token <token>`.
     - for tenant/cluster scopes, accepts an optional explicit sample-set argument; otherwise the tool must auto-select one representative region per affected executor/shard group and print which regions were sampled.
   - `coordination-maintenance resume`
     - accepts only the scope grammar above.
+    - requires `--maintenance-lock-token <token>`.
     - exits non-zero unless the scope currently satisfies the resume gate: reset complete, old-epoch ledger converged, command convergence complete, and smoke check passing.
+    - is the canonical success-path command that releases the deployment maintenance lock after the scope returns to `RUNNING`.
+  - `coordination-maintenance release-lock`
+    - requires `--maintenance-lock-token <token>`.
+    - is the canonical failure or operator-abort path for releasing the deployment maintenance lock when a multi-step workflow stops before `resume`.
+    - must emit structured audit output recording the partial workflow state, actor, release reason, and whether the scope remains paused.
 - Required execution rule:
   - The CLI subcommands above are the only supported write-path entrypoints for coordinated reset/recovery flows. Helm hooks, Jobs, and admin dashboards call these verbs rather than re-encoding reset logic themselves.
 - Epoch-bump ownership rule:
@@ -190,6 +205,10 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - Backup restore automation and reset runbooks must record the epoch bump evidence emitted by this operation rather than inventing a second audit trail.
 - Required version rule:
   - The CLI and control-plane implementation must ship from the same build/version set as the services and Lua registry they operate on. Mixed-version reset orchestration is unsupported.
+- Maintenance-lock lifecycle rule:
+  - One workflow owns one deployment maintenance lock from `coordination-maintenance pause` until either `coordination-maintenance resume` or `coordination-maintenance release-lock` completes.
+  - Later subcommands in that workflow refresh the lock TTL with the same `maintenanceLockToken`; they do not acquire independent locks.
+  - If a command loses the lock, every later mutating command must fail closed until an operator explicitly releases or restarts the workflow.
 
 Canonical epoch-map examples:
 
