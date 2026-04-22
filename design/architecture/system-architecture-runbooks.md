@@ -33,7 +33,7 @@ This section covers recovery scenarios at a high level; detailed, per-topic runb
 
 ### Redis Session Schema and TTL Cleanup
 
-- For the scoped session cleanup Job (metrics, per-tenant prefixes such as `session:game:<tenantId>:*`, and large-keyspace safety guidelines), see:
+- For the scoped session cleanup workflow (metrics, tenant-scoped prefixes such as `session:game:{tenantGameplayTag}:*`, and large-keyspace safety guidelines), see:
   - `design/architecture/system-architecture-redis-incident-runbook.md#session-schema-and-ttl-cleanup`
 
 ### Redis Incident Scenarios
