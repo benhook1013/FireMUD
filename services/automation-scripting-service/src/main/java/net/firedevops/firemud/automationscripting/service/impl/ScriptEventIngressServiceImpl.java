@@ -1,9 +1,12 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
@@ -16,6 +19,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected Spring dependencies are not exposed externally")
 public class ScriptEventIngressServiceImpl implements ScriptEventIngressService {
   private static final String DEFAULT_SCHEMA_VERSION = "v1";
   private static final String OUTCOME_ADMITTED =
@@ -26,16 +32,19 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private final ScriptEventIngressAuditRepository repository;
   private final ScriptEventBindingRepository bindingRepository;
   private final ScriptWorkItemRepository workItemRepository;
+  private final ScriptEventAuditRepository eventAuditRepository;
   private final ScriptEventRegistryService eventRegistryService;
 
   public ScriptEventIngressServiceImpl(
       ScriptEventIngressAuditRepository repository,
       ScriptEventBindingRepository bindingRepository,
       ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository eventAuditRepository,
       ScriptEventRegistryService eventRegistryService) {
     this.repository = repository;
     this.bindingRepository = bindingRepository;
     this.workItemRepository = workItemRepository;
+    this.eventAuditRepository = eventAuditRepository;
     this.eventRegistryService = eventRegistryService;
   }
 
@@ -165,7 +174,49 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setTriggerMode(request.getTriggerMode().name());
     item.setReadSnapshotToken(normalize(request.getReadSnapshotToken()));
     item.setPayloadJson(normalize(request.getPayloadJson()));
-    workItemRepository.save(item);
+    ScriptWorkItem saved = workItemRepository.save(item);
+    persistHandlerAudit(request, schemaVersion, binding, saved);
+  }
+
+  private void persistHandlerAudit(
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      ScriptEventBinding binding,
+      ScriptWorkItem workItem) {
+    if (eventAuditRepository
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            request.getTenantId(),
+            normalize(request.getGameInstanceId()),
+            normalize(request.getRegionId()),
+            request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
+            normalize(request.getEntityId()),
+            binding.getScriptId(),
+            request.getEventType(),
+            schemaVersion,
+            request.getScriptPatchVersion(),
+            request.getScriptEventId(),
+            request.getIsDryRun())) {
+      return;
+    }
+    ScriptEventAudit audit = new ScriptEventAudit();
+    audit.setTenantId(request.getTenantId());
+    audit.setGameInstanceId(normalize(request.getGameInstanceId()));
+    audit.setRegionId(normalize(request.getRegionId()));
+    audit.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L);
+    audit.setEntityId(normalize(request.getEntityId()));
+    audit.setScriptId(binding.getScriptId());
+    audit.setEventType(request.getEventType());
+    audit.setEventSchemaVersion(schemaVersion);
+    audit.setScriptPatchVersion(request.getScriptPatchVersion());
+    audit.setScriptEventId(request.getScriptEventId());
+    audit.setDryRun(request.getIsDryRun());
+    audit.setSourceService(resolveSourceService());
+    audit.setTriggerMode(request.getTriggerMode().name());
+    audit.setWorkItemId(workItem.getId());
+    audit.setFinalStage("ADMISSION");
+    audit.setFinalOutcome("work_item_persisted");
+    audit.setFinalReason("handler_resolved");
+    eventAuditRepository.save(audit);
   }
 
   private boolean matchesScope(ScriptEventBinding binding, TriggerScriptEventRequest request) {

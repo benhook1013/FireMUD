@@ -12,8 +12,8 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "script_work_items")
-public class ScriptWorkItem {
+@Table(name = "script_event_audit")
+public class ScriptEventAudit {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
@@ -57,17 +57,17 @@ public class ScriptWorkItem {
   @Column(nullable = false, length = 64)
   private String triggerMode;
 
-  @Column(length = 512)
-  private String readSnapshotToken;
-
-  @Column(columnDefinition = "TEXT")
-  private String payloadJson;
+  @Column(name = "work_item_id")
+  private Long workItemId;
 
   @Column(nullable = false, length = 64)
-  private String status = "PENDING_EVALUATION";
+  private String finalStage;
 
-  @Column(length = 256)
-  private String cancelReason;
+  @Column(nullable = false, length = 128)
+  private String finalOutcome;
+
+  @Column(nullable = false, length = 256)
+  private String finalReason;
 
   @Column(nullable = false)
   private Instant createdAt = Instant.now();

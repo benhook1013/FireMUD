@@ -9,9 +9,11 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
@@ -39,6 +41,10 @@ class ScriptEventIngressServiceImplTest {
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository eventAuditRepository =
+        Mockito.mock(ScriptEventAuditRepository.class);
+    when(workItemRepository.save(Mockito.any(ScriptWorkItem.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(repository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 "1",
@@ -61,6 +67,7 @@ class ScriptEventIngressServiceImplTest {
             repository,
             bindingRepository,
             workItemRepository,
+            eventAuditRepository,
             new BuiltInScriptEventRegistryService());
 
     ScriptEventIngressService.TriggerAdmission admission =
@@ -92,6 +99,11 @@ class ScriptEventIngressServiceImplTest {
     verify(workItemRepository).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getValue().getScriptId()).isEqualTo("script-1");
     assertThat(workItemCaptor.getValue().getStatus()).isEqualTo("PENDING_EVALUATION");
+    ArgumentCaptor<ScriptEventAudit> eventAuditCaptor =
+        ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).save(eventAuditCaptor.capture());
+    assertThat(eventAuditCaptor.getValue().getFinalStage()).isEqualTo("ADMISSION");
+    assertThat(eventAuditCaptor.getValue().getFinalOutcome()).isEqualTo("work_item_persisted");
   }
 
   @Test
@@ -105,6 +117,7 @@ class ScriptEventIngressServiceImplTest {
             repository,
             Mockito.mock(ScriptEventBindingRepository.class),
             Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
             new BuiltInScriptEventRegistryService());
 
     ScriptEventIngressService.TriggerAdmission admission =
@@ -140,6 +153,7 @@ class ScriptEventIngressServiceImplTest {
             repository,
             Mockito.mock(ScriptEventBindingRepository.class),
             Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
             new BuiltInScriptEventRegistryService());
 
     ScriptEventIngressService.TriggerAdmission admission =
@@ -193,6 +207,7 @@ class ScriptEventIngressServiceImplTest {
             repository,
             Mockito.mock(ScriptEventBindingRepository.class),
             Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
             new BuiltInScriptEventRegistryService());
 
     ScriptEventIngressService.TriggerAdmission admission =
@@ -223,6 +238,7 @@ class ScriptEventIngressServiceImplTest {
             repository,
             Mockito.mock(ScriptEventBindingRepository.class),
             Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
             new BuiltInScriptEventRegistryService());
 
     assertThrows(

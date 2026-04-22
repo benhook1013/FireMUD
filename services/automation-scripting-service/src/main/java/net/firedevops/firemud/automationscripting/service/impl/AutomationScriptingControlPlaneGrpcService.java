@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
+import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingControlPlaneServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchRequest;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchResponse;
@@ -26,10 +27,12 @@ public final class AutomationScriptingControlPlaneGrpcService
         .AutomationScriptingControlPlaneServiceImplBase {
 
   private final ScriptEventRegistryService eventRegistryService;
+  private final ScriptWorkItemService workItemService;
 
   public AutomationScriptingControlPlaneGrpcService(
-      ScriptEventRegistryService eventRegistryService) {
+      ScriptEventRegistryService eventRegistryService, ScriptWorkItemService workItemService) {
     this.eventRegistryService = eventRegistryService;
+    this.workItemService = workItemService;
   }
 
   private static ErrorDetail notImplemented(String method) {
@@ -126,7 +129,20 @@ public final class AutomationScriptingControlPlaneGrpcService
         CancelPendingWorkItemsForPatchResponse.newBuilder();
     try {
       requireAdminRole();
-      response.setError(notImplemented("CancelPendingWorkItemsForPatch"));
+      long canceled =
+          workItemService.cancelPendingForPatch(
+              new ScriptWorkItemService.CancelPendingForPatchCommand(
+                  request.getTenantId(),
+                  request.getScriptPatchVersion(),
+                  request.getGameInstanceId(),
+                  request.getRegionId(),
+                  request.getControlPlaneRequestId(),
+                  request.getActorPrincipal(),
+                  request.getReason()));
+      response.setCanceledCount(canceled);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
     } catch (AdminAuthorizationException ex) {
       response.setError(authorizationError(ex));
     }

@@ -1,13 +1,12 @@
 package net.firedevops.firemud.automationscripting.repository;
 
-import java.util.Collection;
-import java.util.List;
-import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import java.util.Optional;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, Long> {
+public interface ScriptEventAuditRepository extends JpaRepository<ScriptEventAudit, Long> {
   boolean
       existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
           String tenantId,
@@ -22,9 +21,5 @@ public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, 
           String scriptEventId,
           boolean dryRun);
 
-  boolean existsByTenantIdAndScriptIdAndStatusIn(
-      String tenantId, String scriptId, Collection<String> statuses);
-
-  List<ScriptWorkItem> findByTenantIdAndScriptPatchVersionAndStatusInOrderByCreatedAtAscIdAsc(
-      String tenantId, String scriptPatchVersion, Collection<String> statuses);
+  Optional<ScriptEventAudit> findByWorkItemId(Long workItemId);
 }

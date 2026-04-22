@@ -6,6 +6,9 @@ import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
+import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchRequest;
+import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsRequest;
@@ -13,6 +16,7 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsR
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 class AutomationScriptingControlPlaneGrpcServiceTest {
   @AfterEach
@@ -24,7 +28,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   void getsBuiltInEventDefinition() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     AutomationScriptingControlPlaneGrpcService service =
-        new AutomationScriptingControlPlaneGrpcService(new BuiltInScriptEventRegistryService());
+        new AutomationScriptingControlPlaneGrpcService(
+            new BuiltInScriptEventRegistryService(), Mockito.mock(ScriptWorkItemService.class));
     AtomicReference<GetScriptEventDefinitionResponse> ref = new AtomicReference<>();
 
     service.getScriptEventDefinition(
@@ -41,7 +46,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   void listsBuiltInEventDefinitionsByOwner() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     AutomationScriptingControlPlaneGrpcService service =
-        new AutomationScriptingControlPlaneGrpcService(new BuiltInScriptEventRegistryService());
+        new AutomationScriptingControlPlaneGrpcService(
+            new BuiltInScriptEventRegistryService(), Mockito.mock(ScriptWorkItemService.class));
     AtomicReference<ListScriptEventDefinitionsResponse> ref = new AtomicReference<>();
 
     service.listScriptEventDefinitions(
@@ -54,6 +60,34 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getDefinitionsList())
         .extracting(definition -> definition.getEventType())
         .contains("onLoad", "onInterval", "onTimerExpire");
+  }
+
+  @Test
+  void cancelsPendingWorkItemsForPatch() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.cancelPendingForPatch(Mockito.any())).thenReturn(3L);
+    AutomationScriptingControlPlaneGrpcService service =
+        new AutomationScriptingControlPlaneGrpcService(
+            new BuiltInScriptEventRegistryService(), workItemService);
+    AtomicReference<CancelPendingWorkItemsForPatchResponse> ref = new AtomicReference<>();
+
+    service.cancelPendingWorkItemsForPatch(
+        CancelPendingWorkItemsForPatchRequest.newBuilder()
+            .setTenantId("1")
+            .setScriptPatchVersion("patch-1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .setReason("rollback_epoch_advanced")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getCanceledCount()).isEqualTo(3L);
+    Mockito.verify(workItemService)
+        .cancelPendingForPatch(
+            new ScriptWorkItemService.CancelPendingForPatchCommand(
+                "1", "patch-1", "game-1", "region-1", "", "", "rollback_epoch_advanced"));
   }
 
   private static <T> StreamObserver<T> observer(AtomicReference<T> ref) {
