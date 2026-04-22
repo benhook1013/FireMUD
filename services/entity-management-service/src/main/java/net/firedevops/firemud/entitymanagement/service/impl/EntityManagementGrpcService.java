@@ -1633,6 +1633,7 @@ public class EntityManagementGrpcService
         .setTenantId(String.valueOf(dto.tenantId()))
         .setAccountId(String.valueOf(dto.accountId()))
         .setName(dto.name())
+        .setPlayableStateScope(dto.playableStateScope())
         .setLevel(dto.level())
         .setExperience(dto.experience())
         .setStrength(dto.strength())

@@ -68,7 +68,7 @@ public class CharacterServiceImpl implements CharacterService {
     entity.setHealth(100);
     entity.setMana(50);
     entity = characterRepository.save(entity);
-    return characterMapper.toDto(entity);
+    return toDto(entity);
   }
 
   @Override
@@ -85,7 +85,7 @@ public class CharacterServiceImpl implements CharacterService {
     }
     cacheMissCounter.increment();
     Character character = characterRepository.findWithInventoryById(characterId).orElseThrow();
-    CharacterDto dto = characterMapper.toDto(character);
+    CharacterDto dto = toDto(character);
     if (cache != null) {
       cache.put(characterId, dto);
     }
@@ -103,7 +103,7 @@ public class CharacterServiceImpl implements CharacterService {
       character.setLevel(character.getLevel() + 1);
     }
     characterRepository.save(character);
-    return characterMapper.toDto(character);
+    return toDto(character);
   }
 
   @Override
@@ -131,7 +131,7 @@ public class CharacterServiceImpl implements CharacterService {
             accountId,
             playableStateKeyResolver.resolve(gameInstanceId, playableStateScope),
             pageable)
-        .map(characterMapper::toDto);
+        .map(this::toDto);
   }
 
   @Override
@@ -147,6 +147,24 @@ public class CharacterServiceImpl implements CharacterService {
             tenantId,
             playableStateKeyResolver.resolve(gameInstanceId, playableStateScope),
             name.trim())
-        .map(characterMapper::toDto);
+        .map(this::toDto);
+  }
+
+  private CharacterDto toDto(Character character) {
+    CharacterDto dto = characterMapper.toDto(character);
+    return new CharacterDto(
+        dto.id(),
+        dto.tenantId(),
+        dto.accountId(),
+        dto.name(),
+        playableStateKeyResolver.resolveScope(character.getPlayableStateKey()),
+        dto.level(),
+        dto.experience(),
+        dto.strength(),
+        dto.agility(),
+        dto.intelligence(),
+        dto.stamina(),
+        dto.health(),
+        dto.mana());
   }
 }

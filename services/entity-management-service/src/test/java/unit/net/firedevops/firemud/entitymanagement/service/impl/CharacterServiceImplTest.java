@@ -11,6 +11,7 @@ import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.mapper.CharacterMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
@@ -50,6 +51,7 @@ class CharacterServiceImplTest {
     CharacterDto dto = service.gainExperience(1L, 1000);
     assertEquals(2, dto.level());
     assertEquals(0, dto.experience());
+    assertEquals(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, dto.playableStateScope());
   }
 
   @Test
@@ -74,5 +76,6 @@ class CharacterServiceImplTest {
 
     CharacterDto dto = service.getWithInventory(1L);
     assertEquals(1L, dto.id());
+    assertEquals(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, dto.playableStateScope());
   }
 }

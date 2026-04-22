@@ -7,6 +7,7 @@ import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring")
 public interface CharacterMapper {
+  @Mapping(target = "playableStateScope", ignore = true)
   CharacterDto toDto(Character entity);
 
   @Mapping(target = "inventoryEntries", ignore = true)

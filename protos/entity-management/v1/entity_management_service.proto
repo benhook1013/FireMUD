@@ -276,6 +276,7 @@ message Character {
   int32 stamina = 10;
   int32 health = 11;
   int32 mana = 12;
+  PlayableStateScope playable_state_scope = 13;
 }
 
 message ListCharactersByAccountResponse {
