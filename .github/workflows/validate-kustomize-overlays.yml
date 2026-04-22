@@ -70,6 +70,7 @@ jobs:
           services="account-service automation-scripting-service entity-management-service game-design-service game-logic-service game-session-service logging-admin-service social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service"
           for service in $services; do
             docker build \
+              --build-context repo_root=. \
               --build-arg BASE_IMAGE=ghcr.io/benhook1013/firemud-base:latest \
               -t "ghcr.io/benhook1013/${service}:latest" \
               -f "./services/${service}/Dockerfile" \

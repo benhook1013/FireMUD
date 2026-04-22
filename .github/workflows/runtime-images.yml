@@ -164,6 +164,8 @@ jobs:
           context: .
           file: ./services/${{ matrix.service }}/Dockerfile
           push: true
+          build-contexts: |
+            repo_root=.
           build-args: |
             BASE_IMAGE=${{ needs.image-meta.outputs.base_image }}
           tags: ghcr.io/benhook1013/${{ matrix.service }}:${{ needs.image-meta.outputs.image_tag }}
