@@ -5,6 +5,7 @@
 - The service owns the scripting runtime, event ingestion, quotas, and sandbox execution model described in the architecture docs.
 - Script authoring and control-plane integration with Game Design are documented and substantially modeled in the current design set.
 - Runtime/data, operations, configuration, and sandbox-specific docs are now split and maintained as the canonical reference set.
+- The current runtime implementation includes event-scope ingress admission, durable script event bindings, durable `script_work_items`, handler-scoped audit rows, pending-work cancellation, pending-work claiming, a first Game Session `onCommand` producer, and scheduled terminal outbox cleanup governed by the documented retention knobs.
 
 ## Current Role In The Platform
 
@@ -16,6 +17,7 @@
 
 - Script-driven generation and richer procedural population flows are still future implementation areas rather than established gameplay slices.
 - Runtime rollout and validation behavior is strongly specified in docs, but much of the remaining work is broader platform build-out rather than isolated scripting tasks.
+- DSL execution, downstream Game Session handoff for emitted commands, scheduler/timer producers, and richer operator convergence reads remain incomplete.
 - Cross-service integration confidence outside the current reviewed doc set should still be treated as evolving.
 
 ## Planning Notes

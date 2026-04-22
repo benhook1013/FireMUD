@@ -58,6 +58,12 @@ script:
   quota:
     limit: 50
     windowSeconds: 60
+  outbox:
+    handed-off-retention-days: ${SCRIPT_OUTBOX_HANDED_OFF_RETENTION_DAYS:7}
+    canceled-retention-days: ${SCRIPT_OUTBOX_CANCELED_RETENTION_DAYS:7}
+    terminal-cleanup-interval-seconds: ${SCRIPT_OUTBOX_TERMINAL_CLEANUP_INTERVAL_SECONDS:300}
+    dead-letter-max-rows: ${SCRIPT_DEAD_LETTER_MAX_ROWS:100000}
+    dead-letter-max-age-seconds: ${SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS:604800}
 automation:
   tick-duration-ms: 1000
   tick-max-events: 50

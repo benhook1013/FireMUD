@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
@@ -34,7 +35,7 @@ class ScriptWorkItemServiceImplTest {
         .thenReturn(List.of(item));
     when(auditRepository.findByWorkItemId(42L)).thenReturn(Optional.of(audit));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository);
+        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, outboxProperties());
 
     long canceled =
         service.cancelPendingForPatch(
@@ -62,7 +63,7 @@ class ScriptWorkItemServiceImplTest {
         .thenReturn(List.of(item));
     when(workItemRepository.saveAll(List.of(item))).thenReturn(List.of(item));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository);
+        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, outboxProperties());
 
     List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(10);
 
@@ -77,10 +78,67 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             Mockito.mock(ScriptWorkItemRepository.class),
-            Mockito.mock(ScriptEventAuditRepository.class));
+            Mockito.mock(ScriptEventAuditRepository.class),
+            outboxProperties());
 
     assertThatThrownBy(() -> service.claimPendingForEvaluation(0))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("max_items must be positive");
+  }
+
+  @Test
+  void cleansTerminalOutboxRowsUsingConfiguredRetentionWindows() {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptOutboxProperties properties = outboxProperties();
+    when(workItemRepository.deleteByStatusAndUpdatedAtBefore(
+            Mockito.eq("HANDED_OFF"), Mockito.any()))
+        .thenReturn(2L);
+    when(workItemRepository.deleteByStatusAndUpdatedAtBefore(Mockito.eq("CANCELED"), Mockito.any()))
+        .thenReturn(3L);
+    when(workItemRepository.deleteByStatusAndUpdatedAtBefore(
+            Mockito.eq("DEAD_LETTERED"), Mockito.any()))
+        .thenReturn(5L);
+    when(workItemRepository.countByStatus("DEAD_LETTERED")).thenReturn(100000L);
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, properties);
+
+    ScriptWorkItemService.TerminalCleanupResult result = service.cleanupTerminalWorkItems();
+
+    assertThat(result.handedOffDeleted()).isEqualTo(2L);
+    assertThat(result.canceledDeleted()).isEqualTo(3L);
+    assertThat(result.deadLetteredDeleted()).isEqualTo(5L);
+    assertThat(result.totalDeleted()).isEqualTo(10L);
+    verify(workItemRepository)
+        .deleteByStatusAndUpdatedAtBefore(Mockito.eq("HANDED_OFF"), Mockito.any());
+    verify(workItemRepository)
+        .deleteByStatusAndUpdatedAtBefore(Mockito.eq("CANCELED"), Mockito.any());
+    verify(workItemRepository)
+        .deleteByStatusAndUpdatedAtBefore(Mockito.eq("DEAD_LETTERED"), Mockito.any());
+  }
+
+  @Test
+  void deletesOldestDeadLettersWhenRowCapIsExceeded() {
+    ScriptWorkItem old = new ScriptWorkItem();
+    old.setStatus("DEAD_LETTERED");
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptOutboxProperties properties = outboxProperties();
+    properties.setDeadLetterMaxRows(1);
+    when(workItemRepository.countByStatus("DEAD_LETTERED")).thenReturn(2L);
+    when(workItemRepository.findByStatusOrderByUpdatedAtAscIdAsc(
+            "DEAD_LETTERED", PageRequest.of(0, 1)))
+        .thenReturn(List.of(old));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, properties);
+
+    ScriptWorkItemService.TerminalCleanupResult result = service.cleanupTerminalWorkItems();
+
+    assertThat(result.deadLetteredDeleted()).isEqualTo(1L);
+    verify(workItemRepository).deleteAll(List.of(old));
+  }
+
+  private static ScriptOutboxProperties outboxProperties() {
+    return new ScriptOutboxProperties();
   }
 }

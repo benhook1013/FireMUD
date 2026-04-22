@@ -1,7 +1,9 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
+import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
@@ -15,15 +17,21 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_EVALUATING = "EVALUATING";
   private static final String STATUS_CANCELED = "CANCELED";
+  private static final String STATUS_HANDED_OFF = "HANDED_OFF";
+  private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
   private static final List<String> CANCELABLE_STATUSES = List.of(STATUS_PENDING_EVALUATION);
 
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository auditRepository;
+  private final ScriptOutboxProperties outboxProperties;
 
   public ScriptWorkItemServiceImpl(
-      ScriptWorkItemRepository workItemRepository, ScriptEventAuditRepository auditRepository) {
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptOutboxProperties outboxProperties) {
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
+    this.outboxProperties = outboxProperties;
   }
 
   @Override
@@ -67,6 +75,40 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
           item.setUpdatedAt(now);
         });
     return List.copyOf(workItemRepository.saveAll(items));
+  }
+
+  @Override
+  @Transactional
+  public TerminalCleanupResult cleanupTerminalWorkItems() {
+    Instant now = Instant.now();
+    long handedOffDeleted =
+        workItemRepository.deleteByStatusAndUpdatedAtBefore(
+            STATUS_HANDED_OFF,
+            now.minus(outboxProperties.getHandedOffRetentionDays(), ChronoUnit.DAYS));
+    long canceledDeleted =
+        workItemRepository.deleteByStatusAndUpdatedAtBefore(
+            STATUS_CANCELED,
+            now.minus(outboxProperties.getCanceledRetentionDays(), ChronoUnit.DAYS));
+    long deadLetteredDeleted =
+        workItemRepository.deleteByStatusAndUpdatedAtBefore(
+            STATUS_DEAD_LETTERED,
+            now.minus(outboxProperties.getDeadLetterMaxAgeSeconds(), ChronoUnit.SECONDS));
+    deadLetteredDeleted += deleteExcessDeadLetters();
+    return new TerminalCleanupResult(handedOffDeleted, canceledDeleted, deadLetteredDeleted);
+  }
+
+  private long deleteExcessDeadLetters() {
+    long deadLetteredCount = workItemRepository.countByStatus(STATUS_DEAD_LETTERED);
+    long excess = deadLetteredCount - outboxProperties.getDeadLetterMaxRows();
+    if (excess <= 0) {
+      return 0;
+    }
+    int batchSize = Math.toIntExact(Math.min(excess, Integer.MAX_VALUE));
+    List<ScriptWorkItem> oldest =
+        workItemRepository.findByStatusOrderByUpdatedAtAscIdAsc(
+            STATUS_DEAD_LETTERED, PageRequest.of(0, batchSize));
+    workItemRepository.deleteAll(oldest);
+    return oldest.size();
   }
 
   private void cancel(ScriptWorkItem item, String reason, Instant now) {

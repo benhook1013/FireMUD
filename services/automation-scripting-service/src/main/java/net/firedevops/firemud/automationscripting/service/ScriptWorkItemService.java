@@ -8,6 +8,8 @@ public interface ScriptWorkItemService {
 
   List<ScriptWorkItem> claimPendingForEvaluation(int maxItems);
 
+  TerminalCleanupResult cleanupTerminalWorkItems();
+
   record CancelPendingForPatchCommand(
       String tenantId,
       String scriptPatchVersion,
@@ -16,4 +18,11 @@ public interface ScriptWorkItemService {
       String controlPlaneRequestId,
       String actorPrincipal,
       String reason) {}
+
+  record TerminalCleanupResult(
+      long handedOffDeleted, long canceledDeleted, long deadLetteredDeleted) {
+    public long totalDeleted() {
+      return handedOffDeleted + canceledDeleted + deadLetteredDeleted;
+    }
+  }
 }

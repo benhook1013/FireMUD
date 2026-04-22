@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.repository;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
@@ -30,4 +31,10 @@ public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, 
       String tenantId, String scriptPatchVersion, Collection<String> statuses);
 
   List<ScriptWorkItem> findByStatusOrderByCreatedAtAscIdAsc(String status, Pageable pageable);
+
+  List<ScriptWorkItem> findByStatusOrderByUpdatedAtAscIdAsc(String status, Pageable pageable);
+
+  long countByStatus(String status);
+
+  long deleteByStatusAndUpdatedAtBefore(String status, Instant updatedAt);
 }
