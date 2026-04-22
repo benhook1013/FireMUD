@@ -34,6 +34,8 @@ This document covers:
 
 This document does not define the designer-facing DSL, sandbox internals, per-trigger runtime semantics, or workflow sequencing (see the scripting DSL reference, sandbox runtime docs, and Control Plane Operations).
 
+The canonical event-registry entry model referenced by ingress APIs lives in `design/architecture/system-architecture-scripting-event-registry.md`.
+
 Compact publication-to-runtime sequence:
 
 | Flow | Design-time acceptance owner | Runtime readiness / eligibility | Runtime activation owner |

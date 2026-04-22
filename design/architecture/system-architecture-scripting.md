@@ -6,6 +6,7 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 
 For control-plane API contracts, see `design/architecture/system-architecture-scripting-control-plane-api.md`.
 For workflow sequencing (pin/rollback orchestration, pause/resume, drain/purge, and convergence), see `design/architecture/system-architecture-scripting-control-plane-operations.md`.
+For canonical custom-event definitions and producer authorization, see `design/architecture/system-architecture-scripting-event-registry.md`.
 
 It complements:
 
@@ -70,6 +71,7 @@ The table below summarizes high-level implementation status categories; verify c
 - **Implementers and backend developers**
   - Focus on: [TL;DR Flow](#tldr-flow) and:
     - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` for terminology, DSL semantics, determinism, timers, event lifecycle, **deployment & versioning behavior**, and advanced NPC modules; in particular, see **Determinism & Allowed Non-Determinism**, **Integration with Game Logic & Tick System**, **Script Timers vs Tick Timers**, and **Scheduler Leadership & Coordination**.
+    - `design/architecture/system-architecture-scripting-event-registry.md` for canonical event-type ownership, schema versioning, producer authorization, and snapshot requirements.
     - `design/architecture/system-architecture-scripting-quotas-and-operations.md` for **Per-Script Scheduling Policies**, **Resource Isolation and Multi-Level Budgets**, and outcome-to-metric mapping.
     - `design/architecture/system-architecture-ticks.md` and `design/architecture/system-architecture-transactions.md` for cross-cutting concerns.
 
@@ -198,6 +200,7 @@ This hub intentionally keeps only high-level flows and routing; detailed topics 
 
 - **Cross-service invariants and contracts**
   - `design/architecture/system-architecture-scripting-contracts.md`
+  - `design/architecture/system-architecture-scripting-event-registry.md`
 
 - **Developer tools and helper scripts**
   - See **Developer Tools** in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for CLI and docs-generation helpers.
