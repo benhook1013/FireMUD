@@ -1,12 +1,11 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
-import java.util.Map;
-import java.util.Set;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
+import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -23,32 +22,15 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private final ScriptEventIngressAuditRepository repository;
   private final ScriptEventBindingRepository bindingRepository;
-  private final Map<String, EventDefinition> eventDefinitions;
+  private final ScriptEventRegistryService eventRegistryService;
 
   public ScriptEventIngressServiceImpl(
       ScriptEventIngressAuditRepository repository,
-      ScriptEventBindingRepository bindingRepository) {
+      ScriptEventBindingRepository bindingRepository,
+      ScriptEventRegistryService eventRegistryService) {
     this.repository = repository;
     this.bindingRepository = bindingRepository;
-    this.eventDefinitions =
-        Map.of(
-            key("onLoad", DEFAULT_SCHEMA_VERSION),
-            new EventDefinition(Set.of("automation-scripting-service"), false, false),
-            key("onCommand", DEFAULT_SCHEMA_VERSION),
-            new EventDefinition(Set.of("game-session-service", "game-logic-service"), true, true),
-            key("onSpawn", DEFAULT_SCHEMA_VERSION),
-            new EventDefinition(
-                Set.of("game-session-service", "world-management-service"), true, true),
-            key("onEnterRegion", DEFAULT_SCHEMA_VERSION),
-            new EventDefinition(
-                Set.of("game-session-service", "world-management-service"), true, true),
-            key("onLeaveRegion", DEFAULT_SCHEMA_VERSION),
-            new EventDefinition(
-                Set.of("game-session-service", "world-management-service"), true, true),
-            key("onTimerExpire", DEFAULT_SCHEMA_VERSION),
-            new EventDefinition(Set.of("automation-scripting-service"), true, true),
-            key("onInterval", DEFAULT_SCHEMA_VERSION),
-            new EventDefinition(Set.of("automation-scripting-service"), true, true));
+    this.eventRegistryService = eventRegistryService;
   }
 
   @Override
@@ -101,18 +83,20 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     requiredText(request.getScriptPatchVersion(), "script_patch_version");
     requiredText(request.getScriptEventId(), "script_event_id");
 
-    EventDefinition definition = eventDefinitions.get(key(request.getEventType(), schemaVersion));
+    ScriptEventRegistryService.EventDefinition definition =
+        eventRegistryService.getDefinition(request.getEventType(), schemaVersion).orElse(null);
     if (definition == null) {
       return rejected("unknown_event_type");
     }
     String sourceService = resolveSourceService();
-    if (!definition.allowedProducers().contains(sourceService)) {
+    if (!definition.allowedProducerPrincipals().contains(sourceService)) {
       return rejected("unauthorized_producer");
     }
-    if (definition.requiresSnapshotToken() && request.getReadSnapshotToken().isBlank()) {
+    if (definition.snapshotAuthority().equals("PRODUCER_SUPPLIED_TOKEN")
+        && request.getReadSnapshotToken().isBlank()) {
       return rejected("missing_snapshot_token");
     }
-    if (definition.requiresRegionIdentity()) {
+    if (definition.requiredTriggerIdentityFields().contains("regionEpoch")) {
       if (request.getGameInstanceId().isBlank()
           || request.getRegionId().isBlank()
           || request.getRegionEpoch() <= 0
@@ -184,10 +168,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         : request.getEventSchemaVersion();
   }
 
-  private static String key(String eventType, String schemaVersion) {
-    return eventType + ":" + schemaVersion;
-  }
-
   private static String resolveSourceService() {
     String source = SessionContext.getServiceName();
     if (source == null || source.isBlank()) {
@@ -206,9 +186,4 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private static String normalize(String value) {
     return value == null ? "" : value;
   }
-
-  private record EventDefinition(
-      Set<String> allowedProducers,
-      boolean requiresRegionIdentity,
-      boolean requiresSnapshotToken) {}
 }

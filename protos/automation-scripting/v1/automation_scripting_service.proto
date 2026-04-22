@@ -49,6 +49,11 @@ service AutomationScriptingControlPlaneService {
   rpc CancelPendingWorkItemsForPatch(CancelPendingWorkItemsForPatchRequest)
       returns (CancelPendingWorkItemsForPatchResponse);
 
+  rpc GetScriptEventDefinition(GetScriptEventDefinitionRequest)
+      returns (GetScriptEventDefinitionResponse);
+  rpc ListScriptEventDefinitions(ListScriptEventDefinitionsRequest)
+      returns (ListScriptEventDefinitionsResponse);
+
   // Plugin lifecycle/control-plane APIs.
   rpc GetPluginStatus(GetPluginStatusRequest) returns (GetPluginStatusResponse);
   rpc SetPluginActiveVersion(SetPluginActiveVersionRequest)
@@ -117,6 +122,40 @@ message ScriptEventBinding {
   string target_scope_id = 4;
   int32 priority = 5;
   bool requires_exclusive_event = 6;
+}
+
+message ScriptEventDefinition {
+  string event_type = 1;
+  string event_schema_version = 2;
+  string owner_service = 3;
+  repeated string allowed_producer_principals = 4;
+  repeated string required_trigger_identity_fields = 5;
+  string snapshot_authority = 6;
+  string consistency_class = 7;
+  string quota_class = 8;
+  string replay_semantics = 9;
+  repeated string allowed_binding_scopes = 10;
+  bool dry_run_support = 11;
+  string deprecation_status = 12;
+}
+
+message GetScriptEventDefinitionRequest {
+  string event_type = 1;
+  string event_schema_version = 2;
+}
+
+message GetScriptEventDefinitionResponse {
+  ScriptEventDefinition definition = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListScriptEventDefinitionsRequest {
+  string owner_service = 1;
+}
+
+message ListScriptEventDefinitionsResponse {
+  repeated ScriptEventDefinition definitions = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message GetScriptStatusRequest {

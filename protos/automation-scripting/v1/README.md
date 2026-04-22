@@ -39,6 +39,7 @@ The proto files in this directory define several RPCs consumed by domain service
   - `Ping(PingRequest) returns (PingResponse)` – basic health check; see the service README for REST and gRPC ping usage.
 - **Runtime control-plane APIs**
   - `AutomationScriptingControlPlaneService` exposes script patch lifecycle APIs (`GetScriptPatchStatus`, `ListScriptPatchStatuses`) and rollback-support hooks (`CancelPendingWorkItemsForPatch`) as specified in `design/architecture/system-architecture-scripting-control-plane-api.md`.
+  - It exposes script event-registry reads (`GetScriptEventDefinition`, `ListScriptEventDefinitions`) so design-time and operator tooling can consume the same canonical event definitions used by ingress admission.
   - It also exposes plugin lifecycle APIs (`GetPluginStatus`, `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`) for operator orchestration via Logging & Admin.
 - **Design-time APIs**
   - `UpdateScript` – uploads or replaces a script definition and its event bindings for later use as part of the Game Design → Automation & Scripting publish Saga.

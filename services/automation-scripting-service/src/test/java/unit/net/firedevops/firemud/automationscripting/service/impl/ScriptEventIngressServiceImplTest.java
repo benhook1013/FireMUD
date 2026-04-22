@@ -54,7 +54,8 @@ class ScriptEventIngressServiceImplTest {
                 1L, "patch-1", "onCommand", "v1"))
         .thenReturn(List.of(binding("script-1", "ENTITY", "entity-1")));
     ScriptEventIngressService service =
-        new ScriptEventIngressServiceImpl(repository, bindingRepository);
+        new ScriptEventIngressServiceImpl(
+            repository, bindingRepository, new BuiltInScriptEventRegistryService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -91,7 +92,9 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
-            repository, Mockito.mock(ScriptEventBindingRepository.class));
+            repository,
+            Mockito.mock(ScriptEventBindingRepository.class),
+            new BuiltInScriptEventRegistryService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -123,7 +126,9 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
-            repository, Mockito.mock(ScriptEventBindingRepository.class));
+            repository,
+            Mockito.mock(ScriptEventBindingRepository.class),
+            new BuiltInScriptEventRegistryService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -173,7 +178,9 @@ class ScriptEventIngressServiceImplTest {
         .thenReturn(Optional.of(existing));
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
-            repository, Mockito.mock(ScriptEventBindingRepository.class));
+            repository,
+            Mockito.mock(ScriptEventBindingRepository.class),
+            new BuiltInScriptEventRegistryService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -200,7 +207,9 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
-            repository, Mockito.mock(ScriptEventBindingRepository.class));
+            repository,
+            Mockito.mock(ScriptEventBindingRepository.class),
+            new BuiltInScriptEventRegistryService());
 
     assertThrows(
         IllegalArgumentException.class,
