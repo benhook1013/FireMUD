@@ -84,20 +84,15 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
           ledger.getScopeEpochAfter());
     }
 
+    validateExpectedScopeEpochBeforeMutation(request);
+    validateExpectedAggregateEpochBeforeMutation(request);
+
     Long aggregateId = applyAggregateMutation(request);
     WorldDesignAggregateEpoch aggregateEpoch =
         aggregateEpochRepository
             .findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
                 request.tenantId(), request.versionId(), request.aggregateType(), aggregateId)
             .orElseGet(() -> newAggregateEpoch(request, aggregateId));
-    if (!aggregateEpoch.getDraftRevisionEpoch().equals(request.expectedDraftRevisionEpoch())) {
-      throw appError(
-          "DRAFT_WRITE_CONFLICT",
-          "expected Draft aggregate epoch "
-              + request.expectedDraftRevisionEpoch()
-              + " but found "
-              + aggregateEpoch.getDraftRevisionEpoch());
-    }
     aggregateEpoch.setDraftRevisionEpoch(aggregateEpoch.getDraftRevisionEpoch() + 1L);
     aggregateEpoch.setUpdatedAt(LocalDateTime.now());
     aggregateEpochRepository.save(aggregateEpoch);
@@ -294,9 +289,6 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
         roomRepository
             .findByTenantIdAndVersionIdAndId(request.tenantId(), request.versionId(), roomId)
             .orElseThrow(() -> appError("UNRESOLVED_REFERENCE", "room not found"));
-    if (isReplaceScopePolicy(request)) {
-      deleteExistingSpawnBindingsInScope(request, room);
-    }
     String entityTemplateType =
         requireText(
             payload.entityTemplateType(), "world_entity_spawn_binding.entity_template_type");
@@ -317,8 +309,14 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
                     entityTemplateType,
                     entityTemplateId)
                 .orElseGet(WorldEntitySpawnBinding::new);
+    if (binding.getId() != null && !StringUtils.hasText(request.aggregateId())) {
+      validateExpectedAggregateEpoch(request, binding.getId());
+    }
     if (isSeedAppendOnlyPolicy(request) && binding.getId() != null) {
       throw appError("OUT_OF_SYNC", "SEED_APPEND_ONLY cannot rewrite an existing spawn binding");
+    }
+    if (isReplaceScopePolicy(request)) {
+      deleteExistingSpawnBindingsInScope(request, room);
     }
     binding.setTenantId(request.tenantId());
     binding.setVersionId(request.versionId());
@@ -328,6 +326,60 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     binding.setSpawnCount(payload.spawnCount() <= 0 ? 1 : payload.spawnCount());
     binding.setRespawnDelaySeconds(Math.max(payload.respawnDelaySeconds(), 0));
     return worldEntitySpawnBindingRepository.save(binding).getId();
+  }
+
+  private void validateExpectedAggregateEpochBeforeMutation(WorldDesignMutationRequestDto request) {
+    if (StringUtils.hasText(request.aggregateId())) {
+      validateExpectedAggregateEpoch(request, parseId(request.aggregateId(), "aggregate_id"));
+      return;
+    }
+    if (request.expectedDraftRevisionEpoch() != 0L) {
+      throw appError(
+          "DRAFT_WRITE_CONFLICT",
+          "expected Draft aggregate epoch "
+              + request.expectedDraftRevisionEpoch()
+              + " but found 0");
+    }
+  }
+
+  private void validateExpectedAggregateEpoch(
+      WorldDesignMutationRequestDto request, Long aggregateId) {
+    Long currentEpoch =
+        aggregateEpochRepository
+            .findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
+                request.tenantId(), request.versionId(), request.aggregateType(), aggregateId)
+            .map(WorldDesignAggregateEpoch::getDraftRevisionEpoch)
+            .orElse(0L);
+    if (!currentEpoch.equals(request.expectedDraftRevisionEpoch())) {
+      throw appError(
+          "DRAFT_WRITE_CONFLICT",
+          "expected Draft aggregate epoch "
+              + request.expectedDraftRevisionEpoch()
+              + " but found "
+              + currentEpoch);
+    }
+  }
+
+  private void validateExpectedScopeEpochBeforeMutation(WorldDesignMutationRequestDto request) {
+    if (!StringUtils.hasText(request.scopeType()) && !StringUtils.hasText(request.scopeId())) {
+      return;
+    }
+    String scopeType = requireText(request.scopeType(), "scope_type");
+    String scopeId = requireText(request.scopeId(), "scope_id");
+    Long currentEpoch =
+        scopeEpochRepository
+            .findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
+                request.tenantId(), request.versionId(), scopeType, scopeId)
+            .map(WorldDesignScopeEpoch::getDraftScopeRevisionEpoch)
+            .orElse(0L);
+    if (!currentEpoch.equals(request.expectedDraftScopeRevisionEpoch())) {
+      throw appError(
+          "DRAFT_WRITE_CONFLICT",
+          "expected Draft scope epoch "
+              + request.expectedDraftScopeRevisionEpoch()
+              + " but found "
+              + currentEpoch);
+    }
   }
 
   private void deleteExistingSpawnBindingsInScope(

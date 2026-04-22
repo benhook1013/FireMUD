@@ -19,6 +19,7 @@ import net.firedevops.firemud.worldmanagement.entity.Region;
 import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignAggregateEpoch;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignRevisionLedger;
+import net.firedevops.firemud.worldmanagement.entity.WorldDesignScopeEpoch;
 import net.firedevops.firemud.worldmanagement.entity.WorldEntitySpawnBinding;
 import net.firedevops.firemud.worldmanagement.entity.Zone;
 import net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository;
@@ -147,6 +148,85 @@ class WorldDesignMutationServiceImplTest {
             IllegalArgumentException.class, () -> service.applyMutation(regionUpdateRequest()));
 
     assertEquals(true, ex.getMessage().startsWith("DRAFT_WRITE_CONFLICT:"));
+    verify(regionRepository, never()).save(any(Region.class));
+  }
+
+  @Test
+  void staleScopeEpochFailsBeforeReplaceScopeMutation() {
+    WorldDesignScopeEpoch scopeEpoch = new WorldDesignScopeEpoch();
+    scopeEpoch.setTenantId(1L);
+    scopeEpoch.setVersionId(7L);
+    scopeEpoch.setScopeType("ZONE_SUBTREE");
+    scopeEpoch.setScopeId("12");
+    scopeEpoch.setDraftScopeRevisionEpoch(2L);
+    when(scopeEpochRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
+            1L, 7L, "ZONE_SUBTREE", "12"))
+        .thenReturn(Optional.of(scopeEpoch));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-2", "revision-2", "UPSERT", "WORLD_ENTITY_SPAWN_BINDING", ""))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.applyMutation(
+                    spawnBindingRequestWithScope("ZONE_SUBTREE", "12", "REPLACE_SCOPE")));
+
+    assertEquals(true, ex.getMessage().startsWith("DRAFT_WRITE_CONFLICT:"));
+    verify(roomRepository, never()).findByTenantIdAndVersionIdAndId(1L, 7L, 12L);
+    verify(worldEntitySpawnBindingRepository, never()).deleteAll(any());
+    verify(worldEntitySpawnBindingRepository, never()).save(any(WorldEntitySpawnBinding.class));
+  }
+
+  @Test
+  void staleNaturalKeySpawnBindingEpochFailsBeforeReplaceScopeDelete() {
+    Zone zone = zone(12L, 99L);
+    Room targetRoom = room(12L, zone);
+    WorldEntitySpawnBinding existing = binding(102L, targetRoom);
+    when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L))
+        .thenReturn(Optional.of(targetRoom));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-2", "revision-2", "UPSERT", "WORLD_ENTITY_SPAWN_BINDING", ""))
+        .thenReturn(Optional.empty());
+    when(worldEntitySpawnBindingRepository
+            .findByTenantIdAndVersionIdAndRoomIdAndEntityTemplateTypeAndEntityTemplateId(
+                1L, 7L, 12L, "NPC", 55L))
+        .thenReturn(Optional.of(existing));
+    WorldDesignAggregateEpoch epoch = new WorldDesignAggregateEpoch();
+    epoch.setTenantId(1L);
+    epoch.setVersionId(7L);
+    epoch.setAggregateType("WORLD_ENTITY_SPAWN_BINDING");
+    epoch.setAggregateId(102L);
+    epoch.setDraftRevisionEpoch(2L);
+    when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
+            1L, 7L, "WORLD_ENTITY_SPAWN_BINDING", 102L))
+        .thenReturn(Optional.of(epoch));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.applyMutation(
+                    spawnBindingRequestWithScope("ZONE_SUBTREE", "12", "REPLACE_SCOPE")));
+
+    assertEquals(true, ex.getMessage().startsWith("DRAFT_WRITE_CONFLICT:"));
+    verify(worldEntitySpawnBindingRepository, never()).deleteAll(any());
+    verify(worldEntitySpawnBindingRepository, never()).save(any(WorldEntitySpawnBinding.class));
+  }
+
+  @Test
+  void newAggregateWithNonZeroExpectedEpochFailsBeforeMutation() {
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.applyMutation(regionCreateRequestWithExpectedEpoch(1L)));
+
+    assertEquals(
+        "DRAFT_WRITE_CONFLICT: expected Draft aggregate epoch 1 but found 0", ex.getMessage());
+    verify(regionRepository, never()).save(any(Region.class));
   }
 
   @Test
@@ -353,6 +433,10 @@ class WorldDesignMutationServiceImplTest {
   }
 
   private WorldDesignMutationRequestDto regionCreateRequest() {
+    return regionCreateRequestWithExpectedEpoch(0L);
+  }
+
+  private WorldDesignMutationRequestDto regionCreateRequestWithExpectedEpoch(long expectedEpoch) {
     return new WorldDesignMutationRequestDto(
         1L,
         7L,
@@ -361,7 +445,7 @@ class WorldDesignMutationServiceImplTest {
         "UPSERT",
         "REGION",
         "",
-        0L,
+        expectedEpoch,
         "",
         "",
         0L,
