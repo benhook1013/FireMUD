@@ -190,6 +190,39 @@ previewStack:
       participant_digests_json = EXCLUDED.participant_digests_json,
       script_only = EXCLUDED.script_only;
 
+    INSERT INTO game_design_service.version_asset_artifact (
+      tenant_id,
+      version_id,
+      artifact_state,
+      manifest_hash,
+      asset_count,
+      storage_bytes,
+      export_workflow_id,
+      exported_manifest_asset_keys_json,
+      exported_version_number
+    )
+    VALUES (
+      '1',
+      1,
+      'PUBLISHED',
+      'dev-demo-seed-manifest',
+      0,
+      0,
+      'dev-demo-seed',
+      '[]',
+      1
+    )
+    ON CONFLICT (tenant_id, version_id) DO UPDATE SET
+      artifact_state = EXCLUDED.artifact_state,
+      manifest_hash = EXCLUDED.manifest_hash,
+      asset_count = EXCLUDED.asset_count,
+      storage_bytes = EXCLUDED.storage_bytes,
+      export_workflow_id = EXCLUDED.export_workflow_id,
+      purge_after = NULL,
+      exported_manifest_asset_keys_json = EXCLUDED.exported_manifest_asset_keys_json,
+      exported_version_number = EXCLUDED.exported_version_number,
+      updated_at = CURRENT_TIMESTAMP;
+
     INSERT INTO world_management_service.region (id, name, tenant_id, shard_id)
     VALUES (201, 'Preview Coast', 1, 0)
     ON CONFLICT (id) DO UPDATE SET
