@@ -21,6 +21,7 @@ RPC expectations:
 - `Ping` – safe to retry freely; no side effects.
 - `UpdateScript` / `NotifyScriptVersionUpdate` – **idempotent with respect to their request identifiers** (for example, script IDs, patch versions, and event-binding identity). Callers should treat transport-level retries as safe as long as they resend the same payload.
 - `GetScriptPatchStatus` / `ListScriptPatchStatuses` – visibility over patch lifecycle states (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `ROLLED_BACK`).
+- `GetScriptPatchInstanceRolloutStatus` / `ListScriptPatchInstanceRollouts` – per-instance rollout visibility for a concrete `scriptPatchVersion`, including freshness flags (`projectionAsOfMs`, `projectionLagMs`, `isProjectionStale`) so operators can distinguish stale read models from real rollout failures.
 - Plugin control-plane mutating RPCs (`SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`) are idempotent with respect to `controlPlaneRequestId`.
 - Event ingress RPCs (for example, `TriggerScriptEvent`) – **idempotent with respect to `scriptEventId`**:
   - Re-sending the same request with the same Trigger Identity must not cause the DSL body to run twice.
@@ -38,7 +39,7 @@ The proto files in this directory define several RPCs consumed by domain service
 - **Health and admin**
   - `Ping(PingRequest) returns (PingResponse)` – basic health check; see the service README for REST and gRPC ping usage.
 - **Runtime control-plane APIs**
-  - `AutomationScriptingControlPlaneService` exposes script patch lifecycle APIs (`GetScriptPatchStatus`, `ListScriptPatchStatuses`) and rollback-support hooks (`CancelPendingWorkItemsForPatch`) as specified in `design/architecture/system-architecture-scripting-control-plane-api.md`.
+  - `AutomationScriptingControlPlaneService` exposes script patch lifecycle APIs (`GetScriptPatchStatus`, `ListScriptPatchStatuses`), per-instance rollout reads (`GetScriptPatchInstanceRolloutStatus`, `ListScriptPatchInstanceRollouts`), and rollback-support hooks (`CancelPendingWorkItemsForPatch`) as specified in `design/architecture/system-architecture-scripting-control-plane-api.md`.
   - It exposes script event-registry reads (`GetScriptEventDefinition`, `ListScriptEventDefinitions`) so design-time and operator tooling can consume the same canonical event definitions used by ingress admission.
   - It also exposes plugin lifecycle APIs (`GetPluginStatus`, `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`) for operator orchestration via Logging & Admin.
 - **Design-time APIs**

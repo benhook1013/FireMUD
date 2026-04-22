@@ -17,18 +17,23 @@ import net.firedevops.firemud.automationscripting.v1.GetPluginStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionResponse;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchInstanceRolloutStatusRequest;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchInstanceRolloutStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsRequest;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsResponse;
 import net.firedevops.firemud.automationscripting.v1.ScriptDeadLetterEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptEventDefinition;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatusEntry;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionRequest;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
@@ -148,6 +153,75 @@ public final class AutomationScriptingControlPlaneGrpcService
           .stream()
           .map(AutomationScriptingControlPlaneGrpcService::toProto)
           .forEach(response::addPatches);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.getScriptPatchInstanceRolloutStatus")
+  public void getScriptPatchInstanceRolloutStatus(
+      GetScriptPatchInstanceRolloutStatusRequest request,
+      StreamObserver<GetScriptPatchInstanceRolloutStatusResponse> responseObserver) {
+    GetScriptPatchInstanceRolloutStatusResponse.Builder response =
+        GetScriptPatchInstanceRolloutStatusResponse.newBuilder();
+    try {
+      requireAdminRole();
+      workItemService
+          .getPatchInstanceRolloutStatus(
+              request.getTenantId(), request.getGameInstanceId(), request.getScriptPatchVersion())
+          .ifPresentOrElse(
+              summary ->
+                  response
+                      .setTenantId(summary.tenantId())
+                      .setGameInstanceId(summary.gameInstanceId())
+                      .setScriptPatchVersion(summary.scriptPatchVersion())
+                      .setRolloutStatus(summary.rolloutStatus())
+                      .setStatusReason(summary.statusReason())
+                      .setLastChangedAtMs(summary.lastChangedAtMs())
+                      .setProjectionAsOfMs(summary.projectionAsOfMs())
+                      .setProjectionLagMs(summary.projectionLagMs())
+                      .setIsProjectionStale(summary.projectionStale()),
+              () ->
+                  response.setError(
+                      notFound(
+                          "GetScriptPatchInstanceRolloutStatus",
+                          "script_patch_instance_rollout_not_found")));
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.listScriptPatchInstanceRollouts")
+  public void listScriptPatchInstanceRollouts(
+      ListScriptPatchInstanceRolloutsRequest request,
+      StreamObserver<ListScriptPatchInstanceRolloutsResponse> responseObserver) {
+    ListScriptPatchInstanceRolloutsResponse.Builder response =
+        ListScriptPatchInstanceRolloutsResponse.newBuilder();
+    try {
+      requireAdminRole();
+      workItemService
+          .listPatchInstanceRollouts(
+              request.getTenantId(),
+              request.getGameInstanceId(),
+              request.getScriptPatchVersion(),
+              request.getRolloutStatus(),
+              request.getChangedAfterMs(),
+              request.getChangedBeforeMs())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addRollouts);
     } catch (IllegalArgumentException ex) {
       response.setError(
           ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
@@ -427,6 +501,21 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setReason(summary.reason())
         .setCreatedAtMs(summary.createdAtMs())
         .setUpdatedAtMs(summary.updatedAtMs())
+        .build();
+  }
+
+  private static ScriptPatchInstanceRolloutEntry toProto(
+      ScriptWorkItemService.PatchInstanceRolloutSummary summary) {
+    return ScriptPatchInstanceRolloutEntry.newBuilder()
+        .setTenantId(summary.tenantId())
+        .setGameInstanceId(summary.gameInstanceId())
+        .setScriptPatchVersion(summary.scriptPatchVersion())
+        .setRolloutStatus(summary.rolloutStatus())
+        .setStatusReason(summary.statusReason())
+        .setLastChangedAtMs(summary.lastChangedAtMs())
+        .setProjectionAsOfMs(summary.projectionAsOfMs())
+        .setProjectionLagMs(summary.projectionLagMs())
+        .setIsProjectionStale(summary.projectionStale())
         .build();
   }
 }

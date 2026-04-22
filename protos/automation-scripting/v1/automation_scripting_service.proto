@@ -44,6 +44,10 @@ service AutomationScriptingService {
 service AutomationScriptingControlPlaneService {
   rpc GetScriptPatchStatus(GetScriptPatchStatusRequest) returns (GetScriptPatchStatusResponse);
   rpc ListScriptPatchStatuses(ListScriptPatchStatusesRequest) returns (ListScriptPatchStatusesResponse);
+  rpc GetScriptPatchInstanceRolloutStatus(GetScriptPatchInstanceRolloutStatusRequest)
+      returns (GetScriptPatchInstanceRolloutStatusResponse);
+  rpc ListScriptPatchInstanceRollouts(ListScriptPatchInstanceRolloutsRequest)
+      returns (ListScriptPatchInstanceRolloutsResponse);
   rpc ListScriptDeadLetters(ListScriptDeadLettersRequest) returns (ListScriptDeadLettersResponse);
   rpc ReplayDeadLetteredWorkItems(ReplayDeadLetteredWorkItemsRequest)
       returns (ReplayDeadLetteredWorkItemsResponse);
@@ -360,6 +364,58 @@ message ScriptPatchStatusEntry {
 
 message ListScriptPatchStatusesResponse {
   repeated ScriptPatchStatusEntry patches = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+enum ScriptPatchInstanceRolloutStatus {
+  SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED = 0;
+  SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED = 1;
+  SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK = 2;
+  SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED = 3;
+}
+
+message GetScriptPatchInstanceRolloutStatusRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+}
+
+message GetScriptPatchInstanceRolloutStatusResponse {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  ScriptPatchInstanceRolloutStatus rollout_status = 4;
+  string status_reason = 5;
+  int64 last_changed_at_ms = 6;
+  int64 projection_as_of_ms = 7;
+  int64 projection_lag_ms = 8;
+  bool is_projection_stale = 9;
+  shared.v1.ErrorDetail error = 10;
+}
+
+message ListScriptPatchInstanceRolloutsRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  ScriptPatchInstanceRolloutStatus rollout_status = 4;
+  int64 changed_after_ms = 5;
+  int64 changed_before_ms = 6;
+}
+
+message ScriptPatchInstanceRolloutEntry {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  ScriptPatchInstanceRolloutStatus rollout_status = 4;
+  string status_reason = 5;
+  int64 last_changed_at_ms = 6;
+  int64 projection_as_of_ms = 7;
+  int64 projection_lag_ms = 8;
+  bool is_projection_stale = 9;
+}
+
+message ListScriptPatchInstanceRolloutsResponse {
+  repeated ScriptPatchInstanceRolloutEntry rollouts = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

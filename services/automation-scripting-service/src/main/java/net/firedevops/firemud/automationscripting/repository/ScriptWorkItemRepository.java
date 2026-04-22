@@ -12,6 +12,12 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, Long> {
+  interface ScriptPatchInstanceProjection {
+    String getGameInstanceId();
+
+    String getScriptPatchVersion();
+  }
+
   boolean
       existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
           String tenantId,
@@ -35,9 +41,25 @@ public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, 
   List<ScriptWorkItem> findByTenantIdAndScriptPatchVersion(
       String tenantId, String scriptPatchVersion);
 
+  List<ScriptWorkItem> findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
+      String tenantId, String gameInstanceId, String scriptPatchVersion);
+
   @Query(
       "select distinct item.scriptPatchVersion from ScriptWorkItem item where item.tenantId = :tenantId")
   List<String> findDistinctScriptPatchVersionsByTenantId(@Param("tenantId") String tenantId);
+
+  @Query(
+      """
+      select distinct item.gameInstanceId as gameInstanceId, item.scriptPatchVersion as scriptPatchVersion
+      from ScriptWorkItem item
+      where item.tenantId = :tenantId
+        and (:gameInstanceId = '' or item.gameInstanceId = :gameInstanceId)
+        and (:scriptPatchVersion = '' or item.scriptPatchVersion = :scriptPatchVersion)
+      """)
+  List<ScriptPatchInstanceProjection> findDistinctInstancePatchPairs(
+      @Param("tenantId") String tenantId,
+      @Param("gameInstanceId") String gameInstanceId,
+      @Param("scriptPatchVersion") String scriptPatchVersion);
 
   List<ScriptWorkItem> findByStatusOrderByCreatedAtAscIdAsc(String status, Pageable pageable);
 

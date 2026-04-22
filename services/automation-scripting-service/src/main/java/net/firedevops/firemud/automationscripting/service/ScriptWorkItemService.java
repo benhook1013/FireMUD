@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.service;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 
 public interface ScriptWorkItemService {
@@ -16,6 +17,17 @@ public interface ScriptWorkItemService {
 
   List<PatchStatusSummary> listPatchStatuses(
       String tenantId, ScriptPatchStatus status, long changedAfterMs, long changedBeforeMs);
+
+  Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
+      String tenantId, String gameInstanceId, String scriptPatchVersion);
+
+  List<PatchInstanceRolloutSummary> listPatchInstanceRollouts(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      long changedAfterMs,
+      long changedBeforeMs);
 
   List<DeadLetterSummary> listDeadLetters(
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit);
@@ -43,6 +55,17 @@ public interface ScriptWorkItemService {
       ScriptPatchStatus status,
       String statusReason,
       long lastChangedAtMs) {}
+
+  record PatchInstanceRolloutSummary(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      String statusReason,
+      long lastChangedAtMs,
+      long projectionAsOfMs,
+      long projectionLagMs,
+      boolean projectionStale) {}
 
   record DeadLetterSummary(
       String workItemId,

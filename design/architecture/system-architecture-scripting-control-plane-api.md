@@ -280,6 +280,8 @@ Contract rules:
 
 #### `GetScriptPatchInstanceRolloutStatus`
 
+Implementation note: the current Automation & Scripting implementation now exposes these rollout reads as a first direct-runtime-backed read model rather than a fully event-projected history. It combines the shared Game Session `GetGameInstanceRuntimeState` read with local durable work-item evidence, sets freshness fields explicitly, and currently emits the narrower concrete rollout vocabulary actually provable from that substrate (`PINNED` and `ROLLED_BACK`). `REPINNED` and richer convergence history remain later event-projection work rather than already-live behavior.
+
 Inputs:
 
 - `tenantId`
