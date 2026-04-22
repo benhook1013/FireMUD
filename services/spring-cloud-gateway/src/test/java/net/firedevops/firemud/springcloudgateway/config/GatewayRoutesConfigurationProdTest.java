@@ -66,6 +66,9 @@ class GatewayRoutesConfigurationProdTest {
     assertHasStripPrefixTwo(route("design"));
     assertHasStripPrefixTwo(route("account"));
     assertHasStripPrefixTwo(route("social"));
+    assertThat(route("asset-store").getPredicates().get(0).getArgs().values())
+        .containsExactly("/assets/**");
+    assertHasStripPrefix(route("asset-store"), "1");
   }
 
   private RouteDefinition route(String routeId) {
@@ -76,11 +79,15 @@ class GatewayRoutesConfigurationProdTest {
   }
 
   private void assertHasStripPrefixTwo(RouteDefinition route) {
+    assertHasStripPrefix(route, "2");
+  }
+
+  private void assertHasStripPrefix(RouteDefinition route, String value) {
     FilterDefinition filter =
         route.getFilters().stream()
             .filter(candidate -> "StripPrefix".equals(candidate.getName()))
             .findFirst()
             .orElseThrow(() -> new AssertionError("Expected StripPrefix filter"));
-    assertThat(filter.getArgs().values()).containsExactly("2");
+    assertThat(filter.getArgs().values()).containsExactly(value);
   }
 }
