@@ -64,7 +64,7 @@ This behavior ensures that a script patch either becomes the new active version 
 ## Redis Roles and Prefixes
 
 - **Coordination Redis participation**
-  - Uses automation-specific coordination prefixes owned by the Game Session Lua registry, such as `automation:tick:{tenantInstanceScriptTag}:lock`, `automation:tick:{tenantInstanceScriptTag}:queue`, and `automation:tick:{tenantInstanceScriptTag}:pending`, as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples) and [Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md).
+  - Uses automation-specific coordination prefixes owned by Automation & Scripting itself, such as `automation:tick:{tenantInstanceScriptTag}:lock`, `automation:tick:{tenantInstanceScriptTag}:queue`, and `automation:tick:{tenantInstanceScriptTag}:pending`, as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples) and [Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md). Game Session remains the only owner of `tick:{tenantRegionTag}:*` gameplay coordination prefixes.
   - Automation scripts are registered as single-hash-slot Lua scripts that operate only on `automation:tick:{tenantInstanceScriptTag}:*` keys and never mix `automation:*` and `tick:*` prefixes in a single script invocation.
 - **Cache/Rate-Limit Redis usage**
   - Stores script quota counters and similar best-effort aggregates in Cache/Rate-Limit Redis using prefixes such as `automation:quota:<tenantId>:<scriptId>` and `automation:queue:{tenantInstanceTag}:*`.

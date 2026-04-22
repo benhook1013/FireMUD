@@ -52,7 +52,7 @@ FireMUD runs two logical Redis roles in all non‑trivial environments:
     - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>`
     - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>`
     - `ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]`
-    - `automation:queue:<tenantId>:<entityId>` and automation quota counters.
+    - `automation:queue:{tenantInstanceTag}:<entityId>` and automation quota counters.
 
 Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate deployments** in all persistent, player-facing environments so cache eviction/pressure cannot silently impact coordination SLOs. The only supported exception is explicitly ephemeral test/CI stacks that opt out of tail-loss and role-separation guarantees; those stacks may collapse roles temporarily, but must be clearly labelled as ephemeral and must not be used to validate coordination behavior or SLOs. See [Environment Profiles and Mappings](#environment-profiles-and-mappings) for details.
 
@@ -134,7 +134,7 @@ Automation workloads split into two broad classes, with different expectations a
 - **Best-effort, non-critical automation**
   - Examples: analytics-style background work, non-critical notifications, opportunistic refreshes that can be dropped or reordered without visible gameplay impact.
   - Redis role: **Cache/Rate-Limit Redis**.
-  - Prefixes: `automation:queue:<tenantId>:*`, `automation:quota:<tenantId>:*` and similar TTL-only queues and counters documented in the Redis Cache & Rate Limiting design.
+  - Prefixes: `automation:queue:{tenantInstanceTag}:*`, `automation:quota:<tenantId>:*` and similar TTL-only queues and counters documented in the Redis Cache & Rate Limiting design.
   - Guarantees:
     - Treated as **TTL-only, reset-tolerant** hints: items may be dropped, duplicated, or processed late.
     - Correctness (for example, “was this workflow triggered at least once?”) must come from durable trigger tables and idempotent domain logic, not from the queue contents.
@@ -151,7 +151,7 @@ The following table summarizes how core services interact with Coordination Redi
 | Service | Redis Usage |
 | --- | --- |
 | **Game Session Service** | Owns **Coordination Redis**: tick queues, locks, timers, retry metadata, region leases, and Redis‑backed session state used for reconnection. All tick/coordination key prefixes and their Lua scripts are registered and owned here. |
-| **Automation & Scripting Service** | Participates in coordination via **registered Lua helpers** and automation‑specific staging keys (`automation:tick:{tenantInstanceScriptTag}:...`) but does **not** own tick queues or locks directly. It reads tick heartbeats via gRPC and uses **Cache/Rate‑Limit Redis** for script quotas and best‑effort internal queues where documented. |
+| **Automation & Scripting Service** | Owns automation-specific coordination prefixes such as `automation:tick:{tenantInstanceScriptTag}:...` and `script-scheduler:{tenantRegionTag}:lastTickId`, but does **not** own gameplay `tick:*` queues or locks. It reads tick heartbeats via gRPC, stages automation work under its own coordination families, and uses **Cache/Rate‑Limit Redis** for script quotas and best-effort internal queues where documented. |
 | **Spring Cloud Gateway** | Uses **Cache/Rate‑Limit Redis** for token‑bucket rate limiting and best‑effort caches only; it never touches tick/coordination prefixes directly and always connects via the cache profile configured in `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`. |
 | **Other microservices (Game Logic, Entity Management, World Management, Social & Groups, etc.)** | Do not define or own coordination prefixes; they participate in Coordination Redis **only** through shared helpers and Lua descriptors owned by Game Session (for example, `tick:{tenantRegionTag}:lock:<entityId>` for tick locks). Where they cache read‑heavy aggregates, they use **Cache/Rate‑Limit Redis** and the key patterns from the Redis Cache & Rate Limiting design. |
 

@@ -123,7 +123,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `RunScopedCoordinationReset(scope)`
   - `ReconcileTickLedger(scope, oldRegionEpoch)`
   - `ConvergeCommandRecords(scope, oldRegionEpoch)`
-  - `InitializeRegionMeta(scope, regionEpoch, currentTickId)`
+  - `InitializeRegionMeta(scope, regionEpoch, currentTickId, currentTickState, currentTickTerminalAtMs)`
   - `RebindRegionSessions(scope, regionEpoch)`
   - `RunPostResetSmokeCheck(scope)`
 - Required CLI verbs:
