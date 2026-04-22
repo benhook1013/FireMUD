@@ -1,4 +1,4 @@
-CREATE TABLE script_event_audit (
+CREATE TABLE script_event_ingress_audit (
     id BIGSERIAL PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL,
     game_instance_id VARCHAR(64),
@@ -22,7 +22,7 @@ CREATE TABLE script_event_audit (
     admission_reason VARCHAR(256) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     row_version INT NOT NULL DEFAULT 0,
-    CONSTRAINT uq_script_event_audit_trigger_identity UNIQUE (
+    CONSTRAINT uq_script_event_ingress_audit_identity UNIQUE (
         tenant_id,
         game_instance_id,
         region_id,
@@ -39,5 +39,5 @@ CREATE TABLE script_event_audit (
     )
 );
 
-CREATE INDEX idx_script_event_audit_tenant_created ON script_event_audit(tenant_id, created_at);
-CREATE INDEX idx_script_event_audit_event_type ON script_event_audit(event_type, event_schema_version);
+CREATE INDEX idx_script_event_ingress_audit_tenant_created ON script_event_ingress_audit(tenant_id, created_at);
+CREATE INDEX idx_script_event_ingress_audit_event_type ON script_event_ingress_audit(event_type, event_schema_version);

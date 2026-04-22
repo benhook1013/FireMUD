@@ -27,7 +27,7 @@ RPC expectations:
   - For entity-scoped external gameplay/runtime events, the Trigger Identity is at least `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, eventSchemaVersion, scriptPatchVersion, scriptEventId>`.
   - For plugin triggers, Trigger Identity also includes `<pluginId, pluginVersionId>`.
   - For tick-aligned scheduler events, Trigger Identity also includes `regionEpoch`, and `scriptEventId` must be deterministic and derived from a due point (for example `dueTickId` / `dueAt`) plus the stable identity fields above.
-  - The service records at most one `script_event_audit` row per Trigger Identity and only one set of commands flows into tick queues for that trigger.
+  - The service records at most one ingress audit row per event-scope Trigger Identity, then later records handler-scoped `script_event_audit` rows per resolved handler before any commands flow into tick queues.
 
 Callers and infrastructure components may retry these RPCs at the transport layer only when they reuse the same identifiers; changing identifiers creates new triggers and must be treated as new work.
 

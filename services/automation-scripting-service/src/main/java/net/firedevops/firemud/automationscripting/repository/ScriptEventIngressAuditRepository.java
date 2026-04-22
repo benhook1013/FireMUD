@@ -1,11 +1,12 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import java.util.Optional;
-import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface ScriptEventAuditRepository extends JpaRepository<ScriptEventAudit, Long> {
-  Optional<ScriptEventAudit>
+public interface ScriptEventIngressAuditRepository
+    extends JpaRepository<ScriptEventIngressAudit, Long> {
+  Optional<ScriptEventIngressAudit>
       findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndPluginIdAndPluginVersionIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
           String tenantId,
           String gameInstanceId,

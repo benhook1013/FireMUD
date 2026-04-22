@@ -2,8 +2,8 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import java.util.Map;
 import java.util.Set;
-import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
-import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
@@ -19,10 +19,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private static final String OUTCOME_REGISTRY_REJECTED =
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name();
 
-  private final ScriptEventAuditRepository repository;
+  private final ScriptEventIngressAuditRepository repository;
   private final Map<String, EventDefinition> eventDefinitions;
 
-  public ScriptEventIngressServiceImpl(ScriptEventAuditRepository repository) {
+  public ScriptEventIngressServiceImpl(ScriptEventIngressAuditRepository repository) {
     this.repository = repository;
     this.eventDefinitions =
         Map.of(
@@ -49,14 +49,14 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   @Transactional
   public TriggerAdmission admit(TriggerScriptEventRequest request) {
     String schemaVersion = schemaVersion(request);
-    ScriptEventAudit existing = findExisting(request, schemaVersion);
+    ScriptEventIngressAudit existing = findExisting(request, schemaVersion);
     if (existing != null) {
       return new TriggerAdmission(
           existing.isAdmitted(), existing.getAdmissionOutcome(), existing.getAdmissionReason());
     }
 
     TriggerAdmission admission = validate(request, schemaVersion);
-    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptEventIngressAudit audit = new ScriptEventIngressAudit();
     audit.setTenantId(requiredText(request.getTenantId(), "tenant_id"));
     audit.setGameInstanceId(normalize(request.getGameInstanceId()));
     audit.setRegionId(normalize(request.getRegionId()));
@@ -114,7 +114,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     return new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, reason);
   }
 
-  private ScriptEventAudit findExisting(TriggerScriptEventRequest request, String schemaVersion) {
+  private ScriptEventIngressAudit findExisting(
+      TriggerScriptEventRequest request, String schemaVersion) {
     if (request.getTenantId().isBlank()
         || request.getEventType().isBlank()
         || request.getScriptPatchVersion().isBlank()

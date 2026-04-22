@@ -12,8 +12,8 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "script_event_audit")
-public class ScriptEventAudit {
+@Table(name = "script_event_ingress_audit")
+public class ScriptEventIngressAudit {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;

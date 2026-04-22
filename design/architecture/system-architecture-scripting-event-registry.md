@@ -141,7 +141,7 @@ Publish validation must fail closed if it cannot read the canonical registry for
 
 Registry-driven admission must be observable:
 
-- `script_event_audit` records the `eventType`, `eventSchemaVersion`, and producing service identity for every admitted or rejected custom/service-specific event
+- `script_event_ingress_audit` records the `eventType`, `eventSchemaVersion`, and producing service identity for every admitted or rejected custom/service-specific event before handler resolution
 - ingress rejection metrics must tag bounded reasons such as `unknown_event_type`, `unauthorized_producer`, `missing_snapshot_token`, or `illegal_binding_scope`
 - registry change events must be replayable so operator read models can explain why an event became valid, deprecated, or rejected
 

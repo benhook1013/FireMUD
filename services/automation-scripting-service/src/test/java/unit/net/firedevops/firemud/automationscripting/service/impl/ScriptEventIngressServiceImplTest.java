@@ -9,8 +9,8 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
-import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
@@ -30,7 +30,8 @@ class ScriptEventIngressServiceImplTest {
   void admitsKnownProducerAndPersistsAuditRow() {
     SessionContext.setContext(
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
-    ScriptEventAuditRepository repository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
     when(repository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndPluginIdAndPluginVersionIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 "1",
@@ -67,7 +68,8 @@ class ScriptEventIngressServiceImplTest {
     assertThat(admission.admitted()).isTrue();
     assertThat(admission.outcome())
         .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name());
-    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    ArgumentCaptor<ScriptEventIngressAudit> auditCaptor =
+        ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
     verify(repository).save(auditCaptor.capture());
     assertThat(auditCaptor.getValue().getSourceService()).isEqualTo("game-session-service");
     assertThat(auditCaptor.getValue().isAdmitted()).isTrue();
@@ -77,7 +79,8 @@ class ScriptEventIngressServiceImplTest {
   void rejectsRuntimeTriggerWithoutSnapshotToken() {
     SessionContext.setContext(
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
-    ScriptEventAuditRepository repository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
     ScriptEventIngressService service = new ScriptEventIngressServiceImpl(repository);
 
     ScriptEventIngressService.TriggerAdmission admission =
@@ -99,14 +102,15 @@ class ScriptEventIngressServiceImplTest {
         .isEqualTo(
             TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
     assertThat(admission.reason()).isEqualTo("missing_snapshot_token");
-    verify(repository).save(Mockito.any(ScriptEventAudit.class));
+    verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
   }
 
   @Test
   void rejectsUnauthorizedProducerThroughRegistryOutcome() {
     SessionContext.setContext(
         "svc", List.of(), Map.of(), true, "account-service", "account-service-1");
-    ScriptEventAuditRepository repository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
     ScriptEventIngressService service = new ScriptEventIngressServiceImpl(repository);
 
     ScriptEventIngressService.TriggerAdmission admission =
@@ -128,18 +132,19 @@ class ScriptEventIngressServiceImplTest {
         .isEqualTo(
             TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
     assertThat(admission.reason()).isEqualTo("unauthorized_producer");
-    verify(repository).save(Mockito.any(ScriptEventAudit.class));
+    verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
   }
 
   @Test
   void deduplicatesExistingTriggerIdentity() {
     SessionContext.setContext(
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
-    ScriptEventAudit existing = new ScriptEventAudit();
+    ScriptEventIngressAudit existing = new ScriptEventIngressAudit();
     existing.setAdmitted(true);
     existing.setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name());
     existing.setAdmissionReason("admitted_for_handler_resolution");
-    ScriptEventAuditRepository repository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
     when(repository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndPluginIdAndPluginVersionIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 "1",
@@ -178,7 +183,8 @@ class ScriptEventIngressServiceImplTest {
 
   @Test
   void rejectsMissingRequiredIdentityBeforeAuditWrite() {
-    ScriptEventAuditRepository repository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
     ScriptEventIngressService service = new ScriptEventIngressServiceImpl(repository);
 
     assertThrows(
