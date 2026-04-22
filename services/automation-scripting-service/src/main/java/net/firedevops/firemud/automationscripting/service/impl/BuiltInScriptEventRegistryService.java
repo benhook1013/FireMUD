@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -15,6 +16,10 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
 @Service
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification =
+        "Fail-fast startup is intentional if the built-in event registry manifest is invalid.")
 public class BuiltInScriptEventRegistryService implements ScriptEventRegistryService {
   private static final String MANIFEST_PATH = "script-event-registry/built-in-events.json";
 

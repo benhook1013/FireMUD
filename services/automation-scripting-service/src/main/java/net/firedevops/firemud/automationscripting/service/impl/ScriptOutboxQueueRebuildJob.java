@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
@@ -10,6 +11,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected Spring collaborators are retained, not exposed externally.")
 public class ScriptOutboxQueueRebuildJob {
   private static final Logger LOGGER = LoggerFactory.getLogger(ScriptOutboxQueueRebuildJob.class);
 
