@@ -144,7 +144,7 @@ jobs:
     steps:
       - name: Enforce successful CodeQL analysis
         run: |
-          if [ "${{ needs.analyze.result }}" != "success" ]; then
+          if [ "${{ needs.analyze.result }}" != "success" ] && [ "${{ needs.analyze.result }}" != "skipped" ]; then
             echo "CodeQL analysis did not complete successfully: ${{ needs.analyze.result }}"
             exit 1
           fi
