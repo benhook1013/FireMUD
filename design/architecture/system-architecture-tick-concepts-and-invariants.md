@@ -249,7 +249,8 @@ Two additional behaviors complete the mental model:
   - World-wide or multi-region events are implemented by Game Session injecting commands into each affected region and forcing a tick there.
   - This ensures the effect is applied even if a region would otherwise be idle; the work still runs under that region’s normal lease, locks, and fairness rules.
 - **Idle regions still advance time via lightweight ticks**:
-  - Regions continue to run a lightweight “background tick” (for example, roughly once per second) even when no players are present.
-  - Timers, cooldowns, and delayed events therefore continue to progress in idle areas, using the same bounded per-tick work limits described above.
+  - Idle/background behavior does not create a second slower canonical tick cadence inside the same live `region_epoch`.
+  - Regions continue to use the configured `tick_interval_ms` timeline for timer ordering and `tickId` advancement; “background” means reduced work and wake-up pressure when there are no due commands or timers, not a different epoch-local clock.
+  - Any true cadence change for an idle region still requires the same explicit epoch bump and timer re-derivation rules described above.
 
 The underlying Redis key layout and shard-locality rules for these behaviors are documented in the Redis architecture; this section captures the conceptual guarantees for designers and implementers.

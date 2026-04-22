@@ -250,10 +250,10 @@ Every selected work item must provide the tuple
   - If the runtime also stores `dueMs` for wall-clock evaluation, that value is advisory for firing-time comparisons and diagnostics only; ordering and replay always use the persisted `due_tick_id`.
   - Lower normalized value wins.
 - `enqueue_seq`:
-  - Monotonic per region source stream; assigned at ingress/scheduling time and persisted with the item.
+  - Monotonic per region across all candidate work sources; assigned by one region-scoped ordering allocator at ingress or scheduling time and persisted with the item.
   - Lower value wins.
 - `source_kind`:
-  - Fixed, low-cardinality tie-break enum (`command`, `retry`, `timer`, `remote_followup`), sorted lexicographically by canonical enum order.
+  - Fixed, low-cardinality tie-break enum (`command`, `retry`, `timer`, `remote_followup`), used only after the region-wide `enqueue_seq` if earlier fields are equal.
 - `entityId`:
   - Stable deterministic tie-breaker after source ordering.
 - `commandId_or_effectKey`:
