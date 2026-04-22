@@ -8,11 +8,11 @@ replica:
     enabled: true
     size: 8Gi
 commonConfiguration: |-
-  # Enable AOF persistence for crash recovery
+  # Enable AOF persistence for crash recovery on Coordination Redis.
   appendonly yes
   appendfsync everysec
-  # Disable RDB snapshots as only AOF is required
+  # Disable RDB snapshots as only AOF is required.
   save ""
-  # Manage AOF growth via automatic rewrite
+  # Manage AOF growth via automatic rewrite.
   auto-aof-rewrite-percentage 100
   auto-aof-rewrite-min-size 64mb
