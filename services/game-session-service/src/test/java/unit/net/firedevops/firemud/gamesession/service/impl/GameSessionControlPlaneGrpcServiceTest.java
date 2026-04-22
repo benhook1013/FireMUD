@@ -167,6 +167,42 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void getPinnedScriptPatchVersionReturnsPersistedRequestId() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setRuntimeVersion("1.0.0");
+    instance.setScriptPatchVersion("patch-9");
+    instance.setScriptPatchPinnedAt(Instant.parse("2026-04-22T00:00:00Z"));
+    instance.setScriptPatchPinnedBy("operator-1");
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-99");
+    instance.setOwnerAccountId(99L);
+    instance.setStatus("RUNNING");
+    Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service = newService(repository);
+
+    AtomicReference<GetPinnedScriptPatchVersionResponse> responseRef = new AtomicReference<>();
+    service.getPinnedScriptPatchVersion(
+        GetPinnedScriptPatchVersionRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetPinnedScriptPatchVersionResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals("patch-9", responseRef.get().getPinnedScriptPatchVersion());
+    assertEquals("req-99", responseRef.get().getControlPlaneRequestId());
+  }
+
+  @Test
   void getGameInstanceRuntimeStateReturnsCanonicalVersionAndPinMetadata() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();

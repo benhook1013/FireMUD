@@ -287,7 +287,8 @@ message GetPinnedScriptPatchVersionResponse {
   string pinned_script_patch_version = 1;
   int64 pinned_at_ms = 2;
   string pinned_by = 3;
-  shared.v1.ErrorDetail error = 4;
+  string control_plane_request_id = 4;
+  shared.v1.ErrorDetail error = 5;
 }
 
 message GetGameSessionPinConvergenceRequest {

@@ -55,4 +55,4 @@ When diagnosing sandbox-related or automation-runtime issues in production, oper
 - Check `script_event_audit` records for `finalStage`, `finalOutcome`, `finalReason`, and associated scope fields such as `tenantId`, `scriptId`, `gameInstanceId`, and `tickId`.
 - Inspect sandbox and runtime metrics such as `automation_script_sandbox_failures_total`, `automation_script_runtime_seconds`, and queue delay metrics.
 - Verify patch and pin convergence using `GetScriptPatchStatus`, `GetScriptPatchInstanceRolloutStatus`, and `GetAutomationPinConvergence`.
-- Confirm signer-policy propagation through `GetSignerPolicyConvergence` when plugin admission is involved.
+- Signer-policy convergence remains future-state. Today, plugin-related diagnosis must rely on the currently live publication/runtime reads and audit outcomes until a dedicated signer-policy read surface ships.

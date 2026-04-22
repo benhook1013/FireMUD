@@ -531,6 +531,10 @@ public final class GameSessionControlPlaneGrpcService
                   instance.getScriptPatchPinnedBy() == null
                       ? ""
                       : instance.getScriptPatchPinnedBy())
+              .setControlPlaneRequestId(
+                  instance.getScriptPatchPinnedControlPlaneRequestId() == null
+                      ? ""
+                      : instance.getScriptPatchPinnedControlPlaneRequestId())
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

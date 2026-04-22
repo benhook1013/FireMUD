@@ -151,6 +151,7 @@ Outputs:
 - `pinnedScriptPatchVersion`
 - `pinnedAt` (timestamp)
 - `pinnedBy` (actor principal, optional)
+- `controlPlaneRequestId` (nullable; the idempotent request that last changed the pin)
 
 #### `GetGameSessionPinConvergence`
 

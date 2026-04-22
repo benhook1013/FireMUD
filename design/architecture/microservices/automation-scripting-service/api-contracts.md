@@ -144,10 +144,10 @@ The service exposes control-plane read and lifecycle surfaces for script patch v
 - `ReplayDeadLetteredWorkItems(tenantId, gameInstanceId?, regionId?, workItemIds?, scriptPatchVersion?, createdAfterMs?, createdBeforeMs?, limit?, controlPlaneRequestId, actorPrincipal, reason)` – requeues eligible `DEAD_LETTERED` work items back to `PENDING_EVALUATION` after validating that the current instance still pins the same `scriptPatchVersion` and, when the original ingress was plugin-backed, that the currently active plugin version still matches the recorded ingress audit.
 - `GetAutomationDrainStatus(tenantId, gameInstanceId, regionId?)` – reports current drain truth for one scope from durable `script_work_items`: `activeExecutionCount`, `oldestActiveExecutionStartedAt`, `pendingCancelableWorkItemCount`, and `observedAt`. The live implementation still returns `admissionEpoch=0` until scoped rollback-pause state exists.
 - `GetAutomationPinConvergence(tenantId, gameInstanceId)` – reports the latest pinned patch observation (`observedPinnedScriptPatchVersion`, `lastObservedControlPlaneRequestId`, `observedAt`) used by admission and scheduler logic. The live implementation currently sources this from the shared Game Session runtime-state read, so it already returns the persisted pin `controlPlaneRequestId` but does not yet own an independent Automation projection.
-- `GetSignerPolicyConvergence(...)` – reports observed signer-policy version, refresh lag, and enforcement mode.
 - `GetPluginStatus(tenantId, gameInstanceId, pluginId)` – returns plugin runtime state (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`), active and pending version IDs, the last control-plane request id, and the last recorded actor principal for the runtime row.
 - `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin` – idempotent plugin lifecycle operations used by Logging & Admin to promote, disable, or drain plugin versions per runtime scope.
-- `SignerPolicyVersionObserved` and `SignerRevocationApplied` – signer-policy propagation and revocation-enforcement events for operator visibility.
+
+Implementation note: signer-policy convergence and signer-policy propagation events are still target-state only. The current live Automation & Scripting surface does not yet expose `GetSignerPolicyConvergence`, `SignerPolicyVersionObserved`, or `SignerRevocationApplied`; signer/component-policy enforcement remains planned follow-through under `08.4` and `10.5`, not a shipped API family.
 
 Consumption rules:
 
