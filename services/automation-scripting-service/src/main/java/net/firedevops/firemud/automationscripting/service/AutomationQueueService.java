@@ -19,4 +19,12 @@ public interface AutomationQueueService {
    */
   List<AutomationQueueWorkItemPointer> drainWorkItems(
       String tenantId, String gameInstanceId, String entityId);
+
+  /**
+   * Rebuild the Redis queue projection for a bounded set of pending durable work items.
+   *
+   * @param maxItems max number of durable rows to inspect
+   * @return number of queue pointers published
+   */
+  int rebuildPendingWorkItemIndex(int maxItems);
 }

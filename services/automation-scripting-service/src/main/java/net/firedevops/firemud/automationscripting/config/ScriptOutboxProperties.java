@@ -22,6 +22,12 @@ public class ScriptOutboxProperties {
   @Min(1)
   private long terminalCleanupIntervalSeconds = 300;
 
+  @Min(1)
+  private long queueRebuildIntervalSeconds = 60;
+
+  @Min(1)
+  private int queueRebuildBatchSize = 200;
+
   public int getHandedOffRetentionDays() {
     return handedOffRetentionDays;
   }
@@ -60,5 +66,21 @@ public class ScriptOutboxProperties {
 
   public void setTerminalCleanupIntervalSeconds(long terminalCleanupIntervalSeconds) {
     this.terminalCleanupIntervalSeconds = terminalCleanupIntervalSeconds;
+  }
+
+  public long getQueueRebuildIntervalSeconds() {
+    return queueRebuildIntervalSeconds;
+  }
+
+  public void setQueueRebuildIntervalSeconds(long queueRebuildIntervalSeconds) {
+    this.queueRebuildIntervalSeconds = queueRebuildIntervalSeconds;
+  }
+
+  public int getQueueRebuildBatchSize() {
+    return queueRebuildBatchSize;
+  }
+
+  public void setQueueRebuildBatchSize(int queueRebuildBatchSize) {
+    this.queueRebuildBatchSize = queueRebuildBatchSize;
   }
 }
