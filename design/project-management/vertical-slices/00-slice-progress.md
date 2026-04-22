@@ -53,21 +53,23 @@ These are already partly real in code and should continue after the immediate ru
    Remaining: build on the now-live event-scope `TriggerScriptEvent` admission, ingress audit, built-in registry enforcement/read APIs, snapshot-token validation, durable script event bindings, first `script_work_items` outbox materialization, handler-scoped `script_event_audit` rows, real pending-work cancellation, first Game Session `onCommand` producer, and pending-work claiming by adding DSL execution, downstream tick handoff, and broader producer coverage.
 7. [10.3 Script Execution Budgets, Quotas, and Isolation](./10.3-task-list-script-execution-budgets-quotas-and-isolation-vertical-slice.md)
    Remaining: terminal outbox retention cleanup and serialized work-item payload-size rejection are now live from the documented knobs; the next gaps are command-count output-budget enforcement, pin/signer freshness enforcement, admission-time versus execution-time budget charging, and dry-run/test isolation.
-8. [10.5 Scripting Operator Visibility and Runtime Convergence](./10.5-task-list-scripting-operator-visibility-and-runtime-convergence-vertical-slice.md)
+8. [10.4 Automation Handoff and Tick Integration](./10.4-task-list-automation-handoff-and-tick-integration-vertical-slice.md)
+   Remaining: the live queue helper now uses the canonical `automation:queue:{...}:*` key family instead of the retired `automation_queue:*` prefix; the next gaps are full tenant-instance queue tags, per-command `automationDispatchId` mapping, bounded Game Session admission outcome mapping, and real outbox-to-tick handoff.
+9. [10.5 Scripting Operator Visibility and Runtime Convergence](./10.5-task-list-scripting-operator-visibility-and-runtime-convergence-vertical-slice.md)
    Remaining: durable work/audit/cancel/claim state, terminal cleanup, current script-patch status summaries, and Automation-owned plugin runtime state transitions now exist; the next gaps are richer drain/convergence/dead-letter reads, Game Design-backed plugin publication/compatibility validation, and freshness/staleness signaling.
-9. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
+10. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: grow from the current bounded `WHO` plus explicit/auto-AFK and canonical lifecycle substrate into the fuller activity model when that work becomes active.
-10. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
+11. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
    Remaining: grow the first account-scoped friend presence seam, now consumed by REST, gRPC, and gameplay `FRIENDS`, into later social consumers and later privacy refinement without reopening `WHO`.
-11. [06 Task List Inventory, Containers, Equipment](./06-task-list-inventory-containers-equipment-vertical-slice.md)
+12. [06 Task List Inventory, Containers, Equipment](./06-task-list-inventory-containers-equipment-vertical-slice.md)
    Remaining: holder-transfer safety, canonical transfer-audit persistence with attested session/effect correlation, Game Session -> Game Logic -> Entity Management item command routing, game-configured equipment slot/body-layout validation, and WebSocket plus Telnet cross-service room-ground/equipment happy/failure paths are now live; the main remaining work is the `06.3` follow-through and later authored stackability depth.
-12. [06.3.1 Stable Item Instance Visible Ref Allocation](./06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
+13. [06.3.1 Stable Item Instance Visible Ref Allocation](./06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
-13. [06.3.2 Authored Stackability and Fungibility](./06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
+14. [06.3.2 Authored Stackability and Fungibility](./06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
    Remaining: build on the now-live authored `stackVariantKey` plus runtime `stackFamilyKey` substrate with richer authored family sources; explicit stack-family selector UX for ambiguous holder-local families is now live.
-14. [02.18 Service Boundary and Audit Hardening](./02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
+15. [02.18 Service Boundary and Audit Hardening](./02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
    Remaining: keep `02.18.6` at operator-proof level and continue any later hardening only if real-load evidence justifies it.
-15. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
+16. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
 
 ### 3. Design settled enough, but not started or only placeholder-level

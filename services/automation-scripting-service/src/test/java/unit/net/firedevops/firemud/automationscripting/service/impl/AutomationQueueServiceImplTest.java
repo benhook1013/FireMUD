@@ -30,13 +30,13 @@ class AutomationQueueServiceImplTest {
   @Test
   void enqueueEventPushesToRedis() {
     service.enqueueEvent(1L, 2L, "evt");
-    verify(listOps).rightPush("automation_queue:1:2", "evt");
+    verify(listOps).rightPush("automation:queue:{tenant:1}:2", "evt");
   }
 
   @Test
   void drainEventsRetrievesAndDeletes() {
-    when(listOps.range("automation_queue:1:2", 0, -1)).thenReturn(List.of("evt1", "evt2"));
+    when(listOps.range("automation:queue:{tenant:1}:2", 0, -1)).thenReturn(List.of("evt1", "evt2"));
     service.drainEvents(1L, 2L);
-    verify(redisTemplate).delete("automation_queue:1:2");
+    verify(redisTemplate).delete("automation:queue:{tenant:1}:2");
   }
 }

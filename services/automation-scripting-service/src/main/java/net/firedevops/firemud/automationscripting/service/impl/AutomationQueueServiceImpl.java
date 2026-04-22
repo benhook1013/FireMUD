@@ -53,6 +53,6 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
   }
 
   private String queueKey(Long tenantId, Long entityId) {
-    return "automation_queue:" + tenantId + ":" + entityId;
+    return "automation:queue:{tenant:" + tenantId + "}:" + entityId;
   }
 }
