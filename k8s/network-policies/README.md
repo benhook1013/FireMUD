@@ -11,7 +11,7 @@ kubectl apply -f network-policies/internal-services-egress.yaml
 
 The gateway and TCP proxy remain accessible to external clients, while all other services accept connections only from within the cluster.
 
-Helm deployments name the PostgreSQL and Redis releases `firemud-postgresql` and
-`firemud-redis`. The policies reference these release names via the
-`app.kubernetes.io/instance` label. Update the values if your release names
-differ.
+Helm deployments name the PostgreSQL release `firemud-postgresql` and expose
+the Redis roles with `app` labels `redis-coord` and `redis-cache`. The policies
+reference those labels directly. Update the selectors if your release naming or
+labels differ.

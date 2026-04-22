@@ -129,7 +129,7 @@ class SocialGroupsApplicationIntegrationTest {
     assertThat(chatMessageRepository.findByTenantIdAndEffectId(1L, "fx-comm-42"))
         .hasValueSatisfying(message -> assertThat(message.getId()).isEqualTo(first.id()));
 
-    List<Object> redisRange = redisTemplate.opsForList().range("say:1:2", 0, -1);
+    List<Object> redisRange = redisTemplate.opsForList().range("chat:say:1:2", 0, -1);
     List<Object> cachedMessages = new ArrayList<>(redisRange == null ? List.of() : redisRange);
     assertThat(cachedMessages).containsExactly("hello there");
   }

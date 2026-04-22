@@ -32,6 +32,7 @@ This document defines the Social & Groups Service runtime model, persistent data
 - **Cache/Rate-Limit Redis**
   - Uses Cache/Rate-Limit Redis for chat history buffers and similar transient social aggregates under prefixes such as:
     - `chat:say:<tenantId>:<characterId>`
+    - `chat:whisper:<tenantId>:<accountId>`
     - `chat:tell:<tenantId>:<conversationId>`
     - `chat:guild:<tenantId>:<guildId>`
     - `chat:account:<tenantId>:<accountId>`
