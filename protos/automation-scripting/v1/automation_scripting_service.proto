@@ -46,6 +46,8 @@ service AutomationScriptingControlPlaneService {
   rpc ListScriptPatchStatuses(ListScriptPatchStatusesRequest) returns (ListScriptPatchStatusesResponse);
   rpc GetAutomationDrainStatus(GetAutomationDrainStatusRequest)
       returns (GetAutomationDrainStatusResponse);
+  rpc GetAutomationPinConvergence(GetAutomationPinConvergenceRequest)
+      returns (GetAutomationPinConvergenceResponse);
   rpc GetScriptPatchInstanceRolloutStatus(GetScriptPatchInstanceRolloutStatusRequest)
       returns (GetScriptPatchInstanceRolloutStatusResponse);
   rpc ListScriptPatchInstanceRollouts(ListScriptPatchInstanceRolloutsRequest)
@@ -386,6 +388,20 @@ message GetAutomationDrainStatusResponse {
   int64 pending_cancelable_work_item_count = 7;
   int64 observed_at_ms = 8;
   shared.v1.ErrorDetail error = 9;
+}
+
+message GetAutomationPinConvergenceRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+}
+
+message GetAutomationPinConvergenceResponse {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string observed_pinned_script_patch_version = 3;
+  string last_observed_control_plane_request_id = 4;
+  int64 observed_at_ms = 5;
+  shared.v1.ErrorDetail error = 6;
 }
 
 enum ScriptPatchInstanceRolloutStatus {

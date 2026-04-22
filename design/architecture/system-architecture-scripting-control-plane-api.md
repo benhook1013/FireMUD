@@ -260,6 +260,27 @@ Contract rules:
 - The current live response is scoped only to durable work-item truth already owned by Automation & Scripting. It does not yet prove that a pause transition has advanced a real rollback epoch.
 - Operators may already use `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` as the current drain-empty condition for scope-local durable work. Once scoped pause/admission-epoch control ships, the same read must upgrade in place so `admissionEpoch` reflects the authoritative rollback epoch instead of `0`.
 
+#### `GetAutomationPinConvergence`
+
+Implementation note: the current Automation & Scripting implementation now exposes the first pin-convergence read by delegating to the shared Game Session runtime-state surface that current rollout/replay decisions already depend on. That means it can return the observed pinned patch and observation time now, but it does not yet own a replayable Automation-side pin projection keyed by `controlPlaneRequestId`; `lastObservedControlPlaneRequestId` is therefore currently blank rather than fabricated.
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`
+- `observedPinnedScriptPatchVersion`
+- `lastObservedControlPlaneRequestId`
+- `observedAt`
+
+Contract rules:
+
+- This is a read-only operator surface for the latest pin observation currently visible to Automation-side admission and replay logic.
+- The live implementation is a direct shared-runtime read, not yet a distinct Automation projection. Once Automation owns a replayable pin projection, this same read must upgrade in place so `lastObservedControlPlaneRequestId` reflects the authoritative observed pin transition instead of the current blank value.
+
 #### `ListScriptDeadLetters`
 
 Implementation note: the current Automation & Scripting API exposes this read directly from durable `script_work_items` rows with `status=DEAD_LETTERED`. It is an operator inspection surface separate from the controlled replay mutation API.

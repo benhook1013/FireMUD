@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
+import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
@@ -15,6 +16,8 @@ import net.firedevops.firemud.automationscripting.v1.DrainPluginRequest;
 import net.firedevops.firemud.automationscripting.v1.DrainPluginResponse;
 import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationPinConvergenceRequest;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationPinConvergenceResponse;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionRequest;
@@ -41,6 +44,7 @@ import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionReque
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
@@ -55,14 +59,17 @@ public final class AutomationScriptingControlPlaneGrpcService
   private final ScriptEventRegistryService eventRegistryService;
   private final ScriptWorkItemService workItemService;
   private final PluginRuntimeStateService pluginRuntimeStateService;
+  private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
 
   public AutomationScriptingControlPlaneGrpcService(
       ScriptEventRegistryService eventRegistryService,
       ScriptWorkItemService workItemService,
-      PluginRuntimeStateService pluginRuntimeStateService) {
+      PluginRuntimeStateService pluginRuntimeStateService,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient) {
     this.eventRegistryService = eventRegistryService;
     this.workItemService = workItemService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
+    this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
   }
 
   @Override
@@ -189,6 +196,39 @@ public final class AutomationScriptingControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       response.setError(
           ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.getAutomationPinConvergence")
+  public void getAutomationPinConvergence(
+      GetAutomationPinConvergenceRequest request,
+      StreamObserver<GetAutomationPinConvergenceResponse> responseObserver) {
+    GetAutomationPinConvergenceResponse.Builder response =
+        GetAutomationPinConvergenceResponse.newBuilder();
+    try {
+      requireAdminRole();
+      GetGameInstanceRuntimeStateResponse runtime =
+          gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+              request.getTenantId(), request.getGameInstanceId());
+      if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
+        response.setError(runtime.getError());
+      } else if (!runtime.hasRuntimeState()) {
+        response.setError(
+            notFound("GetAutomationPinConvergence", "game_instance_runtime_state_not_found"));
+      } else {
+        response
+            .setTenantId(runtime.getRuntimeState().getTenantId())
+            .setGameInstanceId(runtime.getRuntimeState().getGameInstanceId())
+            .setObservedPinnedScriptPatchVersion(
+                runtime.getRuntimeState().getPinnedScriptPatchVersion())
+            .setLastObservedControlPlaneRequestId("")
+            .setObservedAtMs(runtime.getRuntimeState().getScriptPatchPinnedAtMs());
+      }
     } catch (AdminAuthorizationException ex) {
       response.setError(authorizationError(ex));
     }
