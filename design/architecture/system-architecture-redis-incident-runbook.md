@@ -149,7 +149,7 @@ Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions 
 3. **Act**
    1. For coordination prefixes: follow the region/tenant/cluster reset flow from [Coordination Reset Model](./system-architecture-redis-reset-and-recovery.md#coordination-reset-model) and rely on PostgreSQL/idempotent ticks to rebuild state.
    2. For non-coordination prefixes: write a small migration Job that:
-      - Iterates the affected prefix (for example `automation:queue:<tenantId>:*`).
+      - Iterates the affected prefix (for example `automation:queue:{tenantInstanceTag}:*`).
       - Writes corrected keys using shared builders.
       - Deletes or expires the old keys once consumers have been updated.
    3. Use the `tick-region-logs.json` Kibana saved search to confirm that tick/coordination-related logs for the affected regions no longer show mis-keyed or unknown-prefix warnings after the migration or reset completes.
@@ -157,7 +157,7 @@ Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions 
 ### Automation Queue Schema Mistakes
 
 1. **Detect**
-   - Automation consumers log deserialization errors or unknown `schemaVersion` values for `automation:queue:<tenantId>:*` keys.
+   - Automation consumers log deserialization errors or unknown `schemaVersion` values for `automation:queue:{tenantInstanceTag}:*` keys.
    - Metrics show sustained failures processing automation work items.
 2. **Decide**
    - If automation queues are purely best-effort, consider treating affected items as lost and flushing the prefix.
@@ -165,6 +165,6 @@ Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions 
 3. **Act**
    1. Pause automation processing for the affected tenants or globally, depending on blast radius.
    2. Choose one explicit remediation path:
-      - Best-effort path: flush `automation:queue:<tenantId>:*` and restart consumers.
+      - Best-effort path: flush `automation:queue:{tenantInstanceTag}:*` and restart consumers.
       - Durable path: run the Automation rebuild workflow that re-enqueues from PostgreSQL-backed triggers/quotas, not from Redis queue payload migration.
    3. Resume automation processing and monitor error rates and queue depths until they stabilize.

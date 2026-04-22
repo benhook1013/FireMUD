@@ -220,8 +220,8 @@ Automation-related Lua scripts follow stricter cluster slotting rules to avoid `
 - Scripts that operate on `automation:tick:{tenantInstanceScriptTag}:*` keys are registered as **single-hash-slot** scripts:
   - They may include multiple `automation:tick:{tenantInstanceScriptTag}:*` keys for the **same** `<tenantId>` + `<gameInstanceId>` + `<scriptId>` in `KEYS`, but they must not mix different `{tenantInstanceScriptTag}` values.
   - They must not include any `tick:{tenantRegionTag}:*` keys in the same invocation.
-- Scripts that operate on `automation:queue:<tenantId>:*` keys:
-  - Use only `automation:queue:<tenantId>:*` keys for a single tenant in `KEYS`.
+- Scripts that operate on `automation:queue:{tenantInstanceTag}:*` keys:
+  - Use only `automation:queue:{tenantInstanceTag}:*` keys for a single runtime instance scope in `KEYS`.
   - Must not include `automation:tick:*` or `tick:*` keys in the same invocation.
 - Cross-boundary rules:
   - Automation scripts **never** perform multi-key operations that span both `automation:*` and `tick:*` prefixes in one `EVAL`/`EVALSHA` call.
