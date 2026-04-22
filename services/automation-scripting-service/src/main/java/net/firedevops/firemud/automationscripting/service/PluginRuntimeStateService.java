@@ -37,5 +37,7 @@ public interface PluginRuntimeStateService {
       String pendingPluginVersionId,
       PluginState pluginState,
       String statusReason,
-      long lastChangedAtMs) {}
+      long lastChangedAtMs,
+      String controlPlaneRequestId,
+      String actorPrincipal) {}
 }

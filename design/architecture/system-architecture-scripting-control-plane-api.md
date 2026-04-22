@@ -338,6 +338,8 @@ Outputs:
 - `pluginState` (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`)
 - `statusReason` (optional; required for security/policy-driven disablement such as `signer_revoked`)
 - `lastChangedAt`
+- `controlPlaneRequestId` (nullable; the last idempotent mutating request that changed this runtime row)
+- `actor` (nullable; the last operator/system principal recorded on the runtime row)
 
 Boundary rule:
 

@@ -265,7 +265,9 @@ public final class AutomationScriptingControlPlaneGrpcService
                       .setPendingPluginVersionId(status.pendingPluginVersionId())
                       .setPluginState(status.pluginState())
                       .setStatusReason(status.statusReason())
-                      .setLastChangedAtMs(status.lastChangedAtMs()),
+                      .setLastChangedAtMs(status.lastChangedAtMs())
+                      .setControlPlaneRequestId(status.controlPlaneRequestId())
+                      .setActorPrincipal(status.actorPrincipal()),
               () ->
                   response.setError(notFound("GetPluginStatus", "plugin_runtime_state_not_found")));
     } catch (IllegalArgumentException ex) {

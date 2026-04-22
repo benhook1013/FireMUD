@@ -144,7 +144,7 @@ The service exposes control-plane read and lifecycle surfaces for script patch v
 - `ReplayDeadLetteredWorkItems(tenantId, gameInstanceId?, regionId?, workItemIds?, scriptPatchVersion?, createdAfterMs?, createdBeforeMs?, limit?, controlPlaneRequestId, actorPrincipal, reason)` – requeues eligible `DEAD_LETTERED` work items back to `PENDING_EVALUATION` after validating that the current instance still pins the same `scriptPatchVersion` and, when the original ingress was plugin-backed, that the currently active plugin version still matches the recorded ingress audit.
 - `GetAutomationPinConvergence(tenantId, gameInstanceId)` – reports the latest pinned patch observation (`observedPinnedScriptPatchVersion`, `lastObservedControlPlaneRequestId`, `observedAt`) used by admission and scheduler logic.
 - `GetSignerPolicyConvergence(...)` – reports observed signer-policy version, refresh lag, and enforcement mode.
-- `GetPluginStatus(tenantId, gameInstanceId, pluginId)` – returns plugin runtime state (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`) and active and pending version IDs.
+- `GetPluginStatus(tenantId, gameInstanceId, pluginId)` – returns plugin runtime state (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`), active and pending version IDs, the last control-plane request id, and the last recorded actor principal for the runtime row.
 - `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin` – idempotent plugin lifecycle operations used by Logging & Admin to promote, disable, or drain plugin versions per runtime scope.
 - `SignerPolicyVersionObserved` and `SignerRevocationApplied` – signer-policy propagation and revocation-enforcement events for operator visibility.
 

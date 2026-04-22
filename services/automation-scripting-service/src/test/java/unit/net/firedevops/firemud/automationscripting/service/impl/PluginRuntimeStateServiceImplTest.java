@@ -117,6 +117,8 @@ class PluginRuntimeStateServiceImplTest {
     existing.setPendingPluginVersionId("");
     existing.setPluginState(PluginState.PLUGIN_STATE_DRAINING.name());
     existing.setStatusReason("operator_drain");
+    existing.setControlPlaneRequestId("req-7");
+    existing.setActorPrincipal("operator-1");
     existing.setLastChangedAt(java.time.Instant.ofEpochMilli(123));
     PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
     when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
@@ -134,6 +136,8 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(status.get().activePluginVersionId()).isEqualTo("plugin-v1");
     assertThat(status.get().pluginState()).isEqualTo(PluginState.PLUGIN_STATE_DRAINING);
     assertThat(status.get().lastChangedAtMs()).isEqualTo(123L);
+    assertThat(status.get().controlPlaneRequestId()).isEqualTo("req-7");
+    assertThat(status.get().actorPrincipal()).isEqualTo("operator-1");
   }
 
   @Test

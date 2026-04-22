@@ -270,7 +270,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "",
                     PluginState.PLUGIN_STATE_ENABLED,
                     "operator_activation",
-                    55L)));
+                    55L,
+                    "req-1",
+                    "operator-1")));
     AutomationScriptingControlPlaneGrpcService service =
         new AutomationScriptingControlPlaneGrpcService(
             new BuiltInScriptEventRegistryService(),
@@ -290,6 +292,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getActivePluginVersionId()).isEqualTo("plugin-v1");
     assertThat(ref.get().getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_ENABLED);
     assertThat(ref.get().getLastChangedAtMs()).isEqualTo(55L);
+    assertThat(ref.get().getControlPlaneRequestId()).isEqualTo("req-1");
+    assertThat(ref.get().getActorPrincipal()).isEqualTo("operator-1");
   }
 
   @Test

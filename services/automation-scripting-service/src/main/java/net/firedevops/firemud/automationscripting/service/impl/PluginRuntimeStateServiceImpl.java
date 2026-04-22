@@ -161,7 +161,9 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         normalize(state.getPendingPluginVersionId()),
         PluginState.valueOf(state.getPluginState()),
         state.getStatusReason(),
-        state.getLastChangedAt().toEpochMilli());
+        state.getLastChangedAt().toEpochMilli(),
+        normalize(state.getControlPlaneRequestId()),
+        normalize(state.getActorPrincipal()));
   }
 
   private static String normalizeReason(String reason, String defaultReason) {
