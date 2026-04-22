@@ -154,7 +154,7 @@ Consumption rules:
 - Use `ScriptPatchInstanceRolloutChanged` for instance rollout progression and rollback history.
 - Read-model ownership for rollout status is Game Session pin mutations projected into query APIs via idempotent, replayable events keyed by `controlPlaneRequestId`.
 
-Game Session and Logging & Admin use script patch visibility APIs and events to decide which `scriptPatchVersion` values may be passed to runtime. Mutating operations that change the pinned patch for a running game instance are defined on the Game Session control-plane surface and must follow the contracts in [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md). The Automation & Scripting Service uses pin-change events for visibility and admission alignment, but it is not the source of truth for the pin. Pinning must also satisfy base-version cohesion (`patch.baseVersionId == runtimeVersionId` for the instance).
+Game Session and Logging & Admin use script patch visibility APIs and events to decide which `scriptPatchVersion` values may be passed to runtime. Mutating operations that change the pinned patch for a running game instance are defined on the Game Session control-plane surface and must follow the contracts in [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md). The Automation & Scripting Service uses pin-change events plus the shared Game Session runtime-state read for visibility and admission alignment, but it is not the source of truth for the pin. Pinning must also satisfy base-version cohesion (`patch.baseVersionId == runtimeVersionId` for the instance).
 
 ## Pinned Version Visibility Consistency
 

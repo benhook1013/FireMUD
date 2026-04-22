@@ -586,6 +586,30 @@ public final class GameSessionControlPlaneGrpcService
                               ? ""
                               : instance.getLaunchDescriptorId())
                       .setStatus(instance.getStatus() == null ? "" : instance.getStatus())
+                      .setVersionId(
+                          instance.getVersionId() == null
+                              ? ""
+                              : Long.toString(instance.getVersionId()))
+                      .setReleaseBundleId(
+                          instance.getReleaseBundleId() == null
+                              ? ""
+                              : Long.toString(instance.getReleaseBundleId()))
+                      .setVersionStateEpoch(
+                          instance.getVersionStateEpoch() == null
+                              ? 0L
+                              : instance.getVersionStateEpoch())
+                      .setScriptPatchPinnedAtMs(
+                          instance.getScriptPatchPinnedAt() == null
+                              ? 0L
+                              : instance.getScriptPatchPinnedAt().toEpochMilli())
+                      .setScriptPatchPinnedBy(
+                          instance.getScriptPatchPinnedBy() == null
+                              ? ""
+                              : instance.getScriptPatchPinnedBy())
+                      .setScriptPatchPinnedReason(
+                          instance.getScriptPatchPinnedReason() == null
+                              ? ""
+                              : instance.getScriptPatchPinnedReason())
                       .build())
               .build();
       responseObserver.onNext(response);

@@ -30,6 +30,8 @@ import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentReq
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
@@ -158,6 +160,52 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         1.0,
         meterRegistry.get("grpc.app_error").tag("code", "PERMISSION_DENIED").counter().count());
+  }
+
+  @Test
+  void getGameInstanceRuntimeStateReturnsCanonicalVersionAndPinMetadata() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setRuntimeVersion("runtime-v7");
+    instance.setScriptPatchVersion("patch-2");
+    instance.setLaunchDescriptorId("ld-9");
+    instance.setStatus("RUNNING");
+    instance.setVersionId(11L);
+    instance.setReleaseBundleId(19L);
+    instance.setVersionStateEpoch(77L);
+    instance.setScriptPatchPinnedAt(Instant.parse("2026-04-22T00:00:00Z"));
+    instance.setScriptPatchPinnedBy("operator-1");
+    instance.setScriptPatchPinnedReason("roll-forward");
+    Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service = newService(repository);
+
+    AtomicReference<GetGameInstanceRuntimeStateResponse> responseRef = new AtomicReference<>();
+    service.getGameInstanceRuntimeState(
+        GetGameInstanceRuntimeStateRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetGameInstanceRuntimeStateResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals("runtime-v7", responseRef.get().getRuntimeState().getRuntimeVersionId());
+    assertEquals("11", responseRef.get().getRuntimeState().getVersionId());
+    assertEquals("19", responseRef.get().getRuntimeState().getReleaseBundleId());
+    assertEquals(77L, responseRef.get().getRuntimeState().getVersionStateEpoch());
+    assertEquals(
+        Instant.parse("2026-04-22T00:00:00Z").toEpochMilli(),
+        responseRef.get().getRuntimeState().getScriptPatchPinnedAtMs());
+    assertEquals("operator-1", responseRef.get().getRuntimeState().getScriptPatchPinnedBy());
+    assertEquals("roll-forward", responseRef.get().getRuntimeState().getScriptPatchPinnedReason());
   }
 
   @Test

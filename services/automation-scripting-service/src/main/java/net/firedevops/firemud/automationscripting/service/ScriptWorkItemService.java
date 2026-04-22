@@ -1,6 +1,5 @@
 package net.firedevops.firemud.automationscripting.service;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
@@ -61,9 +60,6 @@ public interface ScriptWorkItemService {
       long createdAtMs,
       long updatedAtMs) {}
 
-  @SuppressFBWarnings(
-      value = {"EI_EXPOSE_REP", "EI_EXPOSE_REP2"},
-      justification = "Replay work item ids are defensively copied into an immutable list")
   record ReplayDeadLettersCommand(
       String tenantId,
       String gameInstanceId,

@@ -300,6 +300,12 @@ message GameInstanceRuntimeState {
   string pinned_script_patch_version = 4;
   string launch_descriptor_id = 5;
   string status = 6;
+  string version_id = 7;
+  string release_bundle_id = 8;
+  int64 version_state_epoch = 9;
+  int64 script_patch_pinned_at_ms = 10;
+  string script_patch_pinned_by = 11;
+  string script_patch_pinned_reason = 12;
 }
 
 message GetGameInstanceRuntimeStateResponse {
