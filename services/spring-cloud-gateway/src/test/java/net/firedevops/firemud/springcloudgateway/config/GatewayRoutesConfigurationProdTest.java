@@ -37,7 +37,7 @@ class GatewayRoutesConfigurationProdTest {
   @Autowired private GatewayProperties gatewayProperties;
 
   @Test
-  void sessionRouteUsesWebSocketSchemeAndAlias() {
+  void sessionRouteUsesHttpSchemeForControlPlaneTraffic() {
     RouteDefinition sessionRoute =
         gatewayProperties.getRoutes().stream()
             .filter(route -> "session".equals(route.getId()))
@@ -45,7 +45,7 @@ class GatewayRoutesConfigurationProdTest {
             .orElseThrow(() -> new AssertionError("Expected session route to be configured"));
 
     URI targetUri = sessionRoute.getUri();
-    assertThat(targetUri.getScheme()).isEqualTo("ws");
+    assertThat(targetUri.getScheme()).isEqualTo("http");
 
     Map<String, String> pathArgs =
         sessionRoute.getPredicates().stream()

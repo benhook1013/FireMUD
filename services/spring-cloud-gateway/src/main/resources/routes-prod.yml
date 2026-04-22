@@ -5,7 +5,7 @@ spring:
         webflux:
           routes:
             - id: session
-              uri: ws://game-session-service.default.svc.cluster.local:8080
+              uri: http://game-session-service.default.svc.cluster.local:8080
               predicates:
                 - Path=/api/session/**
               filters:

@@ -5,6 +5,7 @@
 - Core HTTP/gateway routing, `/ws/game/**` handling, JWT/header trust filtering, and connection metrics are implemented.
 - Lightweight gateway stub support exists for cross-service gameplay testing.
 - Dynamic route management surfaces and baseline route configuration are present.
+- The canonical `/api/session/**` family now routes as HTTP control-plane traffic rather than through a `ws://` upstream, keeping the live gateway config aligned with the documented `/ws/game/**` versus `/api/session/**` split.
 
 ## Current Role In The Platform
 
@@ -17,6 +18,7 @@
 - Some production-hardening concerns remain, especially around TLS lifecycle, restart/reconnect behavior, and route persistence/overrides.
 - Gateway should remain thin; future work should avoid pulling gameplay logic into it.
 - Real operational readiness should be tracked as infrastructure hardening, not as gameplay-slice scope.
+- The main remaining edge-contract gap is still deny-by-default enforcement for internal-only subtrees under public `/api/{service}/**` families, not basic route-family or protocol-shape confusion.
 
 ## Planning Notes
 
