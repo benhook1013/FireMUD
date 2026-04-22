@@ -32,6 +32,8 @@ service GameSessionService {
 service GameSessionControlPlaneService {
   rpc GetPinnedScriptPatchVersion(GetPinnedScriptPatchVersionRequest)
       returns (GetPinnedScriptPatchVersionResponse);
+  rpc GetGameInstanceRuntimeState(GetGameInstanceRuntimeStateRequest)
+      returns (GetGameInstanceRuntimeStateResponse);
   rpc ListAdmissionPointers(ListAdmissionPointersRequest)
       returns (ListAdmissionPointersResponse);
   rpc ListAdmissionPointerAudit(ListAdmissionPointerAuditRequest)
@@ -284,6 +286,25 @@ message GetPinnedScriptPatchVersionResponse {
   int64 pinned_at_ms = 2;
   string pinned_by = 3;
   shared.v1.ErrorDetail error = 4;
+}
+
+message GetGameInstanceRuntimeStateRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+}
+
+message GameInstanceRuntimeState {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string runtime_version_id = 3;
+  string pinned_script_patch_version = 4;
+  string launch_descriptor_id = 5;
+  string status = 6;
+}
+
+message GetGameInstanceRuntimeStateResponse {
+  GameInstanceRuntimeState runtime_state = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message AdmissionPointerControlPlaneEntry {

@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.PublishedPluginVersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
@@ -39,6 +40,7 @@ import org.mockito.MockitoAnnotations;
 class VersionServiceImplTest {
   @Mock private VersionRepository versionRepository;
   @Mock private GameRepository gameRepository;
+  @Mock private PublishedPluginVersionRepository publishedPluginVersionRepository;
   @Mock private AutomationScriptingClient scriptingClient;
   @Mock private AssetExportService assetExportService;
   @Mock private PublishAttemptService publishAttemptService;
@@ -58,6 +60,7 @@ class VersionServiceImplTest {
         new VersionServiceImpl(
             versionRepository,
             gameRepository,
+            publishedPluginVersionRepository,
             mapper,
             scriptingClient,
             assetExportService,

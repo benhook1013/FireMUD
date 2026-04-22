@@ -296,7 +296,7 @@ Plugins are controlled by operators via Logging & Admin, but the runtime registr
 
 #### `GetPluginStatus`
 
-Implementation note: the current Automation & Scripting implementation persists and serves the runtime registry for `(tenantId, gameInstanceId, pluginId)`, including active version, runtime state, status reason, and last-changed timestamp. Design-time publication eligibility, signature policy, base-version compatibility, and ability-digest validation still depend on the Game Design plugin publication read surface tracked in `08.4`; until that lands, this runtime API must be treated as the activation registry, not proof that publication validation is complete.
+Implementation note: the current Automation & Scripting implementation persists and serves the runtime registry for `(tenantId, gameInstanceId, pluginId)`, and `SetPluginActiveVersion` now consults the live Game Design `GetPublishedPluginVersion` read surface plus Game Session runtime-instance metadata before mutating that registry. That means design-time publication eligibility and `baseVersionId` compatibility are now enforced in the live control-plane path. Signature-policy enforcement, richer component-policy gating, and `abilitySchemaDigest` comparison against the running instance remain follow-up work rather than already-proven runtime checks.
 
 Inputs:
 
@@ -338,6 +338,7 @@ Semantics:
   - `plugin.baseVersionId` must equal the instance `runtimeVersionId`.
   - `plugin.abilitySchemaDigest` must match the immutable digest recorded for the same base version used by the running instance.
   - Any mismatch fails deterministically with an application error (for example `PLUGIN_BASE_VERSION_MISMATCH` or `PLUGIN_ABILITY_SCHEMA_MISMATCH`) and must not mutate active plugin state.
+- Current implementation note: the live control-plane path now enforces `PUBLISHED` design-time state and `plugin.baseVersionId == runtimeVersionId` before updating the runtime registry. The `abilitySchemaDigest` comparison and the richer signer/component-policy gates remain target-state follow-through.
 - On success, updates the registry for `(tenantId, gameInstanceId, pluginId)`, reconciles any durable plugin-owned schedules/timers so the displaced `pluginVersionId` cannot keep minting new triggers, and emits `PluginVersionActivated` (or `PluginVersionDisabled` as appropriate if this operation also transitions state).
 
 Outputs:

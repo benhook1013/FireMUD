@@ -11,6 +11,7 @@ import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.gamedesign.dto.AppliedWorldDesignMutationDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
@@ -33,6 +34,8 @@ import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetRequest;
 import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestResponse;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionRequest;
@@ -43,6 +46,8 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
@@ -207,6 +212,95 @@ class GameDesignGrpcServiceTest {
     assertEquals(9L, ref.get().getScriptPatch().getVersionId());
     assertEquals(7L, ref.get().getScriptPatch().getBaseVersionId());
     assertEquals("digest-1", ref.get().getScriptPatch().getControlPlaneDigest());
+  }
+
+  @Test
+  void publishPluginVersionReturnsPublicationId() {
+    Mockito.when(
+            versionService.publishPluginVersion(
+                "tenant-1",
+                "plugin-1",
+                "plugin-v1",
+                7L,
+                "ability-1",
+                "bundle-1",
+                1,
+                "dist-hash",
+                "dist-path",
+                "notes"))
+        .thenReturn(
+            new PublishedPluginVersionDto(
+                15L,
+                "tenant-1",
+                "plugin-1",
+                "plugin-v1",
+                7L,
+                VersionLifecycleState.PUBLISHED,
+                "ability-1",
+                "bundle-1",
+                1,
+                "dist-hash",
+                "dist-path",
+                "notes",
+                LocalDateTime.parse("2026-04-22T12:00:00")));
+
+    AtomicReference<PublishPluginVersionResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishPluginVersion(
+          PublishPluginVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setPluginId("plugin-1")
+              .setPluginVersionId("plugin-v1")
+              .setBaseVersionId(7L)
+              .setAbilitySchemaDigest("ability-1")
+              .setBundleDigest("bundle-1")
+              .setManifestSchemaVersion(1)
+              .setDistributionManifestHash("dist-hash")
+              .setDistributionManifestPath("dist-path")
+              .setNotes("notes")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals(15L, ref.get().getPublicationId());
+  }
+
+  @Test
+  void getPublishedPluginVersionReturnsPublicationReadModel() {
+    Mockito.when(versionService.getPublishedPluginVersion("tenant-1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            new PublishedPluginVersionDto(
+                15L,
+                "tenant-1",
+                "plugin-1",
+                "plugin-v1",
+                7L,
+                VersionLifecycleState.PUBLISHED,
+                "ability-1",
+                "bundle-1",
+                1,
+                "dist-hash",
+                "dist-path",
+                "notes",
+                LocalDateTime.parse("2026-04-22T12:00:00")));
+
+    AtomicReference<GetPublishedPluginVersionResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getPublishedPluginVersion(
+          GetPublishedPluginVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setPluginId("plugin-1")
+              .setPluginVersionId("plugin-v1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals("plugin-1", ref.get().getPluginVersion().getPluginId());
+    assertEquals("plugin-v1", ref.get().getPluginVersion().getPluginVersionId());
+    assertEquals(7L, ref.get().getPluginVersion().getBaseVersionId());
+    assertEquals("ability-1", ref.get().getPluginVersion().getAbilitySchemaDigest());
   }
 
   @Test

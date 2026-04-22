@@ -32,8 +32,11 @@ import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentReq
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
+import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GameplayCommandStatus;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
@@ -547,6 +550,64 @@ public final class GameSessionControlPlaneGrpcService
       logger.error("GetPinnedScriptPatchVersion failed", ex);
       GetPinnedScriptPatchVersionResponse response =
           GetPinnedScriptPatchVersionResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getGameInstanceRuntimeState")
+  public void getGameInstanceRuntimeState(
+      GetGameInstanceRuntimeStateRequest request,
+      StreamObserver<GetGameInstanceRuntimeStateResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      GameInstance instance = getInstanceOrThrow(gameInstanceId);
+      if (instance.getTenantId() != tenantId) {
+        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+      }
+      GetGameInstanceRuntimeStateResponse response =
+          GetGameInstanceRuntimeStateResponse.newBuilder()
+              .setRuntimeState(
+                  GameInstanceRuntimeState.newBuilder()
+                      .setTenantId(Long.toString(instance.getTenantId()))
+                      .setGameInstanceId(Long.toString(instance.getId()))
+                      .setRuntimeVersionId(instance.getRuntimeVersion())
+                      .setPinnedScriptPatchVersion(
+                          instance.getScriptPatchVersion() == null
+                              ? ""
+                              : instance.getScriptPatchVersion())
+                      .setLaunchDescriptorId(
+                          instance.getLaunchDescriptorId() == null
+                              ? ""
+                              : instance.getLaunchDescriptorId())
+                      .setStatus(instance.getStatus() == null ? "" : instance.getStatus())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      GetGameInstanceRuntimeStateResponse response =
+          GetGameInstanceRuntimeStateResponse.newBuilder()
+              .setError(authorizationError("GetGameInstanceRuntimeState", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      GetGameInstanceRuntimeStateResponse response =
+          GetGameInstanceRuntimeStateResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("GetGameInstanceRuntimeState failed", ex);
+      GetGameInstanceRuntimeStateResponse response =
+          GetGameInstanceRuntimeStateResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build();
       responseObserver.onNext(response);

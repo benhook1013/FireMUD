@@ -1,20 +1,34 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
+import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected dependencies are internal Spring collaborators")
 public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService {
   private final PluginRuntimeStateRepository repository;
+  private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
+  private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
 
-  public PluginRuntimeStateServiceImpl(PluginRuntimeStateRepository repository) {
+  public PluginRuntimeStateServiceImpl(
+      PluginRuntimeStateRepository repository,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient) {
     this.repository = repository;
+    this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
+    this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
   }
 
   @Override
@@ -36,6 +50,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     requireText(command.gameInstanceId(), "game_instance_id");
     requireText(command.pluginId(), "plugin_id");
     requireText(command.targetPluginVersionId(), "target_plugin_version_id");
+    validateActivation(command);
     Instant now = Instant.now();
     PluginRuntimeState state =
         repository
@@ -56,6 +71,40 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     PluginRuntimeState saved = repository.save(state);
     return new ActivationResult(
         previous, saved.getActivePluginVersionId(), normalize(command.controlPlaneRequestId()));
+  }
+
+  private void validateActivation(ActivationCommand command) {
+    var publication =
+        gameDesignControlPlaneClient.getPublishedPluginVersion(
+            command.tenantId(), command.pluginId(), command.targetPluginVersionId());
+    if (publication.hasError() && !publication.getError().getCode().isBlank()) {
+      throw new IllegalArgumentException(
+          "PLUGIN_VERSION_NOT_PUBLISHED: " + publication.getError().getMessage());
+    }
+    if (publication.getPluginVersion().getPublicationState()
+        != VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED) {
+      throw new IllegalArgumentException(
+          "PLUGIN_VERSION_NOT_PUBLISHED: plugin version is not in PUBLISHED state");
+    }
+
+    var runtime =
+        gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+            command.tenantId(), command.gameInstanceId());
+    if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
+      throw new IllegalArgumentException(
+          "GAME_INSTANCE_RUNTIME_UNAVAILABLE: " + runtime.getError().getMessage());
+    }
+    long runtimeVersionId;
+    try {
+      runtimeVersionId = Long.parseLong(runtime.getRuntimeState().getRuntimeVersionId());
+    } catch (NumberFormatException ex) {
+      throw new IllegalArgumentException(
+          "GAME_INSTANCE_RUNTIME_UNAVAILABLE: runtime version id is not numeric");
+    }
+    if (publication.getPluginVersion().getBaseVersionId() != runtimeVersionId) {
+      throw new IllegalArgumentException(
+          "PLUGIN_BASE_VERSION_MISMATCH: plugin base version does not match runtime version");
+    }
   }
 
   @Override

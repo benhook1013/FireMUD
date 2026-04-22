@@ -10,6 +10,8 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,10 +69,38 @@ public class GameSessionControlPlaneClient
     }
   }
 
+  public GetGameInstanceRuntimeStateResponse getGameInstanceRuntimeState(
+      String tenantId, String gameInstanceId) {
+    if (stub() == null) {
+      return runtimeUnavailable();
+    }
+    try {
+      return stub()
+          .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+          .getGameInstanceRuntimeState(
+              GetGameInstanceRuntimeStateRequest.newBuilder()
+                  .setTenantId(tenantId)
+                  .setGameInstanceId(gameInstanceId)
+                  .build());
+    } catch (RuntimeException ex) {
+      logger.warn("Game Session getGameInstanceRuntimeState failed", ex);
+      return runtimeUnavailable();
+    }
+  }
+
   private static EnqueueAutomationCommandIfAbsentResponse unavailable() {
     return EnqueueAutomationCommandIfAbsentResponse.newBuilder()
         .setAccepted(false)
         .setAdmissionOutcome("GAME_SESSION_UNAVAILABLE")
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("GAME_SESSION_UNAVAILABLE")
+                .setMessage("Game Session service unavailable"))
+        .build();
+  }
+
+  private static GetGameInstanceRuntimeStateResponse runtimeUnavailable() {
+    return GetGameInstanceRuntimeStateResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
                 .setCode("GAME_SESSION_UNAVAILABLE")
