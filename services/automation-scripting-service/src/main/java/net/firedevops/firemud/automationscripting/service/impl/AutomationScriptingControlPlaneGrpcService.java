@@ -25,6 +25,8 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsR
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
+import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsRequest;
+import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsResponse;
 import net.firedevops.firemud.automationscripting.v1.ScriptDeadLetterEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptEventDefinition;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatusEntry;
@@ -173,6 +175,40 @@ public final class AutomationScriptingControlPlaneGrpcService
           .stream()
           .map(AutomationScriptingControlPlaneGrpcService::toProto)
           .forEach(response::addDeadLetters);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.replayDeadLetteredWorkItems")
+  public void replayDeadLetteredWorkItems(
+      ReplayDeadLetteredWorkItemsRequest request,
+      StreamObserver<ReplayDeadLetteredWorkItemsResponse> responseObserver) {
+    ReplayDeadLetteredWorkItemsResponse.Builder response =
+        ReplayDeadLetteredWorkItemsResponse.newBuilder();
+    try {
+      requireAdminRole();
+      ScriptWorkItemService.ReplayResult result =
+          workItemService.replayDeadLetters(
+              new ScriptWorkItemService.ReplayDeadLettersCommand(
+                  request.getTenantId(),
+                  request.getGameInstanceId(),
+                  request.getRegionId(),
+                  request.getWorkItemIdsList(),
+                  request.getScriptPatchVersion(),
+                  request.getCreatedAfterMs(),
+                  request.getCreatedBeforeMs(),
+                  request.getLimit(),
+                  request.getControlPlaneRequestId(),
+                  request.getActorPrincipal(),
+                  request.getReason()));
+      response.setReplayedCount(result.replayedCount()).setRejectedCount(result.rejectedCount());
     } catch (IllegalArgumentException ex) {
       response.setError(
           ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));

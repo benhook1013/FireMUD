@@ -45,6 +45,8 @@ service AutomationScriptingControlPlaneService {
   rpc GetScriptPatchStatus(GetScriptPatchStatusRequest) returns (GetScriptPatchStatusResponse);
   rpc ListScriptPatchStatuses(ListScriptPatchStatusesRequest) returns (ListScriptPatchStatusesResponse);
   rpc ListScriptDeadLetters(ListScriptDeadLettersRequest) returns (ListScriptDeadLettersResponse);
+  rpc ReplayDeadLetteredWorkItems(ReplayDeadLetteredWorkItemsRequest)
+      returns (ReplayDeadLetteredWorkItemsResponse);
 
   // Cancel pending durable work items for a patch so they are never handed off again.
   rpc CancelPendingWorkItemsForPatch(CancelPendingWorkItemsForPatchRequest)
@@ -225,6 +227,26 @@ message ScriptDeadLetterEntry {
 message ListScriptDeadLettersResponse {
   repeated ScriptDeadLetterEntry dead_letters = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message ReplayDeadLetteredWorkItemsRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  repeated string work_item_ids = 4;
+  string script_patch_version = 5;
+  int64 created_after_ms = 6;
+  int64 created_before_ms = 7;
+  int32 limit = 8;
+  string control_plane_request_id = 9;
+  string actor_principal = 10;
+  string reason = 11;
+}
+
+message ReplayDeadLetteredWorkItemsResponse {
+  int64 replayed_count = 1;
+  int64 rejected_count = 2;
+  shared.v1.ErrorDetail error = 3;
 }
 
 enum TriggerMode {

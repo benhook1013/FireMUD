@@ -28,6 +28,8 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsR
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsRequest;
+import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsResponse;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionRequest;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
@@ -225,6 +227,34 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getDeadLettersList()).hasSize(1);
     assertThat(ref.get().getDeadLetters(0).getWorkItemId()).isEqualTo("99");
     assertThat(ref.get().getDeadLetters(0).getReason()).isEqualTo("STALE_TIMELINE");
+  }
+
+  @Test
+  void replaysDeadLettersThroughWorkItemService() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.replayDeadLetters(Mockito.any()))
+        .thenReturn(new ScriptWorkItemService.ReplayResult(2L, 1L));
+    AutomationScriptingControlPlaneGrpcService service =
+        new AutomationScriptingControlPlaneGrpcService(
+            new BuiltInScriptEventRegistryService(),
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class));
+    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+
+    service.replayDeadLetteredWorkItems(
+        ReplayDeadLetteredWorkItemsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .addWorkItemIds("77")
+            .setLimit(10)
+            .setReason("retry")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getReplayedCount()).isEqualTo(2L);
+    assertThat(ref.get().getRejectedCount()).isEqualTo(1L);
   }
 
   @Test

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.service;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
@@ -19,6 +20,8 @@ public interface ScriptWorkItemService {
 
   List<DeadLetterSummary> listDeadLetters(
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit);
+
+  ReplayResult replayDeadLetters(ReplayDeadLettersCommand command);
 
   record CancelPendingForPatchCommand(
       String tenantId,
@@ -57,4 +60,26 @@ public interface ScriptWorkItemService {
       String reason,
       long createdAtMs,
       long updatedAtMs) {}
+
+  @SuppressFBWarnings(
+      value = {"EI_EXPOSE_REP", "EI_EXPOSE_REP2"},
+      justification = "Replay work item ids are defensively copied into an immutable list")
+  record ReplayDeadLettersCommand(
+      String tenantId,
+      String gameInstanceId,
+      String regionId,
+      List<String> workItemIds,
+      String scriptPatchVersion,
+      long createdAfterMs,
+      long createdBeforeMs,
+      int limit,
+      String controlPlaneRequestId,
+      String actorPrincipal,
+      String reason) {
+    public ReplayDeadLettersCommand {
+      workItemIds = workItemIds == null ? List.of() : List.copyOf(workItemIds);
+    }
+  }
+
+  record ReplayResult(long replayedCount, long rejectedCount) {}
 }

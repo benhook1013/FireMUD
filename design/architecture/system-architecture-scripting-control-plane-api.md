@@ -236,7 +236,7 @@ Outputs:
 
 #### `ListScriptDeadLetters`
 
-Implementation note: the current Automation & Scripting API exposes this read directly from durable `script_work_items` rows with `status=DEAD_LETTERED`. It is an operator inspection surface, not a replay API.
+Implementation note: the current Automation & Scripting API exposes this read directly from durable `script_work_items` rows with `status=DEAD_LETTERED`. It is an operator inspection surface separate from the controlled replay mutation API.
 
 Inputs:
 
@@ -251,6 +251,32 @@ Outputs:
 Boundary rule:
 
 - Operators use this read to decide whether a replay or manual remediation workflow is needed; replay itself remains a separate controlled operation so listing dead letters cannot accidentally mutate runtime state.
+
+#### `ReplayDeadLetteredWorkItems`
+
+Implementation note: the current Automation & Scripting implementation now exposes the first bounded replay mutation on top of durable `script_work_items`. Replay currently requeues eligible rows by setting `status=PENDING_EVALUATION`, clearing the terminal cancel reason, and recording `finalStage=REPLAY` plus `finalOutcome=requeued` on the handler-scoped audit row. Broader convergence and richer replay-policy signaling remain follow-up work.
+
+Inputs:
+
+- `tenantId`
+- Optional filters: `gameInstanceId`, `regionId`, `scriptPatchVersion`, `createdAfterMs`, `createdBeforeMs`
+- Optional explicit `workItemIds` (numeric durable work-item identifiers; when present, replay selection is limited to these rows)
+- `limit` (bounded by the service)
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Outputs:
+
+- `replayedCount`
+- `rejectedCount`
+
+Contract rules:
+
+- Replay is fail-closed per work item. A candidate row may be requeued only if the current Game Session runtime state still reports the same pinned `scriptPatchVersion` recorded on the dead-lettered work item.
+- When the original ingress audit identifies a plugin-backed handler, replay is additionally allowed only if the currently active plugin version for `(tenantId, gameInstanceId, pluginId)` still matches the ingress-audited `pluginVersionId`.
+- Rows that fail these checks remain `DEAD_LETTERED` and count toward `rejectedCount`; the operation does not partially mutate them into an intermediate state.
+- Replay does not bypass later admission or runtime checks. Requeued rows re-enter the normal evaluation pipeline and may dead-letter again if the underlying failure condition still exists.
 
 #### `GetScriptPatchInstanceRolloutStatus`
 

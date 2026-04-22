@@ -8,18 +8,28 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageRequest;
 
 class ScriptWorkItemServiceImplTest {
+  private static ScriptEventIngressAuditRepository ingressAuditRepository() {
+    return Mockito.mock(ScriptEventIngressAuditRepository.class);
+  }
+
   @Test
   void cancelsPendingPatchWorkAndUpdatesAuditOutcome() {
     ScriptWorkItem item = new ScriptWorkItem();
@@ -37,7 +47,13 @@ class ScriptWorkItemServiceImplTest {
         .thenReturn(List.of(item));
     when(auditRepository.findByWorkItemId(42L)).thenReturn(Optional.of(audit));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, outboxProperties());
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            outboxProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     long canceled =
         service.cancelPendingForPatch(
@@ -65,7 +81,13 @@ class ScriptWorkItemServiceImplTest {
         .thenReturn(List.of(item));
     when(workItemRepository.saveAll(List.of(item))).thenReturn(List.of(item));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, outboxProperties());
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            outboxProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(10);
 
@@ -81,7 +103,10 @@ class ScriptWorkItemServiceImplTest {
         new ScriptWorkItemServiceImpl(
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(ScriptEventAuditRepository.class),
-            outboxProperties());
+            ingressAuditRepository(),
+            outboxProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     assertThatThrownBy(() -> service.claimPendingForEvaluation(0))
         .isInstanceOf(IllegalArgumentException.class)
@@ -103,7 +128,13 @@ class ScriptWorkItemServiceImplTest {
         .thenReturn(5L);
     when(workItemRepository.countByStatus("DEAD_LETTERED")).thenReturn(100000L);
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, properties);
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            properties,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptWorkItemService.TerminalCleanupResult result = service.cleanupTerminalWorkItems();
 
@@ -132,7 +163,13 @@ class ScriptWorkItemServiceImplTest {
             "DEAD_LETTERED", PageRequest.of(0, 1)))
         .thenReturn(List.of(old));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, properties);
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            properties,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptWorkItemService.TerminalCleanupResult result = service.cleanupTerminalWorkItems();
 
@@ -149,7 +186,13 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
         .thenReturn(List.of(pending, handedOff));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, outboxProperties());
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            outboxProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     Optional<ScriptWorkItemService.PatchStatusSummary> status =
         service.getPatchStatus("1", "patch-1");
@@ -174,7 +217,13 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-failed"))
         .thenReturn(List.of(failed));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, outboxProperties());
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            outboxProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     List<ScriptWorkItemService.PatchStatusSummary> statuses =
         service.listPatchStatuses("1", ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED, 250L, 0L);
@@ -204,7 +253,13 @@ class ScriptWorkItemServiceImplTest {
             "1", "DEAD_LETTERED", PageRequest.of(0, 25)))
         .thenReturn(List.of(deadLetter));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, outboxProperties());
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            outboxProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     List<ScriptWorkItemService.DeadLetterSummary> deadLetters =
         service.listDeadLetters("1", "game-1", "patch-1", 25);
@@ -213,6 +268,152 @@ class ScriptWorkItemServiceImplTest {
     assertThat(deadLetters.get(0).workItemId()).isEqualTo("99");
     assertThat(deadLetters.get(0).reason()).isEqualTo("STALE_TIMELINE");
     assertThat(deadLetters.get(0).updatedAtMs()).isEqualTo(300L);
+  }
+
+  @Test
+  void replaysEligibleDeadLetteredWorkItem() {
+    ScriptWorkItem item = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    item.setId(77L);
+    item.setTenantId("1");
+    item.setGameInstanceId("game-1");
+    item.setRegionId("region-1");
+    item.setRegionEpoch(3L);
+    item.setEntityId("entity-1");
+    item.setEventType("onCommand");
+    item.setEventSchemaVersion("v1");
+    item.setScriptEventId("event-1");
+    item.setCreatedAt(Instant.ofEpochMilli(100));
+    item.setCancelReason("GAME_SESSION_UNAVAILABLE");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptEventIngressAudit ingressAudit = new ScriptEventIngressAudit();
+    ingressAudit.setPluginId("");
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    PluginRuntimeStateService pluginRuntimeStateService =
+        Mockito.mock(PluginRuntimeStateService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventIngressAuditRepository ingressAuditRepository = ingressAuditRepository();
+    when(workItemRepository.findById(77L)).thenReturn(Optional.of(item));
+    when(workItemRepository.save(item)).thenReturn(item);
+    when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.of(audit));
+    when(ingressAuditRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+                "1",
+                "game-1",
+                "region-1",
+                3L,
+                "entity-1",
+                "onCommand",
+                "v1",
+                "patch-1",
+                "event-1",
+                false))
+        .thenReturn(Optional.of(ingressAudit));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setRuntimeVersionId("7")
+                        .build())
+                .build());
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository,
+            outboxProperties(),
+            gameSessionClient,
+            pluginRuntimeStateService);
+
+    ScriptWorkItemService.ReplayResult result =
+        service.replayDeadLetters(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1",
+                "game-1",
+                "region-1",
+                List.of("77"),
+                "patch-1",
+                0L,
+                0L,
+                10,
+                "req-1",
+                "admin",
+                "retry"));
+
+    assertThat(result.replayedCount()).isEqualTo(1L);
+    assertThat(result.rejectedCount()).isEqualTo(0L);
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getCancelReason()).isEmpty();
+    assertThat(audit.getFinalStage()).isEqualTo("REPLAY");
+    assertThat(audit.getFinalOutcome()).isEqualTo("requeued");
+    assertThat(audit.getFinalReason()).isEqualTo("retry");
+  }
+
+  @Test
+  void rejectsReplayWhenPinnedPatchDoesNotMatch() {
+    ScriptWorkItem item = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    item.setId(77L);
+    item.setTenantId("1");
+    item.setGameInstanceId("game-1");
+    item.setRegionId("region-1");
+    item.setRegionEpoch(3L);
+    item.setEntityId("entity-1");
+    item.setEventType("onCommand");
+    item.setEventSchemaVersion("v1");
+    item.setScriptEventId("event-1");
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventIngressAuditRepository ingressAuditRepository = ingressAuditRepository();
+    when(workItemRepository.findById(77L)).thenReturn(Optional.of(item));
+    when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.empty());
+    when(ingressAuditRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+                "1",
+                "game-1",
+                "region-1",
+                3L,
+                "entity-1",
+                "onCommand",
+                "v1",
+                "patch-1",
+                "event-1",
+                false))
+        .thenReturn(Optional.empty());
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("patch-2")
+                        .setRuntimeVersionId("7")
+                        .build())
+                .build());
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository,
+            outboxProperties(),
+            gameSessionClient,
+            Mockito.mock(PluginRuntimeStateService.class));
+
+    ScriptWorkItemService.ReplayResult result =
+        service.replayDeadLetters(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1", "game-1", "", List.of("77"), "", 0L, 0L, 10, "", "", ""));
+
+    assertThat(result.replayedCount()).isEqualTo(0L);
+    assertThat(result.rejectedCount()).isEqualTo(1L);
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
   }
 
   private static ScriptWorkItem workItem(String patchVersion, String status, Instant updatedAt) {

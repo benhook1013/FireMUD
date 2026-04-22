@@ -1,14 +1,19 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import org.springframework.data.domain.PageRequest;
@@ -16,6 +21,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected dependencies are internal Spring collaborators")
 public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_EVALUATING = "EVALUATING";
@@ -28,15 +36,24 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
 
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository auditRepository;
+  private final ScriptEventIngressAuditRepository ingressAuditRepository;
   private final ScriptOutboxProperties outboxProperties;
+  private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
+  private final PluginRuntimeStateService pluginRuntimeStateService;
 
   public ScriptWorkItemServiceImpl(
       ScriptWorkItemRepository workItemRepository,
       ScriptEventAuditRepository auditRepository,
-      ScriptOutboxProperties outboxProperties) {
+      ScriptEventIngressAuditRepository ingressAuditRepository,
+      ScriptOutboxProperties outboxProperties,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      PluginRuntimeStateService pluginRuntimeStateService) {
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
+    this.ingressAuditRepository = ingressAuditRepository;
     this.outboxProperties = outboxProperties;
+    this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
+    this.pluginRuntimeStateService = pluginRuntimeStateService;
   }
 
   @Override
@@ -158,6 +175,31 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         .toList();
   }
 
+  @Override
+  @Transactional
+  public ReplayResult replayDeadLetters(ReplayDeadLettersCommand command) {
+    requireText(command.tenantId(), "tenant_id");
+    int boundedLimit = Math.min(Math.max(command.limit() <= 0 ? 50 : command.limit(), 1), 100);
+    Instant now = Instant.now();
+    String reason = normalizeReplayReason(command.reason());
+    List<ScriptWorkItem> candidates = selectReplayCandidates(command, boundedLimit);
+    long replayed = 0L;
+    long rejected = 0L;
+    for (ScriptWorkItem item : candidates) {
+      if (!eligibleForReplay(item)) {
+        rejected++;
+        continue;
+      }
+      item.setStatus(STATUS_PENDING_EVALUATION);
+      item.setCancelReason("");
+      item.setUpdatedAt(now);
+      workItemRepository.save(item);
+      markReplayQueued(item.getId(), reason, now);
+      replayed++;
+    }
+    return new ReplayResult(replayed, rejected);
+  }
+
   private Optional<PatchStatusSummary> summarize(
       String scriptPatchVersion, List<ScriptWorkItem> workItems) {
     if (workItems.isEmpty()) {
@@ -221,6 +263,91 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         item.getUpdatedAt().toEpochMilli());
   }
 
+  private List<ScriptWorkItem> selectReplayCandidates(
+      ReplayDeadLettersCommand command, int boundedLimit) {
+    if (command.workItemIds() != null && !command.workItemIds().isEmpty()) {
+      return command.workItemIds().stream()
+          .limit(boundedLimit)
+          .map(ScriptWorkItemServiceImpl::parseWorkItemId)
+          .map(workItemRepository::findById)
+          .flatMap(Optional::stream)
+          .filter(item -> command.tenantId().equals(item.getTenantId()))
+          .filter(item -> STATUS_DEAD_LETTERED.equals(item.getStatus()))
+          .filter(item -> matchesReplayFilters(item, command))
+          .toList();
+    }
+    return workItemRepository
+        .findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
+            command.tenantId(), STATUS_DEAD_LETTERED, PageRequest.of(0, boundedLimit))
+        .stream()
+        .filter(item -> matchesReplayFilters(item, command))
+        .toList();
+  }
+
+  private boolean matchesReplayFilters(ScriptWorkItem item, ReplayDeadLettersCommand command) {
+    return (command.gameInstanceId() == null
+            || command.gameInstanceId().isBlank()
+            || item.getGameInstanceId().equals(command.gameInstanceId()))
+        && (command.regionId() == null
+            || command.regionId().isBlank()
+            || item.getRegionId().equals(command.regionId()))
+        && (command.scriptPatchVersion() == null
+            || command.scriptPatchVersion().isBlank()
+            || item.getScriptPatchVersion().equals(command.scriptPatchVersion()))
+        && (command.createdAfterMs() <= 0
+            || item.getCreatedAt().toEpochMilli() >= command.createdAfterMs())
+        && (command.createdBeforeMs() <= 0
+            || item.getCreatedAt().toEpochMilli() <= command.createdBeforeMs());
+  }
+
+  private boolean eligibleForReplay(ScriptWorkItem item) {
+    var runtime =
+        gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+            item.getTenantId(), item.getGameInstanceId());
+    if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
+      return false;
+    }
+    if (!item.getScriptPatchVersion()
+        .equals(runtime.getRuntimeState().getPinnedScriptPatchVersion())) {
+      return false;
+    }
+    Optional<ScriptEventIngressAudit> audit =
+        ingressAuditRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+                item.getTenantId(),
+                item.getGameInstanceId(),
+                item.getRegionId(),
+                item.getRegionEpoch(),
+                item.getEntityId(),
+                item.getEventType(),
+                item.getEventSchemaVersion(),
+                item.getScriptPatchVersion(),
+                item.getScriptEventId(),
+                item.isDryRun());
+    if (audit.isEmpty()
+        || audit.get().getPluginId() == null
+        || audit.get().getPluginId().isBlank()) {
+      return true;
+    }
+    return pluginRuntimeStateService
+        .getStatus(item.getTenantId(), item.getGameInstanceId(), audit.get().getPluginId())
+        .map(status -> status.activePluginVersionId().equals(audit.get().getPluginVersionId()))
+        .orElse(false);
+  }
+
+  private void markReplayQueued(Long workItemId, String reason, Instant now) {
+    auditRepository
+        .findByWorkItemId(workItemId)
+        .ifPresent(
+            audit -> {
+              audit.setFinalStage("REPLAY");
+              audit.setFinalOutcome("requeued");
+              audit.setFinalReason(reason);
+              audit.setUpdatedAt(now);
+              auditRepository.save(audit);
+            });
+  }
+
   private long deleteExcessDeadLetters() {
     long deadLetteredCount = workItemRepository.countByStatus(STATUS_DEAD_LETTERED);
     long excess = deadLetteredCount - outboxProperties.getDeadLetterMaxRows();
@@ -255,9 +382,21 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     return reason == null || reason.isBlank() ? "operator_cancel" : reason;
   }
 
+  private static String normalizeReplayReason(String reason) {
+    return reason == null || reason.isBlank() ? "operator_replay" : reason;
+  }
+
   private static void requireText(String value, String fieldName) {
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(fieldName + " is required");
+    }
+  }
+
+  private static Long parseWorkItemId(String workItemId) {
+    try {
+      return Long.parseLong(workItemId);
+    } catch (NumberFormatException ex) {
+      throw new IllegalArgumentException("work_item_id must be numeric");
     }
   }
 }
