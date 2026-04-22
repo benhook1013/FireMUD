@@ -389,8 +389,8 @@ previewStack:
       extraEnv:
         GATEWAY_WS_URL: ws://spring-cloud-gateway/ws/game
         TCP_PROXY_GATEWAY_BASE_URL: http://spring-cloud-gateway
-        FIREMUD_GAMEPLAY_DEFAULT_TENANT_ID: "1"
-        FIREMUD_GAMEPLAY_DEFAULT_WORLD_ID: "demo"
+        TCP_PROXY_DEFAULT_GAME_INSTANCE_ID: "1"
+        TCP_PROXY_DEFAULT_TENANT_ID: "1"
       ports:
         - port: 8080
           targetPort: 8080
