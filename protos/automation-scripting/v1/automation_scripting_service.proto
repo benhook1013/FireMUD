@@ -144,6 +144,7 @@ message ScriptEventDefinition {
   repeated string allowed_binding_scopes = 10;
   bool dry_run_support = 11;
   string deprecation_status = 12;
+  string payload_schema_ref = 13;
 }
 
 message GetScriptEventDefinitionRequest {

@@ -119,7 +119,28 @@ public class BuiltInScriptEventRegistryService implements ScriptEventRegistrySer
         "IDEMPOTENT_BY_TRIGGER_IDENTITY",
         allowedBindingScopes,
         true,
-        "ACTIVE");
+        "ACTIVE",
+        payloadSchemaRef(eventType));
+  }
+
+  private static String payloadSchemaRef(String eventType) {
+    return switch (eventType) {
+      case "onCommand" ->
+          "design/architecture/system-architecture-scripting-event-registry.md#oncommand-payload-v1";
+      case "onSpawn" ->
+          "design/architecture/system-architecture-scripting-event-registry.md#onspawn-payload-v1";
+      case "onEnterRegion" ->
+          "design/architecture/system-architecture-scripting-event-registry.md#onenterregion-payload-v1";
+      case "onLeaveRegion" ->
+          "design/architecture/system-architecture-scripting-event-registry.md#onleaveregion-payload-v1";
+      case "onTimerExpire" ->
+          "design/architecture/system-architecture-scripting-event-registry.md#ontimerexpire-payload-v1";
+      case "onInterval" ->
+          "design/architecture/system-architecture-scripting-event-registry.md#oninterval-payload-v1";
+      case "onLoad" ->
+          "design/architecture/system-architecture-scripting-event-registry.md#onload-payload-v1";
+      default -> "";
+    };
   }
 
   private String key(EventDefinition definition) {

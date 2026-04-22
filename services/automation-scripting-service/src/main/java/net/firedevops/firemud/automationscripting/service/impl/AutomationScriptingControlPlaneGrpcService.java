@@ -473,6 +473,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         .addAllAllowedBindingScopes(definition.allowedBindingScopes())
         .setDryRunSupport(definition.dryRunSupport())
         .setDeprecationStatus(definition.deprecationStatus())
+        .setPayloadSchemaRef(definition.payloadSchemaRef())
         .build();
   }
 

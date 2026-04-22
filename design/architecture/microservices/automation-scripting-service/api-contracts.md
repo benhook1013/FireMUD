@@ -56,7 +56,7 @@ Admission must also enforce pin consistency for `<tenantId, gameInstanceId>`:
 Canonical event-registry contract for ingress:
 
 - Each registry entry is keyed by `eventType` plus `eventSchemaVersion`.
-- The registry entry must define the owning producer service, allowed producer principal classes, payload schema/version, replay semantics, quota class, snapshot authority, consistency class, and whether `GLOBAL` bindings are legal.
+- The registry entry must define the owning producer service, allowed producer principal classes, payload schema/version, payload schema reference, replay semantics, quota class, snapshot authority, consistency class, and whether `GLOBAL` bindings are legal.
 - For authoritative gameplay-affecting events, the registry entry must state that `readSnapshotToken` is required and must define the required scope encoded by that token.
 - For non-authoritative or synthetic events, the registry entry must explicitly mark `readSnapshotToken` forbidden so callers cannot imply stronger consistency than the event contract provides.
 - Registry rejection is an event-scope ingress failure and must use `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED` with a bounded `admissionReason` such as `unknown_event_type`, `schema_version_unsupported`, `producer_not_authorized`, `snapshot_token_required`, or `snapshot_token_forbidden`.

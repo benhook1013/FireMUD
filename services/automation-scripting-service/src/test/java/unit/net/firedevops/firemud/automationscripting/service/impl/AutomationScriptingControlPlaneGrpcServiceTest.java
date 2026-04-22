@@ -67,6 +67,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getDefinition().getEventType()).isEqualTo("onCommand");
     assertThat(ref.get().getDefinition().getSnapshotAuthority())
         .isEqualTo("PRODUCER_SUPPLIED_TOKEN");
+    assertThat(ref.get().getDefinition().getPayloadSchemaRef()).contains("#oncommand-payload-v1");
   }
 
   @Test
