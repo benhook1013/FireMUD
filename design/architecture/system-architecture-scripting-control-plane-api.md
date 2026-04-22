@@ -152,6 +152,27 @@ Outputs:
 - `pinnedAt` (timestamp)
 - `pinnedBy` (actor principal, optional)
 
+#### `GetGameSessionPinConvergence`
+
+Implementation note: the current Game Session implementation now exposes this convergence read directly from the persisted game-instance pin record. That means the live service returns the observed pinned patch, observed timestamp, and the actual persisted `controlPlaneRequestId` that last changed the pin instead of leaving convergence identity implicit in actor/reason text.
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`
+- `observedPinnedScriptPatchVersion`
+- `lastObservedControlPlaneRequestId`
+- `observedAt`
+
+Contract rules:
+
+- This is the canonical Game Session-side convergence read for rollback/promotion orchestration.
+- The response must be derived from the same persisted pin mutation that `SetPinnedScriptPatchVersion` / `RollbackScriptPatchVersion` commit, not reconstructed from logs or operator events.
+
 #### `SetPinnedScriptPatchVersion`
 
 Inputs:
@@ -262,7 +283,7 @@ Contract rules:
 
 #### `GetAutomationPinConvergence`
 
-Implementation note: the current Automation & Scripting implementation now exposes the first pin-convergence read by delegating to the shared Game Session runtime-state surface that current rollout/replay decisions already depend on. That means it can return the observed pinned patch and observation time now, but it does not yet own a replayable Automation-side pin projection keyed by `controlPlaneRequestId`; `lastObservedControlPlaneRequestId` is therefore currently blank rather than fabricated.
+Implementation note: the current Automation & Scripting implementation now exposes the first pin-convergence read by delegating to the shared Game Session runtime-state surface that current rollout/replay decisions already depend on. Because Game Session now persists pin `controlPlaneRequestId` in the canonical runtime-state record, this live read can already surface the real observed request id even before Automation owns its own replayable pin projection.
 
 Inputs:
 
@@ -279,7 +300,7 @@ Outputs:
 Contract rules:
 
 - This is a read-only operator surface for the latest pin observation currently visible to Automation-side admission and replay logic.
-- The live implementation is a direct shared-runtime read, not yet a distinct Automation projection. Once Automation owns a replayable pin projection, this same read must upgrade in place so `lastObservedControlPlaneRequestId` reflects the authoritative observed pin transition instead of the current blank value.
+- The live implementation is a direct shared-runtime read, not yet a distinct Automation projection. Once Automation owns a replayable pin projection, this same read should continue returning the same request id semantics while decoupling freshness and failure handling from the raw shared runtime-state query.
 
 #### `ListScriptDeadLetters`
 

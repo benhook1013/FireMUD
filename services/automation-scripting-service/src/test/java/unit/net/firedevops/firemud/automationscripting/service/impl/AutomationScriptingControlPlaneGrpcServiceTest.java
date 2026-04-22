@@ -251,6 +251,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-2")
+                        .setScriptPatchPinnedControlPlaneRequestId("req-22")
                         .setScriptPatchPinnedAtMs(222L)
                         .build())
                 .build());
@@ -271,7 +272,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getObservedPinnedScriptPatchVersion()).isEqualTo("patch-2");
-    assertThat(ref.get().getLastObservedControlPlaneRequestId()).isEmpty();
+    assertThat(ref.get().getLastObservedControlPlaneRequestId()).isEqualTo("req-22");
     assertThat(ref.get().getObservedAtMs()).isEqualTo(222L);
   }
 

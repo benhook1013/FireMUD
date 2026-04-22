@@ -13,7 +13,7 @@
 - Item command invocation/failure metrics are emitted through `gamesession.command.item.*` with command type and error tags.
 - Redis-backed session context, command queuing, tick-oriented coordination, feature flags, gRPC surfaces, and WebSocket handling exist in the service.
 - Game Session owns the idempotent automation-command admission boundary through `EnqueueAutomationCommandIfAbsent`, with Automation dispatch/work-item correlation persisted on the gameplay command ledger before tick staging.
-- Game Session now exposes a canonical control-plane runtime-state read for `(tenantId, gameInstanceId)` including current runtime version, launch descriptor, version/release identifiers, and script-patch pin metadata so other services can make compatibility decisions against one shared substrate instead of ad hoc instance lookups.
+- Game Session now exposes a canonical control-plane runtime-state read for `(tenantId, gameInstanceId)` including current runtime version, launch descriptor, version/release identifiers, and script-patch pin metadata including the persisted pin `controlPlaneRequestId`, plus a direct `GetGameSessionPinConvergence` read for rollback/promotion orchestration.
 - Reconnection/session-takeover concepts are partially implemented at the current slice level.
 - The `02.14` runtime-identity/logging baseline is live here, and the highest-value gameplay command paths already enrich logs with `tenantId`, `gameInstanceId`, and `characterId` when that context is known.
 

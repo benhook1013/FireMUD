@@ -32,6 +32,8 @@ import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverReques
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceRequest;
+import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
@@ -105,6 +107,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setScriptPatchPinnedAt(Instant.parse("2026-01-01T00:00:00Z"));
     instance.setScriptPatchPinnedBy("old-user");
     instance.setScriptPatchPinnedReason("old-reason");
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-0");
     instance.setOwnerAccountId(99L);
     instance.setStatus("RUNNING");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
@@ -131,6 +134,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("patch-1", responseRef.get().getPreviousScriptPatchVersion());
     assertEquals("patch-2", responseRef.get().getPinnedScriptPatchVersion());
+    assertEquals("req-1", instance.getScriptPatchPinnedControlPlaneRequestId());
     Mockito.verify(repository).save(Mockito.any(GameInstance.class));
   }
 
@@ -178,6 +182,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setScriptPatchPinnedAt(Instant.parse("2026-04-22T00:00:00Z"));
     instance.setScriptPatchPinnedBy("operator-1");
     instance.setScriptPatchPinnedReason("roll-forward");
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-77");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
 
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -206,6 +211,44 @@ class GameSessionControlPlaneGrpcServiceTest {
         responseRef.get().getRuntimeState().getScriptPatchPinnedAtMs());
     assertEquals("operator-1", responseRef.get().getRuntimeState().getScriptPatchPinnedBy());
     assertEquals("roll-forward", responseRef.get().getRuntimeState().getScriptPatchPinnedReason());
+    assertEquals(
+        "req-77", responseRef.get().getRuntimeState().getScriptPatchPinnedControlPlaneRequestId());
+  }
+
+  @Test
+  void getGameSessionPinConvergenceReturnsPersistedPinObservation() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setScriptPatchVersion("patch-2");
+    instance.setScriptPatchPinnedAt(Instant.parse("2026-04-22T00:00:00Z"));
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-77");
+    Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service = newService(repository);
+
+    AtomicReference<GetGameSessionPinConvergenceResponse> responseRef = new AtomicReference<>();
+    service.getGameSessionPinConvergence(
+        GetGameSessionPinConvergenceRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetGameSessionPinConvergenceResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals("1", responseRef.get().getTenantId());
+    assertEquals("7", responseRef.get().getGameInstanceId());
+    assertEquals("patch-2", responseRef.get().getObservedPinnedScriptPatchVersion());
+    assertEquals("req-77", responseRef.get().getLastObservedControlPlaneRequestId());
+    assertEquals(
+        Instant.parse("2026-04-22T00:00:00Z").toEpochMilli(), responseRef.get().getObservedAtMs());
   }
 
   @Test

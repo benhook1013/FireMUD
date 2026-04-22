@@ -37,6 +37,8 @@ import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GameplayCommandStatus;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceRequest;
+import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
@@ -558,6 +560,61 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getGameSessionPinConvergence")
+  public void getGameSessionPinConvergence(
+      GetGameSessionPinConvergenceRequest request,
+      StreamObserver<GetGameSessionPinConvergenceResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      GameInstance instance = getInstanceOrThrow(gameInstanceId);
+      if (instance.getTenantId() != tenantId) {
+        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+      }
+      GetGameSessionPinConvergenceResponse response =
+          GetGameSessionPinConvergenceResponse.newBuilder()
+              .setTenantId(Long.toString(instance.getTenantId()))
+              .setGameInstanceId(Long.toString(instance.getId()))
+              .setObservedPinnedScriptPatchVersion(
+                  instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
+              .setLastObservedControlPlaneRequestId(
+                  instance.getScriptPatchPinnedControlPlaneRequestId() == null
+                      ? ""
+                      : instance.getScriptPatchPinnedControlPlaneRequestId())
+              .setObservedAtMs(
+                  instance.getScriptPatchPinnedAt() == null
+                      ? 0L
+                      : instance.getScriptPatchPinnedAt().toEpochMilli())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      GetGameSessionPinConvergenceResponse response =
+          GetGameSessionPinConvergenceResponse.newBuilder()
+              .setError(authorizationError("GetGameSessionPinConvergence", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      GetGameSessionPinConvergenceResponse response =
+          GetGameSessionPinConvergenceResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("GetGameSessionPinConvergence failed", ex);
+      GetGameSessionPinConvergenceResponse response =
+          GetGameSessionPinConvergenceResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
   @Timed(value = "gamesessionGrpc.controlPlane.getGameInstanceRuntimeState")
   public void getGameInstanceRuntimeState(
       GetGameInstanceRuntimeStateRequest request,
@@ -610,6 +667,10 @@ public final class GameSessionControlPlaneGrpcService
                           instance.getScriptPatchPinnedReason() == null
                               ? ""
                               : instance.getScriptPatchPinnedReason())
+                      .setScriptPatchPinnedControlPlaneRequestId(
+                          instance.getScriptPatchPinnedControlPlaneRequestId() == null
+                              ? ""
+                              : instance.getScriptPatchPinnedControlPlaneRequestId())
                       .build())
               .build();
       responseObserver.onNext(response);
@@ -658,6 +719,7 @@ public final class GameSessionControlPlaneGrpcService
       instance.setScriptPatchPinnedAt(Instant.now());
       instance.setScriptPatchPinnedBy(request.getActorPrincipal());
       instance.setScriptPatchPinnedReason(request.getReason());
+      instance.setScriptPatchPinnedControlPlaneRequestId(request.getControlPlaneRequestId());
       gameInstanceRepository.save(instance);
 
       SetPinnedScriptPatchVersionResponse response =
@@ -713,6 +775,7 @@ public final class GameSessionControlPlaneGrpcService
       instance.setScriptPatchPinnedAt(Instant.now());
       instance.setScriptPatchPinnedBy(request.getActorPrincipal());
       instance.setScriptPatchPinnedReason(request.getReason());
+      instance.setScriptPatchPinnedControlPlaneRequestId(request.getControlPlaneRequestId());
       gameInstanceRepository.save(instance);
 
       RollbackScriptPatchVersionResponse response =

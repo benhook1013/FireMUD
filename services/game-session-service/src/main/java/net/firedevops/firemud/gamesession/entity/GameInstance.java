@@ -51,6 +51,9 @@ public class GameInstance {
   @Column(name = "script_patch_pinned_reason", length = 500)
   private String scriptPatchPinnedReason;
 
+  @Column(name = "script_patch_pinned_control_plane_request_id", length = 128)
+  private String scriptPatchPinnedControlPlaneRequestId;
+
   @Column(nullable = false)
   private Long ownerAccountId;
 

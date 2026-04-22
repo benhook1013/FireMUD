@@ -8,6 +8,6 @@ For details see the [design docs](../../../design/architecture/microservices/gam
 
 ## Control Plane APIs
 
-This proto now includes a separate `GameSessionControlPlaneService` for operator-driven actions (script patch pinning/rollback, scoped tick pause/resume, and queue purge hooks for rollback safety) as specified in `design/architecture/system-architecture-scripting-control-plane-api.md`.
+This proto now includes a separate `GameSessionControlPlaneService` for operator-driven actions (script patch pinning/rollback, pin-convergence/runtime-state reads, scoped tick pause/resume, and queue purge hooks for rollback safety) as specified in `design/architecture/system-architecture-scripting-control-plane-api.md`.
 
 The existing `PauseTicks` / `ResumeTicks` RPCs on `GameSessionService` remain the minimal, backup-oriented APIs; the control-plane service is the normative surface for per-tenant/game/region operations.

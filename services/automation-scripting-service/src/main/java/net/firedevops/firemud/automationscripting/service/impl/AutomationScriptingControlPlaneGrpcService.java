@@ -226,7 +226,8 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setGameInstanceId(runtime.getRuntimeState().getGameInstanceId())
             .setObservedPinnedScriptPatchVersion(
                 runtime.getRuntimeState().getPinnedScriptPatchVersion())
-            .setLastObservedControlPlaneRequestId("")
+            .setLastObservedControlPlaneRequestId(
+                runtime.getRuntimeState().getScriptPatchPinnedControlPlaneRequestId())
             .setObservedAtMs(runtime.getRuntimeState().getScriptPatchPinnedAtMs());
       }
     } catch (AdminAuthorizationException ex) {
