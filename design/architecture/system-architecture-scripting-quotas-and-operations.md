@@ -188,7 +188,7 @@ Budgets operate at three main levels:
   - Global ceilings on automation work (for example, CPU/time budgets and `AUTOMATION_TICK_MAX_EVENTS`) protect the cluster.
   - When limits are reached, the scheduler favors `high`-priority, latency-sensitive scripts and defers or drops `background` work.
 
-All script-side keys and metrics are scoped by `tenantId`, and leadership leases such as `script-leader:{<tenantId>}` ensure that each tenant’s automation workload can be reasoned about and tuned independently while still sharing the same infrastructure.
+All script-side keys and metrics are scoped by `tenantId`, and scheduler ownership must remain explicit enough that each tenant’s automation workload can be reasoned about and tuned independently while still sharing the same infrastructure. Do not infer a separate canonical `script-leader:*` prefix unless the Redis coordination docs explicitly add one.
 
 ### Quota & Budget Summary
 

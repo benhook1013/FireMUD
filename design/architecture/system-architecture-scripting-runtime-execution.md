@@ -65,6 +65,13 @@ Each persisted script work item must include:
 - `commandCount` (for budgeting/inspection).
 - `cancelReason` (nullable; required when canceled).
 
+When a work item is handed to Game Session, the handoff identity must be explicit:
+
+- Every gameplay command emitted from one outbox work item must derive a stable `automationDispatchId`.
+- If one work item emits exactly one gameplay command, `automationDispatchId` may be derived directly from `outboxWorkItemId`.
+- If one work item emits multiple gameplay commands, each emitted command must use a deterministic suffix or ordinal under the same stable parent identity (for example `<outboxWorkItemId>#<commandOrdinal>`), so duplicate handoff retries remain idempotent per gameplay command rather than only per work item.
+- Game Session dedupe, stale-timeline rejection, replay/no-op outcomes, and later execution-fence reporting must key off that per-command `automationDispatchId`, while operator tooling must still be able to correlate those outcomes back to the parent `outboxWorkItemId` and Trigger Identity.
+
 ### Minimum Status Model
 
 Statuses are a target-state contract; implementations may use different internal names as long as they are mapped 1:1:
@@ -95,6 +102,8 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 
 - Outbox scanning for rebuild and cancellation must be bounded and backpressured (pagination, time windows, per-tenant limits) so it cannot become an unbounded full-table scan on large tenants.
 - Outbox retention must be explicitly defined for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` records, and must preserve enough history for rollback diagnosis and audit queries.
+- The canonical defaults are owned by [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md): `SCRIPT_OUTBOX_HANDED_OFF_RETENTION_DAYS`, `SCRIPT_OUTBOX_CANCELED_RETENTION_DAYS`, `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS`, and `SCRIPT_OUTBOX_TERMINAL_CLEANUP_INTERVAL_SECONDS`.
+- Operator-facing replay, purge, and convergence tooling must treat those retention windows as the supported diagnosis horizon rather than inventing ad hoc cleanup timing.
 
 ## `scriptEventId` Lifecycle and Deduplication
 
@@ -192,7 +201,7 @@ The main Redis keys used by the Automation & Scripting Service are:
 | `automation:tick:{tenantInstanceScriptTag}:lock` | Automation & Scripting (`ScriptTickService`) | Per-instance, per-script automation tick lock to serialize staging for a script’s work batch. | Hash-tagged on `{tenantInstanceScriptTag}`. | Short-lived lock. |
 | `automation:tick:{tenantInstanceScriptTag}:queue` | Automation & Scripting (`ScriptTickService`) | Staging queue for batched script events before they are written into per-entity tick queues. | Hash-tagged on `{tenantInstanceScriptTag}`. | Short-lived staging. |
 | `automation:timer:{tenantRegionTag}` | Automation & Scripting scheduler | Region-scoped index of script timers and intervals. | Hash-tagged on `{tenantRegionTag}`. | Persistent while timers are active. |
-| `script-leader:{<tenantId>}` | Automation & Scripting scheduler | Leadership lease for scheduler coordination per tenant. | Hash-tagged per tenant. | Short-lived lease refreshed by the active scheduler instance. |
+| Scheduler leadership state | Automation & Scripting scheduler | Derived scheduler ownership aligned to the canonical runtime and region-scoped coordination model; do not assume a separate first-class `script-leader:*` prefix unless a later Redis design update explicitly introduces it. | Must follow the same slotting and reset rules as the documented scheduler coordination families. | Short-lived and reset-tolerant by design. |
 
 ## Failure Modes and Error Handling
 
