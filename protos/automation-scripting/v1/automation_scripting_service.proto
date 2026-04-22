@@ -158,12 +158,14 @@ enum TriggerAdmissionOutcome {
   TRIGGER_ADMISSION_OUTCOME_UNSPECIFIED = 0;
   TRIGGER_ADMISSION_OUTCOME_ADMITTED = 1;
   TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING = 2;
-  TRIGGER_ADMISSION_OUTCOME_DENIED_QUOTA = 3;
-  TRIGGER_ADMISSION_OUTCOME_DENIED_TENANT_BUDGET = 4;
-  TRIGGER_ADMISSION_OUTCOME_DENIED_DISABLED = 5;
-  TRIGGER_ADMISSION_OUTCOME_DENIED_VERSION_UNAVAILABLE = 6;
-  TRIGGER_ADMISSION_OUTCOME_DENIED_POLICY = 7;
+  reserved 3 to 7;
+  reserved "TRIGGER_ADMISSION_OUTCOME_DENIED_QUOTA",
+      "TRIGGER_ADMISSION_OUTCOME_DENIED_TENANT_BUDGET",
+      "TRIGGER_ADMISSION_OUTCOME_DENIED_DISABLED",
+      "TRIGGER_ADMISSION_OUTCOME_DENIED_VERSION_UNAVAILABLE",
+      "TRIGGER_ADMISSION_OUTCOME_DENIED_POLICY";
   TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR = 8;
+  TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED = 9;
 }
 
 message TriggerScriptEventRequest {
@@ -197,6 +199,14 @@ message TriggerScriptEventRequest {
 
   // Event payload envelope (implementation-specific).
   string payload_json = 14;
+
+  // Registry-controlled schema selector for custom and service-specific events.
+  // Built-in events may default to "v1" when omitted.
+  string event_schema_version = 17;
+
+  // Required when the event registry marks the event as producer-supplied
+  // authoritative snapshot. The token format is registry/event-specific.
+  string read_snapshot_token = 18;
 }
 
 message TriggerScriptEventResponse {

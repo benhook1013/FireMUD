@@ -11,6 +11,7 @@ import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.service.PingService;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
 import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
+import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberRequest;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberResponse;
@@ -35,6 +36,7 @@ import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,6 +51,7 @@ public class AutomationScriptingGrpcService
   private final ScriptDefinitionService scriptService;
   private final ScriptDesignDigestService scriptDesignDigestService;
   private final ScriptVersionService scriptVersionService;
+  private final ScriptEventIngressService scriptEventIngressService;
   private final NpcFormationService formationService;
   private final MeterRegistry meterRegistry;
 
@@ -57,12 +60,14 @@ public class AutomationScriptingGrpcService
       ScriptDefinitionService scriptService,
       ScriptDesignDigestService scriptDesignDigestService,
       ScriptVersionService scriptVersionService,
+      ScriptEventIngressService scriptEventIngressService,
       NpcFormationService formationService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.scriptService = scriptService;
     this.scriptDesignDigestService = scriptDesignDigestService;
     this.scriptVersionService = scriptVersionService;
+    this.scriptEventIngressService = Objects.requireNonNull(scriptEventIngressService);
     this.formationService = Objects.requireNonNull(formationService);
     this.meterRegistry = meterRegistry;
   }
@@ -104,16 +109,32 @@ public class AutomationScriptingGrpcService
             .setAdmitted(false)
             .setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_UNSPECIFIED);
     try {
-      requireAdminRole();
+      requireInternalServiceOrAdmin();
+      ScriptEventIngressService.TriggerAdmission admission =
+          scriptEventIngressService.admit(request);
       response
-          .setAdmissionReason("not_implemented")
+          .setAdmitted(admission.admitted())
+          .setAdmissionOutcome(TriggerAdmissionOutcome.valueOf(admission.outcome()))
+          .setAdmissionReason(admission.reason());
+      if (!admission.admitted()) {
+        response.setError(
+            GrpcAppErrors.error(
+                meterRegistry,
+                logger,
+                "TriggerScriptEvent",
+                admission.outcome(),
+                admission.reason()));
+      }
+    } catch (IllegalArgumentException ex) {
+      response
+          .setAdmissionReason("invalid_argument")
           .setError(
               GrpcAppErrors.error(
                   meterRegistry,
                   logger,
                   "TriggerScriptEvent",
-                  "NOT_IMPLEMENTED",
-                  "TriggerScriptEvent is not implemented yet"));
+                  "INVALID_ARGUMENT",
+                  ex.getMessage()));
     } catch (AdminAuthorizationException ex) {
       response
           .setAdmissionReason("permission_denied")
@@ -395,6 +416,13 @@ public class AutomationScriptingGrpcService
 
   private void requireAdminRole() {
     AdminRoleGuard.requireAdminRole();
+  }
+
+  private void requireInternalServiceOrAdmin() {
+    if (SessionContext.isInternalService() || SessionContext.hasGlobalPrivilegedRole()) {
+      return;
+    }
+    throw new AdminAuthorizationException("Internal service or admin role required");
   }
 
   private ErrorDetail authorizationError(String operation, AdminAuthorizationException ex) {

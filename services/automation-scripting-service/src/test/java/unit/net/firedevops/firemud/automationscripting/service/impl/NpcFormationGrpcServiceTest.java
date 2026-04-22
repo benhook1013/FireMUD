@@ -12,6 +12,7 @@ import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.service.PingService;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
 import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
+import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberRequest;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberResponse;
@@ -125,6 +126,7 @@ class NpcFormationGrpcServiceTest {
         Mockito.mock(ScriptDefinitionService.class),
         Mockito.mock(ScriptDesignDigestService.class),
         Mockito.mock(ScriptVersionService.class),
+        Mockito.mock(ScriptEventIngressService.class),
         npcService,
         new SimpleMeterRegistry());
   }

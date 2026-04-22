@@ -1,0 +1,195 @@
+package net.firedevops.firemud.automationscripting.service.impl;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
+import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
+import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
+import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
+import net.firedevops.firemud.common.security.SessionContext;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
+
+class ScriptEventIngressServiceImplTest {
+  @AfterEach
+  void clearSessionContext() {
+    SessionContext.clear();
+  }
+
+  @Test
+  void admitsKnownProducerAndPersistsAuditRow() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
+    ScriptEventAuditRepository repository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(repository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndPluginIdAndPluginVersionIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+                "1",
+                "game-1",
+                "region-1",
+                7L,
+                "entity-1",
+                "script-1",
+                "",
+                "",
+                "onCommand",
+                "v1",
+                "patch-1",
+                "event-1",
+                false))
+        .thenReturn(Optional.empty());
+    ScriptEventIngressService service = new ScriptEventIngressServiceImpl(repository);
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            TriggerScriptEventRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setScriptId("script-1")
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-1")
+                .setReadSnapshotToken("snapshot-1")
+                .build());
+
+    assertThat(admission.admitted()).isTrue();
+    assertThat(admission.outcome())
+        .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name());
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(repository).save(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getSourceService()).isEqualTo("game-session-service");
+    assertThat(auditCaptor.getValue().isAdmitted()).isTrue();
+  }
+
+  @Test
+  void rejectsRuntimeTriggerWithoutSnapshotToken() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
+    ScriptEventAuditRepository repository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventIngressService service = new ScriptEventIngressServiceImpl(repository);
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            TriggerScriptEventRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setScriptId("script-1")
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-1")
+                .build());
+
+    assertThat(admission.admitted()).isFalse();
+    assertThat(admission.outcome())
+        .isEqualTo(
+            TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
+    assertThat(admission.reason()).isEqualTo("missing_snapshot_token");
+    verify(repository).save(Mockito.any(ScriptEventAudit.class));
+  }
+
+  @Test
+  void rejectsUnauthorizedProducerThroughRegistryOutcome() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "account-service", "account-service-1");
+    ScriptEventAuditRepository repository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventIngressService service = new ScriptEventIngressServiceImpl(repository);
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            TriggerScriptEventRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setScriptId("script-1")
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-1")
+                .build());
+
+    assertThat(admission.admitted()).isFalse();
+    assertThat(admission.outcome())
+        .isEqualTo(
+            TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
+    assertThat(admission.reason()).isEqualTo("unauthorized_producer");
+    verify(repository).save(Mockito.any(ScriptEventAudit.class));
+  }
+
+  @Test
+  void deduplicatesExistingTriggerIdentity() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
+    ScriptEventAudit existing = new ScriptEventAudit();
+    existing.setAdmitted(true);
+    existing.setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name());
+    existing.setAdmissionReason("admitted_for_handler_resolution");
+    ScriptEventAuditRepository repository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(repository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndPluginIdAndPluginVersionIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+                "1",
+                "game-1",
+                "region-1",
+                7L,
+                "entity-1",
+                "script-1",
+                "",
+                "",
+                "onCommand",
+                "v1",
+                "patch-1",
+                "event-1",
+                false))
+        .thenReturn(Optional.of(existing));
+    ScriptEventIngressService service = new ScriptEventIngressServiceImpl(repository);
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            TriggerScriptEventRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setScriptId("script-1")
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-1")
+                .build());
+
+    assertThat(admission.admitted()).isTrue();
+    verify(repository, never()).save(Mockito.any());
+  }
+
+  @Test
+  void rejectsMissingRequiredIdentityBeforeAuditWrite() {
+    ScriptEventAuditRepository repository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventIngressService service = new ScriptEventIngressServiceImpl(repository);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.admit(
+                TriggerScriptEventRequest.newBuilder()
+                    .setEventType("onCommand")
+                    .setScriptPatchVersion("patch-1")
+                    .setScriptEventId("event-1")
+                    .build()));
+    verify(repository, never()).save(Mockito.any());
+  }
+}
