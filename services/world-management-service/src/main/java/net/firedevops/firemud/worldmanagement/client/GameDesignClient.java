@@ -1,6 +1,5 @@
 package net.firedevops.firemud.worldmanagement.client;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
 import javax.net.ssl.SSLException;
@@ -22,9 +21,6 @@ import org.springframework.stereotype.Component;
 
 /** gRPC client for communicating with the Game Design Service. */
 @Component
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected configuration and channel references are not exposed")
 public class GameDesignClient
     extends AbstractReloadingBlockingGrpcClient<
         GameDesignServiceGrpc.GameDesignServiceBlockingStub> {
