@@ -125,3 +125,8 @@ Entry format:
   - Context: running multiple Gradle service checks/tests in parallel around proto-regenerating modules produced `bad class file` / `NoSuchFileException` failures against classes that were not actually broken in source.
   - Observation: for this repo's generated sources and shared-module graph, concurrent Gradle invocations can trample build outputs and create expensive false-negative compile results.
   - Expected pattern: keep Gradle validation serialized in one invocation or one main-thread sequence when touching proto-heavy or shared modules, and treat sudden `.class` `NoSuchFileException` compile failures as possible build-state corruption before assuming a source regression.
+
+- `2026-04-22`: Helm seed SQL must fail fast instead of hiding schema drift until smoke
+  - Context: preview deploy rendered a seed row for `version_asset_artifact`, but the Helm hook ran `psql` without `ON_ERROR_STOP`, so a bad column list printed an error, the hook still completed, and the later smoke bootstrap failed with a game-session launch preflight error.
+  - Observation: seed SQL is part of the deploy contract; if it can fail non-fatally, CI reports the wrong failing component and local Helm render checks cannot catch schema drift.
+  - Expected pattern: run seed SQL with `psql -v ON_ERROR_STOP=1` and prefer adding a local/CI seed-against-migrated-schema proof when seed data starts carrying cross-service launch invariants.
