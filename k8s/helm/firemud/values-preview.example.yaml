@@ -194,10 +194,9 @@ previewStack:
       tenant_id,
       version_id,
       artifact_state,
+      state_epoch,
       manifest_hash,
-      asset_count,
-      storage_bytes,
-      export_workflow_id,
+      last_workflow_id,
       exported_manifest_asset_keys_json,
       exported_version_number
     )
@@ -205,20 +204,19 @@ previewStack:
       '1',
       1,
       'PUBLISHED',
+      1,
       'preview-seed-manifest',
-      0,
-      0,
       'preview-seed',
       '[]',
       1
     )
     ON CONFLICT (tenant_id, version_id) DO UPDATE SET
       artifact_state = EXCLUDED.artifact_state,
+      state_epoch = EXCLUDED.state_epoch,
       manifest_hash = EXCLUDED.manifest_hash,
-      asset_count = EXCLUDED.asset_count,
-      storage_bytes = EXCLUDED.storage_bytes,
-      export_workflow_id = EXCLUDED.export_workflow_id,
-      purge_after = NULL,
+      last_workflow_id = EXCLUDED.last_workflow_id,
+      last_error_code = NULL,
+      last_error_message = NULL,
       exported_manifest_asset_keys_json = EXCLUDED.exported_manifest_asset_keys_json,
       exported_version_number = EXCLUDED.exported_version_number,
       updated_at = CURRENT_TIMESTAMP;
