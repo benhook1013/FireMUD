@@ -235,6 +235,77 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void reportsAutomationDrainStatusForScopedWorkItems() {
+    ScriptWorkItem pending = workItem("patch-1", "PENDING_EVALUATION", Instant.ofEpochMilli(200));
+    pending.setTenantId("1");
+    pending.setGameInstanceId("game-1");
+    pending.setRegionId("region-1");
+    ScriptWorkItem evaluating = workItem("patch-1", "EVALUATING", Instant.ofEpochMilli(250));
+    evaluating.setTenantId("1");
+    evaluating.setGameInstanceId("game-1");
+    evaluating.setRegionId("region-1");
+    evaluating.setCreatedAt(Instant.ofEpochMilli(120));
+    ScriptWorkItem inflight = workItem("patch-1", "HANDOFF_IN_FLIGHT", Instant.ofEpochMilli(260));
+    inflight.setTenantId("1");
+    inflight.setGameInstanceId("game-1");
+    inflight.setRegionId("region-1");
+    inflight.setCreatedAt(Instant.ofEpochMilli(140));
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(workItemRepository.findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
+            "1",
+            "game-1",
+            "region-1",
+            List.of("PENDING_EVALUATION", "EVALUATING", "HANDOFF_IN_FLIGHT")))
+        .thenReturn(List.of(evaluating, inflight, pending));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            outboxProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(PluginRuntimeStateService.class));
+
+    ScriptWorkItemService.AutomationDrainStatusSummary summary =
+        service.getAutomationDrainStatus("1", "game-1", "region-1");
+
+    assertThat(summary.tenantId()).isEqualTo("1");
+    assertThat(summary.gameInstanceId()).isEqualTo("game-1");
+    assertThat(summary.regionId()).isEqualTo("region-1");
+    assertThat(summary.admissionEpoch()).isZero();
+    assertThat(summary.activeExecutionCount()).isEqualTo(2L);
+    assertThat(summary.oldestActiveExecutionStartedAtMs()).isEqualTo(120L);
+    assertThat(summary.pendingCancelableWorkItemCount()).isEqualTo(1L);
+    assertThat(summary.observedAtMs()).isPositive();
+  }
+
+  @Test
+  void reportsZeroedAutomationDrainStatusWhenScopedWorkIsEmpty() {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(workItemRepository.findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
+            "1", "game-1", "", List.of("PENDING_EVALUATION", "EVALUATING", "HANDOFF_IN_FLIGHT")))
+        .thenReturn(List.of());
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            outboxProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(PluginRuntimeStateService.class));
+
+    ScriptWorkItemService.AutomationDrainStatusSummary summary =
+        service.getAutomationDrainStatus("1", "game-1", "");
+
+    assertThat(summary.regionId()).isEmpty();
+    assertThat(summary.activeExecutionCount()).isZero();
+    assertThat(summary.oldestActiveExecutionStartedAtMs()).isZero();
+    assertThat(summary.pendingCancelableWorkItemCount()).isZero();
+  }
+
+  @Test
   void getsInstanceRolloutStatusFromRuntimePin() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);

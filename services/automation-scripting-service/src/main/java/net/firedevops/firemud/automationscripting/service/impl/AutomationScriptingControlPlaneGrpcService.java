@@ -13,6 +13,8 @@ import net.firedevops.firemud.automationscripting.v1.DisablePluginRequest;
 import net.firedevops.firemud.automationscripting.v1.DisablePluginResponse;
 import net.firedevops.firemud.automationscripting.v1.DrainPluginRequest;
 import net.firedevops.firemud.automationscripting.v1.DrainPluginResponse;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusRequest;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionRequest;
@@ -153,6 +155,37 @@ public final class AutomationScriptingControlPlaneGrpcService
           .stream()
           .map(AutomationScriptingControlPlaneGrpcService::toProto)
           .forEach(response::addPatches);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.getAutomationDrainStatus")
+  public void getAutomationDrainStatus(
+      GetAutomationDrainStatusRequest request,
+      StreamObserver<GetAutomationDrainStatusResponse> responseObserver) {
+    GetAutomationDrainStatusResponse.Builder response =
+        GetAutomationDrainStatusResponse.newBuilder();
+    try {
+      requireAdminRole();
+      ScriptWorkItemService.AutomationDrainStatusSummary summary =
+          workItemService.getAutomationDrainStatus(
+              request.getTenantId(), request.getGameInstanceId(), request.getRegionId());
+      response
+          .setTenantId(summary.tenantId())
+          .setGameInstanceId(summary.gameInstanceId())
+          .setRegionId(summary.regionId())
+          .setAdmissionEpoch(summary.admissionEpoch())
+          .setActiveExecutionCount(summary.activeExecutionCount())
+          .setOldestActiveExecutionStartedAtMs(summary.oldestActiveExecutionStartedAtMs())
+          .setPendingCancelableWorkItemCount(summary.pendingCancelableWorkItemCount())
+          .setObservedAtMs(summary.observedAtMs());
     } catch (IllegalArgumentException ex) {
       response.setError(
           ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));

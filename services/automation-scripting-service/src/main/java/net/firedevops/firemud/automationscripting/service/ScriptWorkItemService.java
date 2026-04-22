@@ -18,6 +18,9 @@ public interface ScriptWorkItemService {
   List<PatchStatusSummary> listPatchStatuses(
       String tenantId, ScriptPatchStatus status, long changedAfterMs, long changedBeforeMs);
 
+  AutomationDrainStatusSummary getAutomationDrainStatus(
+      String tenantId, String gameInstanceId, String regionId);
+
   Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
       String tenantId, String gameInstanceId, String scriptPatchVersion);
 
@@ -55,6 +58,16 @@ public interface ScriptWorkItemService {
       ScriptPatchStatus status,
       String statusReason,
       long lastChangedAtMs) {}
+
+  record AutomationDrainStatusSummary(
+      String tenantId,
+      String gameInstanceId,
+      String regionId,
+      long admissionEpoch,
+      long activeExecutionCount,
+      long oldestActiveExecutionStartedAtMs,
+      long pendingCancelableWorkItemCount,
+      long observedAtMs) {}
 
   record PatchInstanceRolloutSummary(
       String tenantId,

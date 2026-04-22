@@ -234,6 +234,32 @@ Outputs:
 
 - A list of `GetScriptPatchStatus` records.
 
+#### `GetAutomationDrainStatus`
+
+Implementation note: the current Automation & Scripting implementation now exposes the first drain-status read directly from durable `script_work_items` for one `(tenantId, gameInstanceId[, regionId])` scope. It reports active executions from `EVALUATING` and `HANDOFF_IN_FLIGHT`, counts cancelable pending work from `PENDING_EVALUATION`, and returns `observedAt` from the read timestamp. The broader rollback-admission substrate is not live yet, so `admissionEpoch` is currently returned as `0` rather than a true scope-local pause epoch.
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- Optional narrower scope: `regionId`
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`
+- Optional `regionId`
+- `admissionEpoch`
+- `activeExecutionCount`
+- `oldestActiveExecutionStartedAt` (nullable/zero when no active work exists)
+- `pendingCancelableWorkItemCount`
+- `observedAt`
+
+Contract rules:
+
+- This is a read-only operator surface for rollback/promotion drain checks; it must not mutate work-item state.
+- The current live response is scoped only to durable work-item truth already owned by Automation & Scripting. It does not yet prove that a pause transition has advanced a real rollback epoch.
+- Operators may already use `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` as the current drain-empty condition for scope-local durable work. Once scoped pause/admission-epoch control ships, the same read must upgrade in place so `admissionEpoch` reflects the authoritative rollback epoch instead of `0`.
+
 #### `ListScriptDeadLetters`
 
 Implementation note: the current Automation & Scripting API exposes this read directly from durable `script_work_items` rows with `status=DEAD_LETTERED`. It is an operator inspection surface separate from the controlled replay mutation API.

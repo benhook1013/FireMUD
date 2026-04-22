@@ -44,6 +44,8 @@ service AutomationScriptingService {
 service AutomationScriptingControlPlaneService {
   rpc GetScriptPatchStatus(GetScriptPatchStatusRequest) returns (GetScriptPatchStatusResponse);
   rpc ListScriptPatchStatuses(ListScriptPatchStatusesRequest) returns (ListScriptPatchStatusesResponse);
+  rpc GetAutomationDrainStatus(GetAutomationDrainStatusRequest)
+      returns (GetAutomationDrainStatusResponse);
   rpc GetScriptPatchInstanceRolloutStatus(GetScriptPatchInstanceRolloutStatusRequest)
       returns (GetScriptPatchInstanceRolloutStatusResponse);
   rpc ListScriptPatchInstanceRollouts(ListScriptPatchInstanceRolloutsRequest)
@@ -366,6 +368,24 @@ message ScriptPatchStatusEntry {
 message ListScriptPatchStatusesResponse {
   repeated ScriptPatchStatusEntry patches = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message GetAutomationDrainStatusRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+}
+
+message GetAutomationDrainStatusResponse {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  int64 admission_epoch = 4;
+  int64 active_execution_count = 5;
+  int64 oldest_active_execution_started_at_ms = 6;
+  int64 pending_cancelable_work_item_count = 7;
+  int64 observed_at_ms = 8;
+  shared.v1.ErrorDetail error = 9;
 }
 
 enum ScriptPatchInstanceRolloutStatus {

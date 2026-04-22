@@ -15,6 +15,8 @@ import net.firedevops.firemud.automationscripting.v1.DisablePluginRequest;
 import net.firedevops.firemud.automationscripting.v1.DisablePluginResponse;
 import net.firedevops.firemud.automationscripting.v1.DrainPluginRequest;
 import net.firedevops.firemud.automationscripting.v1.DrainPluginResponse;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusRequest;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionRequest;
@@ -189,6 +191,40 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getPatches(0).getScriptPatchVersion()).isEqualTo("patch-2");
     assertThat(ref.get().getPatches(0).getStatus())
         .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
+  }
+
+  @Test
+  void getsAutomationDrainStatusFromWorkItemReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.getAutomationDrainStatus("1", "game-1", "region-1"))
+        .thenReturn(
+            new ScriptWorkItemService.AutomationDrainStatusSummary(
+                "1", "game-1", "region-1", 0L, 2L, 123L, 4L, 200L));
+    AutomationScriptingControlPlaneGrpcService service =
+        new AutomationScriptingControlPlaneGrpcService(
+            new BuiltInScriptEventRegistryService(),
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class));
+    AtomicReference<GetAutomationDrainStatusResponse> ref = new AtomicReference<>();
+
+    service.getAutomationDrainStatus(
+        GetAutomationDrainStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getTenantId()).isEqualTo("1");
+    assertThat(ref.get().getGameInstanceId()).isEqualTo("game-1");
+    assertThat(ref.get().getRegionId()).isEqualTo("region-1");
+    assertThat(ref.get().getAdmissionEpoch()).isZero();
+    assertThat(ref.get().getActiveExecutionCount()).isEqualTo(2L);
+    assertThat(ref.get().getOldestActiveExecutionStartedAtMs()).isEqualTo(123L);
+    assertThat(ref.get().getPendingCancelableWorkItemCount()).isEqualTo(4L);
+    assertThat(ref.get().getObservedAtMs()).isEqualTo(200L);
   }
 
   @Test

@@ -45,6 +45,22 @@ public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, 
       String tenantId, String gameInstanceId, String scriptPatchVersion);
 
   @Query(
+      """
+      select item
+      from ScriptWorkItem item
+      where item.tenantId = :tenantId
+        and item.gameInstanceId = :gameInstanceId
+        and (:regionId = '' or item.regionId = :regionId)
+        and item.status in :statuses
+      order by item.createdAt asc, item.id asc
+      """)
+  List<ScriptWorkItem> findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
+      @Param("tenantId") String tenantId,
+      @Param("gameInstanceId") String gameInstanceId,
+      @Param("regionId") String regionId,
+      @Param("statuses") Collection<String> statuses);
+
+  @Query(
       "select distinct item.scriptPatchVersion from ScriptWorkItem item where item.tenantId = :tenantId")
   List<String> findDistinctScriptPatchVersionsByTenantId(@Param("tenantId") String tenantId);
 

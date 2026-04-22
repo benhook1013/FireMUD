@@ -37,6 +37,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private static final String STATUS_FAILED = "FAILED";
   private static final String STATUS_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
   private static final List<String> CANCELABLE_STATUSES = List.of(STATUS_PENDING_EVALUATION);
+  private static final List<String> ACTIVE_DRAIN_STATUSES =
+      List.of(STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT);
+  private static final List<String> DRAIN_RELEVANT_STATUSES =
+      List.of(STATUS_PENDING_EVALUATION, STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT);
   private static final long INSTANCE_ROLLOUT_STALE_THRESHOLD_MS = 5_000L;
 
   private final ScriptWorkItemRepository workItemRepository;
@@ -154,6 +158,42 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         .filter(summary -> changedBeforeMs <= 0 || summary.lastChangedAtMs() < changedBeforeMs)
         .sorted(Comparator.comparingLong(PatchStatusSummary::lastChangedAtMs).reversed())
         .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public AutomationDrainStatusSummary getAutomationDrainStatus(
+      String tenantId, String gameInstanceId, String regionId) {
+    requireText(tenantId, "tenant_id");
+    requireText(gameInstanceId, "game_instance_id");
+    Instant now = Instant.now();
+    List<ScriptWorkItem> scopedWorkItems =
+        workItemRepository.findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
+            tenantId, gameInstanceId, blankToEmpty(regionId), DRAIN_RELEVANT_STATUSES);
+    long activeExecutionCount =
+        scopedWorkItems.stream()
+            .filter(item -> ACTIVE_DRAIN_STATUSES.contains(item.getStatus()))
+            .count();
+    long oldestActiveExecutionStartedAtMs =
+        scopedWorkItems.stream()
+            .filter(item -> ACTIVE_DRAIN_STATUSES.contains(item.getStatus()))
+            .map(ScriptWorkItem::getCreatedAt)
+            .findFirst()
+            .map(Instant::toEpochMilli)
+            .orElse(0L);
+    long pendingCancelableWorkItemCount =
+        scopedWorkItems.stream()
+            .filter(item -> STATUS_PENDING_EVALUATION.equals(item.getStatus()))
+            .count();
+    return new AutomationDrainStatusSummary(
+        tenantId,
+        gameInstanceId,
+        blankToEmpty(regionId),
+        0L,
+        activeExecutionCount,
+        oldestActiveExecutionStartedAtMs,
+        pendingCancelableWorkItemCount,
+        now.toEpochMilli());
   }
 
   @Override
