@@ -9,4 +9,6 @@ import org.springframework.stereotype.Repository;
 public interface LaunchDescriptorRepository extends JpaRepository<LaunchDescriptor, Long> {
   Optional<LaunchDescriptor> findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
       String tenantId, Long gameTemplateId, String controlPlaneRequestId);
+
+  boolean existsByTenantIdAndVersionId(String tenantId, Long versionId);
 }
