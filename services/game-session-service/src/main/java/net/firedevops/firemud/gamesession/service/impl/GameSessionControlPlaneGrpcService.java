@@ -5,6 +5,7 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
+import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
@@ -12,6 +13,7 @@ import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
+import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
@@ -26,6 +28,8 @@ import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationServi
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.CutoverCompatibilityResult;
 import net.firedevops.firemud.gamesession.v1.CutoverParticipantResult;
+import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
+import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
@@ -793,6 +797,181 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.enqueueAutomationCommandIfAbsent")
+  public void enqueueAutomationCommandIfAbsent(
+      EnqueueAutomationCommandIfAbsentRequest request,
+      StreamObserver<EnqueueAutomationCommandIfAbsentResponse> responseObserver) {
+    try {
+      EnqueueAutomationCommandIfAbsentResponse response = enqueueAutomationCommand(request);
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      EnqueueAutomationCommandIfAbsentResponse response =
+          EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+              .setAccepted(false)
+              .setAdmissionOutcome("REJECTED")
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("EnqueueAutomationCommandIfAbsent failed", ex);
+      EnqueueAutomationCommandIfAbsentResponse response =
+          EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+              .setAccepted(false)
+              .setAdmissionOutcome("INTERNAL_ERROR")
+              .setError(
+                  GrpcAppErrors.internal(
+                      meterRegistry, logger, "EnqueueAutomationCommandIfAbsent", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  private EnqueueAutomationCommandIfAbsentResponse enqueueAutomationCommand(
+      EnqueueAutomationCommandIfAbsentRequest request) {
+    long tenantId = parseTenantId(request.getTenantId());
+    long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+    requireText(request.getRegionId(), "region_id is required");
+    if (request.getRegionEpoch() <= 0) {
+      throw new IllegalArgumentException("region_epoch must be positive");
+    }
+    if (request.getDueTickId() <= 0) {
+      throw new IllegalArgumentException("due_tick_id must be positive");
+    }
+    requireText(request.getAutomationDispatchId(), "automation_dispatch_id is required");
+    requireText(request.getAutomationWorkItemId(), "automation_work_item_id is required");
+    requireText(request.getScriptId(), "script_id is required");
+    requireText(request.getScriptPatchVersion(), "script_patch_version is required");
+    requireText(request.getTargetEntityId(), "target_entity_id is required");
+    requireText(request.getCommand(), "command is required");
+
+    GameInstance instance = getInstanceOrThrow(gameInstanceId);
+    if (instance.getTenantId() != tenantId) {
+      throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+    }
+
+    return gameplayCommandRepository
+        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+            tenantId,
+            gameInstanceId,
+            request.getRegionId(),
+            request.getRegionEpoch(),
+            request.getAutomationDispatchId())
+        .map(this::duplicateAutomationResponse)
+        .orElseGet(() -> enqueueNewAutomationCommand(request, tenantId, gameInstanceId));
+  }
+
+  private EnqueueAutomationCommandIfAbsentResponse duplicateAutomationResponse(
+      GameplayCommand command) {
+    return EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+        .setAccepted(true)
+        .setAdmissionOutcome("DUPLICATE_NOOP")
+        .setCommandId(command.getCommandId())
+        .build();
+  }
+
+  private EnqueueAutomationCommandIfAbsentResponse enqueueNewAutomationCommand(
+      EnqueueAutomationCommandIfAbsentRequest request, long tenantId, long gameInstanceId) {
+    GameplayCommand command = acceptedAutomationCommand(request, tenantId, gameInstanceId);
+    gameplayCommandRepository.save(command);
+    try {
+      tickService.enqueueCommand(
+          tenantId,
+          gameInstanceId,
+          command.getCommandId(),
+          request.getCommand(),
+          request.getRequiresSoloTick());
+      markAutomationStaged(command);
+      triggerImmediateAutomationTick(tenantId, gameInstanceId);
+      return EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+          .setAccepted(true)
+          .setAdmissionOutcome("ENQUEUED")
+          .setCommandId(command.getCommandId())
+          .build();
+    } catch (IllegalArgumentException ex) {
+      markAutomationFailed(command, "INVALID_ARGUMENT", ex.getMessage());
+      return EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+          .setAccepted(false)
+          .setAdmissionOutcome("REJECTED")
+          .setCommandId(command.getCommandId())
+          .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+          .build();
+    }
+  }
+
+  private GameplayCommand acceptedAutomationCommand(
+      EnqueueAutomationCommandIfAbsentRequest request, long tenantId, long gameInstanceId) {
+    Instant now = Instant.now();
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("auto-" + UUID.randomUUID());
+    command.setTenantId(tenantId);
+    command.setGameInstanceId(gameInstanceId);
+    command.setSessionId(0L);
+    command.setCommandName(commandName(request.getCommand()));
+    command.setCommandText(request.getCommand());
+    command.setSanitizedCommandText(GameSessionCommandLogSanitizer.sanitize(request.getCommand()));
+    command.setRequiresSoloTick(request.getRequiresSoloTick());
+    command.setExecutionOutcome("ACCEPTED");
+    command.setGameplayResult("PENDING");
+    command.setAcceptedAt(now);
+    command.setLastAttemptAt(now);
+    command.setAttemptCount(1);
+    command.setSourceType("AUTOMATION");
+    command.setAutomationDispatchId(request.getAutomationDispatchId());
+    command.setAutomationWorkItemId(request.getAutomationWorkItemId());
+    command.setScriptId(request.getScriptId());
+    command.setScriptPatchVersion(request.getScriptPatchVersion());
+    command.setTargetEntityId(request.getTargetEntityId());
+    command.setRegionId(request.getRegionId());
+    command.setRegionEpoch(request.getRegionEpoch());
+    command.setDueTickId(request.getDueTickId());
+    return command;
+  }
+
+  private void markAutomationStaged(GameplayCommand command) {
+    Instant now = Instant.now();
+    command.setExecutionOutcome("STAGED");
+    command.setStagedAt(now);
+    command.setLastAttemptAt(now);
+    gameplayCommandRepository.save(command);
+  }
+
+  private void markAutomationFailed(GameplayCommand command, String code, String message) {
+    Instant now = Instant.now();
+    command.setExecutionOutcome("FAILED");
+    command.setGameplayResult("NOT_APPLIED");
+    command.setCompletedAt(now);
+    command.setLastAttemptAt(now);
+    command.setFailureCode(code);
+    command.setFailureMessage(message);
+    gameplayCommandRepository.save(command);
+  }
+
+  private void triggerImmediateAutomationTick(long tenantId, long gameInstanceId) {
+    try {
+      tickService.processTick(tenantId, gameInstanceId);
+    } catch (RuntimeException ex) {
+      logger.warn(
+          "Immediate automation tick kick failed tenantId={} gameInstanceId={}",
+          tenantId,
+          gameInstanceId,
+          ex);
+    }
+  }
+
+  private String commandName(String command) {
+    String trimmed = command == null ? "" : command.trim();
+    if (trimmed.isEmpty()) {
+      return "UNKNOWN";
+    }
+    int firstSpace = trimmed.indexOf(' ');
+    String token = firstSpace < 0 ? trimmed : trimmed.substring(0, firstSpace);
+    return token.toUpperCase(java.util.Locale.ROOT);
+  }
+
   private AdmissionPointerControlPlaneEntry toEntry(GameplayAdmissionPointerAuditEntry entry) {
     AdmissionPointerControlPlaneEntry.Builder builder =
         AdmissionPointerControlPlaneEntry.newBuilder()
@@ -1033,6 +1212,33 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (command.getFailureMessage() != null) {
       builder.setFailureMessage(command.getFailureMessage());
+    }
+    if (command.getSourceType() != null) {
+      builder.setSourceType(command.getSourceType());
+    }
+    if (command.getAutomationDispatchId() != null) {
+      builder.setAutomationDispatchId(command.getAutomationDispatchId());
+    }
+    if (command.getAutomationWorkItemId() != null) {
+      builder.setAutomationWorkItemId(command.getAutomationWorkItemId());
+    }
+    if (command.getScriptId() != null) {
+      builder.setScriptId(command.getScriptId());
+    }
+    if (command.getScriptPatchVersion() != null) {
+      builder.setScriptPatchVersion(command.getScriptPatchVersion());
+    }
+    if (command.getTargetEntityId() != null) {
+      builder.setTargetEntityId(command.getTargetEntityId());
+    }
+    if (command.getRegionId() != null) {
+      builder.setRegionId(command.getRegionId());
+    }
+    if (command.getRegionEpoch() != null) {
+      builder.setRegionEpoch(command.getRegionEpoch());
+    }
+    if (command.getDueTickId() != null) {
+      builder.setDueTickId(command.getDueTickId());
     }
     return builder.build();
   }

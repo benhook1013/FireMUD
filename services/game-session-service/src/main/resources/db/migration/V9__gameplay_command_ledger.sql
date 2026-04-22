@@ -17,8 +17,24 @@ CREATE TABLE gameplay_command (
     last_attempt_at TIMESTAMP,
     attempt_count INTEGER NOT NULL DEFAULT 0,
     failure_code VARCHAR(80),
-    failure_message VARCHAR(500)
+    failure_message VARCHAR(500),
+    source_type VARCHAR(40) NOT NULL DEFAULT 'PLAYER',
+    automation_dispatch_id VARCHAR(128),
+    automation_work_item_id VARCHAR(128),
+    script_id VARCHAR(128),
+    script_patch_version VARCHAR(128),
+    target_entity_id VARCHAR(64),
+    region_id VARCHAR(64),
+    region_epoch BIGINT,
+    due_tick_id BIGINT
 );
 
 CREATE UNIQUE INDEX idx_gameplay_command_command_id ON gameplay_command (command_id);
 CREATE INDEX idx_gameplay_command_tenant_instance_status ON gameplay_command (tenant_id, game_instance_id, execution_outcome);
+CREATE UNIQUE INDEX idx_gameplay_command_automation_dispatch ON gameplay_command (
+    tenant_id,
+    game_instance_id,
+    region_id,
+    region_epoch,
+    automation_dispatch_id
+);

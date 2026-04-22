@@ -56,6 +56,8 @@ service GameSessionControlPlaneService {
   rpc PrepareVersionUpgrade(PrepareVersionUpgradeRequest) returns (PrepareVersionUpgradeResponse);
   rpc GetPreparedVersionUpgrade(GetPreparedVersionUpgradeRequest)
       returns (GetPreparedVersionUpgradeResponse);
+  rpc EnqueueAutomationCommandIfAbsent(EnqueueAutomationCommandIfAbsentRequest)
+      returns (EnqueueAutomationCommandIfAbsentResponse);
   rpc PurgeQueuedTickCommandsForScriptPatch(PurgeQueuedTickCommandsForScriptPatchRequest)
       returns (PurgeQueuedTickCommandsForScriptPatchResponse);
   rpc PurgeQueuedTickCommandsForPluginVersion(PurgeQueuedTickCommandsForPluginVersionRequest)
@@ -343,6 +345,15 @@ message GameplayCommandStatus {
   int32 attempt_count = 16;
   string failure_code = 17;
   string failure_message = 18;
+  string source_type = 19;
+  string automation_dispatch_id = 20;
+  string automation_work_item_id = 21;
+  string script_id = 22;
+  string script_patch_version = 23;
+  string target_entity_id = 24;
+  string region_id = 25;
+  int64 region_epoch = 26;
+  int64 due_tick_id = 27;
 }
 
 message GetGameplayCommandStatusResponse {
@@ -558,6 +569,28 @@ message GetPreparedVersionUpgradeRequest {
 message GetPreparedVersionUpgradeResponse {
   PreparedVersionUpgrade preparation = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message EnqueueAutomationCommandIfAbsentRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  int64 region_epoch = 4;
+  int64 due_tick_id = 5;
+  string automation_dispatch_id = 6;
+  string automation_work_item_id = 7;
+  string script_id = 8;
+  string script_patch_version = 9;
+  string target_entity_id = 10;
+  string command = 11;
+  bool requires_solo_tick = 12;
+}
+
+message EnqueueAutomationCommandIfAbsentResponse {
+  bool accepted = 1;
+  string admission_outcome = 2;
+  string command_id = 3;
+  shared.v1.ErrorDetail error = 4;
 }
 
 message PurgeQueuedTickCommandsForScriptPatchRequest {

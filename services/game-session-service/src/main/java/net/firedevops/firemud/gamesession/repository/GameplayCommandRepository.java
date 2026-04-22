@@ -12,6 +12,14 @@ import org.springframework.stereotype.Repository;
 public interface GameplayCommandRepository extends JpaRepository<GameplayCommand, Long> {
   Optional<GameplayCommand> findByCommandId(String commandId);
 
+  Optional<GameplayCommand>
+      findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+          Long tenantId,
+          Long gameInstanceId,
+          String regionId,
+          Long regionEpoch,
+          String automationDispatchId);
+
   List<GameplayCommand> findByCommandIdIn(Collection<String> commandIds);
 
   List<GameplayCommand> findByExecutionOutcomeAndStagedAtIsNullAndAcceptedAtBefore(

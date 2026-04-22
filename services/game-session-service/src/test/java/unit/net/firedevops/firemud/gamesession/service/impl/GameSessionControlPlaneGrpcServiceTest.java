@@ -26,6 +26,8 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapsh
 import net.firedevops.firemud.gamesession.service.InstanceCutoverCompatibilityService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
+import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
+import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
@@ -806,6 +808,107 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void enqueueAutomationCommandPersistsDispatchAndStagesTickCommand() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
+    Mockito.when(
+            commandRepository
+                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                    1L, 7L, "region-1", 12L, "dispatch-1"))
+        .thenReturn(Optional.empty());
+    TickService tickService = Mockito.mock(TickService.class);
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            gameInstanceRepository,
+            commandRepository,
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
+    service.enqueueAutomationCommandIfAbsent(
+        automationRequest(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(EnqueueAutomationCommandIfAbsentResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(true, responseRef.get().getAccepted());
+    assertEquals("ENQUEUED", responseRef.get().getAdmissionOutcome());
+    org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
+        org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
+    Mockito.verify(commandRepository, Mockito.times(2)).save(commandCaptor.capture());
+    GameplayCommand staged = commandCaptor.getAllValues().get(1);
+    assertEquals(responseRef.get().getCommandId(), staged.getCommandId());
+    assertEquals("AUTOMATION", staged.getSourceType());
+    assertEquals("dispatch-1", staged.getAutomationDispatchId());
+    assertEquals("work-1", staged.getAutomationWorkItemId());
+    assertEquals("script-1", staged.getScriptId());
+    assertEquals("patch-1", staged.getScriptPatchVersion());
+    assertEquals("entity-1", staged.getTargetEntityId());
+    assertEquals("region-1", staged.getRegionId());
+    assertEquals(12L, staged.getRegionEpoch());
+    assertEquals(34L, staged.getDueTickId());
+    assertEquals("STAGED", staged.getExecutionOutcome());
+    Mockito.verify(tickService)
+        .enqueueCommand(1L, 7L, responseRef.get().getCommandId(), "say hello", false);
+    Mockito.verify(tickService).processTick(1L, 7L);
+  }
+
+  @Test
+  void enqueueAutomationCommandReturnsDuplicateNoopForExistingDispatch() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    GameplayCommand existing = new GameplayCommand();
+    existing.setCommandId("auto-existing");
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    Mockito.when(
+            commandRepository
+                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                    1L, 7L, "region-1", 12L, "dispatch-1"))
+        .thenReturn(Optional.of(existing));
+    TickService tickService = Mockito.mock(TickService.class);
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            gameInstanceRepository,
+            commandRepository,
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
+    service.enqueueAutomationCommandIfAbsent(
+        automationRequest(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(EnqueueAutomationCommandIfAbsentResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(true, responseRef.get().getAccepted());
+    assertEquals("DUPLICATE_NOOP", responseRef.get().getAdmissionOutcome());
+    assertEquals("auto-existing", responseRef.get().getCommandId());
+    Mockito.verify(commandRepository, Mockito.never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(tickService);
+  }
+
+  @Test
   void getRuntimeOwnershipStatusReturnsDurableOwnerRecordForAdminCaller() {
     RuntimeRegionStatus status = new RuntimeRegionStatus();
     status.setTenantId(1L);
@@ -1042,6 +1145,29 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(VersionUpgradePreparationService.class),
         Mockito.mock(TickService.class),
         meterRegistry);
+  }
+
+  private static EnqueueAutomationCommandIfAbsentRequest automationRequest() {
+    return EnqueueAutomationCommandIfAbsentRequest.newBuilder()
+        .setTenantId("1")
+        .setGameInstanceId("7")
+        .setRegionId("region-1")
+        .setRegionEpoch(12L)
+        .setDueTickId(34L)
+        .setAutomationDispatchId("dispatch-1")
+        .setAutomationWorkItemId("work-1")
+        .setScriptId("script-1")
+        .setScriptPatchVersion("patch-1")
+        .setTargetEntityId("entity-1")
+        .setCommand("say hello")
+        .build();
+  }
+
+  private static GameplayCommandRepository commandRepositorySavingArgument() {
+    GameplayCommandRepository repository = Mockito.mock(GameplayCommandRepository.class);
+    Mockito.when(repository.save(Mockito.any(GameplayCommand.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    return repository;
   }
 
   private static class NoopObserver<T> implements StreamObserver<T> {

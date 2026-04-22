@@ -12,7 +12,12 @@ import lombok.Data;
       @Index(name = "idx_gameplay_command_command_id", columnList = "command_id", unique = true),
       @Index(
           name = "idx_gameplay_command_tenant_instance_status",
-          columnList = "tenant_id, game_instance_id, execution_outcome")
+          columnList = "tenant_id, game_instance_id, execution_outcome"),
+      @Index(
+          name = "idx_gameplay_command_automation_dispatch",
+          columnList =
+              "tenant_id, game_instance_id, region_id, region_epoch, automation_dispatch_id",
+          unique = true)
     })
 public class GameplayCommand {
   @Id
@@ -75,4 +80,31 @@ public class GameplayCommand {
 
   @Column(name = "failure_message", length = 500)
   private String failureMessage;
+
+  @Column(name = "source_type", nullable = false, length = 40)
+  private String sourceType = "PLAYER";
+
+  @Column(name = "automation_dispatch_id", length = 128)
+  private String automationDispatchId;
+
+  @Column(name = "automation_work_item_id", length = 128)
+  private String automationWorkItemId;
+
+  @Column(name = "script_id", length = 128)
+  private String scriptId;
+
+  @Column(name = "script_patch_version", length = 128)
+  private String scriptPatchVersion;
+
+  @Column(name = "target_entity_id", length = 64)
+  private String targetEntityId;
+
+  @Column(name = "region_id", length = 64)
+  private String regionId;
+
+  @Column(name = "region_epoch")
+  private Long regionEpoch;
+
+  @Column(name = "due_tick_id")
+  private Long dueTickId;
 }
