@@ -24,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class RevisionServiceImpl implements RevisionService {
   private static final Logger logger = LoggingUtil.getLogger(RevisionServiceImpl.class);
+  private static final String WORLD_DESIGN_MUTATION_KIND = "WORLD_DESIGN_MUTATION";
 
   private final RevisionRepository revisionRepository;
   private final GameRepository gameRepository;
@@ -78,7 +79,7 @@ public class RevisionServiceImpl implements RevisionService {
 
   private void validateWorldMutationRequest(RevisionDto dto) {
     WorldDesignMutationRevisionDto mutation = dto.worldDesignMutation();
-    if (!"WORLD_DESIGN_MUTATION".equals(dto.revisionKind())) {
+    if (!WORLD_DESIGN_MUTATION_KIND.equals(dto.revisionKind())) {
       throw new IllegalArgumentException(
           "INVALID_ARGUMENT: worldDesignMutation requires revisionKind WORLD_DESIGN_MUTATION");
     }
@@ -89,6 +90,75 @@ public class RevisionServiceImpl implements RevisionService {
     if (mutation.commitId() == null || mutation.commitId().isBlank()) {
       throw new IllegalArgumentException(
           "INVALID_ARGUMENT: worldDesignMutation.commitId is required");
+    }
+    requireKnownWorldMutationOperation(mutation.operation());
+    requireKnownWorldAggregateType(mutation.aggregateType());
+    requireKnownWorldScopeTypeIfPresent(mutation.scopeType());
+    requireKnownWorldScopePolicyIfPresent(mutation.scopeMutationPolicy());
+    requirePayloadMatchesAggregateType(mutation);
+  }
+
+  private void requireKnownWorldMutationOperation(String operation) {
+    if (!"WORLD_DESIGN_MUTATION_OPERATION_UPSERT".equals(operation)
+        && !"WORLD_DESIGN_MUTATION_OPERATION_DELETE".equals(operation)) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: unsupported worldDesignMutation.operation");
+    }
+  }
+
+  private void requireKnownWorldAggregateType(String aggregateType) {
+    if (!"WORLD_DESIGN_AGGREGATE_TYPE_REGION".equals(aggregateType)
+        && !"WORLD_DESIGN_AGGREGATE_TYPE_ZONE".equals(aggregateType)
+        && !"WORLD_DESIGN_AGGREGATE_TYPE_ROOM".equals(aggregateType)
+        && !"WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT".equals(aggregateType)
+        && !"WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE".equals(aggregateType)
+        && !"WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING".equals(aggregateType)) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: unsupported worldDesignMutation.aggregateType");
+    }
+  }
+
+  private void requireKnownWorldScopeTypeIfPresent(String scopeType) {
+    if (scopeType == null || scopeType.isBlank()) {
+      return;
+    }
+    if (!"WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE".equals(scopeType)
+        && !"WORLD_DESIGN_SCOPE_TYPE_ZONE_SUBTREE".equals(scopeType)
+        && !"WORLD_DESIGN_SCOPE_TYPE_NEW_EMPTY_REGION".equals(scopeType)) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: unsupported worldDesignMutation.scopeType");
+    }
+  }
+
+  private void requireKnownWorldScopePolicyIfPresent(String scopeMutationPolicy) {
+    if (scopeMutationPolicy == null || scopeMutationPolicy.isBlank()) {
+      return;
+    }
+    if (!"WORLD_DESIGN_SCOPE_MUTATION_POLICY_REPLACE_SCOPE".equals(scopeMutationPolicy)
+        && !"WORLD_DESIGN_SCOPE_MUTATION_POLICY_SEED_APPEND_ONLY".equals(scopeMutationPolicy)) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: unsupported worldDesignMutation.scopeMutationPolicy");
+    }
+  }
+
+  private void requirePayloadMatchesAggregateType(WorldDesignMutationRevisionDto mutation) {
+    if ("WORLD_DESIGN_MUTATION_OPERATION_DELETE".equals(mutation.operation())) {
+      return;
+    }
+    boolean valid =
+        switch (mutation.aggregateType()) {
+          case "WORLD_DESIGN_AGGREGATE_TYPE_REGION" -> mutation.region() != null;
+          case "WORLD_DESIGN_AGGREGATE_TYPE_ZONE" -> mutation.zone() != null;
+          case "WORLD_DESIGN_AGGREGATE_TYPE_ROOM" -> mutation.room() != null;
+          case "WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT" -> mutation.roomExit() != null;
+          case "WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE" -> mutation.generationRule() != null;
+          case "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING" ->
+              mutation.worldEntitySpawnBinding() != null;
+          default -> false;
+        };
+    if (!valid) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: worldDesignMutation payload must match aggregateType");
     }
   }
 
