@@ -161,7 +161,7 @@ jobs:
       - name: Build and push runtime service image
         uses: docker/build-push-action@v7
         with:
-          context: .
+          context: ./services/${{ matrix.service }}/build/libs
           file: ./services/${{ matrix.service }}/Dockerfile
           push: true
           build-contexts: |

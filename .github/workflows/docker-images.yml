@@ -78,9 +78,11 @@ jobs:
       - name: Build and Push
         uses: docker/build-push-action@v7
         with:
-          context: .
+          context: ./services/${{ matrix.service }}/build/libs
           file: ./services/${{ matrix.service }}/Dockerfile
           push: true
+          build-contexts: |
+            repo_root=.
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: |
             type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache
