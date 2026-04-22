@@ -1,5 +1,15 @@
 # Game Session Service API Contracts
 
+## Implementation Notes
+
+This document mixes live and target-state control-plane surfaces. Current live behavior is narrower:
+
+- the shipped pause/resume control path is `PauseTicksForScope` / `ResumeTicksForScope` at the current `{tenantId, gameInstanceId}` runtime boundary;
+- the shipped owner/status read is `GetRuntimeOwnershipStatus`, not yet the fuller target-state `GetRegionTickStatus` surface described below;
+- player-facing prod-like coordinated backup and restore-point recovery are therefore still blocked on the later canonical `tenantId + regionId` status/pause convergence.
+
+Read the pause/status/recovery APIs below as the target-state contract unless the repo implementation or slice docs explicitly say they are already live.
+
 ## Service Interactions
 
 Game Session communicates with other platform services exclusively via gRPC for gameplay-domain work. For gameplay-domain gRPC calls made on behalf of a player, it includes a signed `SessionAttestation` and rotates it on bounded TTL; downstream gameplay services must reject calls missing a valid attestation, or attestations whose destination service/method scope does not match the invoked RPC, even when mTLS is present.
