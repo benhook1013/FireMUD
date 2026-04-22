@@ -7,6 +7,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
@@ -18,6 +19,8 @@ import net.firedevops.firemud.worldmanagement.entity.Region;
 import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignAggregateEpoch;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignRevisionLedger;
+import net.firedevops.firemud.worldmanagement.entity.WorldEntitySpawnBinding;
+import net.firedevops.firemud.worldmanagement.entity.Zone;
 import net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository;
 import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
@@ -83,6 +86,10 @@ class WorldDesignMutationServiceImplTest {
             });
     when(aggregateEpochRepository.save(any(WorldDesignAggregateEpoch.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(scopeEpochRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
+            any(Long.class), any(Long.class), any(String.class), any(String.class)))
+        .thenReturn(Optional.empty());
+    when(scopeEpochRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(ledgerRepository.save(any(WorldDesignRevisionLedger.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
   }
@@ -199,6 +206,152 @@ class WorldDesignMutationServiceImplTest {
     verify(regionRepository, never()).delete(any(Region.class));
   }
 
+  @Test
+  void replaceScopeClearsExistingSpawnBindingsWithinZoneSubtree() {
+    Zone zone = zone(12L, 99L);
+    Zone otherZone = zone(13L, 99L);
+    Room targetRoom = room(12L, zone);
+    Room inScopeRoom = room(13L, zone);
+    Room outOfScopeRoom = room(14L, otherZone);
+    when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L))
+        .thenReturn(Optional.of(targetRoom));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-2", "revision-2", "UPSERT", "WORLD_ENTITY_SPAWN_BINDING", ""))
+        .thenReturn(Optional.empty());
+    when(worldEntitySpawnBindingRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of(binding(100L, inScopeRoom), binding(101L, outOfScopeRoom)));
+    when(worldEntitySpawnBindingRepository
+            .findByTenantIdAndVersionIdAndRoomIdAndEntityTemplateTypeAndEntityTemplateId(
+                1L, 7L, 12L, "NPC", 55L))
+        .thenReturn(Optional.empty());
+    when(worldEntitySpawnBindingRepository.save(any(WorldEntitySpawnBinding.class)))
+        .thenAnswer(
+            invocation -> {
+              WorldEntitySpawnBinding binding = invocation.getArgument(0);
+              binding.setId(102L);
+              return binding;
+            });
+    when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
+            1L, 7L, "WORLD_ENTITY_SPAWN_BINDING", 102L))
+        .thenReturn(Optional.empty());
+
+    var result =
+        service.applyMutation(spawnBindingRequestWithScope("ZONE_SUBTREE", "12", "REPLACE_SCOPE"));
+
+    assertEquals("APPLIED", result.result());
+    verify(worldEntitySpawnBindingRepository)
+        .deleteAll(
+            org.mockito.ArgumentMatchers.argThat(
+                bindings -> {
+                  java.util.Iterator<? extends WorldEntitySpawnBinding> iterator =
+                      bindings.iterator();
+                  if (!iterator.hasNext()) {
+                    return false;
+                  }
+                  WorldEntitySpawnBinding binding = iterator.next();
+                  return !iterator.hasNext()
+                      && binding.getId().equals(100L)
+                      && binding.getRoom().getId().equals(13L);
+                }));
+  }
+
+  @Test
+  void replaceScopeRejectsSpawnBindingOutsideDeclaredZoneSubtree() {
+    Zone otherZone = zone(13L, 99L);
+    when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L))
+        .thenReturn(Optional.of(room(12L, otherZone)));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-2", "revision-2", "UPSERT", "WORLD_ENTITY_SPAWN_BINDING", ""))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.applyMutation(
+                    spawnBindingRequestWithScope("ZONE_SUBTREE", "12", "REPLACE_SCOPE")));
+
+    assertEquals("OUT_OF_SYNC: spawn binding room is outside the declared scope", ex.getMessage());
+    verify(worldEntitySpawnBindingRepository, never()).deleteAll(any());
+  }
+
+  @Test
+  void replaceScopeClearsExistingSpawnBindingsWithinRegionSubtree() {
+    Zone targetZone = zone(12L, 99L);
+    Zone sameRegionOtherZone = zone(13L, 99L);
+    Zone otherRegionZone = zone(14L, 100L);
+    when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L))
+        .thenReturn(Optional.of(room(12L, targetZone)));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-2", "revision-2", "UPSERT", "WORLD_ENTITY_SPAWN_BINDING", ""))
+        .thenReturn(Optional.empty());
+    when(worldEntitySpawnBindingRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(
+            List.of(
+                binding(100L, room(13L, sameRegionOtherZone)),
+                binding(101L, room(14L, otherRegionZone))));
+    when(worldEntitySpawnBindingRepository
+            .findByTenantIdAndVersionIdAndRoomIdAndEntityTemplateTypeAndEntityTemplateId(
+                1L, 7L, 12L, "NPC", 55L))
+        .thenReturn(Optional.empty());
+    when(worldEntitySpawnBindingRepository.save(any(WorldEntitySpawnBinding.class)))
+        .thenAnswer(
+            invocation -> {
+              WorldEntitySpawnBinding binding = invocation.getArgument(0);
+              binding.setId(102L);
+              return binding;
+            });
+    when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
+            1L, 7L, "WORLD_ENTITY_SPAWN_BINDING", 102L))
+        .thenReturn(Optional.empty());
+
+    var result =
+        service.applyMutation(
+            spawnBindingRequestWithScope("REGION_SUBTREE", "99", "REPLACE_SCOPE"));
+
+    assertEquals("APPLIED", result.result());
+    verify(worldEntitySpawnBindingRepository)
+        .deleteAll(
+            org.mockito.ArgumentMatchers.argThat(
+                bindings -> {
+                  java.util.Iterator<? extends WorldEntitySpawnBinding> iterator =
+                      bindings.iterator();
+                  if (!iterator.hasNext()) {
+                    return false;
+                  }
+                  WorldEntitySpawnBinding binding = iterator.next();
+                  return !iterator.hasNext()
+                      && binding.getId().equals(100L)
+                      && binding.getRoom().getId().equals(13L);
+                }));
+  }
+
+  @Test
+  void replaceScopeRejectsNewEmptyRegionForSpawnBindings() {
+    Zone zone = zone(12L, 99L);
+    when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L))
+        .thenReturn(Optional.of(room(12L, zone)));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-2", "revision-2", "UPSERT", "WORLD_ENTITY_SPAWN_BINDING", ""))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.applyMutation(
+                    spawnBindingRequestWithScope("NEW_EMPTY_REGION", "12", "REPLACE_SCOPE")));
+
+    assertEquals(
+        "UNSUPPORTED_SCOPE: REPLACE_SCOPE for world entity spawn bindings does not support NEW_EMPTY_REGION",
+        ex.getMessage());
+    verify(worldEntitySpawnBindingRepository, never()).deleteAll(any());
+  }
+
   private WorldDesignMutationRequestDto regionCreateRequest() {
     return new WorldDesignMutationRequestDto(
         1L,
@@ -246,6 +399,11 @@ class WorldDesignMutationServiceImplTest {
   }
 
   private WorldDesignMutationRequestDto spawnBindingRequest() {
+    return spawnBindingRequestWithScope("", "", "");
+  }
+
+  private WorldDesignMutationRequestDto spawnBindingRequestWithScope(
+      String scopeType, String scopeId, String scopeMutationPolicy) {
     return new WorldDesignMutationRequestDto(
         1L,
         7L,
@@ -255,10 +413,10 @@ class WorldDesignMutationServiceImplTest {
         "WORLD_ENTITY_SPAWN_BINDING",
         "",
         0L,
-        "",
-        "",
+        scopeType,
+        scopeId,
         0L,
-        "",
+        scopeMutationPolicy,
         null,
         null,
         null,
@@ -323,5 +481,34 @@ class WorldDesignMutationServiceImplTest {
                 .setVersionStateEpoch(1L)
                 .build())
         .build();
+  }
+
+  private Zone zone(long zoneId, long regionId) {
+    Region region = new Region();
+    region.setId(regionId);
+    Zone zone = new Zone();
+    zone.setId(zoneId);
+    zone.setRegion(region);
+    return zone;
+  }
+
+  private Room room(long roomId, Zone zone) {
+    Room room = new Room();
+    room.setId(roomId);
+    room.setTenantId(1L);
+    room.setVersionId(7L);
+    room.setZone(zone);
+    return room;
+  }
+
+  private WorldEntitySpawnBinding binding(long bindingId, Room room) {
+    WorldEntitySpawnBinding binding = new WorldEntitySpawnBinding();
+    binding.setId(bindingId);
+    binding.setTenantId(1L);
+    binding.setVersionId(7L);
+    binding.setRoom(room);
+    binding.setEntityTemplateType("NPC");
+    binding.setEntityTemplateId(55L);
+    return binding;
   }
 }

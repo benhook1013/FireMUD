@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
@@ -293,6 +294,9 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
         roomRepository
             .findByTenantIdAndVersionIdAndId(request.tenantId(), request.versionId(), roomId)
             .orElseThrow(() -> appError("UNRESOLVED_REFERENCE", "room not found"));
+    if (isReplaceScopePolicy(request)) {
+      deleteExistingSpawnBindingsInScope(request, room);
+    }
     String entityTemplateType =
         requireText(
             payload.entityTemplateType(), "world_entity_spawn_binding.entity_template_type");
@@ -324,6 +328,33 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     binding.setSpawnCount(payload.spawnCount() <= 0 ? 1 : payload.spawnCount());
     binding.setRespawnDelaySeconds(Math.max(payload.respawnDelaySeconds(), 0));
     return worldEntitySpawnBindingRepository.save(binding).getId();
+  }
+
+  private void deleteExistingSpawnBindingsInScope(
+      WorldDesignMutationRequestDto request, Room room) {
+    String scopeType = requireText(request.scopeType(), "scope_type");
+    long scopeId = parseId(request.scopeId(), "scope_id");
+    if (SCOPE_TYPE_NEW_EMPTY_REGION.equals(scopeType)) {
+      throw appError(
+          "UNSUPPORTED_SCOPE",
+          "REPLACE_SCOPE for world entity spawn bindings does not support NEW_EMPTY_REGION");
+    }
+    if (!roomWithinScope(room, scopeType, scopeId)) {
+      throw appError("OUT_OF_SYNC", "spawn binding room is outside the declared scope");
+    }
+    List<WorldEntitySpawnBinding> inScopeBindings =
+        worldEntitySpawnBindingRepository
+            .findByTenantIdAndVersionIdOrderByIdAsc(request.tenantId(), request.versionId())
+            .stream()
+            .filter(binding -> bindingWithinScope(binding, scopeType, scopeId))
+            .filter(
+                binding ->
+                    !StringUtils.hasText(request.aggregateId())
+                        || !binding.getId().equals(parseId(request.aggregateId(), "aggregate_id")))
+            .toList();
+    if (!inScopeBindings.isEmpty()) {
+      worldEntitySpawnBindingRepository.deleteAll(inScopeBindings);
+    }
   }
 
   private Long advanceScopeEpoch(WorldDesignMutationRequestDto request) {
@@ -400,6 +431,10 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     return SCOPE_POLICY_SEED_APPEND_ONLY.equals(request.scopeMutationPolicy());
   }
 
+  private boolean isReplaceScopePolicy(WorldDesignMutationRequestDto request) {
+    return SCOPE_POLICY_REPLACE_SCOPE.equals(request.scopeMutationPolicy());
+  }
+
   private void failIfSeedAppendOnlyDelete(WorldDesignMutationRequestDto request) {
     if (isSeedAppendOnlyPolicy(request)) {
       throw appError("OUT_OF_SYNC", "SEED_APPEND_ONLY cannot delete existing rows");
@@ -473,6 +508,26 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
         .findByTenantIdAndVersionIdAndId(
             request.tenantId(), request.versionId(), parseId(request.aggregateId(), "aggregate_id"))
         .orElseThrow(() -> appError("NOT_FOUND", "world entity spawn binding not found"));
+  }
+
+  private boolean bindingWithinScope(
+      WorldEntitySpawnBinding binding, String scopeType, long scopeId) {
+    return binding.getRoom() != null && roomWithinScope(binding.getRoom(), scopeType, scopeId);
+  }
+
+  private boolean roomWithinScope(Room room, String scopeType, long scopeId) {
+    if (room.getZone() == null) {
+      return false;
+    }
+    return switch (scopeType) {
+      case SCOPE_TYPE_ZONE_SUBTREE ->
+          room.getZone().getId() != null && room.getZone().getId() == scopeId;
+      case SCOPE_TYPE_REGION_SUBTREE ->
+          room.getZone().getRegion() != null
+              && room.getZone().getRegion().getId() != null
+              && room.getZone().getRegion().getId() == scopeId;
+      default -> false;
+    };
   }
 
   private String requireText(String value, String field) {
