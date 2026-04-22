@@ -61,7 +61,7 @@ When Redis becomes slow or unavailable, Game Session applies the graceful degrad
 
 Every gameplay session record includes a `tenantId` identifying the owning tenant and, through associated records, the `gameInstanceId` for the running world instance. Redis keys and database tables prefix this value so sessions from different games remain isolated. The platform may enforce per-tenant resource quotas at this level so one tenant cannot exhaust cluster capacity. See [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 
-Session state needed for reconnect recovery is stored under `session:game:<tenantId>:<gameInstanceId>:<sessionId>`. These per-session keys, including session-scoped command queues or metadata, are removed when the corresponding session stops or expires.
+Session state needed for reconnect recovery is stored under `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`. These per-session keys, including session-scoped command queues or metadata, are removed when the corresponding session stops or expires.
 
 Current Game Session code also maintains a `sessionctx:*` Redis-backed session-context family for bootstrap and implementation-local lookup indexes:
 
@@ -73,9 +73,11 @@ Unauthenticated `sessionctx:*` entries may exist before `LOGIN`; they are bootst
 
 Game Session must also maintain the bounded authoritative indexes defined in the authentication architecture so takeover, reconnect, and revocation do not require scans:
 
-- `session:game:index:character:<tenantId>:<gameInstanceId>:<characterId>` -> `sessionId`
-- `session:game:index:account-tenant:<accountId>:<tenantId>` -> active `sessionId` set
-- `session:game:index:tenant:<tenantId>` -> active `sessionId` set
+- `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>` -> `sessionId`
+- `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` -> active `sessionId` set
+- `session:game:index:tenant:{tenantGameplayTag}` -> active `sessionId` set
+
+Gameplay session creation/update plus these tenant-scoped index mutations are one shard-local Redis CAS/update flow under `{tenantGameplayTag}`. Region-local gameplay admission still uses the separate `tick:{tenantRegionTag}:session-binding:<entityId>` bridge contract and is not folded into the same Lua invocation.
 
 Gameplay session bindings must include the server-side auth token identity used for backend calls on behalf of the session, such as `authTokenHash` and `authTokenIssuedAt`, plus authoritative membership freshness metadata such as `membershipVersion` so resume logic can validate current identity, current membership authority, and current revocation state before rebinding to a fresh backend token:
 

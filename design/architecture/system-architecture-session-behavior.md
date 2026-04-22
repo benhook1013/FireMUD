@@ -88,14 +88,15 @@ FireMUD uses distinct lifetimes and invariants for each session type:
 
 Game Session must also maintain bounded authoritative secondary indexes for gameplay bindings so takeover, reconnect, and revocation do not require scans:
 
-- `session:game:index:character:<tenantId>:<gameInstanceId>:<characterId>` -> `sessionId`
-- `session:game:index:account-tenant:<accountId>:<tenantId>` -> active `sessionId` set
-- `session:game:index:tenant:<tenantId>` -> active `sessionId` set
+- `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>` -> `sessionId`
+- `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` -> active `sessionId` set
+- `session:game:index:tenant:{tenantGameplayTag}` -> active `sessionId` set
 
 Index contract requirements:
 
 - Game Session is the sole writer for these indexes.
-- Session key creation/update, uniqueness-index update, and reverse-index membership changes must occur atomically with respect to takeover/resume decisions.
+- The session record plus these tenant-scoped indexes must be mutated through one shard-local session-only CAS/update flow where all keys share `{tenantGameplayTag}`. This is the atomic boundary for takeover and resume decisions inside Redis Cluster.
+- Region-local gameplay binding is intentionally outside that atomic boundary and follows the separate session-to-region bridge contract in the Redis architecture docs.
 - Index entries must be removed or expired when the bound gameplay session ends or becomes non-resumable.
 - Billing- and membership-driven revocation flows must use these bounded indexes rather than wildcard key scans.
 

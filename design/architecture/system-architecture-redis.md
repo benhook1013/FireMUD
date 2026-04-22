@@ -171,7 +171,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
   - Session keys in Redis bind player connections, tick participation, and cooldown state to authenticated platform identities.
   - Session binding is monotonic: once a session is rebound or terminated, old bindings are not resurrected, even under replay or tail‑loss.
 - Session keys are **not** the authoritative runtime record for region-local gameplay participation. To preserve shard locality in Redis Cluster:
-  - `session:game:<tenantId>:<gameInstanceId>:<sessionId>` remains the authoritative record for connection identity, reconnect eligibility, auth/session CAS fields, and desired gameplay attachment generation.
+  - `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` remains the authoritative record for connection identity, reconnect eligibility, auth/session CAS fields, and desired gameplay attachment generation.
   - Region-local gameplay attachment is authoritative under the region-scoped key family `tick:{tenantRegionTag}:session-binding:<entityId>`, owned by Game Session and mutated only by region-lease scripts.
   - Any region list or attachment summary mirrored inside `session:game:*` is advisory/reconnect metadata only and must not be used as the sole authority for gameplay admission or command routing.
 - This split exists specifically so same-type non-edge workers can take over after restart. If a value is required to preserve gameplay binding, region participation, or resumable command eligibility across Game Session/Game Logic restart, it must be externalized through these authoritative Redis/PostgreSQL-backed structures rather than hidden in process memory.
@@ -213,7 +213,7 @@ The detailed scripting rules and categories (region-lease scripts, session-only 
 Game Session uses Redis for two related but distinct session concerns:
 
 - **Bootstrap/pre-auth transport context** is created when a socket connects and before gameplay authentication completes. Current Game Session implementations store this context under the `sessionctx:*` key family, such as `sessionctx:session:<sessionId>:context` and `sessionctx:<tenantId>:<sessionId>:context`, with unauthenticated fields such as `accountId = 0`, no `authTokenHash`, no `membershipVersion`, and only bootstrap scope such as tenant, locale, or initial game-instance hints. Gameplay commands must treat these entries as unauthenticated until `LOGIN` succeeds.
-- **Authenticated gameplay session state** is created or promoted after successful `LOGIN` and `PLAY`. The canonical target key family for this state is `session:game:<tenantId>:<gameInstanceId>:<sessionId>`.
+- **Authenticated gameplay session state** is created or promoted after successful `LOGIN` and `PLAY`. The canonical target key family for this state is `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`.
 
 Authenticated gameplay session keys capture:
 
@@ -230,7 +230,7 @@ The pre-auth `sessionctx:*` family is a bootstrap/session-context implementation
 
 Session and region participation updates are intentionally **two-phase and monotonic**, not a single cross-slot atomic Redis transaction:
 
-1. A **session-only** script updates `session:game:<tenantId>:<gameInstanceId>:<sessionId>`:
+1. A **session-only** script updates `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`:
    - It validates the session CAS fields and logical expiry.
    - It increments or verifies a monotonic `binding_generation`.
    - It records reconnect/takeover intent plus any advisory region summary fields.
@@ -258,7 +258,7 @@ Key properties:
 - Session entries use a **derived session TTL** computed from authentication settings (see `infrastructure/environment-and-secrets.md#authentication`):
 
   - A logical expiry timestamp is stored inside the session value.
-  - The Redis TTL for `session:game:<tenantId>:<gameInstanceId>:<sessionId>` is set to the same derived duration when the session is created or refreshed.
+  - The Redis TTL for `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` is set to the same derived duration when the session is created or refreshed.
 - The logical expiry timestamp is the **authoritative bound** on reconnection:
 
   - Reconnect/resume attempts are rejected as expired once the logical expiry has passed, even if the Redis TTL has not yet removed the key (for example, due to AOF replay or failover drift).
@@ -380,6 +380,18 @@ Key principles:
     - `retry:{tenantRegionTag}`
     - `tick-executor-lease:{tenantRegionTag}`
 
+- **`{tenantGameplayTag}` hash tag**
+  - Session-only gameplay keys use a canonical hash tag placeholder `{tenantGameplayTag}` derived from `<tenantId>`.
+  - Properties:
+    - The concrete string format is an implementation detail of shared key helpers; callers treat it as opaque.
+    - The session record plus its tenant-scoped uniqueness and reverse indexes for one tenant share the same `{tenantGameplayTag}` and therefore land in the same Redis Cluster slot.
+    - Session-only Lua scripts may perform shard-local multi-key CAS/update flows across these keys, but they must not mix `{tenantGameplayTag}` session keys with `{tenantRegionTag}` tick-region keys in the same invocation.
+  - Representative patterns:
+    - `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`
+    - `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>`
+    - `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>`
+    - `session:game:index:tenant:{tenantGameplayTag}`
+
 - **Coordination vs cache prefixes**
   - Coordination prefixes (for example `tick:*`, `timer:*`, `retry:*`, `session:game:*`, `session:auth:*`, `tick-executor-lease:*`) live **only** on Coordination Redis.
   - Cache and rate‑limit prefixes (for example `inventory:*`, `view:room-look:*`, `ratelimit:*`) live **only** on Cache/Rate‑Limit Redis.
@@ -400,9 +412,9 @@ When designing or reviewing coordination flows, use this shard-local checklist:
 
 - All mutating Lua scripts for coordination prefixes are either:
   - Single-key operations, or
-  - Shard-local multi-key operations where all `KEYS` share the same `{tenantRegionTag}` hash tag and Redis Cluster slot.
+  - Shard-local multi-key operations where all `KEYS` share the same `{tenantRegionTag}` or `{tenantGameplayTag}` hash tag and Redis Cluster slot.
 - Cross-region behavior is implemented via per-region operations and durable follow-up records in PostgreSQL, **not** via cross-region multi-key scripts.
-- Callers always construct keys via shared key helpers (for example, builders in `firemud-common`) so `{tenantRegionTag}`, prefixes, and slots remain consistent; scripts and callers must not hand-roll key strings with embedded hostnames, region names, or ad-hoc hash tags.
+- Callers always construct keys via shared key helpers (for example, builders in `firemud-common`) so `{tenantRegionTag}`, `{tenantGameplayTag}`, prefixes, and slots remain consistent; scripts and callers must not hand-roll key strings with embedded hostnames, region names, or ad-hoc hash tags.
 - CI and the Lua Script Registry:
   - Reject registry entries that claim shard-local multi-key semantics but declare keys that cannot share a hash tag.
   - Reject coordination scripts that reference cache/rate-limit prefixes or omit required reset/tail-loss metadata.
@@ -419,6 +431,9 @@ This table lists representative coordination keys and their responsibilities. Fu
 | `tick:{tenantRegionTag}:pending` | Staged results for a tick region (single in‑flight tick). |
 | `tick:{tenantRegionTag}:queue:<entityId>` | Per‑entity command queue within a region. |
 | `tick:{tenantRegionTag}:session-binding:<entityId>` | Region-authoritative gameplay session binding for an entity. Stores the currently admitted `sessionId` and `binding_generation` for region-local command admission and takeover cleanup. |
+| `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` | Authenticated gameplay session record holding reconnect eligibility, auth/session CAS fields, and the latest desired gameplay binding generation for one tenant-scoped session. |
+| `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>` | Tenant-scoped uniqueness index from character to active gameplay `sessionId`. Updated atomically with the session record inside the session-only CAS flow. |
+| `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` and `session:game:index:tenant:{tenantGameplayTag}` | Tenant-scoped reverse indexes used for bounded revocation, reconnect, and inspection without wildcard scans. |
 | `retry:{tenantRegionTag}` | Retry queue for failed actions, keyed by `next_eligible_tick_id` on the target region timeline (not wall-clock due time). |
 | `timer:{tenantRegionTag}` | Sorted set of timers for a region; score is expiration timestamp (ms), members encode entity/effect metadata. |
 | `remote:<tenantId>:<entityId>` | Best‑effort, TTL-bounded hint marker for cross‑region follow‑ups (durable follow‑ups live in PostgreSQL). Default `remote_hint_ttl_ms = 60_000`; expiry/missing keys affect latency only. |
@@ -429,7 +444,7 @@ This table lists representative coordination keys and their responsibilities. Fu
 | `automation:timer:{tenantRegionTag}` | Region-scoped Automation & Scripting timer index for `onInterval` and timer coordination. Stored entries remain instance-aware in payload and durable identity (`gameInstanceId`, and plugin identifiers when applicable) even though the Redis key is region-scoped for slotting and reset targeting. |
 | `script-scheduler:{tenantRegionTag}:lastTickId` | Automation & Scripting scheduler checkpoint for “every N ticks” triggers; used to resume interval counting after leader changes. Durable automation schedules, quotas, and trigger-instance de-duplication live in PostgreSQL; this key is a coordination hint, not the source of truth for which scripts should eventually run or whether a due trigger was already emitted. |
 
-Region‑scoped coordination keys share the same `{tenantRegionTag}` hash tag and therefore land in the same Redis Cluster slot. Tenant‑scoped session/auth keys and other single‑key prefixes do not require a hash tag but must still honour the coordination vs cache role split described above.
+Region‑scoped coordination keys share the same `{tenantRegionTag}` hash tag and therefore land in the same Redis Cluster slot. Tenant-scoped gameplay session keys share `{tenantGameplayTag}` for session-only CAS/index updates. Other tenant-scoped auth or single-key prefixes that are not mutated together may remain ordinary single-key operations, but they must still honour the coordination vs cache role split described above.
 
 ---
 
@@ -441,7 +456,7 @@ Redis features and assumptions in FireMUD must work across both single‑instanc
 | --- | --- | --- | --- |
 | Single‑node with AOF (coordination) | **Supported.** All coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:game:*`, `session:auth:*`, `tick-executor-lease:*`, etc.) and shard‑local Lua patterns apply. Tail‑loss envelopes and AOF replay guarantees assume this profile or better. | **Supported** on a separate Cache/Rate‑Limit deployment (distinct process or container). | Recommended baseline for `dev_local` and `hobby_self_hosted` profiles. |
 | Single‑node without AOF (ephemeral coordination) | **Supported only for explicitly ephemeral stacks** (preview/CI) that opt out of tail‑loss SLOs and replay guarantees. Coordination keys are disposable and must be reset‑tolerant. | **Supported** on a separate Cache/Rate‑Limit deployment; cache behavior is unchanged. | Not appropriate for environments where tick replay, tail‑loss SLOs, or long‑lived coordination logs are required. |
-| Redis Cluster (coordination) | **Supported** provided all coordination Lua scripts obey shard‑local rules using `{tenantRegionTag}` hash tags. Multi‑key coordination scripts must only touch keys that share a hash tag and slot. | **Supported** for cache/rate‑limit workloads; rate‑limit prefixes (`ratelimit:*`) are treated as single‑key operations without cross‑slot atomicity. | Cluster deployment requires strict adherence to hash‑tag and slotting rules described in [Key Naming and Shard Discipline](#key-naming-and-shard-discipline). |
+| Redis Cluster (coordination) | **Supported** provided all coordination Lua scripts obey shard‑local rules using `{tenantRegionTag}` for region/tick flows and `{tenantGameplayTag}` for session-only gameplay flows. Multi‑key coordination scripts must only touch keys that share one hash tag and slot. | **Supported** for cache/rate‑limit workloads; rate‑limit prefixes (`ratelimit:*`) are treated as single‑key operations without cross‑slot atomicity. | Cluster deployment requires strict adherence to hash‑tag and slotting rules described in [Key Naming and Shard Discipline](#key-naming-and-shard-discipline). |
 
 In all topologies:
 

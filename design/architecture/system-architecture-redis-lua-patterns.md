@@ -29,7 +29,7 @@ Every coordination script belongs to a **script category** that constrains which
 | Entity lock | `tick:{tenantRegionTag}:lock:<entityId>` | Single-key or small multi-key scripts; all lock keys share the same `{tenantRegionTag}` as their corresponding `pending` structures. |
 | Tick staging / pending | `tick:{tenantRegionTag}:pending` and related effect structures | Single-key or shard-local multi-key scripts that operate entirely within one `{tenantRegionTag}` slot. |
 | Timers and retries | `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}` | Shard-local scripts operating on keys that share the same `{tenantRegionTag}`; no cross-slot operations. |
-| Session CAS / bindings | `session:game:<tenantId>:<gameInstanceId>:<sessionId>`, `session:auth:<scope>:<tokenHash>` (for example `session:auth:tenant:<tenantId>:<tokenHash>`) | Single-key scripts; session keys are never mixed with tick keys in the same script unless all keys are shard-local to one `{tenantRegionTag}`. |
+| Session CAS / bindings | `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` plus `session:game:index:*:{tenantGameplayTag}:*`, and `session:auth:<scope>:<tokenHash>` (for example `session:auth:tenant:<tenantId>:<tokenHash>`) | Gameplay session CAS/update scripts may be shard-local multi-key scripts where all gameplay-session keys share `{tenantGameplayTag}`. Auth allowlist and revocation-watermark scripts remain single-key. Session scripts are never mixed with tick keys in the same invocation. |
 | Session-to-region bridge | `tick:{tenantRegionTag}:session-binding:<entityId>` plus `tick-executor-lease:{tenantRegionTag}` | Region-lease scripts only. They update region-authoritative gameplay bindings using caller-supplied `sessionId` / `binding_generation` and never read `session:game:*` directly inside Lua. |
 | Maintenance / cleanup | Region-local maintenance keys under `tick:{tenantRegionTag}:*` or `timer:{tenantRegionTag}` | Shard-local scans and deletes constrained to one `{tenantRegionTag}` at a time; no cross-slot operations. |
 | Automation helpers (coordination role only) | `script-scheduler:{tenantRegionTag}:lastTickId` and similar | Shard-local scripts that operate on per-region scheduler metadata; must not touch Cache/Rate-Limit prefixes. |
@@ -168,7 +168,14 @@ These checks are enforced via the Lua Script Registry descriptors, generated key
 
 #### Session-only scripts
 
-Session scripts operate only on `session:game:<tenantId>:<gameInstanceId>:<sessionId>` keys and do **not** run under a region lease. They must instead validate session-specific invariants:
+Session scripts operate only on gameplay session keys that share one `{tenantGameplayTag}` and do **not** run under a region lease. The normal mutating set is:
+
+- `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`
+- `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>`
+- `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>`
+- `session:game:index:tenant:{tenantGameplayTag}`
+
+These scripts must instead validate session-specific invariants:
 
 - **Session key and binding** – verify that the target session key exists and, where applicable, that it is bound to the expected `characterId`/`tenantId` or token hash provided in `ARGV`.
 - **Expiry and logical window** – enforce the logical expiry rules described in the session design (for example, do not revive sessions whose logical expiry timestamp has passed, even if the Redis TTL has not).
@@ -176,7 +183,7 @@ Session scripts operate only on `session:game:<tenantId>:<gameInstanceId>:<sessi
   - Treat mismatched versions as non-mutating outcomes (for example, `"SESSION_VERSION_MISMATCH"`).
   - Avoid partial updates that would leave the payload in a mixed version or conflicting binding state.
 
-These rules keep session scripts lightweight while still protecting reconnect and binding invariants. They deliberately avoid a region lease so that session operations are not coupled to tick leadership, but they still behave deterministically and idempotently around reconnection windows.
+These rules keep session scripts lightweight while still protecting reconnect and binding invariants. They deliberately avoid a region lease so that session operations are not coupled to tick leadership, but they still behave deterministically and idempotently around reconnection windows. In Redis Cluster, their atomicity boundary is the tenant-scoped `{tenantGameplayTag}` slot only; anything region-local still goes through the separate bridge step.
 
 Session scripts must not attempt to mutate region-scoped gameplay binding keys in the same invocation. Region-local gameplay authority lives under `tick:{tenantRegionTag}:session-binding:<entityId>` and is updated only by region-lease scripts using the monotonic `binding_generation` carried from the session contract. As a result:
 
