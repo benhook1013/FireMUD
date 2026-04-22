@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Telnet → Gateway → Game Session smoke test: WORLDS + LOGIN + PLAY + LOOK over TCP Proxy.
+# Telnet -> Gateway -> Game Session smoke test: WORLDS + LOGIN + PLAY + item/container/equipment loop over TCP Proxy.
 set -euo pipefail
 
 TCP_PORT=${TCP_PROXY_PORT:-2323}
@@ -29,7 +29,7 @@ else
   exit 1
 fi
 
-echo "Running Telnet WORLDS + LOGIN + PLAY + LOOK smoke test against ${SMOKE_HOST}:${TCP_PORT}"
+echo "Running Telnet WORLDS + LOGIN + PLAY + item/container/equipment smoke test against ${SMOKE_HOST}:${TCP_PORT}"
 echo "Using username='${SMOKE_USERNAME}' (password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 echo "Using account API base '${SMOKE_ACCOUNT_API_BASE}' for smoke validation"
@@ -81,6 +81,54 @@ def recv_until(sock, expected_substring, timeout):
         if expected_substring in joined:
             return joined
     return "".join(chunks)
+
+
+def drain_available(sock, quiet_timeout=0.25):
+    deadline = time.time() + quiet_timeout
+    chunks = []
+    while time.time() < deadline:
+        try:
+            sock.settimeout(max(0.05, deadline - time.time()))
+            data = sock.recv(4096)
+        except (socket.timeout, BlockingIOError):
+            break
+        if not data:
+            break
+        chunks.append(data.decode("iso-8859-1", errors="ignore"))
+    return "".join(chunks)
+
+
+def wait_for_incremental_text(sock, responses, start_index, expected_substrings, timeout):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        remaining = max(0.1, deadline - time.time())
+        chunk = recv_until(sock, "", remaining)
+        if chunk:
+            responses.append(chunk)
+            response = "".join(responses[start_index:])
+            if all(substring in response for substring in expected_substrings):
+                trailing = drain_available(sock)
+                if trailing:
+                    responses.append(trailing)
+                    response += trailing
+                return response
+        else:
+            time.sleep(0.05)
+    response = "".join(responses[start_index:])
+    raise RuntimeError(
+        f"Expected response containing {expected_substrings}, got '{response}'"
+    )
+
+
+def send_and_expect(sock, responses, line, expected_substrings, label):
+    start_index = len(responses)
+    sock.sendall(f"{line}\r\n".encode("iso-8859-1"))
+    response = wait_for_incremental_text(
+        sock, responses, start_index, expected_substrings, timeout_seconds
+    )
+    print(f"=== {label} response ===")
+    print(response.strip() or "<no data>")
+    return response
 
 
 def verify_smoke_account():
@@ -219,54 +267,51 @@ try:
     wait_for_http_readiness("tcp-proxy-service", tcp_proxy_api_base)
     verify_smoke_account()
     with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
-        # WORLDS
-        sock.sendall("WORLDS\r\n".encode("iso-8859-1"))
-        worlds_resp = recv_until(sock, worlds_expect, timeout_seconds)
-        print("=== WORLDS response ===")
-        print(worlds_resp.strip() or "<no data>")
-        if worlds_expect not in worlds_resp:
-            sys.stderr.write(
-                f"Expected substring '{worlds_expect}' in WORLDS response but did not find it.\n"
-            )
-            sys.exit(1)
-
-        # LOGIN
-        login_line = f"LOGIN {username} {password}\r\n"
-        sock.sendall(login_line.encode("iso-8859-1"))
-        login_resp = recv_until(sock, login_expect, timeout_seconds)
-        print("=== LOGIN response ===")
-        print(login_resp.strip() or "<no data>")
-        if login_expect not in login_resp:
-            sys.stderr.write(
-                f"Expected substring '{login_expect}' in LOGIN response but did not find it.\n"
-            )
-            sys.exit(1)
-
-        # PLAY
-        sock.sendall("PLAY demo\r\n".encode("iso-8859-1"))
-        play_resp = recv_until(sock, play_expect, timeout_seconds)
-        print("=== PLAY response ===")
-        print(play_resp.strip() or "<no data>")
-        if play_expect not in play_resp:
-            sys.stderr.write(
-                f"Expected substring '{play_expect}' in PLAY response but did not find it.\n"
-            )
-            sys.exit(1)
-
-        # LOOK
-        sock.sendall("LOOK\r\n".encode("iso-8859-1"))
-        look_resp = recv_until(sock, look_expect, timeout_seconds)
-        print("=== LOOK response ===")
-        print(look_resp.strip() or "<no data>")
-        if look_expect not in look_resp:
-            sys.stderr.write(
-                f"Expected substring '{look_expect}' in LOOK response but did not find it.\n"
-            )
-            sys.exit(1)
+        responses = []
+        send_and_expect(sock, responses, "WORLDS", [worlds_expect], "WORLDS")
+        send_and_expect(sock, responses, f"LOGIN {username} {password}", [login_expect], "LOGIN")
+        send_and_expect(sock, responses, "PLAY demo", [play_expect], "PLAY")
+        send_and_expect(sock, responses, "LOOK", [look_expect], "LOOK")
+        send_and_expect(sock, responses, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE")
+        send_and_expect(sock, responses, "GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET")
+        send_and_expect(
+            sock,
+            responses,
+            "CONTAINER Backpack",
+            ["Container: Backpack [backpack#1]", "Ration"],
+            "CONTAINER",
+        )
+        send_and_expect(
+            sock,
+            responses,
+            "PUT Torch INTO Backpack",
+            ["You put Torch into Backpack.", "Container: Backpack [backpack#1]", "Torch"],
+            "PUT",
+        )
+        send_and_expect(
+            sock,
+            responses,
+            "TAKE Torch FROM Backpack",
+            ["You take Torch from Backpack.", "Container: Backpack [backpack#1]", "Ration"],
+            "TAKE",
+        )
+        send_and_expect(sock, responses, "DROP Torch", ["You drop Torch."], "DROP")
+        send_and_expect(sock, responses, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE after DROP")
+        send_and_expect(sock, responses, "EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty")
+        send_and_expect(sock, responses, "WEAR Leather Cap", ["You wear Leather Cap."], "WEAR")
+        send_and_expect(sock, responses, "EQUIPMENT", ["Equipment:", "HEAD", "Leather Cap"], "EQUIPMENT worn")
+        send_and_expect(sock, responses, "REMOVE HEAD", ["You remove Leather Cap."], "REMOVE")
+        send_and_expect(
+            sock,
+            responses,
+            "WEAR Iron Boots",
+            ["ERROR SLOT_INCOMPATIBLE", "Iron Boots cannot be worn by this body layout"],
+            "WEAR incompatible",
+        )
 
 except OSError as exc:
     sys.stderr.write(f"Failed to connect to {host}:{port}: {exc}\n")
     sys.exit(1)
 
-print("Telnet WORLDS + LOGIN + PLAY + LOOK smoke test passed.")
+print("Telnet WORLDS + LOGIN + PLAY + item/container/equipment smoke test passed.")
 PYTHON

@@ -33,12 +33,29 @@ For day-to-day operations, environment variables fall into three broad categorie
 | `SCRIPT_TEST_MAX_RUNS_PER_MINUTE_PER_PRINCIPAL` | Maximum dry-run/test executions allowed per principal per tenant per minute | `30` | Stable operator knob |
 | `SCRIPT_TEST_MAX_CONCURRENCY` | Maximum concurrent dry-run/test executions per tenant or cluster | `10` | Stable operator knob |
 | `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` | Maximum synthetic catch-up timer firings admitted per resume window | `200` | Stable operator knob |
+| `SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN` | Maximum commands one live or dry-run execution may emit before output-budget failure | `64` | Stable operator knob |
+| `SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER` | Maximum commands a single trigger may emit for one entity before output-budget failure | `8` | Stable operator knob |
+| `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` | Maximum serialized work-item payload size before persistence or handoff rejection | `32768` | Stable operator knob |
+| `SCRIPT_PIN_STATE_MAX_AGE_SECONDS` | Maximum age for cached pin visibility before admission must refresh from authoritative control-plane state | `30` | Stable operator knob |
+| `SCRIPT_PIN_STATE_REFRESH_TIMEOUT_MS` | Timeout for one authoritative pin-state refresh attempt | `1000` | Stable operator knob |
+| `SCRIPT_PIN_STATE_REFRESH_BACKOFF_MS` | Initial bounded backoff for repeated pin-state refresh attempts during one admission path | `250` | Advanced/experimental |
+| `SCRIPT_SIGNER_POLICY_MAX_AGE_SECONDS` | Maximum age for cached signer-policy visibility before plugin admission must refresh | `60` | Stable operator knob |
+| `SCRIPT_SIGNER_POLICY_REFRESH_TIMEOUT_MS` | Timeout for one authoritative signer-policy refresh attempt | `1000` | Stable operator knob |
+| `SCRIPT_OUTBOX_HANDED_OFF_RETENTION_DAYS` | Retention window for successfully handed-off outbox rows needed for rollback and replay diagnosis | `7` | Stable operator knob |
+| `SCRIPT_OUTBOX_CANCELED_RETENTION_DAYS` | Retention window for canceled outbox rows needed for rollback and drain diagnosis | `7` | Stable operator knob |
+| `SCRIPT_OUTBOX_TERMINAL_CLEANUP_INTERVAL_SECONDS` | Cleanup sweep interval for terminal outbox rows (`HANDED_OFF`, `CANCELED`, `DEAD_LETTERED`) | `300` | Stable operator knob |
 | `SCRIPT_DEAD_LETTER_MAX_ROWS` | Maximum dead-lettered automation work items retained before cleanup | `100000` | Stable operator knob |
 | `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS` | Maximum age for dead-lettered work items | `604800` | Stable operator knob |
 | `SCRIPT_DEAD_LETTER_CLEANUP_INTERVAL_SECONDS` | Cleanup sweep interval for dead-lettered work items | `300` | Stable operator knob |
 | `SCRIPT_DEAD_LETTER_ALERT_THRESHOLD_ROWS` | Alert threshold for dead-letter store growth | `80000` | Stable operator knob |
 
 Any additional, less common tuning variables should be documented alongside their introduction and clearly marked as advanced or internal. Operational runbooks should treat only stable operator knobs as supported surface for routine adjustments.
+
+These knobs are the authoritative defaults referenced by the scripting architecture docs:
+
+- publish-time validation and runtime enforcement share `SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN`, `SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER`, and `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` as the canonical output-budget ceilings;
+- admission-critical freshness decisions share `SCRIPT_PIN_STATE_*` and `SCRIPT_SIGNER_POLICY_*` defaults so services do not invent divergent max-age or refresh-timeout behavior; and
+- outbox cleanup and diagnosis for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` rows must follow the documented retention knobs above rather than ad hoc cleanup windows.
 
 ## Proto Files
 

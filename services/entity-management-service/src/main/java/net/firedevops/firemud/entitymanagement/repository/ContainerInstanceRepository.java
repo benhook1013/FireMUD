@@ -26,6 +26,31 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
       @Param("characterId") Long characterId);
 
   @EntityGraph(attributePaths = {"character", "item"})
+  @Query(
+      """
+      select ci
+      from ContainerInstance ci
+      where ci.id = :id
+        and ci.tenantId = :tenantId
+        and (
+          ci.character.id = :characterId
+          or (
+            :gameInstanceId is not null
+            and :roomInstanceId is not null
+            and ci.character is null
+            and ci.gameInstanceId = :gameInstanceId
+            and ci.roomInstanceId = :roomInstanceId
+          )
+        )
+      """)
+  Optional<ContainerInstance> findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+      @Param("id") Long id,
+      @Param("tenantId") Long tenantId,
+      @Param("characterId") Long characterId,
+      @Param("gameInstanceId") String gameInstanceId,
+      @Param("roomInstanceId") String roomInstanceId);
+
+  @EntityGraph(attributePaths = {"character", "item"})
   Optional<ContainerInstance>
       findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
           Long tenantId, Long characterId, Long itemId);
@@ -48,4 +73,6 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
 
   @Transactional
   long deleteByTenantIdAndGameInstanceId(Long tenantId, String gameInstanceId);
+
+  long countByTenantIdAndGameInstanceId(Long tenantId, String gameInstanceId);
 }

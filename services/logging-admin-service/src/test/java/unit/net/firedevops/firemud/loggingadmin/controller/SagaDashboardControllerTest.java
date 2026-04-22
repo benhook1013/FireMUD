@@ -12,24 +12,20 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.loggingadmin.dto.SagaInstanceDto;
 import net.firedevops.firemud.loggingadmin.dto.SagaStepDto;
 import net.firedevops.firemud.loggingadmin.service.SagaDashboardService;
+import net.firedevops.firemud.test.WithFiremudJwtTestProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(SagaDashboardController.class)
 @AutoConfigureMockMvc(addFilters = false)
 @Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
-@TestPropertySource(
-    properties = {
-      "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000"
-    })
+@WithFiremudJwtTestProperties
 class SagaDashboardControllerTest {
 
   @Autowired private MockMvc mockMvc;

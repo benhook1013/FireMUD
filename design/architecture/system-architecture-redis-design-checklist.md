@@ -37,7 +37,7 @@ Before applying the detailed checklists below, follow this high‑level workflow
      - **Profile / Topology / Reset Checklist** when changing profiles, reset behavior, or environment mappings.
 5. **Align reset and incident runbooks**
    - Confirm that `system-architecture-redis-reset-and-recovery.md` describes safe reset scopes for any affected prefixes.
-   - Update or validate the corresponding runbooks in `system-architecture-redis-operations.md` and the Redis incident runbook so operators have a clear path for resets, repairs, and “accept loss” decisions.
+   - Update or validate the corresponding runbooks in `system-architecture-redis-operations.md` and the Redis incident runbook so operators have a clear path for resets and “accept loss” decisions.
 6. **Wire observability and metrics**
    - Ensure required metrics and alerts for AOF size/growth, tail‑loss, prefix key counts, and script outcomes are covered or updated in the Redis metrics catalog in `system-architecture-redis-operations.md`.
    - When the change introduces new state-machine fields or outcome codes, ensure the operations docs and metrics catalog name them explicitly (for example `current_tick_state`, `STALE_SESSION_GENERATION`, and stale automation-dispatch outcomes) rather than relying on generic script-failure buckets.
@@ -216,7 +216,7 @@ Use this when changing Redis profiles, topologies, or reset behavior.
 
 - [ ] Design changes explicitly state:
   - [ ] Which reset scopes are safe (region, tenant, cluster).
-  - [ ] Whether repair, reset, or accept‑loss is the expected response to problems.
+  - [ ] Whether reset or accept‑loss is the expected response to problems.
 - [ ] Runbooks in `system-architecture-redis-operations.md` are updated or confirmed to cover new/reset behaviors.
 - [ ] For workloads that are **reset-sensitive** rather than reset-tolerant:
   - [ ] The impact of a reset is documented (player-facing effects, operational steps).

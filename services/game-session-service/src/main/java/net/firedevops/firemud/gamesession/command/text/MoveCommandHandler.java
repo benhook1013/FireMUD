@@ -11,7 +11,6 @@ import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -29,13 +28,12 @@ public class MoveCommandHandler {
   private static final String FAILURES_METRIC = "gamesession.command.move.failures";
 
   private final GameLogicClient gameLogicClient;
-  private final SessionContextService sessionContextService;
   private final LookCommandHandler lookCommandHandler;
   private final GameLogicProperties gameLogicProperties;
   private final EffectiveSettingsResolver settingsResolver;
   private final MeterRegistry meterRegistry;
 
-  public MoveCommandHandlingResult handle(SessionContext context, TextCommand command) {
+  public PreparedMoveCommandResult prepare(SessionContext context, TextCommand command) {
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
@@ -44,7 +42,7 @@ public class MoveCommandHandler {
       meterRegistry.counter(INVOCATIONS_METRIC).increment();
       String direction = extractDirection(command);
       if (!StringUtils.hasText(direction)) {
-        return failure(
+        return failureResult(
             "INVALID_ARGUMENT",
             "MOVE command requires a direction",
             "error.move.direction-required",
@@ -58,10 +56,7 @@ public class MoveCommandHandler {
       try {
         MoveResult response =
             gameLogicClient.resolveMove(
-                Long.toString(context.tenantId()),
-                Long.toString(context.sessionId()),
-                Long.toString(context.characterId()),
-                Long.toString(context.gameInstanceId()),
+                context,
                 StringUtils.hasText(context.roomInstanceId())
                     ? context.roomInstanceId()
                     : gameLogicProperties.getDefaultRoomId(),
@@ -76,7 +71,7 @@ public class MoveCommandHandler {
               response.hasError() && StringUtils.hasText(response.getError().getMessage())
                   ? response.getError().getMessage()
                   : "Move unavailable";
-          return failure(
+          return failureResult(
               code,
               errorMessage,
               moveErrorMessageKey(code),
@@ -88,7 +83,7 @@ public class MoveCommandHandler {
         }
 
         if (!response.hasDestinationLook()) {
-          return failure(
+          return failureResult(
               "MOVE_UNAVAILABLE",
               "Move destination unavailable",
               "error.move.destination-unavailable",
@@ -100,11 +95,11 @@ public class MoveCommandHandler {
         }
 
         SessionContext updatedContext = updatedContext(context, response);
-        sessionContextService.save(updatedContext);
         if (!settingsResolver.movement(updatedContext).postMoveLookEnabled()) {
-          return new MoveCommandHandlingResult(CommandEnqueueResult.success(), null);
+          return new PreparedMoveCommandResult(
+              CommandEnqueueResult.success(), null, updatedContext);
         }
-        return new MoveCommandHandlingResult(
+        return new PreparedMoveCommandResult(
             CommandEnqueueResult.success(),
             lookCommandHandler.toPlayerOutput(
                 updatedContext,
@@ -113,9 +108,10 @@ public class MoveCommandHandler {
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
                     .MOVE_REFRESH,
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .PREFER_BRIEF));
+                    .PREFER_BRIEF),
+            updatedContext);
       } catch (RuntimeException ex) {
-        return failure(
+        return failureResult(
             "MOVE_UNAVAILABLE",
             "Game Logic unavailable",
             "error.move.unavailable",
@@ -148,7 +144,7 @@ public class MoveCommandHandler {
         current.bootstrapGameInstanceId());
   }
 
-  private MoveCommandHandlingResult failure(
+  private PreparedMoveCommandResult failureResult(
       String errorCode,
       String message,
       String messageKey,
@@ -176,10 +172,11 @@ public class MoveCommandHandler {
           message,
           ex);
     }
-    return new MoveCommandHandlingResult(
+    return new PreparedMoveCommandResult(
         CommandEnqueueResult.failure(errorCode, message),
         net.firedevops.firemud.gamesession.presentation.PlayerOutput.error(
-            errorCode, message, messageKey, arguments));
+            errorCode, message, messageKey, arguments),
+        null);
   }
 
   private String moveErrorMessageKey(String errorCode) {

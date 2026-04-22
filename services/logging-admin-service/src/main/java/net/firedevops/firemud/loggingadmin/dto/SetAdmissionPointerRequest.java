@@ -18,4 +18,5 @@ public record SetAdmissionPointerRequest(
     @NotBlank @Size(max = 50) String characterCreationPolicy,
     @Size(max = 255) String reason,
     @Size(max = 128) String controlPlaneRequestId,
-    Long expectedPointerVersion) {}
+    Long expectedPointerVersion,
+    @Size(max = 64) String preparedVersionUpgradeId) {}

@@ -58,6 +58,16 @@ script:
   quota:
     limit: 50
     windowSeconds: 60
+  output:
+    max-commands-per-run: ${SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN:64}
+    max-commands-per-entity-per-trigger: ${SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER:8}
+    max-serialized-work-item-bytes: ${SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES:32768}
+  outbox:
+    handed-off-retention-days: ${SCRIPT_OUTBOX_HANDED_OFF_RETENTION_DAYS:7}
+    canceled-retention-days: ${SCRIPT_OUTBOX_CANCELED_RETENTION_DAYS:7}
+    terminal-cleanup-interval-seconds: ${SCRIPT_OUTBOX_TERMINAL_CLEANUP_INTERVAL_SECONDS:300}
+    dead-letter-max-rows: ${SCRIPT_DEAD_LETTER_MAX_ROWS:100000}
+    dead-letter-max-age-seconds: ${SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS:604800}
 automation:
   tick-duration-ms: 1000
   tick-max-events: 50
@@ -69,9 +79,6 @@ server:
     min-response-size: 1024
 
 firemud:
-  auth:
-    grpc:
-      interceptor-enabled: false
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

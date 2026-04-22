@@ -50,6 +50,7 @@ game:
 
 firemud:
   services:
+    automation-scripting-service: ${FIREMUD_SERVICES_AUTOMATION_SCRIPTING_SERVICE}
     game-logic-service: ${FIREMUD_SERVICES_GAME_LOGIC_SERVICE}
   conflict:
     ttlSeconds: ${FIREMUD_CONFLICT_TTL_SECONDS:300}

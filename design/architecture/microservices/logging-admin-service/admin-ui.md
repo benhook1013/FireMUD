@@ -27,8 +27,11 @@ POST /logs/query
 POST /reports
 POST /moderation/actions
 POST /feature-flags/toggle
-POST /admin/tick-remediation/pause
-POST /admin/tick-remediation/resume
+POST /quota-overrides
+DELETE /quota-overrides/{scopeType}/{scopeId}/{quotaKey}
+POST /tick-remediation/pause
+POST /tick-remediation/resume
+POST /tick-remediation/remediate
 GET  /sagas
 GET  /sagas/{id}/steps
 ```

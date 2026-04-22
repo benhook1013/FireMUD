@@ -17,7 +17,7 @@ The **Game Design Service** manages version metadata and publish workflows for g
    - Publish gating must compare like-for-like commit scope across every required participant. A full publish is invalid if required participants attest different `appliedCommitId` values for the target scope, even when each individual digest is otherwise well-formed.
    - Participant selection is fixed by publish type (full publish vs script-only patch) using the matrix in `design/architecture/microservices/game-design-service/version-control.md#digest-participants-by-publish-type`; publish workflows must not change digest participants implicitly at runtime.
    - For versions that use procedural generation, publish must also freeze and persist a `generationConfigRevision`/hash identity for `(tenantId, versionId)` derived from the version-scoped generation inputs committed through Game Design workflows. Mutable World Management operational defaults are not valid publish inputs. World creation for that version must use the frozen identity and fail closed if it cannot be resolved.
-4. As part of the Saga, the Game Design Service runs an **asset export** step for each `(tenantId, versionId)` that uploads design-time assets to object storage, generates a deterministic `manifest.json` for the version, and updates version metadata with the manifest location. This step is implemented as an idempotent Saga step with compensation as described in [Asset Storage Setup](./microservices/game-design-service/asset-storage.md). If this step or another publish step fails irrecoverably, the Saga marks the version as **Failed** and records the asset artifact as `TOMBSTONED` (quarantined) so it is not eligible for activation.
+4. As part of the Saga, the Game Design Service runs an **asset export** step for each `(tenantId, versionId)` that uploads design-time assets to object storage, generates a deterministic `manifest.json` for the version, and updates version metadata with the manifest location. This step is implemented as an idempotent Saga step with compensation as described in [Asset Storage Setup](./microservices/game-design-service/asset-storage.md). If this step or another publish step fails irrecoverably, the Saga marks the version as **Failed** and records the asset artifact as `FAILED` so it is not eligible for activation. Moving failed artifact bytes to `TOMBSTONED` remains a separate explicit abandonment/quarantine action rather than an automatic publish-failure transition.
    - The asset export step must persist a `manifestHash` in version metadata and treat any mismatch between recorded hash and served bytes as drift/corruption, not a legitimate “update” to a Published/Active version.
 5. Before the version can transition to `Published`, the Game Design Service must persist a single immutable `published_release_bundle` attestation row for `(tenantId, versionId)` containing at minimum:
    - publish identity (`publishWorkflowId`, target `commitId`, `versionId`, `publishedAt`);
@@ -281,6 +281,13 @@ Launch descriptor version-resolution rules:
 - `artifactDigests[]` and `requiredManifestAssetKeys[]` are complementary, not competing fields: typed artifact digests attest the exact exported bytes, while `requiredManifestAssetKeys[]` declares which manifest entries are required for a valid launch of that release.
 - The contract intentionally does not introduce a separate top-level artifact-path reference field outside this attested bundle shape. Runtime consumers still discover artifact locations through the attested `manifest.json`, not through ad hoc object-store path reconstruction.
 
+Launch and cutover preflight use one fail-closed predicate for a full-version release:
+
+- `GetVersionState(tenantId, versionId)` must return `Published` or `Active`, and its `versionStateEpoch` must match the epoch frozen into the resolved launch descriptor or prepared cutover proof.
+- `GetPublishedReleaseBundle(tenantId, versionId)` must return a supported attestation for the same release identity, generation config revision, participant digests, and `manifestHash` used by the launch/cutover proof.
+- `GetVersionAssetArtifactState(tenantId, versionId)` must return `artifactState=PUBLISHED`, the frozen `exportedVersionNumber`, the same `manifestHash` attested by the release bundle, and exported manifest asset keys containing every `requiredManifestAssetKeys[]` entry.
+- If any proof is missing, unsupported, stale, or mismatched, launch/cutover fails before gameplay admission or admission-pointer swap. Callers must not fall back to reconstructing release truth from object-store paths, local template tables, cached descriptors, or partial publish workflow state.
+
 Illustrative launch-descriptor examples:
 
 - Fresh launch:
@@ -330,6 +337,11 @@ Required cutover workflow additions:
   - `CreateTemplateRemapSet(sourceVersionId, targetVersionId, mappings...)`
   - `ApproveTemplateRemapSet(remapSetId, reason)`
   - `GetTemplateRemapSet(remapSetId)`
+- The first launch-resolution substrate is now live on this model: `ResolveLaunchDescriptor` freezes the approved `remapSetId` for cross-version replacement launches, and runtime `game_instance` / `world_instance` rows persist that frozen id as launch proof.
+- The first cutover-preflight substrate is now live too: Game Session exposes `ValidateInstanceCutoverCompatibility`, resolves the target launch descriptor to freeze the approved `remapSetId`, checks target version-state / published-release-bundle proof through Game Design, and gathers World / Entity participant attestations before admission-pointer swap can proceed.
+- The first persisted cutover-preparation substrate is also live: `PrepareVersionUpgrade` now records one durable `prepared_version_upgrade` control-plane artifact containing the target launch-descriptor identity, frozen `remapSetId`, participant results, and checked-at timestamp for the requested source-instance -> target-version pair, keyed by explicit `controlPlaneRequestId` for retry-safe idempotency.
+- Once `ExecutePreparedVersionCutover` succeeds, that same durable artifact now records execution state as well (`executedTargetGameInstanceId`, `executedPointerVersion`, `executedAt`, `executionControlPlaneRequestId`) so later reads can prove which prepared cutover actually ran.
+- The first canonical cutover-execution substrate is now live too: `ExecutePreparedVersionCutover` consumes one durable `prepared_version_upgrade` id plus the replacement `gameInstanceId`, revalidates the proof against the current admission pointer and target instance, and performs the pointer swap under the same CAS/audit surface instead of leaving operators to stitch preparation and pointer mutation manually. Retrying the same execution request after the pointer has already moved is idempotent when the durable preparation execution state matches the requested target and request id.
 - `PrepareVersionUpgrade` and `ValidateInstanceCutoverCompatibility` must reference a concrete `remapSetId` whenever cutover depends on remapped S2 state. Ad hoc inferred remaps are not allowed.
 - If any surviving runtime row references missing or incompatible target-version templates and no approved remap exists, cutover fails closed before admission-pointer swap.
 - S3 state is discarded with the source instance through standard termination workflows. No component may silently copy room-ground containers, room ambient state, or instance topology to the target `gameInstanceId`.
@@ -351,9 +363,10 @@ Initial-slice row-family references used by preflight:
 
 These names are the canonical initial-slice preflight vocabulary until service implementation docs replace them with exact schema table names.
 
-Initial-slice note:
+Initial-slice notes:
 
-- In the first implementation slice, World Management declares no mandatory `S2` row families. Cutover preflight should therefore expect World to report `hasS2Rows=false` unless later world-bound durable metadata is introduced explicitly.
+- In the first live implementation slice, World Management declares no mandatory `S2` row families. `ValidateWorldUpgradeMappings` therefore still reports `stateClassesChecked=["S3"]` and `hasS2Rows=false`, but it now proves more than one row exists: the source world must be in a cutover-eligible lifecycle state and still have retained `region_instance`, `zone_instance`, and `room_instance` topology before it reports `COMPATIBLE`.
+- In the first live Entity Management implementation slice, the validation surface is also honest about current persisted runtime families: it checks tenant-surviving `character`, `inventory`, `character_equipment`, and `character_friend` families plus the current instance-scoped `S3` families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`). `character` and `character_friend` are supported `S1` survivor state. `inventory` and `character_equipment` are treated as current `S2` template-bound survivor state: if either family has rows, cutover requires the frozen approved `remapSetId`; without that id Entity returns `INCOMPATIBLE` with `ENTITY_REMAP_REQUIRED`, and with it Entity reports `COMPATIBLE` while echoing the exact id bound into the prepared cutover proof.
 
 The `ValidateInstanceCutoverCompatibility` contract below is the orchestration surface for these rules; it must report which state classes were checked, which owning domains attested compatibility, and whether any remap set was required.
 
@@ -390,7 +403,7 @@ For non-script content, there is no cross-version reuse of instance data. A give
 
 Replacement-instance cutover requires an explicit compatibility preflight before admission-pointer swap:
 
-- Game Session Service is the authoritative owner of cutover preflight orchestration and exposes `ValidateInstanceCutoverCompatibility(tenantId, sourceGameInstanceId, targetVersionId)`.
+- Game Session Service is the authoritative owner of cutover preflight orchestration and now exposes `ValidateInstanceCutoverCompatibility(tenantId, sourceGameInstanceId, targetVersionId)`.
 - The API must return deterministic payload fields at minimum: `{result: COMPATIBLE|INCOMPATIBLE|UNAVAILABLE, reasons[], checkedParticipants[], checkedAt}`.
 - `UNAVAILABLE` (for participant outage or stale dependency state) is fail-closed for cutover.
 - Minimum required checks:
@@ -400,6 +413,12 @@ Replacement-instance cutover requires an explicit compatibility preflight before
   - World/runtime bootstrap compatibility passes (required region/room templates, persistent world-bound metadata mappings, generation config revision resolution, required script patch readiness when pinned).
   - No unresolved `OUT_OF_SYNC` digest state for required publish participants.
   - The target `published_release_bundle` attestation returned by `GetPublishedReleaseBundle` exists and matches the digests, `manifestHash`, and `generationConfigRevision` used during preflight.
+- Current live first slice:
+  - Game Session resolves the replacement launch descriptor first, freezing any approved `remapSetId`.
+  - Game Session then fails closed if target Game Design version-state or published-release-bundle proof is missing/invalid.
+  - Game Session gathers World and Entity participant attestations into one canonical response.
+  - `PrepareVersionUpgrade` persists that same proof bundle as a durable `prepared_version_upgrade` control-plane record for later cutover consumers.
+  - World currently reports the honest first-cut `S3` row-family view described above. Entity now enumerates both survivor and instance-scoped row families, accepts current `S1` survivor rows, and requires the frozen approved `remapSetId` whenever current `S2` inventory/equipment rows exist.
 - Pointer swap is forbidden until this preflight reports `COMPATIBLE`; no best-effort fallback defaults are allowed at cutover time.
 
 Illustrative compatibility responses:
@@ -517,9 +536,10 @@ Version cutover contract for a player-addressable realm:
 
 1. Prepare the replacement instance as non-admissible (`PREPARING`/draining-safe) and run world creation to completion.
 2. Run compatibility preflight for source instance -> target version and fail closed on mismatch.
-3. Perform one atomic realm-route swap so the selected realm resolves to exactly one admissible `gameInstanceId` at any instant.
-4. Keep the old instance non-admissible and drain/terminate it through the standard `InstanceTermination` workflow.
-5. If swap fails, keep the previously routed instance as the sole admissible target for that realm and retry; do not open dual admission for the same realm.
+3. Persist a durable `PrepareVersionUpgrade` artifact for that cutover attempt and use it as the proof input to the realm-route swap.
+4. Perform one atomic realm-route swap so the selected realm resolves to exactly one admissible `gameInstanceId` at any instant.
+5. Keep the old instance non-admissible and drain/terminate it through the standard `InstanceTermination` workflow.
+6. If swap fails, keep the previously routed instance as the sole admissible target for that realm and retry; do not open dual admission for the same realm.
 
 Realm-routing contract (required):
 
@@ -536,6 +556,8 @@ Realm-routing contract (required):
 - Routing updates use compare-and-set semantics on `pointerVersion`; failed CAS must not admit or expose dual-admissible state for the same realm.
 - Ownership: Game Session Service is the sole writer and system of record for gameplay realm-routing state; other services consume via API/read models and must not write routing state directly.
 - API surface: Game Session exposes control-plane APIs for reading/updating realm-routing state. All launch, cutover, rollback, and fork lifecycle workflows must use these APIs rather than direct table writes.
+- A pointer swap to a different `gameInstanceId` is a cutover operation, not a generic edit. It must reference one durable `prepared_version_upgrade` record, and Game Session must reject the swap unless that preparation is still `COMPATIBLE` and matches both the current source pointer target and the replacement instance's frozen launch proof (`versionId`, `launchDescriptorId`, `remapSetId`).
+- Pointer-audit history must preserve that same preparation identity. A successful cutover write records the `preparedVersionUpgradeId` on the resulting admission-pointer audit event so operators can prove which durable preparation authorized a given swap.
 - If routing state for a selected realm is unavailable or ambiguous, admission fails closed with `ADMISSION_POINTER_UNAVAILABLE` (or protocol-mapped equivalent) until reconciled.
 - One realm may be marked as the default production realm. Additional realms, including playtest forks, are valid first-class player-addressable realms when they are intentionally exposed through the authenticated discovery contract.
 

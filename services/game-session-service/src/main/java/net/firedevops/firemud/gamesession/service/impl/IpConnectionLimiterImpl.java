@@ -4,19 +4,13 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.redis.RedisAtomicOperations;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 /** Redis-backed implementation of {@link IpConnectionLimiter}. */
 @Service
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = false)
 public class IpConnectionLimiterImpl implements IpConnectionLimiter {
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -26,25 +20,18 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
   private final int maxConnectionsPerIp;
 
   private final Duration entryTtl;
-  private final DevIsolatedProperties devIsolatedProperties;
 
   public IpConnectionLimiterImpl(
       StringRedisTemplate redisTemplate,
       @Value("${GAME_SESSION_MAX_CONNECTIONS_PER_IP:5}") int maxConnectionsPerIp,
-      @Value("${GAME_SESSION_CONN_TTL_SEC:3600}") long entryTtlSeconds,
-      DevIsolatedProperties devIsolatedProperties) {
+      @Value("${GAME_SESSION_CONN_TTL_SEC:3600}") long entryTtlSeconds) {
     this.redisTemplate = redisTemplate;
     this.maxConnectionsPerIp = maxConnectionsPerIp;
     this.entryTtl = Duration.ofSeconds(entryTtlSeconds);
-    this.devIsolatedProperties = devIsolatedProperties;
   }
 
   @Override
   public boolean canAccept(String ip) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      return true;
-    }
-
     String key = ipKey(ip);
     String value = redisTemplate.opsForValue().get(key);
     long count = value == null ? 0L : Long.parseLong(value);
@@ -56,7 +43,7 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
     if (canAccept(ip)) {
       return true;
     }
-    if (replacingSessionId == null || devIsolatedProperties.isDevIsolated()) {
+    if (replacingSessionId == null) {
       return false;
     }
     String currentIp = redisTemplate.opsForValue().get(sessionKey(replacingSessionId));
@@ -65,20 +52,12 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
 
   @Override
   public boolean tryRegister(String ip, long sessionId) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      return true;
-    }
-
     return RedisAtomicOperations.reserveBoundedCounter(
         redisTemplate, ipKey(ip), sessionKey(sessionId), maxConnectionsPerIp, entryTtl, ip);
   }
 
   @Override
   public boolean transferRegistration(String ip, long previousSessionId, long newSessionId) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      return true;
-    }
-
     String previousSessionKey = sessionKey(previousSessionId);
     String currentIp = redisTemplate.opsForValue().get(previousSessionKey);
     if (!ip.equals(currentIp)) {
@@ -94,10 +73,6 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
 
   @Override
   public void release(long sessionId) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      return;
-    }
-
     String sessionKey = sessionKey(sessionId);
     String ip = redisTemplate.opsForValue().get(sessionKey);
     if (ip != null) {

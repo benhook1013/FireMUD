@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.HashSet;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
@@ -12,7 +13,6 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.ResolvedLaunchDescriptor;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
@@ -23,7 +23,6 @@ import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -34,16 +33,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /** Default implementation of {@link GameInstanceService}. */
 @Service
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = false)
 public class GameInstanceServiceImpl implements GameInstanceService {
   private static final Logger logger = LoggingUtil.getLogger(GameInstanceServiceImpl.class);
   private static final String STATUS_STARTING = "STARTING";
   private static final String STATUS_RUNNING = "RUNNING";
   private static final String STATUS_STOPPING = "STOPPING";
   private static final String STATUS_STOPPED = "STOPPED";
+  private static final String SUPPORTED_RELEASE_ATTESTATION_SCHEMA_VERSION = "v1";
 
   private final GameInstanceRepository repository;
   private final GameInstanceMapper mapper;
@@ -54,7 +50,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private final EntityManagementClient entityManagementClient;
   private final SagaRunner sagaRunner;
   private final MeterRegistry meterRegistry;
-  private final DevIsolatedProperties devIsolatedProperties;
   private final TransactionOperations transactionOperations;
 
   @Autowired
@@ -68,7 +63,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       EntityManagementClient entityManagementClient,
       @Nullable SagaRunner sagaRunner,
       MeterRegistry meterRegistry,
-      DevIsolatedProperties devIsolatedProperties,
       PlatformTransactionManager transactionManager) {
     this(
         repository,
@@ -80,7 +74,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         entityManagementClient,
         sagaRunner,
         meterRegistry,
-        devIsolatedProperties,
         new TransactionTemplate(transactionManager));
   }
 
@@ -94,7 +87,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       EntityManagementClient entityManagementClient,
       @Nullable SagaRunner sagaRunner,
       MeterRegistry meterRegistry,
-      DevIsolatedProperties devIsolatedProperties,
       TransactionOperations transactionOperations) {
     this.repository = repository;
     this.mapper = mapper;
@@ -105,7 +97,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     this.entityManagementClient = entityManagementClient;
     this.sagaRunner = sagaRunner;
     this.meterRegistry = meterRegistry;
-    this.devIsolatedProperties = devIsolatedProperties;
     this.transactionOperations = transactionOperations;
   }
 
@@ -124,34 +115,12 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         null,
         null,
         new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
-        new DevIsolatedProperties(false),
         immediateTransactionOperations());
   }
 
   @Override
   @Timed(value = "gamesession.start")
   public GameInstanceDto startSession(StartSessionRequest request, boolean replaceExistingFirst) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      logger.info(
-          "Dev-isolated mode enabled; acknowledging start for tenant {} template {} controlPlaneRequestId {}",
-          request.tenantId(),
-          request.gameTemplateId(),
-          request.controlPlaneRequestId());
-      return new GameInstanceDto(
-          -1L,
-          request.tenantId(),
-          "launch:" + request.gameTemplateId(),
-          null,
-          request.gameTemplateId(),
-          null,
-          null,
-          null,
-          null,
-          null,
-          request.ownerAccountId(),
-          STATUS_RUNNING);
-    }
-
     logger.info(
         "Starting game session for tenant {} template {} controlPlaneRequestId {}",
         request.tenantId(),
@@ -197,23 +166,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   @Override
   @Timed(value = "gamesession.stop")
   public GameInstanceDto stopSession(long sessionId) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      logger.info("Dev-isolated mode enabled; acknowledging stop for session {}", sessionId);
-      return new GameInstanceDto(
-          sessionId,
-          0L,
-          "dev-isolated",
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          0L,
-          STATUS_STOPPED);
-    }
-
     GameInstanceDto runningState = inTransaction(() -> stageStopSession(sessionId), "stage stop");
     boolean stateDeleted = false;
     try {
@@ -230,23 +182,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   @Override
   @Timed(value = "gamesession.restart")
   public GameInstanceDto restartSession(long sessionId) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      logger.info("Dev-isolated mode enabled; acknowledging restart for session {}", sessionId);
-      return new GameInstanceDto(
-          sessionId,
-          0L,
-          "dev-isolated",
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          0L,
-          STATUS_RUNNING);
-    }
-
     GameInstanceDto previousState =
         inTransaction(() -> stageRestartSession(sessionId), "stage restart");
     GameInstanceDto runtimeState = withStatus(previousState, STATUS_RUNNING);
@@ -292,6 +227,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setReleaseBundleId(resolvedLaunchDescriptor.releaseBundleId());
     instance.setVersionStateEpoch(resolvedLaunchDescriptor.versionStateEpoch());
     instance.setGenerationConfigRevision(resolvedLaunchDescriptor.generationConfigRevision());
+    instance.setRemapSetId(resolvedLaunchDescriptor.remapSetId());
     instance.setOwnerAccountId(request.ownerAccountId());
     instance.setStatus(STATUS_STARTING);
     return new StartSessionStage(snapshot(repository.save(instance)), existingRunningState);
@@ -475,6 +411,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         instance.getReleaseBundleId(),
         instance.getVersionStateEpoch(),
         instance.getGenerationConfigRevision(),
+        instance.getRemapSetId(),
         instance.getOwnerAccountId(),
         instance.getStatus());
   }
@@ -489,6 +426,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setReleaseBundleId(snapshot.releaseBundleId());
     instance.setVersionStateEpoch(snapshot.versionStateEpoch());
     instance.setGenerationConfigRevision(snapshot.generationConfigRevision());
+    instance.setRemapSetId(snapshot.remapSetId());
     instance.setOwnerAccountId(snapshot.ownerAccountId());
     instance.setTenantId(snapshot.tenantId());
     repository.save(instance);
@@ -506,6 +444,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         snapshot.releaseBundleId(),
         snapshot.versionStateEpoch(),
         snapshot.generationConfigRevision(),
+        snapshot.remapSetId(),
         snapshot.ownerAccountId(),
         status);
   }
@@ -531,11 +470,16 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           bundleResponse.getError().getCode() + ": " + bundleResponse.getError().getMessage());
     }
     var bundle = bundleResponse.getBundle();
+    requireSupportedReleaseAttestationSchema(bundle.getAttestationSchemaVersion());
     if (bundle.getId() != descriptor.getReleaseBundleId()
-        || !bundle.getGenerationConfigRevision().equals(descriptor.getGenerationConfigRevision())) {
+        || bundle.getVersionId() != descriptor.getVersionId()
+        || !bundle.getGenerationConfigRevision().equals(descriptor.getGenerationConfigRevision())
+        || !releaseBundleRef(request.tenantId(), descriptor.getVersionId(), bundle.getId())
+            .equals(descriptor.getPublishedReleaseBundleRef())) {
       throw new IllegalArgumentException(
           "RELEASE_ATTESTATION_MISMATCH: resolved launch descriptor does not match the published release bundle");
     }
+    validatePublishedAssetProof(request.tenantId(), descriptor.getVersionId(), bundle);
     var versionStateResponse =
         gameDesignClient.getVersionState(request.tenantId(), descriptor.getVersionId());
     if (versionStateResponse.hasError()) {
@@ -565,7 +509,41 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         descriptor.getGenerationConfigRevision(),
         descriptor.getVersionStateEpoch(),
         descriptor.getReleaseBundleId(),
-        descriptor.getPublishedReleaseBundleRef());
+        descriptor.getPublishedReleaseBundleRef(),
+        descriptor.getRemapSetId().isBlank() ? null : descriptor.getRemapSetId());
+  }
+
+  private void validatePublishedAssetProof(
+      long tenantId,
+      long versionId,
+      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle) {
+    var artifactStateResponse = gameDesignClient.getVersionAssetArtifactState(tenantId, versionId);
+    if (artifactStateResponse.hasError()) {
+      throw new IllegalArgumentException(
+          artifactStateResponse.getError().getCode()
+              + ": "
+              + artifactStateResponse.getError().getMessage());
+    }
+    var artifactState = artifactStateResponse.getArtifactState();
+    if (artifactState.getArtifactState()
+            != net.firedevops.firemud.gamedesign.v1.ArtifactState.ARTIFACT_STATE_PUBLISHED
+        || !artifactState.getManifestHash().equals(bundle.getManifestHash())) {
+      throw new IllegalArgumentException(
+          "RELEASE_ATTESTATION_MISMATCH: published asset artifact state does not match the release bundle");
+    }
+    var exportedKeys = new HashSet<>(artifactState.getExportedManifestAssetKeysList());
+    if (!exportedKeys.containsAll(bundle.getRequiredManifestAssetKeysList())) {
+      throw new IllegalArgumentException(
+          "RELEASE_ATTESTATION_MISMATCH: published asset artifact state is missing required manifest asset keys");
+    }
+  }
+
+  private void requireSupportedReleaseAttestationSchema(String schemaVersion) {
+    if (!SUPPORTED_RELEASE_ATTESTATION_SCHEMA_VERSION.equals(schemaVersion)) {
+      throw new IllegalArgumentException(
+          "SCHEMA_VERSION_UNSUPPORTED: unsupported published release bundle attestation schema "
+              + schemaVersion);
+    }
   }
 
   private PreparedWorldInstance prepareWorldInstance(
@@ -588,7 +566,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             resolvedLaunchDescriptor.generationConfigRevision(),
             resolvedLaunchDescriptor.releaseBundleId(),
             resolvedLaunchDescriptor.publishedReleaseBundleRef(),
-            resolvedLaunchDescriptor.versionStateEpoch());
+            resolvedLaunchDescriptor.versionStateEpoch(),
+            resolvedLaunchDescriptor.remapSetId());
     if (response.hasError()) {
       throw new IllegalArgumentException(
           response.getError().getCode() + ": " + response.getError().getMessage());
@@ -685,6 +664,10 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   @FunctionalInterface
   private interface TransactionSupplier<T> {
     T get();
+  }
+
+  private String releaseBundleRef(long tenantId, long versionId, long releaseBundleId) {
+    return "prb:" + tenantId + ":" + versionId + ":" + releaseBundleId;
   }
 
   private record StartSessionStage(

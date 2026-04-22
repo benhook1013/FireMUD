@@ -10,6 +10,8 @@ import io.grpc.ServerCallHandler;
 import io.grpc.Status;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
@@ -140,6 +142,23 @@ class CommonSecurityAutoConfigurationTest {
               assertThat(claims.getPayload().getSubject()).isEqualTo("user");
               assertThat(claims.getPayload().get("globalRoles", List.class))
                   .containsExactly("platformAdmin");
+            });
+  }
+
+  @Test
+  void jwtUtilCanInitializeFromSecretPathWithoutInlineSecret() throws Exception {
+    Path secretFile = Files.createTempFile("firemud-jwt-secret", ".txt");
+    Files.writeString(secretFile, "testsecretkeytestsecretkeytest1234");
+
+    contextRunner
+        .withPropertyValues("firemud.auth.jwt-secret-path=" + secretFile)
+        .run(
+            ctx -> {
+              assertThat(ctx).hasSingleBean(JwtUtil.class);
+              JwtUtil jwtUtil = ctx.getBean(JwtUtil.class);
+              String token = jwtUtil.generateToken("user", java.util.Map.of());
+              Jws<Claims> claims = jwtUtil.parseToken(token);
+              assertThat(claims.getPayload().getSubject()).isEqualTo("user");
             });
   }
 

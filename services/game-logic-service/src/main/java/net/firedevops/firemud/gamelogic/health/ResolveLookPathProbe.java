@@ -1,9 +1,11 @@
 package net.firedevops.firemud.gamelogic.health;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.health.DependencyReadinessSupport;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc.EntityManagementServiceBlockingStub;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
@@ -15,6 +17,9 @@ import org.springframework.stereotype.Component;
 
 /** Shared internal canary for the downstream calls made by {@code ResolveLook}. */
 @Component
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected gRPC stubs and attestation service are shared Spring-managed clients")
 public final class ResolveLookPathProbe {
   private static final long READINESS_DEADLINE_SECONDS = 2L;
   private static final String WORLD_DEPENDENCY = "worldManagementService";
@@ -22,12 +27,15 @@ public final class ResolveLookPathProbe {
 
   private final WorldManagementServiceBlockingStub worldStub;
   private final EntityManagementServiceBlockingStub entityStub;
+  private final GameplaySessionAttestationService gameplaySessionAttestationService;
 
   public ResolveLookPathProbe(
       WorldManagementServiceBlockingStub worldStub,
-      EntityManagementServiceBlockingStub entityStub) {
+      EntityManagementServiceBlockingStub entityStub,
+      GameplaySessionAttestationService gameplaySessionAttestationService) {
     this.worldStub = worldStub;
     this.entityStub = entityStub;
+    this.gameplaySessionAttestationService = gameplaySessionAttestationService;
   }
 
   public ProbeResult probe(String tenantId, String gameInstanceId, String roomId) {
@@ -38,6 +46,9 @@ public final class ResolveLookPathProbe {
             .setGameInstanceId(gameInstanceId)
             .setRoomInstanceId(roomId)
             .build();
+    String sessionAttestation =
+        gameplaySessionAttestationService.issueInternalProbeAttestation(
+            tenantId, gameInstanceId, roomId);
 
     try {
       GetRoomSnapshotResponse response =
@@ -47,6 +58,7 @@ public final class ResolveLookPathProbe {
                   GetRoomSnapshotRequest.newBuilder()
                       .setTenantId(tenantId)
                       .setRoomInstance(roomInstance)
+                      .setSessionAttestation(sessionAttestation)
                       .build());
       if (response.hasError() && !isReachableAppError(response.getError().getCode())) {
         dependencies.put(
@@ -81,6 +93,7 @@ public final class ResolveLookPathProbe {
                   ListRoomEntitiesRequest.newBuilder()
                       .setTenantId(tenantId)
                       .setRoomInstance(roomInstance)
+                      .setSessionAttestation(sessionAttestation)
                       .build());
       if (response.hasError() && !isReachableAppError(response.getError().getCode())) {
         dependencies.put(
@@ -116,6 +129,10 @@ public final class ResolveLookPathProbe {
 
   public record ProbeResult(
       boolean ready, String failingDependency, Map<String, Object> dependencies) {
+    public ProbeResult {
+      dependencies = Map.copyOf(dependencies);
+    }
+
     static ProbeResult up(Map<String, Object> dependencies) {
       return new ProbeResult(true, null, dependencies);
     }

@@ -22,6 +22,16 @@ This document outlines how FireMUD is deployed across environments including loc
 - Use **`pr-preview`** for reviewer-accessible pull-request environments that must expose the full stack over HTTPS for the lifetime of the PR.
 - Prefer **staging** for playtests that should mirror production routing, TLS, and Redis/Postgres topologies before promoting changes. `pr-preview` is for isolated PR validation, not for canonical creator playtests or promotion evidence.
 
+## Implementation Notes
+
+The environment matrix below is the canonical target state. Current repository implementation has partial support only for several deployment gates:
+
+- `./dev-tools/deploy/preflight.sh` is the intended entrypoint, but it does not yet enforce every player-facing policy listed in `system-architecture-deploy-preflight-policy.md`; missing enforcement remains a blocker for first player-facing deployment and traffic-open events.
+- The player-facing expected-binding manifests under `design/operations/environments/` currently describe the intended shape but are not yet complete authoritative inputs for preflight or restore validation.
+- Hosted `pr-preview` and `dev-demo-cluster` currently reuse the preview Helm values path, which still contains static inline JWT secret material by default. That does not satisfy the preview-unique JWT/JWKS target state until the workflow generates or injects per-namespace material and the JWKS resource path is wired end to end.
+
+When this document says an environment “must” satisfy a gate, that is a target-state requirement. If the current tooling cannot prove the gate yet, the deployment remains blocked or requires explicit manual evidence recorded outside the incomplete tool output.
+
 ## Terms
 
 - `player-facing`: any environment that may accept real player traffic or is used to validate player-visible operational correctness. In FireMUD this includes `hobby-self-hosted`, `staging`, and `production`.
@@ -120,7 +130,7 @@ Readiness rules for the currently implemented player path:
 - For `game-session-service`, that safety check includes reserved readiness-only round trips through the session-context store and command-queue store so the first command path is not admitted on downstream reachability alone. Readiness-only downstream gRPC canaries also run with explicit short per-call deadlines rather than inheriting ambient channel timing.
 - `game-logic-service` is ready only when the downstream services required for `ResolveLook` are reachable.
 - `account-service`, `world-management-service`, and `entity-management-service` use truthful local readiness for the currently implemented slice.
-- `game-session-service` may still run in `dev-isolated` mode for intentionally dependency-free local development, but the normal `dev` profile no longer weakens the canonical readiness group for Docker Compose or smoke environments.
+- `game-session-service` now uses the same canonical `dev` topology for local Docker Compose and smoke environments, rather than a separate dependency-light mode.
 
 Gateway retry filters, `wait-for-it.sh`, and similar startup helpers are convenience/bootstrap mechanisms only. They must not be treated as substitutes for correct readiness semantics.
 

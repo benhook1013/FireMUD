@@ -24,7 +24,7 @@ dependencies {
     implementation(libs.opentelemetry.api)
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
-    testImplementation("io.projectreactor:reactor-test:3.8.5")
+    testImplementation("io.projectreactor:reactor-test:3.8.4")
     testImplementation(libs.spring.boot.starter.websocket)
     testImplementation(libs.spring.boot.starter.webflux)
     testImplementation("com.h2database:h2:2.4.240")
@@ -38,13 +38,4 @@ tasks.named<BootRun>("bootRun") {
     if (activeProfile.isNullOrBlank()) {
         systemProperty("spring.profiles.active", "dev")
     }
-}
-
-tasks.register<BootRun>("bootRunDevIsolated") {
-    group = "application"
-    description = "Start the gateway in dev with dev-isolated WebSocket handling"
-    mainClass.set("net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication")
-    classpath = sourceSets.main.get().runtimeClasspath
-    systemProperty("spring.profiles.active", "dev")
-    environment("TCP_PROXY_DEV_ISOLATED", "true")
 }

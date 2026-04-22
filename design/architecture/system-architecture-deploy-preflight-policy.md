@@ -8,6 +8,12 @@ This document defines the authoritative preflight policy gate for staging and pr
 - Ensure secret contracts, digest pinning, and bridge/security invariants are enforced before apply.
 - Produce a reusable pass/fail artifact for deployment evidence.
 
+## Implementation Notes
+
+`./dev-tools/deploy/preflight.sh` is the canonical executable preflight entrypoint for this contract. It currently emits the required policy ID set, consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` into reports, validates the mounted JWT/JWKS contract, validates first-pass expected binding shape, and enforces production and hobby/self-hosted traffic-open backup gates when the run declares `FIREMUD_TRAFFIC_OPEN_EVENT=first-live|reopen`.
+
+The remaining limitation is evidence depth, not missing policy IDs: the expected-binding checks validate repository manifests and declared binding refs, while real first-live and reopen decisions still require current environment evidence files produced by operators or automation. A successful static report without traffic-open evidence is not enough to open player-facing traffic.
+
 ## Bootstrap Contract
 
 For a brand-new player-facing environment (`hobby-self-hosted`, `staging`, or `production`), preflight must verify the baseline trust and secret set before any workload apply. The minimum bootstrap set is:

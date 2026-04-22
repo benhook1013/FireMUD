@@ -10,15 +10,18 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
+import net.firedevops.firemud.gamedesign.entity.PublishedPluginVersion;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.PublishedPluginVersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
@@ -44,6 +47,7 @@ public class VersionServiceImpl implements VersionService {
 
   private final VersionRepository versionRepository;
   private final GameRepository gameRepository;
+  private final PublishedPluginVersionRepository publishedPluginVersionRepository;
   private final VersionMapper versionMapper;
   private final AutomationScriptingClient scriptingClient;
   private final AssetExportService assetExportService;
@@ -58,6 +62,7 @@ public class VersionServiceImpl implements VersionService {
   public VersionServiceImpl(
       VersionRepository versionRepository,
       GameRepository gameRepository,
+      PublishedPluginVersionRepository publishedPluginVersionRepository,
       VersionMapper versionMapper,
       AutomationScriptingClient scriptingClient,
       AssetExportService assetExportService,
@@ -69,6 +74,7 @@ public class VersionServiceImpl implements VersionService {
       RecordedParticipantDigestService recordedParticipantDigestService) {
     this.versionRepository = versionRepository;
     this.gameRepository = gameRepository;
+    this.publishedPluginVersionRepository = publishedPluginVersionRepository;
     this.versionMapper = versionMapper;
     this.scriptingClient = scriptingClient;
     this.assetExportService = assetExportService;
@@ -112,7 +118,12 @@ public class VersionServiceImpl implements VersionService {
       exportedManifest = assetExportService.exportAssets(tenantId, saved.getVersionNumber());
       exportedStateEpoch =
           versionAssetArtifactService
-              .markExportedUnattested(dto.tenantId(), dto.id(), publishWorkflowId, exportedManifest)
+              .markExportedUnattested(
+                  dto.tenantId(),
+                  dto.id(),
+                  saved.getVersionNumber(),
+                  publishWorkflowId,
+                  exportedManifest)
               .stateEpoch();
       String generationConfigRevision = generationConfigRevision(dto, exportedManifest);
       publishedReleaseBundleService.createFullVersionBundle(
@@ -138,6 +149,7 @@ public class VersionServiceImpl implements VersionService {
         versionAssetArtifactService.markFailed(
             dto.tenantId(),
             dto.id(),
+            saved.getVersionNumber(),
             publishWorkflowId,
             exportedManifest,
             publishFailureCode(ex),
@@ -204,6 +216,94 @@ public class VersionServiceImpl implements VersionService {
       versionRepository.delete(saved);
       throw ex;
     }
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public VersionDto getPublishedScriptPatchVersion(String tenantId, String scriptPatchVersion) {
+    if (scriptPatchVersion == null || scriptPatchVersion.isBlank()) {
+      throw new IllegalArgumentException("script patch version is required");
+    }
+    return versionMapper.toDto(
+        versionRepository
+            .findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
+                tenantId, scriptPatchVersion)
+            .filter(Version::isScriptOnly)
+            .orElseThrow(() -> new IllegalArgumentException("script patch version not found")));
+  }
+
+  @Override
+  @Transactional
+  public PublishedPluginVersionDto publishPluginVersion(
+      String tenantId,
+      String pluginId,
+      String pluginVersionId,
+      long baseVersionId,
+      String abilitySchemaDigest,
+      String bundleDigest,
+      int manifestSchemaVersion,
+      String distributionManifestHash,
+      String distributionManifestPath,
+      String notes) {
+    requireText(pluginId, "pluginId");
+    requireText(pluginVersionId, "pluginVersionId");
+    requireText(abilitySchemaDigest, "abilitySchemaDigest");
+    requireText(bundleDigest, "bundleDigest");
+    if (baseVersionId <= 0L) {
+      throw new IllegalArgumentException("INVALID_ARGUMENT: baseVersionId must be positive");
+    }
+    if (manifestSchemaVersion <= 0) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: manifestSchemaVersion must be positive");
+    }
+    requireTenantVersion(tenantId, baseVersionId);
+
+    Optional<PublishedPluginVersion> existing =
+        publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
+            tenantId, pluginId, pluginVersionId);
+    if (existing.isPresent()) {
+      PublishedPluginVersion entity = existing.get();
+      if (!samePublication(
+          entity,
+          baseVersionId,
+          abilitySchemaDigest,
+          bundleDigest,
+          manifestSchemaVersion,
+          distributionManifestHash,
+          distributionManifestPath,
+          notes)) {
+        throw new IllegalArgumentException(
+            "PLUGIN_VERSION_IMMUTABLE: plugin version already exists with different metadata");
+      }
+      return toPublishedPluginVersionDto(entity);
+    }
+
+    PublishedPluginVersion entity = new PublishedPluginVersion();
+    entity.setTenantId(tenantId);
+    entity.setPluginId(pluginId);
+    entity.setPluginVersionId(pluginVersionId);
+    entity.setBaseVersionId(baseVersionId);
+    entity.setPublicationState(VersionLifecycleState.PUBLISHED);
+    entity.setAbilitySchemaDigest(abilitySchemaDigest);
+    entity.setBundleDigest(bundleDigest);
+    entity.setManifestSchemaVersion(manifestSchemaVersion);
+    entity.setDistributionManifestHash(normalizeBlank(distributionManifestHash));
+    entity.setDistributionManifestPath(normalizeBlank(distributionManifestPath));
+    entity.setNotes(normalizeBlank(notes));
+    entity.setLastChangedAt(LocalDateTime.now());
+    return toPublishedPluginVersionDto(publishedPluginVersionRepository.save(entity));
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public PublishedPluginVersionDto getPublishedPluginVersion(
+      String tenantId, String pluginId, String pluginVersionId) {
+    requireText(pluginId, "pluginId");
+    requireText(pluginVersionId, "pluginVersionId");
+    return publishedPluginVersionRepository
+        .findByTenantIdAndPluginIdAndPluginVersionId(tenantId, pluginId, pluginVersionId)
+        .map(this::toPublishedPluginVersionDto)
+        .orElseThrow(() -> new IllegalArgumentException("NOT_FOUND: plugin version not found"));
   }
 
   @Override
@@ -310,6 +410,44 @@ public class VersionServiceImpl implements VersionService {
         .orElseThrow(() -> new IllegalArgumentException("version not found"));
   }
 
+  private boolean samePublication(
+      PublishedPluginVersion entity,
+      long baseVersionId,
+      String abilitySchemaDigest,
+      String bundleDigest,
+      int manifestSchemaVersion,
+      String distributionManifestHash,
+      String distributionManifestPath,
+      String notes) {
+    return entity.getBaseVersionId() == baseVersionId
+        && entity.getPublicationState() == VersionLifecycleState.PUBLISHED
+        && entity.getAbilitySchemaDigest().equals(abilitySchemaDigest)
+        && entity.getBundleDigest().equals(bundleDigest)
+        && entity.getManifestSchemaVersion() == manifestSchemaVersion
+        && normalizeBlank(entity.getDistributionManifestHash())
+            .equals(normalizeBlank(distributionManifestHash))
+        && normalizeBlank(entity.getDistributionManifestPath())
+            .equals(normalizeBlank(distributionManifestPath))
+        && normalizeBlank(entity.getNotes()).equals(normalizeBlank(notes));
+  }
+
+  private PublishedPluginVersionDto toPublishedPluginVersionDto(PublishedPluginVersion entity) {
+    return new PublishedPluginVersionDto(
+        entity.getId(),
+        entity.getTenantId(),
+        entity.getPluginId(),
+        entity.getPluginVersionId(),
+        entity.getBaseVersionId(),
+        entity.getPublicationState(),
+        entity.getAbilitySchemaDigest(),
+        entity.getBundleDigest(),
+        entity.getManifestSchemaVersion(),
+        normalizeBlank(entity.getDistributionManifestHash()),
+        normalizeBlank(entity.getDistributionManifestPath()),
+        normalizeBlank(entity.getNotes()),
+        entity.getLastChangedAt());
+  }
+
   private VersionStateDto toVersionStateDto(Version version) {
     return new VersionStateDto(
         version.getTenantId(),
@@ -351,5 +489,15 @@ public class VersionServiceImpl implements VersionService {
         + version.id()
         + ":"
         + exportedManifest.manifestHash();
+  }
+
+  private static void requireText(String value, String fieldName) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException("INVALID_ARGUMENT: " + fieldName + " is required");
+    }
+  }
+
+  private static String normalizeBlank(String value) {
+    return value == null ? "" : value;
   }
 }

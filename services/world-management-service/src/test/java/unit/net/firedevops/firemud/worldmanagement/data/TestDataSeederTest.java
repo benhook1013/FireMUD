@@ -59,9 +59,9 @@ class TestDataSeederTest {
   @Test
   void runSeedsDataWhenRepositoriesEmpty() throws Exception {
     when(regionRepository.count()).thenReturn(0L);
-    when(zoneRepository.findByTenantIdOrderByIdAsc(1L)).thenReturn(List.of());
-    when(roomRepository.findByTenantIdOrderByIdAsc(1L)).thenReturn(List.of());
-    when(roomExitRepository.findByTenantIdOrderByIdAsc(1L)).thenReturn(List.of());
+    when(zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L)).thenReturn(List.of());
+    when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L)).thenReturn(List.of());
+    when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L)).thenReturn(List.of());
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(1L, 1L))
         .thenReturn(Optional.empty());
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(1L, 2L))

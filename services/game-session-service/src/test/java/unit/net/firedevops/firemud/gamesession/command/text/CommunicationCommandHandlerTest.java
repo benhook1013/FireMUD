@@ -78,17 +78,14 @@ class CommunicationCommandHandlerTest {
             .addDeliveredTo("Sora")
             .build();
     when(gameLogicClient.sendCommunication(
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
+            Mockito.eq(sessionContext),
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.any(),
             Mockito.anyString(),
             Mockito.anyString(),
-            Mockito.anyString()))
+            Mockito.anyString(),
+            Mockito.nullable(String.class)))
         .thenReturn(response);
 
     CommunicationCommandHandlingResult result =
@@ -104,17 +101,14 @@ class CommunicationCommandHandlerTest {
     assertThat(joinedOutputText(result.outputs())).isEqualTo("You say, \"Hello travelers.\"");
     Mockito.verify(gameLogicClient)
         .sendCommunication(
-            "22",
-            "1",
-            "911",
-            "123",
-            "1",
+            sessionContext,
             "Emberline",
             "room-7",
             CommunicationType.SAY,
             "hello travelers",
             "",
-            "");
+            "",
+            null);
   }
 
   @Test
@@ -131,7 +125,7 @@ class CommunicationCommandHandlerTest {
   @Test
   void tellRequiresOnlineTarget() {
     when(entityManagementClient.findCharacterByName(
-            "22", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Sora"))
+            sessionContext, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Sora"))
         .thenReturn(
             Optional.of(
                 Character.newBuilder()
@@ -157,17 +151,14 @@ class CommunicationCommandHandlerTest {
     ErrorDetail error =
         ErrorDetail.newBuilder().setCode("PERMISSION_DENIED").setMessage("silenced").build();
     when(gameLogicClient.sendCommunication(
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
+            Mockito.eq(sessionContext),
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.any(),
             Mockito.anyString(),
             Mockito.anyString(),
-            Mockito.anyString()))
+            Mockito.anyString(),
+            Mockito.nullable(String.class)))
         .thenReturn(
             SendCommunicationResponse.newBuilder()
                 .setSuccess(false)

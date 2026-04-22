@@ -12,4 +12,5 @@ public record SendMessageRequestDto(
     Long recipientAccountId,
     Long guildId,
     Long cityId,
-    @NotBlank String content) {}
+    @NotBlank String content,
+    String effectId) {}

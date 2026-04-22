@@ -110,7 +110,7 @@ After applying strip/authentication rules, the gateway sets or forwards the down
 Gateway must overwrite any inbound values for these gateway-owned `X-Firemud-*` gameplay-admission headers; they are never forwarded from external callers verbatim and are meaningful downstream only when re-issued by the gateway after successful handshake validation.
 Game Session must treat `X-Proxy-Connection-Id` as authoritative only when `X-Firemud-Connection-Mode=trusted_tcp_proxy`. On all other gameplay paths, gateway must drop or overwrite `X-Proxy-Connection-Id`, and downstream services must ignore it if present.
 
-`X-Game-Instance-Id` and `X-Tenant-Id` are not authentication material and must never be treated as reconnect tokens or proof of session ownership. They exist to carry the TCP Proxy Service’s optional Telnet `SESSION <gameInstanceId> <tenantId>` envelope context into the gameplay WebSocket handshake for advanced tools:
+`X-Game-Instance-Id` and `X-Tenant-Id` are not authentication material and must never be treated as reconnect tokens or proof of session ownership. On the trusted TCP Proxy path, they carry server-owned proxy bootstrap metadata or future hidden MCP-carried smart-client hints into the gameplay WebSocket handshake:
 
 - `X-Game-Instance-Id` is a hint for the desired game instance (`gameInstanceId`), not a gameplay “player session” identifier.
 - `X-Tenant-Id` is a hint for the desired tenant and must be validated against the authenticated account’s allowed tenants and entitlements during the canonical `LOGIN` + lobby selection (`PLAY`) flow.
@@ -118,7 +118,7 @@ Game Session must treat `X-Proxy-Connection-Id` as authoritative only when `X-Fi
 
 After `PLAY` succeeds, Redis-backed session binding is authoritative for tenant/gameplay scope. Header hints (`X-Game-Instance-Id`, `X-Tenant-Id`) remain admission-only context and must not override already-bound session scope.
 
-For canonical Telnet `SESSION` parsing and forwarding rules, see the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section. For canonical tenant-selection behavior, see [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay).
+Typed Telnet `SESSION` lines are not part of the player-facing or advanced-client target contract. For canonical tenant-selection behavior, see [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay).
 
 ---
 
@@ -138,10 +138,10 @@ At a configuration level, Spring Cloud Gateway defines WebSocket routes in `appl
 - **Canonical route path** – `/ws/game/**` is the canonical gameplay WebSocket entry point for first-party gameplay clients and Telnet clients bridged via the TCP Proxy Service.
 - **Single route policy** – `/ws/game/**` is the only supported gameplay WebSocket entry point. Gameplay admission through alternate legacy routes is not supported.
 - **First-party admission marker** – successful first-party `/ws/game/**` handshakes must emit `X-Firemud-Connection-Mode=first_party_web` as defined in [Gateway Output Rules (Downstream-Trusted)](#gateway-output-rules-downstream-trusted), so downstream services can distinguish this path using the same positive discriminator model as the trusted TCP Proxy path.
-- **Telnet bridge usage** – The TCP Proxy Service connects to Spring Cloud Gateway using the `GATEWAY_WS_URL` environment variable. The proxy’s `dev` profile may fall back to `ws://spring-cloud-gateway:8080/ws/game` when unset, but shared and player-facing environments must set it explicitly to a `wss://.../ws/game` URL that targets the Gateway’s internal-only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`) so the proxy–gateway hop uses mTLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway). Exact `SESSION` envelope semantics and header propagation rules are defined in the TCP Proxy design’s **Telnet Session Envelope & Event Metrics** section; this document intentionally summarizes only the routing side.
+- **Telnet bridge usage** – The TCP Proxy Service connects to Spring Cloud Gateway using the `GATEWAY_WS_URL` environment variable. The proxy’s `dev` profile may fall back to `ws://spring-cloud-gateway:8080/ws/game` when unset, but shared and player-facing environments must set it explicitly to a `wss://.../ws/game` URL that targets the Gateway’s internal-only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`) so the proxy–gateway hop uses mTLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway). TCP Proxy bootstrap metadata and header propagation rules are defined in the TCP Proxy design; this document intentionally summarizes only the routing side.
 - **Required headers** – Spring Cloud Gateway preserves or sets:
   - `X-Client-IP` with the originating client address. For web clients this is derived from the external load balancer’s forwarded headers. For Telnet clients this is derived by the gateway from `X-Proxy-Client-IP` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
-  - `X-Proxy-Game-Instance-Id`, `X-Proxy-Tenant-Id`, and `X-Proxy-Connection-Id` on the TCP Proxy → Gateway hop when advanced Telnet clients provide a `SESSION` envelope or when the proxy needs disconnect correlation. The gateway strips these from public ingress and only forwards canonical `X-Game-Instance-Id` / `X-Tenant-Id` and `X-Proxy-Connection-Id` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
+  - `X-Proxy-Game-Instance-Id`, `X-Proxy-Tenant-Id`, and `X-Proxy-Connection-Id` on the TCP Proxy → Gateway hop when the proxy supplies server-owned bootstrap metadata or future hidden MCP-carried smart-client hints, or when the proxy needs disconnect correlation. The gateway strips these from public ingress and only forwards canonical `X-Game-Instance-Id` / `X-Tenant-Id` and `X-Proxy-Connection-Id` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
   - Standard correlation and trace headers defined in the logging/observability guidelines.
 - **TLS expectations**
   - External clients connect over `wss://` to the public load balancer, which forwards to Spring Cloud Gateway as described in [Security Architecture](./system-architecture-security.md#tls-termination--internal-encryption).
@@ -299,12 +299,21 @@ This section is the canonical source of truth for connect-token enforcement and 
   - Audience is the gateway gameplay route (`/ws/game/**`) and must not be accepted on unrelated routes.
   - Gateway validates signatures against the issuer's published verification key set with explicit `kid` selection and overlap handling during rotation.
 - **Transport location**
-  - Sent in a dedicated handshake header (`X-Firemud-Connect-Token`) on `/ws/game/**`.
-  - Gateway must not accept connect tokens from query parameters in player-facing environments.
+  - Server-side and non-browser clients may send the connect token in the dedicated handshake header (`X-Firemud-Connect-Token`) on `/ws/game/**`.
+  - First-party browser clients send the connect token through the `Firemud-Connect-Token` cookie set by `POST /auth/connect-token`.
+  - Required cookie attributes: `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/ws/game`, and `Max-Age` no longer than the connect-token TTL.
+  - The cookie value is the connect token. Browser JavaScript must not read, copy, or persist the token outside the cookie; client code uses the non-secret response metadata from `POST /auth/connect-token` for retry and expiry UX.
+  - Gateway must accept exactly one connect-token carrier on non-proxy `/ws/game/**` handshakes. If both `X-Firemud-Connect-Token` and `Cookie: Firemud-Connect-Token=...` are present, Gateway rejects the handshake as `CONNECT_TOKEN_REJECTED` rather than choosing precedence.
+  - Gateway must not accept connect tokens from query parameters in player-facing environments unless a future security review explicitly changes this rule and documents the resulting logging, referrer, and replay implications.
 - **Required claims**
   - `accountId`
   - `tenantId`
   - `gameInstanceId`
+  - `worldSlug`
+  - `realmSlug`
+  - `pointerVersion`
+  - `connectScopeId`
+  - `requestId`
   - `exp` (absolute expiration)
   - `jti` (single-use nonce for replay defense)
 - **Lifetime and replay**
@@ -313,13 +322,13 @@ This section is the canonical source of truth for connect-token enforcement and 
   - Replay cache entries must expire automatically at `exp + small_skew`.
   - Replay cache ownership is Gateway-only; downstream services do not participate in connect-token replay checks.
   - Replay checks must be backed by shared Cache/Rate-Limit Redis (not per-pod memory) so `jti` replay decisions are consistent across horizontally scaled gateway pods.
-  - Replay cache keys use `gateway:connect-token:replay:<jti>` and bounded cardinality with deterministic eviction (`oldest-expiry-first`).
+  - Replay cache keys use `gateway:connect-token:jti:<jti>` and bounded cardinality with deterministic expiry at `exp + small_skew`.
   - On replay-cache capacity pressure, gateway must emit overload metrics and continue fail-closed behavior for uncertain replay outcomes.
   - Replay-cache outage behavior:
-    - Player-facing environments (`/ws/game/**` in `enforce` mode): fail closed (`503` for replay-check unavailable).
+    - Player-facing environments (`/ws/game/**` in `enforce` mode): fail closed with HTTP `403` and `CONNECT_REPLAY_PROTECTION_UNAVAILABLE` when replay protection is unavailable.
     - Non-player-facing dev/preview environments: fail-open is allowed only when explicitly configured for local iteration and must emit drift metrics.
 - **Validation outcomes**
-  - Invalid/expired/replayed token is rejected with HTTP `403`.
+  - Invalid, expired, replayed, scope-mismatched, or replay-protection-unavailable token state is rejected with HTTP `403` and the bounded handshake error classes below.
   - Missing token is rejected with HTTP `403` for non-proxy gameplay clients.
   - Rate-limit exhaustion remains HTTP `429`.
   - Backend-unavailable remains HTTP `503`.
@@ -356,19 +365,23 @@ This token is an edge admission/rate-limiting hint only. It does not replace `LO
   - Once a WebSocket connection is established to `/ws/game/**`, ongoing gameplay messages traverse the connection without additional gateway-level rate limiting; downstream services (especially Game Session Service) enforce per-session and per-command safety.
 - **Gameplay WebSocket handshake errors**
   - HTTP `429` responses from gameplay routes indicate edge rate/connection policy boundaries.
-  - HTTP `503` responses from gameplay routes may represent backend unavailable **or** replay-check infrastructure unavailable fail-closed outcomes.
-  - HTTP `403` responses indicate handshake denial by policy or trust boundaries (for example internal-only listener, mTLS/client-identity mismatch, explicit route policy deny, or invalid connect token when token enforcement is enabled).
+  - HTTP `503` responses from gameplay routes represent backend unavailable outcomes.
+  - HTTP `403` responses indicate handshake denial by policy or trust boundaries (for example internal-only listener, mTLS/client-identity mismatch, explicit route policy deny, or connect-token admission failures when token enforcement is enabled).
   - HTTP `401` is not part of the normal gameplay-route handshake taxonomy. If observed, treat as policy drift/misconfiguration and investigate.
   - Client retry/backoff handling is canonical in [Reconnection Strategy](./system-architecture-reconnection.md#http-handshake-failures-on-ws-game).
   - Gateway must emit a machine-readable handshake error class for all non-101 upgrades (for example response header `X-Firemud-Handshake-Error-Class` and mirrored structured log field) using the bounded set:
     - `POLICY_PRESSURE`
     - `BACKEND_UNAVAILABLE`
-    - `REPLAY_CHECK_UNAVAILABLE`
+    - `CONNECT_TOKEN_MISSING`
+    - `CONNECT_TOKEN_EXPIRED`
+    - `CONNECT_TOKEN_REPLAYED`
+    - `CONNECT_SCOPE_MISMATCH`
+    - `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`
     - `CONNECT_TOKEN_REJECTED`
     - `POLICY_DENY`
     - `PROTOCOL_MISMATCH`
     - `INTERNAL_ERROR`
-  - `CONNECT_TOKEN_REJECTED` is mandatory for missing, expired, replayed, malformed, or signature-invalid gameplay connect tokens. `POLICY_DENY` is reserved for trust-boundary and route-policy denials after token parsing is no longer the deciding factor.
+  - The specific connect-token classes above should be used when the gateway can classify the failure. `CONNECT_TOKEN_REJECTED` is reserved for malformed, signature-invalid, missing-claim, wrong-audience, or otherwise rejected connect tokens outside the narrower classes above. `CONNECT_SCOPE_MISMATCH` may also appear as a post-handshake Game Session admission error when the verified connect context no longer matches the selected gameplay target before `PLAY` completes. `POLICY_DENY` is reserved for trust-boundary and route-policy denials after token parsing is no longer the deciding factor.
   - Reconnection/client policy must key on handshake error class first and HTTP status second.
 - **Edge vs core responsibilities**
   - The **TCP Proxy Service** enforces **connection-level and per-socket safety** for Telnet clients: idle timeouts, per-IP connection caps, buffer depth limits, and basic abuse heuristics. It relies on Spring Cloud Gateway and Game Session Service for cross-tenant and content-aware rate limiting.
@@ -385,7 +398,7 @@ If gameplay execution is sharded across multiple Game Session instances, that sh
 
 - Tenant identity (`tenantId`) is derived and enforced by backend services as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md), not by Spring Cloud Gateway.
 - Gameplay flows may include tenant markers such as:
-  - `X-Proxy-Game-Instance-Id` / `X-Proxy-Tenant-Id` inputs on the TCP Proxy → Gateway hop when advanced Telnet clients send a `SESSION` envelope. The gateway strips these from public ingress and only forwards canonical `X-Game-Instance-Id` / `X-Tenant-Id` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
+  - `X-Proxy-Game-Instance-Id` / `X-Proxy-Tenant-Id` inputs on the TCP Proxy → Gateway hop when the proxy supplies server-owned bootstrap metadata or future hidden MCP-carried smart-client hints. The gateway strips these from public ingress and only forwards canonical `X-Game-Instance-Id` / `X-Tenant-Id` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
   - Session and tenant context inferred by the Game Session Service from the `LOGIN` flow and Redis session keys.
 - Spring Cloud Gateway preserves these headers and forwards them unchanged to backend services but does not:
   - Derive `tenantId` from hostnames or URL paths.

@@ -13,7 +13,9 @@ The target-state model is container-first:
 - future inventory queries must support structural filtering plus game-defined item types/tags for both gameplay commands and richer GUIs;
 - `LOOK` and similar room-view commands should expose visible room-ground items from that room-attached container as a distinct room-view section, but should not automatically expand nested container contents inline.
 
-Item definitions now also expose an explicit authored `stackable` capability. That field only declares whether a template is eligible for later fungible stack behavior; it does not replace the current item-instance model. Until `06.3.2` lands, ordinary runtime handling still treats physical items as distinct instances, and non-stackable remains the safe default for equipment, containers, and other stateful items.
+Item definitions now also expose explicit authored stackability controls. Non-stackable remains the safe default for equipment, containers, and other stateful items. Stackable definitions merge through holder-local stack records keyed by the authored compatibility mode and runtime stack family, so fungible quantities can merge without collapsing ordinary physical item instances.
+
+Equipment templates now use game-authored equipment schema data rather than a platform-global slot enum. The runtime model stores versioned slot definitions, optional slot-group compatibility keys, body-layout slot membership, and each character's `bodyLayoutKey`. Existing versions without authored equipment schema can still use the item template's direct `equipmentSlot` string as a bootstrap fallback, but once a schema exists the service validates slot existence, item slot-group compatibility, and body-layout membership before binding equipment.
 
 Inventory and equipment mutations are also intended to be auditable through a canonical transfer log so item duplication or invalid movement bugs can be investigated later.
 

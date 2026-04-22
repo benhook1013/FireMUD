@@ -36,7 +36,7 @@ class ScriptTickServiceImplTest {
     when(redisTemplate.opsForList()).thenReturn(listOps);
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
     quotaService = mock(ScriptQuotaService.class);
-    when(quotaService.tryAcquire(any(Long.class), any(Long.class))).thenReturn(true);
+    when(quotaService.tryAcquire(any(String.class), any(String.class))).thenReturn(true);
     meterRegistry = new SimpleMeterRegistry();
     conflictTracker = mock(net.firedevops.firemud.common.conflict.ConflictTracker.class);
     service =
@@ -46,15 +46,17 @@ class ScriptTickServiceImplTest {
 
   @Test
   void enqueueEventPushesToQueue() {
-    service.enqueueEvent(1L, 2L, "evt");
-    verify(listOps).rightPush("automation:tick:queue:1:2", "evt");
-    verify(quotaService).tryAcquire(1L, 2L);
+    service.enqueueEvent("tenant-1", "instance-1", "script-1", "evt");
+    verify(listOps)
+        .rightPush(
+            "automation:tick:{tenant:tenant-1:instance:instance-1:script:script-1}:queue", "evt");
+    verify(quotaService).tryAcquire("tenant-1", "script-1");
   }
 
   @Test
   void enqueueEventSkippedWhenQuotaExceeded() {
-    when(quotaService.tryAcquire(any(Long.class), any(Long.class))).thenReturn(false);
-    service.enqueueEvent(1L, 2L, "evt");
+    when(quotaService.tryAcquire(any(String.class), any(String.class))).thenReturn(false);
+    service.enqueueEvent("tenant-1", "instance-1", "script-1", "evt");
     org.mockito.Mockito.verifyNoInteractions(listOps);
   }
 
@@ -62,7 +64,7 @@ class ScriptTickServiceImplTest {
   void processTickAttemptsLockAndExecutesScript() {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
-    service.processTick(1L, 2L);
+    service.processTick("tenant-1", "instance-1", "script-1");
     ArgumentCaptor<RedisScript<?>> scriptCaptor = redisScriptCaptor();
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
         .execute(scriptCaptor.capture(), org.mockito.ArgumentMatchers.<String>anyList());
@@ -74,11 +76,15 @@ class ScriptTickServiceImplTest {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
 
-    service.processTick(1L, 2L);
+    service.processTick("tenant-1", "instance-1", "script-1");
 
     verify(valueOps)
-        .setIfAbsent(eq("automation:tick:lock:1:2"), any(Object.class), any(Duration.class));
-    verify(listOps).size("automation:tick:pending:1:2");
+        .setIfAbsent(
+            eq("automation:tick:{tenant:tenant-1:instance:instance-1:script:script-1}:lock"),
+            any(Object.class),
+            any(Duration.class));
+    verify(listOps)
+        .size("automation:tick:{tenant:tenant-1:instance:instance-1:script:script-1}:pending");
   }
 
   @Test
@@ -86,9 +92,9 @@ class ScriptTickServiceImplTest {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(false);
 
-    service.processTick(1L, 2L);
+    service.processTick("tenant-1", "instance-1", "script-1");
 
-    verify(conflictTracker).recordConflict("script:1:2");
+    verify(conflictTracker).recordConflict("script:tenant-1:instance-1:script-1");
   }
 
   @Test
@@ -102,7 +108,7 @@ class ScriptTickServiceImplTest {
 
     setField(service, "tickDurationMs", 0L);
 
-    service.processTick(1L, 2L);
+    service.processTick("tenant-1", "instance-1", "script-1");
 
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("automation_tick_budget_exceeded_total").counter().count(), 0.001);

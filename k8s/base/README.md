@@ -32,7 +32,7 @@ All deployments include readiness probes against `/actuator/health/readiness`, l
 
 ## Database Settings
 
-All Spring Boot services expect PostgreSQL and Redis connection details via environment variables. A `firemud-config` `ConfigMap` and `firemud-secret` `Secret` are provided to supply these values:
+All Spring Boot services expect PostgreSQL and Redis connection details via environment variables. A `firemud-config` `ConfigMap` and `postgres-credentials` `Secret` are provided to supply these values:
 
 ```bash
 FIREMUD_POSTGRES_HOST=postgres

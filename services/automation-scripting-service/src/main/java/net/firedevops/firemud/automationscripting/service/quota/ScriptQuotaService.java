@@ -9,5 +9,5 @@ public interface ScriptQuotaService {
    * @param scriptId script identifier
    * @return {@code true} if execution may proceed, {@code false} if the quota is exceeded
    */
-  boolean tryAcquire(Long tenantId, Long scriptId);
+  boolean tryAcquire(String tenantId, String scriptId);
 }

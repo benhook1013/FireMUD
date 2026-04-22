@@ -21,7 +21,7 @@ Use the following patterns to answer common operational questions:
   - Use `automation_script_skips_total{reason="priority_throttled"}` and compare `automation_script_triggers_total` broken out by `priorityTag` to confirm that background work is yielding capacity to high-priority scripts as configured.
 
 - **"Are reloads or version issues causing skips?"**
-  - Inspect `automation_script_triggers_total{outcome="skipped_reloading"}`, `automation_script_triggers_total{outcome="skipped_rollback_pause"}`, and `automation_script_triggers_dropped_total{reason="version_unavailable"}` (paired with `script_event_audit.finalStage=ADMISSION` and `finalOutcome=skipped_reloading` / `skipped_rollback_pause` / `version_unavailable`) to distinguish reload pauses, rollback pauses, and missing or failed script versions.
+  - Inspect `automation_script_triggers_total{outcome="skipped_reloading"}`, `automation_script_triggers_total{outcome="skipped_rollback_pause"}`, and `automation_script_triggers_dropped_total{reason="version_unavailable"}`. Pair these with event-scope ingress audit records for pre-resolution denials and with `script_event_audit.finalStage=ADMISSION` for handler-scoped denials to distinguish reload pauses, rollback pauses, and missing or failed script versions.
   - For stale control-plane pin visibility, inspect admissions with `finalOutcome=pin_state_unavailable` and corresponding drop metrics keyed by the bounded `finalReason`.
 
 ### Tuning Playbook: Misbehaving Scripts
@@ -145,7 +145,7 @@ At a minimum, rollback consists of:
    - Game Session must reject any queued tick commands whose embedded `scriptPatchVersion` does not match the instance’s currently pinned version, and record the rejection so operators can diagnose rollback impact.
 4. **Resume in order**
    - Return Automation & Scripting admission to normal only after cancel/purge completes and rollback draining confirms that pre-pause executions and cancelable outbox work for the current rollback-scope `admissionEpoch` have quiesced, then resume ticks.
-   - If an old-epoch execution reaches persist or handoff checks after rollback pause has advanced the scope `admissionEpoch`, it must fail as a non-success canceled outcome rather than creating new live work. Operators should expect to see these rows in `script_event_audit` during rollback convergence and draining.
+   - If an old-epoch execution reaches persist or handoff checks after rollback pause has advanced the scope `admissionEpoch`, it must fail as `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced` rather than creating new live work. Operators should expect to see these rows in `script_event_audit` during rollback convergence and draining.
 
 Rollback orchestration should be modeled as a durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `ROLLBACK_CONVERGENCE_TIMEOUT`) keyed by `controlPlaneRequestId` so partial failures can be resumed deterministically.
 

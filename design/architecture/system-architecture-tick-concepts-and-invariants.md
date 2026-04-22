@@ -44,7 +44,7 @@ The tick system adopts the same **coordination timeline** concept as the Redis a
   - They belong to the current `region_epoch`.
   - They carry eligibility/order metadata that later maps selected work into a specific `(region_epoch, tickId)` when the tick batch is formed.
   - Reset/replay tooling must therefore distinguish “epoch-scoped source state” from “tick-scoped staged state” rather than treating every region key as already owned by one committed or in-flight tick.
-- Tenant-scoped coordination such as gameplay session keys (`session:game:<tenantId>:<gameInstanceId>:<sessionId>`) live on Coordination Redis but are **not** bound to a single region epoch; they follow the authentication/reconnection contracts and reset behavior described in the Redis hub and usage/profile docs rather than the per-region epoch model.
+- Tenant-scoped coordination such as gameplay session keys (`session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`) live on Coordination Redis but are **not** bound to a single region epoch; they follow the authentication/reconnection contracts and reset behavior described in the Redis hub and usage/profile docs rather than the per-region epoch model.
 - When a scoped coordination reset occurs (or a topology/maintenance operation explicitly severs the old region timeline), the tick control plane bumps `region_epoch` and ensures that subsequent tick work for that `<tenantId, regionId>` is scheduled only on the new timeline; survivors from older epochs in region-scoped Redis keys are treated as stale and either ignored or explicitly reconciled via the tick effect ledger and reset tooling.
 
 The main tick document contains the detailed rules and Redis key shapes behind each of these points.
@@ -249,7 +249,8 @@ Two additional behaviors complete the mental model:
   - World-wide or multi-region events are implemented by Game Session injecting commands into each affected region and forcing a tick there.
   - This ensures the effect is applied even if a region would otherwise be idle; the work still runs under that region’s normal lease, locks, and fairness rules.
 - **Idle regions still advance time via lightweight ticks**:
-  - Regions continue to run a lightweight “background tick” (for example, roughly once per second) even when no players are present.
-  - Timers, cooldowns, and delayed events therefore continue to progress in idle areas, using the same bounded per-tick work limits described above.
+  - Idle/background behavior does not create a second slower canonical tick cadence inside the same live `region_epoch`.
+  - Regions continue to use the configured `tick_interval_ms` timeline for timer ordering and `tickId` advancement; “background” means reduced work and wake-up pressure when there are no due commands or timers, not a different epoch-local clock.
+  - Any true cadence change for an idle region still requires the same explicit epoch bump and timer re-derivation rules described above.
 
 The underlying Redis key layout and shard-locality rules for these behaviors are documented in the Redis architecture; this section captures the conceptual guarantees for designers and implementers.

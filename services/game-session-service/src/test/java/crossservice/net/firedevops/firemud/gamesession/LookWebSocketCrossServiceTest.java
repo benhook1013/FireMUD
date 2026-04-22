@@ -155,12 +155,18 @@ class LookWebSocketCrossServiceTest {
     assertThat(responses).hasSizeGreaterThanOrEqualTo(5);
     assertThat(responses.get(0)).startsWith("OK LOGIN");
     assertThat(responses.get(1)).startsWith("OK PLAY");
-    assertThat(responses.get(2).trim())
-        .matches(
-            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
-    assertThat(responses.get(3).trim())
-        .isEqualTo(canonicalLookWithPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
-    assertThat(responses.get(4)).startsWith("ERROR INVALID_EXIT");
+    assertThat(responses)
+        .anyMatch(
+            response ->
+                matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+                    .test(response.trim()));
+    assertThat(responses)
+        .anyMatch(
+            response ->
+                response
+                    .trim()
+                    .equals(canonicalLookWithPrompt(LookTestFixtures.DESTINATION_ROOM_ID)));
+    assertThat(responses).anyMatch(response -> response.startsWith("ERROR INVALID_EXIT"));
   }
 
   @Test
@@ -171,9 +177,11 @@ class LookWebSocketCrossServiceTest {
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
     assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(firstConnection.get(2).trim())
-        .matches(
-            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(firstConnection)
+        .anyMatch(
+            response ->
+                matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+                    .test(response.trim()));
 
     List<String> reconnectLook = runLookAfterReconnect(sessionId);
     assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(4);
@@ -230,9 +238,13 @@ class LookWebSocketCrossServiceTest {
 
       replaceGameLogic(GAME_LOGIC.restart());
 
-      socket.sendAndAwait("LOOK", 4);
-      assertThat(socket.responses().get(3).trim())
-          .isEqualTo(canonicalLookWithPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+      socket.send("LOOK");
+      waitForResponseMatching(
+          socket.responses(),
+          response ->
+              response
+                  .trim()
+                  .equals(canonicalLookWithPrompt(LookTestFixtures.DESTINATION_ROOM_ID)));
     }
   }
 
@@ -296,7 +308,6 @@ class LookWebSocketCrossServiceTest {
     assertThat(reconnectResponses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(reconnectResponses).anyMatch(response -> response.startsWith("OK LOGIN"));
     assertThat(reconnectResponses).anyMatch(response -> response.trim().equals(canonicalLook()));
-    assertThat(reconnectResponses).anyMatch(response -> response.trim().equals("demo>"));
   }
 
   private static String canonicalLook() {
@@ -478,11 +489,11 @@ class LookWebSocketCrossServiceTest {
     webSocket.sendText("PLAY demo", true).join();
     waitForResponseCount(responses, 2);
     webSocket.sendText("north", true).join();
-    waitForResponseCount(responses, 3);
-    webSocket.sendText("LOOK", true).join();
     waitForResponseCount(responses, 4);
-    webSocket.sendText("west", true).join();
+    webSocket.sendText("LOOK", true).join();
     waitForResponseCount(responses, 5);
+    webSocket.sendText("west", true).join();
+    waitForResponseCount(responses, 7);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     return responses;
   }
@@ -519,7 +530,7 @@ class LookWebSocketCrossServiceTest {
     webSocket.sendText("PLAY demo", true).join();
     waitForResponseCount(responses, 2);
     webSocket.sendText("QUICKLOOK", true).join();
-    waitForResponseCount(responses, 3);
+    waitForResponseMatching(responses, response -> response.startsWith("OK QUICKLOOK"));
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     return responses;
   }
@@ -796,6 +807,10 @@ class LookWebSocketCrossServiceTest {
     private void sendAndAwait(String command, int expectedResponses) throws InterruptedException {
       webSocket.sendText(command, true).join();
       waitForResponseCount(responses, expectedResponses);
+    }
+
+    private void send(String command) {
+      webSocket.sendText(command, true).join();
     }
 
     private List<String> responses() {

@@ -4,6 +4,7 @@ import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
+import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import org.springframework.util.StringUtils;
 
 /** Utilities for resolving and forwarding durable container identities. */
@@ -64,6 +65,15 @@ public final class ContainerIdentitySupport {
         || matchesReference(compactReference(entity), reference);
   }
 
+  public static boolean matchesReference(RoomGroundInventoryItem item, String reference) {
+    return matchesReference(item.getItemId(), reference)
+        || matchesReference(item.getItemName(), reference)
+        || matchesReference(item.getItemInstanceId(), reference)
+        || matchesReference(item.getVisibleRef(), reference)
+        || matchesReference(resolveContainerInstanceId(item), reference)
+        || matchesReference(compactReference(item), reference);
+  }
+
   public static String compactReference(InventoryItem item) {
     return item.getVisibleRef();
   }
@@ -74,6 +84,10 @@ public final class ContainerIdentitySupport {
 
   public static String compactReference(RoomEntity entity) {
     return entity.getVisibleRef();
+  }
+
+  public static String compactReference(RoomGroundInventoryItem item) {
+    return item.getVisibleRef();
   }
 
   public static String compactReference(ContainerItem item) {
@@ -104,6 +118,10 @@ public final class ContainerIdentitySupport {
     return StringUtils.hasText(extractContainerInstanceId(entity))
         ? extractContainerInstanceId(entity)
         : parseItemId(entity.getEntityId());
+  }
+
+  public static String resolveContainerInstanceId(RoomGroundInventoryItem item) {
+    return resolveContainerInstanceId(item.getContainerInstanceId(), item.getItemId());
   }
 
   private static String extractContainerInstanceId(RoomEntity entity) {

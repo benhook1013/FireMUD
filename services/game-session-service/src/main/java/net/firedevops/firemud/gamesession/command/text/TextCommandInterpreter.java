@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -43,7 +45,8 @@ public class TextCommandInterpreter {
       WorldsCommandHandler worldsHandler,
       PromptComposer promptComposer,
       TextCommandRegistry registry,
-      TextCommandParser parser) {
+      TextCommandParser parser,
+      MeterRegistry meterRegistry) {
     this(
         sessionAuthenticationService,
         promptComposer,
@@ -61,7 +64,8 @@ public class TextCommandInterpreter {
             whoHandler,
             friendsHandler,
             authoredActionHandler,
-            new ItemCommandHandler(inventoryHandler, equipmentHandler, containerHandler),
+            new ItemCommandHandler(
+                inventoryHandler, equipmentHandler, containerHandler, meterRegistry),
             communicationHandler,
             worldsHandler));
   }
@@ -107,7 +111,8 @@ public class TextCommandInterpreter {
         worldsHandler,
         promptComposer,
         registry,
-        parser);
+        parser,
+        new SimpleMeterRegistry());
   }
 
   TextCommandInterpreter(
@@ -189,7 +194,8 @@ public class TextCommandInterpreter {
             whoHandler,
             friendsHandler,
             authoredActionHandler,
-            new ItemCommandHandler(inventoryHandler, equipmentHandler, containerHandler),
+            new ItemCommandHandler(
+                inventoryHandler, equipmentHandler, containerHandler, new SimpleMeterRegistry()),
             communicationHandler,
             worldsHandler));
   }
@@ -369,14 +375,14 @@ public class TextCommandInterpreter {
             new EnqueueOnlyTextCommandDispatchHandler(commandService),
             new WorldsTextCommandDispatchHandler(worldsHandler),
             new SessionTextCommandDispatchHandler(loginHandler, logoutHandler, playHandler),
-            new ActivityTextCommandDispatchHandler(afkHandler),
+            new ActivityTextCommandDispatchHandler(commandService),
             new HelpTextCommandDispatchHandler(helpHandler),
             new WhoTextCommandDispatchHandler(whoHandler),
             new FriendsTextCommandDispatchHandler(friendsHandler),
             new AuthoredActionTextCommandDispatchHandler(authoredActionHandler),
-            new ItemTextCommandDispatchHandler(itemHandler),
-            new CommunicationTextCommandDispatchHandler(communicationHandler),
-            new MoveTextCommandDispatchHandler(moveHandler),
+            new ItemTextCommandDispatchHandler(commandService, itemHandler),
+            new CommunicationTextCommandDispatchHandler(commandService),
+            new MoveTextCommandDispatchHandler(commandService),
             new LookTextCommandDispatchHandler(commandService, lookHandler)));
   }
 }

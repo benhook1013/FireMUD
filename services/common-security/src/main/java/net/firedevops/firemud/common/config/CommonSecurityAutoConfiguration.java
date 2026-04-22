@@ -8,7 +8,9 @@ import java.util.Arrays;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.GrpcAuthProperties;
 import net.firedevops.firemud.common.security.GrpcClientAuth;
 import net.firedevops.firemud.common.security.HttpAuthProperties;
@@ -17,6 +19,7 @@ import net.firedevops.firemud.common.security.JwtSecretWatcher;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.ReloadableJwtUtil;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -90,13 +93,23 @@ public class CommonSecurityAutoConfiguration {
   @Bean
   @ConditionalOnBean(name = "jwtUtil")
   @ConditionalOnMissingBean(BlockingGrpcStubCustomizer.class)
-  BlockingGrpcStubCustomizer blockingGrpcStubCustomizer(@Qualifier("jwtUtil") JwtUtil jwtUtil) {
+  BlockingGrpcStubCustomizer blockingGrpcStubCustomizer(
+      @Qualifier("jwtUtil") JwtUtil jwtUtil,
+      ObjectProvider<RuntimeIdentity> runtimeIdentityProvider) {
     return new BlockingGrpcStubCustomizer() {
       @Override
       public <T extends AbstractStub<T>> T customize(T stub) {
-        return GrpcClientAuth.attach(stub, jwtUtil);
+        return GrpcClientAuth.attach(stub, jwtUtil, runtimeIdentityProvider.getIfAvailable());
       }
     };
+  }
+
+  @Bean
+  @ConditionalOnBean(name = "jwtUtil")
+  @ConditionalOnMissingBean(GameplaySessionAttestationService.class)
+  GameplaySessionAttestationService gameplaySessionAttestationService(
+      @Qualifier("jwtUtil") JwtUtil jwtUtil) {
+    return new GameplaySessionAttestationService(jwtUtil);
   }
 
   @Bean
@@ -118,12 +131,22 @@ public class CommonSecurityAutoConfiguration {
     if (secret != null && !secret.isBlank()) {
       return secret;
     }
+    String secretPath = props.getJwtSecretPath();
+    if (secretPath != null && !secretPath.isBlank()) {
+      try {
+        return Files.readString(Path.of(secretPath)).trim();
+      } catch (IOException ex) {
+        throw new IllegalStateException(
+            "firemud.auth.jwt-secret-path could not be read: " + secretPath, ex);
+      }
+    }
     boolean devLike =
         Arrays.stream(environment.getActiveProfiles())
             .map(String::toLowerCase)
             .anyMatch(profile -> profile.equals("dev") || profile.equals("test"));
     if (!devLike) {
-      throw new IllegalStateException("firemud.auth.jwt-secret must be set");
+      throw new IllegalStateException(
+          "firemud.auth.jwt-secret or firemud.auth.jwt-secret-path must be set");
     }
     String generated =
         UUID.randomUUID().toString().replace("-", "")

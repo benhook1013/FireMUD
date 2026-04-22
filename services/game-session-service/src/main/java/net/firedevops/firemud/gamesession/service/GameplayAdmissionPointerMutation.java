@@ -14,4 +14,5 @@ public record GameplayAdmissionPointerMutation(
     String actorPrincipal,
     String reason,
     String controlPlaneRequestId,
-    Long expectedPointerVersion) {}
+    Long expectedPointerVersion,
+    String preparedVersionUpgradeId) {}

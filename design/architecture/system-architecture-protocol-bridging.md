@@ -122,7 +122,7 @@ Telnet clients receive final disconnect messages from the TCP Proxy Service when
 
 The authoritative cross-layer translation table and precedence rules for WebSocket and Telnet close outcomes live in [Gateway Architecture](./system-architecture-gateway.md#canonical-close-translation-matrix). This document defines the Telnet taxonomy and must remain consistent with that table.
 
-The exact Telnet disconnect line format is defined in the TCP Proxy Service design, but every player-visible disconnect must include one of these reason tokens so that:
+The exact Telnet disconnect line format is defined in the TCP Proxy Service design as `DISCONNECT <reason-token> <human-message>\n`. Every player-visible disconnect must include one of these reason tokens so that:
 
 - Client authors can treat `policy_violation` as non-retriable (or much longer backoff) and the others as retriable with the backoff rules in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour), except when wire-visible disconnect metadata explicitly indicates edge backpressure (for example WebSocket `1008/policy_violation;subreason=edge_backpressure` or Telnet `policy_violation;subreason=edge_backpressure`), which should follow retriable backend-pressure policy. If this metadata is absent, default to non-retriable `policy_violation`.
 - Operators can aggregate disconnect metrics by reason category in a way that lines up with WebSocket close-code dashboards.
@@ -253,7 +253,7 @@ whose path contains `/ws/game/**` (or the configured alias) so Telnet and WebSoc
 `GATEWAY_WS_URL` must match a name present in the Gateway certificate’s SANs; pointing it at a bare IP or an unrelated hostname causes TLS validation to fail on the TCP
 Proxy side and increments `tcpproxy.gateway.handshake.failures{reason="cert_validation"}`. For mTLS certificate loading and watcher details, see the TCP Proxy Service design’s WebSocket mTLS section.
 
-Dev-only diagnostic routes (for example `/dev/echo`) may exist to support isolated local testing, but they are not valid targets for staging/production. Player-facing environments must always bridge to the gameplay entry point so the gateway’s standard filters, metrics, and downstream routing apply consistently for Telnet and native WebSocket clients.
+Player-facing and local-development environments must bridge to the gameplay entry point so the gateway’s standard filters, metrics, and downstream routing apply consistently for Telnet and native WebSocket clients.
 
 ### TCP Flow Benefits
 

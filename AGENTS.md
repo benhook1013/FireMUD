@@ -10,11 +10,15 @@ Use this file as the canonical AI instruction source for this repository.
 - For code changes, run `./gradlew spotlessApply` before commit so formatting is normalized locally rather than relying on `check` or CI to catch drift.
 - For code changes, run `./gradlew check` before hand-off.
 - After `spotlessApply`, run the relevant `spotlessCheck` or `spotlessJavaCheck` task for touched services when formatting-sensitive files changed.
+- For service code changes, prefer the same validation path CI uses for that service: run `./gradlew :<service>:check -PfullCheck`, not only narrower tasks such as `test` or `spotlessCheck`.
+- If CI has already exposed more than one issue in the same area, stop relying on incremental remote feedback loops and run the fuller local proof before the next push. At minimum, rerun the touched service `:check -PfullCheck`; for runtime/bootstrap/smoke-related changes, also run the canonical Docker-inclusive smoke proof.
 - For markdown or design-document changes (especially under `design/`), run `./gradlew linkCheck lintMarkdown` before hand-off.
 - Treat `./gradlew linkCheck lintMarkdown` as mandatory hygiene when editing files: if these checks fail, fix the reported issues before hand-off even when the failures were pre-existing and not introduced by your change.
 - When fixing smoke-specific failures, do not rely only on targeted tests. Run the canonical local smoke proof for the path you changed:
   - source-built stack: `dev-tools/verify-fresh-bootstrap.sh` or `dev-tools/verify-restart-state.sh`
   - image-tag smoke: `SMOKE_IMAGE_TAG=<tag> dev-tools/verify-smoke-images.sh`
+- When multiple CI failures suggest the branch may no longer be locally well mirrored, run the broad local proof before continuing to push: `./gradlew check` plus the appropriate canonical Docker smoke script for the affected path.
+- When a change affects service runtime behavior, startup, auth, wiring, migrations, or packaged application artifacts, make sure the local proof actually rebuilds and boots fresh images before pushing. Do not rely on stale local containers or previously built images and let remote CI discover the missing rebuild.
 
 ## Execution Style
 
@@ -28,6 +32,7 @@ Use this file as the canonical AI instruction source for this repository.
 - Expect dirty worktrees with unrelated edits from parallel AI or human sessions.
 - Continue working in scope; do not stop only because unrelated files are modified.
 - Do not run workspace cleanup commands that modify the Git working tree or index (for example `git restore`, `git checkout`, `git reset`, `git clean`, `git stash`) unless a human explicitly asks for that exact action.
+- Do not delete untracked files just because they appear temporary, fail a linter, or were created by a prior AI session. If an untracked file is not unquestionably disposable and in scope for the current task, leave it in place and ask a human before removing it.
 - Never revert, clean up, or reformat unrelated files.
 - If a target file is already modified, edit in place and preserve in-progress changes.
 - If overlapping edits make intent unclear or risky, ask a human before proceeding.

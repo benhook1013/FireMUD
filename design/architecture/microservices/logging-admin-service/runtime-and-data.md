@@ -56,7 +56,7 @@ Logging & Admin does not write to Redis directly and does not define a competing
 - `log_events` stores log data and is mirrored into Elasticsearch indexes for search.
 - `moderation_actions` records bans and warnings with timestamps and includes a `tenant_id` column.
 - `player_reports` stores abuse and bug reports with a `tenant_id` column.
-- `feature_flag` mirrors active runtime settings for auditing and stores the `tenant_id` of the owning game.
+- Runtime feature-flag truth is owned by Game Session. Logging & Admin records operator intent and audit context for feature-flag requests, then forwards the mutation to Game Session rather than maintaining a competing `feature_flag` runtime table.
 
 ## Moderation Workflow
 

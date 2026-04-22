@@ -119,13 +119,20 @@ Use this when testing the browser/first-party route rather than plain text only.
 
 ## 6. Inventory, Containers, Equipment, And Stack Handling
 
-- Inspect current inventory and confirm the presentation is readable and stable.
-- Pick up, drop, put, and take items if the environment supports it.
+- After `PLAY`, run `INV HERE` and confirm any room-ground items are shown in a management-oriented list with stable selectors.
+- Pick up a visible room-ground item with `GET <item>`, then run `INVENTORY` and confirm the item appears as carried.
+- If a nearby room-ground container is available, run `CONTAINER <container>` and confirm its contents are shown without leaking those contents into ordinary room prose.
+- Put the carried item into that container with `PUT <item> INTO <container>`, then confirm the refreshed container view shows the moved item.
+- Take the item back out with `TAKE <item> FROM <container>`, then confirm the refreshed container view and carried inventory both reflect the reversal cleanly.
+- Drop the carried item with `DROP <item>`, then run `INV HERE` again and confirm the item moved back to the room-ground list.
+- Inspect current inventory and confirm the presentation is readable and stable, including selectors where exact targeting is needed.
 - Confirm container behavior is coherent:
   - moving items into containers works;
   - taking them back out works;
+  - nearby room-ground containers are reachable without first picking the container up when that is the intended product behavior;
   - room/inventory/container location changes are obvious.
-- If equipment is available, wear/remove items and confirm the result is visible and believable.
+- If equipment is available, run `EQUIPMENT`, `WEAR <item>`, `EQUIPMENT`, `REMOVE <slot-or-item>`, and `EQUIPMENT` again. Confirm the item appears in the equipment view only while equipped.
+- Try one intentionally invalid equipment action if available, such as wearing an item incompatible with the character body layout, and confirm the error is explicit rather than a silent no-op.
 - If duplicate or stackable items are available, verify:
   - normal unambiguous stack operations work naturally;
   - ambiguous stack operations fail with an explicit selector requirement;

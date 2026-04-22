@@ -34,6 +34,8 @@ This document covers:
 
 This document does not define the designer-facing DSL, sandbox internals, per-trigger runtime semantics, or workflow sequencing (see the scripting DSL reference, sandbox runtime docs, and Control Plane Operations).
 
+The canonical event-registry entry model referenced by ingress APIs lives in `design/architecture/system-architecture-scripting-event-registry.md`.
+
 Compact publication-to-runtime sequence:
 
 | Flow | Design-time acceptance owner | Runtime readiness / eligibility | Runtime activation owner |
@@ -117,10 +119,13 @@ Inputs:
 Outputs:
 
 - `tenantId`, `pluginId`, `pluginVersionId`
-- `designStatus` (`UPLOADED`, `SIGNATURE_VERIFIED`, `VALIDATION_FAILED_DESIGN`, `PUBLISHED`, `REVOKED_DESIGN`)
+- `designStatus` (`DRAFT`, `UPLOAD_REJECTED`, `SIGNATURE_VERIFIED`, `VALIDATION_FAILED_DESIGN`, `PUBLISHED`, `SUPERSEDED`, `REVOKED_DESIGN`)
 - `baseVersionId`
 - `abilitySchemaDigest`
+- `bundleDigest`
 - `signerKeyId`
+- `distributionManifestHash` (nullable; required when the signed plugin manifest declares runtime-consumable `assetRefs[]`)
+- `distributionManifestPath` (nullable; required when the signed plugin manifest declares runtime-consumable `assetRefs[]`)
 - `publishedAt` (nullable; required when `designStatus=PUBLISHED`)
 - `statusReason` (optional; required for deterministic design-time failures or revocation)
 
@@ -129,6 +134,7 @@ Contract rules:
 - `designStatus=PUBLISHED` means the immutable plugin bundle is signed, validated, and eligible for runtime activation. It does not imply that any instance has activated it.
 - Runtime activation and drain/disable state remain the responsibility of Automation & Scripting via `GetPluginStatus`; callers must not infer `ENABLED` or `DISABLED` from Game Design publication state.
 - A plugin version that is not `PUBLISHED` must be rejected by runtime activation APIs with deterministic application errors rather than being partially loaded and then downgraded later.
+- `distributionManifestHash` and `distributionManifestPath` describe the plugin-version-scoped asset distribution manifest owned by Game Design. They must not point into or mutate the base version's `published_release_bundle`.
 
 ### Game Session: Patch Pinning
 
@@ -196,6 +202,8 @@ Outputs: same as `SetPinnedScriptPatchVersion`.
 
 #### `GetScriptPatchStatus`
 
+Implementation note: the current Automation & Scripting API exposes the runtime-readiness subset of this contract from durable `script_work_items`: `status`, `statusReason`, and `lastChangedAt`. The richer design-time compatibility fields such as `baseVersionId`, `abilitySchemaDigest`, and `supersededByScriptPatchVersion` remain target-state companion data from the publication/control-plane model rather than current response fields.
+
 Inputs:
 
 - `tenantId`
@@ -225,6 +233,50 @@ Inputs:
 Outputs:
 
 - A list of `GetScriptPatchStatus` records.
+
+#### `ListScriptDeadLetters`
+
+Implementation note: the current Automation & Scripting API exposes this read directly from durable `script_work_items` rows with `status=DEAD_LETTERED`. It is an operator inspection surface separate from the controlled replay mutation API.
+
+Inputs:
+
+- `tenantId`
+- Optional filters: `gameInstanceId`, `scriptPatchVersion`
+- `limit` (bounded by the service)
+
+Outputs:
+
+- Newest-first dead-letter entries containing `workItemId`, Trigger Identity fields, script/event identity, `status`, bounded failure/cancel reason, `createdAt`, and `updatedAt`.
+
+Boundary rule:
+
+- Operators use this read to decide whether a replay or manual remediation workflow is needed; replay itself remains a separate controlled operation so listing dead letters cannot accidentally mutate runtime state.
+
+#### `ReplayDeadLetteredWorkItems`
+
+Implementation note: the current Automation & Scripting implementation now exposes the first bounded replay mutation on top of durable `script_work_items`. Replay currently requeues eligible rows by setting `status=PENDING_EVALUATION`, clearing the terminal cancel reason, and recording `finalStage=REPLAY` plus `finalOutcome=requeued` on the handler-scoped audit row. Broader convergence and richer replay-policy signaling remain follow-up work.
+
+Inputs:
+
+- `tenantId`
+- Optional filters: `gameInstanceId`, `regionId`, `scriptPatchVersion`, `createdAfterMs`, `createdBeforeMs`
+- Optional explicit `workItemIds` (numeric durable work-item identifiers; when present, replay selection is limited to these rows)
+- `limit` (bounded by the service)
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Outputs:
+
+- `replayedCount`
+- `rejectedCount`
+
+Contract rules:
+
+- Replay is fail-closed per work item. A candidate row may be requeued only if the current Game Session runtime state still reports the same pinned `scriptPatchVersion` recorded on the dead-lettered work item.
+- When the original ingress audit identifies a plugin-backed handler, replay is additionally allowed only if the currently active plugin version for `(tenantId, gameInstanceId, pluginId)` still matches the ingress-audited `pluginVersionId`.
+- Rows that fail these checks remain `DEAD_LETTERED` and count toward `rejectedCount`; the operation does not partially mutate them into an intermediate state.
+- Replay does not bypass later admission or runtime checks. Requeued rows re-enter the normal evaluation pipeline and may dead-letter again if the underlying failure condition still exists.
 
 #### `GetScriptPatchInstanceRolloutStatus`
 
@@ -270,6 +322,8 @@ Plugins are controlled by operators via Logging & Admin, but the runtime registr
 
 #### `GetPluginStatus`
 
+Implementation note: the current Automation & Scripting implementation persists and serves the runtime registry for `(tenantId, gameInstanceId, pluginId)`, and `SetPluginActiveVersion` now consults the live Game Design `GetPublishedPluginVersion` read surface plus the shared Game Session runtime-state read for runtime version, launch descriptor, version/release identifiers, and script-patch pin metadata before mutating that registry. That means design-time publication eligibility and `baseVersionId` compatibility are now enforced in the live control-plane path. Signature-policy enforcement, richer component-policy gating, and `abilitySchemaDigest` comparison against the running instance remain follow-up work rather than already-proven runtime checks.
+
 Inputs:
 
 - `tenantId`
@@ -284,6 +338,8 @@ Outputs:
 - `pluginState` (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`)
 - `statusReason` (optional; required for security/policy-driven disablement such as `signer_revoked`)
 - `lastChangedAt`
+- `controlPlaneRequestId` (nullable; the last idempotent mutating request that changed this runtime row)
+- `actor` (nullable; the last operator/system principal recorded on the runtime row)
 
 Boundary rule:
 
@@ -310,6 +366,7 @@ Semantics:
   - `plugin.baseVersionId` must equal the instance `runtimeVersionId`.
   - `plugin.abilitySchemaDigest` must match the immutable digest recorded for the same base version used by the running instance.
   - Any mismatch fails deterministically with an application error (for example `PLUGIN_BASE_VERSION_MISMATCH` or `PLUGIN_ABILITY_SCHEMA_MISMATCH`) and must not mutate active plugin state.
+- Current implementation note: the live control-plane path now enforces `PUBLISHED` design-time state and `plugin.baseVersionId == runtimeVersionId` before updating the runtime registry. The `abilitySchemaDigest` comparison and the richer signer/component-policy gates remain target-state follow-through.
 - On success, updates the registry for `(tenantId, gameInstanceId, pluginId)`, reconciles any durable plugin-owned schedules/timers so the displaced `pluginVersionId` cannot keep minting new triggers, and emits `PluginVersionActivated` (or `PluginVersionDisabled` as appropriate if this operation also transitions state).
 
 Outputs:
@@ -371,10 +428,8 @@ Required enum values:
 - `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK_PAUSE`
 - `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE`
 - `TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE`
-- `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED`
-- `TRIGGER_ADMISSION_OUTCOME_SCRIPT_DISABLED`
-- `TRIGGER_ADMISSION_OUTCOME_PLUGIN_DISABLED`
-- `TRIGGER_ADMISSION_OUTCOME_PLUGIN_COMPONENT_BLOCKED`
+- `TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED`
+- `TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED`
 - `TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE`
 
 Contract rules:
@@ -382,7 +437,9 @@ Contract rules:
 - Backpressure outcomes (`*_BACKPRESSURE_*`) must include bounded `retryAfterMs`.
 - `admissionOutcome` and `admissionReason` describe the **event-scope ingress decision** only. They must not be interpreted as a summary of all handler-scoped outcomes created after binding resolution.
 - Event-scope `admissionOutcome` and `admissionReason` must map directly to the ingress-time admission result recorded in ingress audit/logging surfaces for that request; they are not the same thing as later handler-scoped `finalOutcome` values recorded in `script_event_audit`.
+- Handler-scoped denials such as `quota_denied`, `script_disabled`, `plugin_disabled`, and `plugin_component_blocked` remain handler/audit outcomes after binding resolution. They are not valid event-scope ingress `admissionOutcome` values in the general fan-out contract.
 - Admission failures are application-level outcomes and must not be surfaced as transport errors.
+- Current ingress enforces `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` before durable work-item persistence and rejects oversized payloads with `TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED` / `work_item_size_exceeded`.
 - For events that fan out to multiple handlers:
   - `admitted=true` means the request passed ingress-time fences and was accepted for handler resolution.
   - Per-handler Trigger Identities and outcomes are recorded asynchronously in `script_event_audit` (one row per resolved handler).

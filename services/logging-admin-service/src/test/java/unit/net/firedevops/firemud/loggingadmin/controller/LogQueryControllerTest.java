@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.QueryLogsRequest;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
+import net.firedevops.firemud.test.WithFiremudPrivilegedHttpAuthTestProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,7 +22,6 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
@@ -29,13 +29,7 @@ import tools.jackson.databind.ObjectMapper;
 @WebMvcTest(LogQueryController.class)
 @AutoConfigureMockMvc(addFilters = false)
 @Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
-@TestPropertySource(
-    properties = {
-      "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000",
-      "firemud.auth.http.enabled=true",
-      "firemud.auth.http.role-requirement=PRIVILEGED"
-    })
+@WithFiremudPrivilegedHttpAuthTestProperties
 class LogQueryControllerTest {
 
   @Autowired private MockMvc mockMvc;
@@ -69,7 +63,7 @@ class LogQueryControllerTest {
   void queryRejectsCrossTenantScopedAdmin() throws Exception {
     QueryLogsRequest request = new QueryLogsRequest(1L, "msg");
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("admin"))));
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(

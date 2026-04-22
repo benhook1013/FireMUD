@@ -25,6 +25,30 @@ stringData:
 apiVersion: v1
 kind: Secret
 metadata:
+  name: jwt-signing-keys
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+type: Opaque
+stringData:
+  current.key: {{ .Values.previewStack.jwt.signingKey | quote }}
+---
+apiVersion: v1
+kind: {{ default "ConfigMap" .Values.previewStack.jwt.jwksResourceKind }}
+metadata:
+  name: jwt-jwks
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+{{- if eq (default "ConfigMap" .Values.previewStack.jwt.jwksResourceKind) "Secret" }}
+type: Opaque
+stringData:
+{{- else }}
+data:
+{{- end }}
+  jwks.json: {{ .Values.previewStack.jwt.jwksJson | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
   name: minio-credentials
   labels:
 {{ include "firemud.commonLabels" . | indent 4 }}

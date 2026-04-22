@@ -1,6 +1,5 @@
 package net.firedevops.firemud.worldmanagement.client;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
 import javax.net.ssl.SSLException;
@@ -12,6 +11,8 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
@@ -20,9 +21,6 @@ import org.springframework.stereotype.Component;
 
 /** gRPC client for communicating with the Game Design Service. */
 @Component
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected configuration and channel references are not exposed")
 public class GameDesignClient
     extends AbstractReloadingBlockingGrpcClient<
         GameDesignServiceGrpc.GameDesignServiceBlockingStub> {
@@ -80,5 +78,15 @@ public class GameDesignClient
             .setVersionId(versionId)
             .build();
     return stub().getVersionState(request);
+  }
+
+  public GetVersionAssetArtifactStateResponse getVersionAssetArtifactState(
+      long tenantId, long versionId) {
+    GetVersionAssetArtifactStateRequest request =
+        GetVersionAssetArtifactStateRequest.newBuilder()
+            .setTenantId(String.valueOf(tenantId))
+            .setVersionId(versionId)
+            .build();
+    return stub().getVersionAssetArtifactState(request);
   }
 }

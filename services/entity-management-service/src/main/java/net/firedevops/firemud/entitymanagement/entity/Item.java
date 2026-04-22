@@ -14,6 +14,9 @@ public class Item {
   @Column(nullable = false)
   private Long tenantId;
 
+  @Column(nullable = false)
+  private Long versionId = 1L;
+
   @Column(nullable = false, length = 100)
   private String name;
 
@@ -22,6 +25,9 @@ public class Item {
 
   @Column(name = "equipment_slot", length = 32)
   private String equipmentSlot;
+
+  @Column(name = "equipment_slot_group_key", length = 64)
+  private String equipmentSlotGroupKey;
 
   @Column(name = "is_container", nullable = false)
   private boolean container;
@@ -34,8 +40,8 @@ public class Item {
   private ItemStackCompatibilityMode stackCompatibilityMode =
       ItemStackCompatibilityMode.DEFINITION_ONLY;
 
-  @Column(name = "default_stack_family_key", length = 128)
-  private String defaultStackFamilyKey;
+  @Column(name = "stack_variant_key", length = 128)
+  private String stackVariantKey;
 
   @Version private int version;
 }

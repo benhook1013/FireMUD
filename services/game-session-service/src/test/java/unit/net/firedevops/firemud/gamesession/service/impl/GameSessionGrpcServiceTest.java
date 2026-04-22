@@ -285,7 +285,7 @@ class GameSessionGrpcServiceTest {
     Mockito.when(ipLimiter.canAccept("127.0.0.1", null)).thenReturn(true);
     Mockito.when(ipLimiter.tryRegister(Mockito.anyString(), Mockito.anyLong())).thenReturn(true);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of("1", List.of("admin")));
+    SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
     Mockito.when(
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
@@ -429,7 +429,7 @@ class GameSessionGrpcServiceTest {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
-    SessionContext.setContext("42", List.of(), Map.of("1", List.of("admin")));
+    SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
     Mockito.when(
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
@@ -488,7 +488,7 @@ class GameSessionGrpcServiceTest {
     Mockito.when(ipLimiter.canAccept("1.2.3.4", null)).thenReturn(true);
     Mockito.when(ipLimiter.tryRegister("1.2.3.4", 1L)).thenReturn(false);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of("1", List.of("admin")));
+    SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
     Mockito.when(
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
@@ -555,7 +555,7 @@ class GameSessionGrpcServiceTest {
         .thenReturn(java.util.Optional.of(existing));
     Mockito.when(ipLimiter.canAccept("1.2.3.4", 77L)).thenReturn(false);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of("1", List.of("admin")));
+    SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
         new GameSessionGrpcService(
             pingService,
@@ -628,7 +628,7 @@ class GameSessionGrpcServiceTest {
             new GameInstanceDto(
                 88L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of("1", List.of("admin")));
+    SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
         new GameSessionGrpcService(
             pingService,
@@ -702,7 +702,7 @@ class GameSessionGrpcServiceTest {
         .when(gameInstanceService)
         .stopSession(77L);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of("1", List.of("admin")));
+    SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
         new GameSessionGrpcService(
             pingService,
@@ -772,7 +772,7 @@ class GameSessionGrpcServiceTest {
             new GameInstanceDto(
                 88L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of("1", List.of("admin")));
+    SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
         new GameSessionGrpcService(
             pingService,
@@ -824,7 +824,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of("1", List.of("admin")));
+    SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
     Mockito.when(
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
@@ -885,7 +885,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of("9", List.of("admin")));
+    SessionContext.setContext("42", List.of(), Map.of("9", List.of("tenantAdmin")));
     Mockito.doThrow(new IllegalStateException("Failed to stop session"))
         .when(gameInstanceService)
         .stopSession(7L);
@@ -940,7 +940,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of("9", List.of("admin")));
+    SessionContext.setContext("42", List.of(), Map.of("9", List.of("tenantAdmin")));
     Mockito.when(gameInstanceService.restartSession(7L))
         .thenThrow(new IllegalStateException("Failed to restart session"));
     GameSessionGrpcService service =
@@ -1113,7 +1113,7 @@ class GameSessionGrpcServiceTest {
     instance.setRuntimeVersion("v1");
     instance.setStatus("RUNNING");
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(java.util.Optional.of(instance));
-    SessionContext.setContext("42", List.of(), Map.of("9", List.of("admin")));
+    SessionContext.setContext("42", List.of(), Map.of("9", List.of("tenantAdmin")));
     Mockito.when(tickService.queryState(7L)).thenThrow(new IllegalStateException("boom"));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
@@ -1157,7 +1157,7 @@ class GameSessionGrpcServiceTest {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
-    SessionContext.setContext("42", List.of(), Map.of("9", List.of("admin")));
+    SessionContext.setContext("42", List.of(), Map.of("9", List.of("tenantAdmin")));
     Mockito.doThrow(new IllegalStateException("boom"))
         .when(featureFlagService)
         .toggleFlag(
@@ -1308,7 +1308,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("99", List.of(), Map.of("1", List.of("admin")));
+    SessionContext.setContext("99", List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
         new GameSessionGrpcService(
             pingService,

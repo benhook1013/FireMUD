@@ -23,6 +23,8 @@ World creation consumes a previously resolved immutable launch descriptor for th
 - any approved `remapSetId`
 - resolved runtime flags/defaults needed by downstream services
 
+For replacement-instance launches, World Management now persists the frozen `remapSetId` on `world_instance` so later cutover/termination consumers can prove they are still operating on the same approved cross-version remap identity that launch resolution selected.
+
 The implementation uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and materialize instance-scoped population schedules for expansive worlds. Activation-time topology must be derived only from the attested published template graph plus runtime generation runs whose canonical inputs are covered by the same published `generationConfigRevision`. Throughout the workflow, the Saga:
 
 - Reads only **template/topology** rows keyed by `(tenantId, versionId)` (for example `region_template`, `zone_template`, `room_template`, or authored generation metadata); and
@@ -34,6 +36,14 @@ Activation requests must carry both:
 - `expectedGenerationConfigRevision` so pre-activation generation steps can prove they used the frozen publish identity rather than mutable tenant defaults.
 
 These fields are sourced from the resolved launch descriptor and must remain immutable across retries of the same launch attempt. World Management must not re-read mutable template JSON, tenant defaults, or "latest READY patch" state during activation.
+
+Before `PREPARING` or `ACTIVE` world state is accepted, World Management must also re-read the authoritative Game Design proof surfaces for the resolved `(tenantId, versionId)`:
+
+- `GetPublishedReleaseBundle` must still return the same bundle identity, `generationConfigRevision`, and release-bundle ref.
+- `GetVersionAssetArtifactState` must prove `artifactState=PUBLISHED`, the same attested `manifestHash`, and presence of every attested `requiredManifestAssetKeys[]`.
+- `GetVersionState` must still report the same activation-eligible lifecycle state and the same `expectedVersionStateEpoch`.
+
+If any of those proofs drift, activation fails closed with application-level attestation/version-state mismatch outcomes rather than proceeding on stale descriptor state.
 
 The same `(tenantId, gameTemplateId, controlPlaneRequestId)` launch attempt must therefore replay against the same descriptor values on every retry, and a fresh launch attempt requires a new `controlPlaneRequestId` if it is allowed to resolve against newer valid published state.
 
@@ -73,7 +83,7 @@ Initial-slice delivery expectation:
 - The first live implementation cut now uses `PrepareWorldInstance`, `ActivatePreparedWorldInstance`, and `FailPreparedWorldInstance` to persist `world_instance`, starter `region_instance`, and runtime `zone_instance` / `room_instance` / `room_instance_exit` rows with fenced `lifecycle_epoch` transitions.
 - Broader activation/cutover consumers and later runtime world-state families remain follow-on work on the same lifecycle seam rather than a separate activation model.
 
-- The first implementation slice must implement steps 1, 2, and 4.
+- The current live implementation cut implements steps 1, 2, and 4 through the activation lifecycle seam; future work should extend the same workflow-state model rather than introducing a second activation path.
 - Step 3 is optional for the initial slice unless the launched version actually requires expansive-world terrain generation or instance-scoped population schedule materialization.
 - When step 3 is omitted for an initial-slice launch, the same launch descriptor and activation invariants still apply; the workflow simply records that no runtime generation/materialization step was required for that `gameInstanceId`.
 

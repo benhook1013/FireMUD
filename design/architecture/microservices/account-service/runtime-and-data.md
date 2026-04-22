@@ -2,6 +2,10 @@
 
 This document defines the Account Service runtime model, persistent data ownership, Redis role, token/session responsibilities, and monetization-related domain notes.
 
+## Implementation Notes
+
+The account lifecycle state machine, global deletion preconditions, full-account versus tenant-scoped export split, and `purchase_entitlement` model are the canonical target design. The current service has partial foundations for payments, virtual currency, and tenant membership, but still needs schema/API/service follow-through for these lifecycle and purchased-entitlement contracts.
+
 ## Architecture and Runtime Notes
 
 - Stateless authentication uses short-lived JWT tokens for internal meta/control APIs. Two token profiles are issued:
@@ -29,8 +33,26 @@ This document defines the Account Service runtime model, persistent data ownersh
 - `achievement` table records earned achievements keyed by account and game.
 - `external_account` table links third-party OAuth IDs to platform accounts.
 - Tenant- and billing-related tables such as `subscription` and `payment_transaction` associate `accountId` with `tenantId` for hosted games and hosting plans.
+- Durable purchased-product grants are represented separately from raw payment attempts. One-time purchases that create ongoing player-visible value write `purchase_entitlement` rows keyed by `accountId`, `tenantId`, optional `characterId`, and `productCode`; payment rows remain the audit and provider-settlement record, not the entitlement authority.
 
 External accounts allow players to log in via Google, Discord, or Steam. Each link stores the provider name and external ID so the platform account can be resolved during authentication.
+
+## Account Lifecycle State Model
+
+The Account Service owns one canonical account lifecycle state machine for the global platform account. Tenant billing state can block gameplay for one tenant, but it does not change the global account state by itself.
+
+| State | Login and bootstrap | Control-plane access | Billing/export access | Recovery | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `active` | Allowed subject to credentials, 2FA, and abuse controls | Allowed by route authorization | Allowed by route authorization | Allowed | Normal state. |
+| `security_locked` | Denied with `AUTH_ACCOUNT_LOCKED` | Existing sessions are revoked; new control-plane login is denied except support-approved recovery flows | Account-scoped export may be support-mediated; billing mutations are denied until recovery clears the lock | Allowed only through the account-security recovery path | Used for compromise, abuse lockout, or security bans. It is not a tenant gameplay ban. |
+| `deactivated_pending_delete` | Denied for gameplay and normal control-plane login | Only deletion-cancel, export, and billing-settlement surfaces remain available by explicit account-scoped or support-mediated routes | Full-account export and billing-settlement reads remain available; new purchases/subscriptions are denied | Allowed to cancel deletion before the retention window expires | Entered after a confirmed deletion request when asynchronous retention/settlement work remains. |
+| `deleted` | Denied | Denied | Only retained audit, tax, fraud, and settlement records remain available to platform-admin/reporting flows | Denied | Terminal account state; usernames/emails may be tombstoned or anonymized according to the retention policy. |
+
+Transitions are explicit: `active` may move to `security_locked`, `deactivated_pending_delete`, or remain `active`; `security_locked` may return to `active` after successful recovery or move to `deactivated_pending_delete` only through a support-reviewed path; `deactivated_pending_delete` may return to `active` before the retention window expires or move to `deleted`; `deleted` has no recovery transition. Every transition must emit an audit event and advance `session:auth:revoked_after:account:<accountId>` so existing control-plane and player-bootstrap tokens stop working immediately when the new state denies access.
+
+Account deletion is global, not tenant-scoped. `DeleteAccount` must fail with `ACCOUNT_DELETE_ACTIVE_BILLING_OWNER` while the account owns any subscription in `trialing`, `active`, `past_due`, `grace`, or `suspended` for any tenant. The caller must first cancel terminally or transfer billing ownership for every affected tenant. Deletion must not hard-delete billing, payment, refund, Stripe customer, tax, fraud, or audit records that must survive for settlement and compliance; those records are retained with the minimum account reference needed for reconciliation and are hidden from normal account/profile surfaces after deletion.
+
+Full-account export and tenant-scoped export are separate contracts. `ExportAccount` is account-scoped and returns all portable account-owned data across tenants that the caller is entitled to receive. Tenant billing-safe export is a separate tenant-scoped route for `tenantAdmin` recovery while a tenant is billing-blocked; it returns only that tenant's exportable game/billing records and must not expose unrelated account data from other tenants.
 
 ## Redis Role and Prefixes
 
@@ -111,7 +133,8 @@ Runtime caller contract:
   - Account bootstrap discovery, in-band `PLAY`, connect-token issuance, and reconnect validation must all consume this same pointer contract rather than maintaining separate realm-to-instance routing rules.
 - `IssueConnectToken` / `POST /auth/connect-token` is the authoritative gameplay bootstrap token-issuance surface.
   - Minimum request fields: `connectScopeId`, `requestId`.
-  - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `realmSlug`, `gameInstanceId`, `jti`, `issuedAt`.
+  - Minimum response fields for non-browser clients: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `realmSlug`, `gameInstanceId`, `jti`, `issuedAt`.
+  - Browser clients receive the connect token as `Set-Cookie: Firemud-Connect-Token=...` with the gateway-required security attributes and receive only non-secret response metadata in the body.
 - Bootstrap discovery surfaces must return `connectScopeId` together with `tenantId`, `realmSlug`, `gameInstanceId`, `pointerVersion`, `evaluatedAt`, and `connectScopeExpiresAt`.
 - `connectScopeExpiresAt` bounds how long the discovery-issued selector may be reused as a convenience token. Once it expires, callers must rerun discovery instead of treating the selector as a durable realm handle.
 - Account Service must expose bootstrap-discovery endpoints that accept only the `player-bootstrap` token profile and return the canonical caller-visible worlds, realms, characters, and a canonical `connectScopeId` selector for each admissible realm target.
@@ -151,6 +174,8 @@ Entitlement producer contract:
 The Account Service also manages billing records for purchases and subscriptions. Payment processing is handled through Stripe as outlined in the [Core Requirements](../../../project-management/core-requirements.md#2.8-moderation-administration--monetization). Entities include `payment_transaction` and `subscription` tables with Flyway migrations. gRPC endpoints and REST controllers expose operations for creating payment intents and managing subscriptions. The proto definitions live in [`payment_service.proto`](../../../../protos/account/v1/payment_service.proto).
 
 Donations are stored as one-time `payment_transaction` records with the `donation` flag set to `true`. A dedicated `CreateDonation` gRPC method issues a Stripe payment intent for these cases. Refunds call Stripe's API and update the `payment_transaction` `status` to `refunded`, enabling chargeback handling workflows. More detailed designs for payments and recurring subscriptions live in the dedicated [Stripe Integration Design](./stripe-integration.md) and [Subscription Management Design](./subscription-management.md) documents.
+
+One-time purchases that grant gameplay value must not be inferred from `payment_transaction.status` alone. Stripe success creates or activates a durable `purchase_entitlement` row through an idempotent fulfillment step keyed by provider event ID and product grant key. Refunds, chargebacks, or operator reversals move the entitlement to `revoked` unless the product contract explicitly marks it as consumed and non-revocable; in that case the refund workflow must record the non-revocable consumption reason and rely on financial/audit settlement rather than silently leaving the purchase ambiguous.
 
 ### Virtual Currency and Revenue Sharing
 

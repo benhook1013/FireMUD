@@ -33,7 +33,7 @@ This section covers recovery scenarios at a high level; detailed, per-topic runb
 
 ### Redis Session Schema and TTL Cleanup
 
-- For the scoped session cleanup Job (metrics, per-tenant prefixes such as `session:game:<tenantId>:*`, and large-keyspace safety guidelines), see:
+- For the scoped session cleanup workflow (metrics, tenant-scoped prefixes such as `session:game:{tenantGameplayTag}:*`, and large-keyspace safety guidelines), see:
   - `design/architecture/system-architecture-redis-incident-runbook.md#session-schema-and-ttl-cleanup`
 
 ### Redis Incident Scenarios
@@ -77,8 +77,8 @@ For a single-admin operator, most “what do I do now?” coordination/tick ques
 
 - **Named operations**
   - Tail-loss incidents first choose a **replay-first** or **reset-first** recovery mode. Scope selection for resets happens only after `reset-first` is chosen.
-  - **Per-region reset** – clear coordination state (`tick:*`, timers, retries, leases) for a single `<tenantId, regionId>` and allow ticks to rebuild from PostgreSQL and the tick effect ledger.
-  - **Per-tenant reset** – clear coordination state for all regions for a single tenant and treat it as a tenant-scoped maintenance/reset event. Tenant resets always invalidate `session:auth:*`; preserve `session:game:*` only when the operator explicitly chooses that option for the reset.
+  - **Per-region reset** – clear coordination state (`tick:*`, timers, retries, leases, region-local session bindings) for a single `<tenantId, regionId>`, rebind preserved sessions through the session-to-region bridge, and allow ticks to rebuild from PostgreSQL and the tick effect ledger.
+  - **Per-tenant reset** – clear coordination state for all regions for a single tenant and treat it as a tenant-scoped maintenance/reset event. Tenant resets always invalidate `session:auth:*`; preserve `session:game:*` / current `sessionctx:*` context only when the operator explicitly chooses that option for the reset, and rebind preserved sessions before command intake resumes.
   - **Cluster reset** – clear coordination state for all tenants/regions on a Coordination Redis deployment; reserved for catastrophic incidents or planned migrations.
 
 - **How to choose**

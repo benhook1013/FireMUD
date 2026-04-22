@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
+import net.firedevops.firemud.automationscripting.service.redis.AutomationRedisKeys;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
@@ -34,15 +35,17 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
 
   @Override
   @Timed(value = "automation.queue.enqueue")
-  public void enqueueEvent(Long tenantId, Long entityId, String eventJson) {
-    listOps.rightPush(queueKey(tenantId, entityId), eventJson);
+  public void enqueueEvent(
+      String tenantId, String gameInstanceId, String entityId, String eventJson) {
+    listOps.rightPush(
+        AutomationRedisKeys.automationQueue(tenantId, gameInstanceId, entityId), eventJson);
     enqueueCounter.increment();
   }
 
   @Override
   @Timed(value = "automation.queue.drain")
-  public List<String> drainEvents(Long tenantId, Long entityId) {
-    String key = queueKey(tenantId, entityId);
+  public List<String> drainEvents(String tenantId, String gameInstanceId, String entityId) {
+    String key = AutomationRedisKeys.automationQueue(tenantId, gameInstanceId, entityId);
     List<Object> raw = listOps.range(key, 0, -1);
     redisTemplate.delete(key);
     if (raw == null) {
@@ -50,9 +53,5 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
     }
     drainCounter.increment(raw.size());
     return raw.stream().map(Object::toString).toList();
-  }
-
-  private String queueKey(Long tenantId, Long entityId) {
-    return "automation_queue:" + tenantId + ":" + entityId;
   }
 }

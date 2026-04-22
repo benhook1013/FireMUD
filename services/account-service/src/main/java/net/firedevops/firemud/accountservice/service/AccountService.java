@@ -13,6 +13,8 @@ import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult;
+import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
+import net.firedevops.firemud.accountservice.dto.RealmAccessGrantResult;
 import net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
@@ -40,6 +42,13 @@ public interface AccountService {
 
   RuntimeMembershipDto getTenantMembershipForRuntime(
       Long accountId, Long tenantId, String requestId);
+
+  RealmAccessGrantResult getRealmAccessGrantForRuntime(
+      Long accountId, Long tenantId, String worldSlug, String realmSlug, String requestId);
+
+  RealmAccessGrantResult grantRealmAccess(RealmAccessGrantRequest request);
+
+  void revokeRealmAccess(Long accountId, Long tenantId, String worldSlug, String realmSlug);
 
   RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId);
 

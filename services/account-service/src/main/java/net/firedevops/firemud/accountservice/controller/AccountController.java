@@ -41,7 +41,7 @@ public class AccountController {
   @GetMapping("/{accountId}/export")
   public ResponseEntity<ApiResponse<AccountDataExportDto>> exportAccount(
       @PathVariable Long accountId, @RequestParam Long tenantId) {
-    SessionContext.requireTenantAccess(tenantId);
+    SessionContext.requireAccountAccess(tenantId, accountId);
     AccountDataExportDto data = accountService.exportAccountData(tenantId, accountId);
     return ResponseEntity.ok(ApiResponse.success(data));
   }
@@ -49,7 +49,7 @@ public class AccountController {
   @DeleteMapping("/{accountId}")
   public ResponseEntity<ApiResponse<Void>> deleteAccount(
       @PathVariable Long accountId, @RequestParam Long tenantId) {
-    SessionContext.requireTenantAccess(tenantId);
+    SessionContext.requireAccountAccess(tenantId, accountId);
     accountService.deleteAccount(tenantId, accountId);
     return ResponseEntity.ok(ApiResponse.success(null));
   }
@@ -57,7 +57,7 @@ public class AccountController {
   @PostMapping("/{accountId}/external")
   public ResponseEntity<ApiResponse<Void>> linkExternalAccount(
       @PathVariable Long accountId, @Valid @RequestBody LinkExternalAccountRequest request) {
-    SessionContext.requireTenantAccess(request.tenantId());
+    SessionContext.requireAccountAccess(request.tenantId(), accountId);
     accountService.linkExternalAccount(
         new LinkExternalAccountRequest(
             request.tenantId(), accountId, request.provider(), request.externalId()));

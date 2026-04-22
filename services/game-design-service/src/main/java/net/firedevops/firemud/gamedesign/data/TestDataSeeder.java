@@ -48,20 +48,23 @@ public class TestDataSeeder implements ApplicationRunner {
       templateRepository.save(template);
     }
 
-    if (revisionRepository.count() == 0) {
-      Revision rev = new Revision();
-      rev.setTenantId(game.getTenantId());
-      rev.setAuthorAccountId(1L);
-      rev.setData("{}");
-      revisionRepository.save(rev);
-    }
-
     if (versionRepository.count() == 0) {
       Version v = new Version();
       v.setTenantId(game.getTenantId());
       v.setVersionNumber(1);
       v.setNotes("Initial version");
       versionRepository.save(v);
+    }
+
+    if (revisionRepository.count() == 0) {
+      Version version = versionRepository.findAll().stream().findFirst().orElseThrow();
+      Revision rev = new Revision();
+      rev.setTenantId(game.getTenantId());
+      rev.setVersionId(version.getId());
+      rev.setAuthorAccountId(1L);
+      rev.setData("{}");
+      rev.setRevisionKind("GENERIC");
+      revisionRepository.save(rev);
     }
   }
 }

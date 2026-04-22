@@ -14,6 +14,7 @@ fi
 image_tag="$1"
 timeout_seconds="${PREVIEW_IMAGE_WAIT_TIMEOUT_SECONDS:-1800}"
 sleep_seconds="${PREVIEW_IMAGE_WAIT_SLEEP_SECONDS:-10}"
+missing_workflow_timeout_seconds="${PREVIEW_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS:-180}"
 start_epoch="${SECONDS}"
 deadline=$((SECONDS + timeout_seconds))
 
@@ -51,8 +52,16 @@ while (( SECONDS < deadline )); do
   IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${run_state}"
 
   if [[ "${state}" == "missing" ]]; then
+    elapsed_seconds=$((SECONDS - start_epoch))
+    if (( elapsed_seconds >= missing_workflow_timeout_seconds )); then
+      printf 'No runtime-images workflow appeared for %s after %ss.\n' \
+        "${image_tag}" "${elapsed_seconds}" >&2
+      printf 'This usually means the runtime-images pull_request trigger did not fire for the head SHA.\n' >&2
+      exit 1
+    fi
+
     printf 'Waiting for runtime-images workflow for %s after %ss. Matching run not visible yet.\n' \
-      "${image_tag}" "$((SECONDS - start_epoch))"
+      "${image_tag}" "${elapsed_seconds}"
     sleep "${sleep_seconds}"
     continue
   fi

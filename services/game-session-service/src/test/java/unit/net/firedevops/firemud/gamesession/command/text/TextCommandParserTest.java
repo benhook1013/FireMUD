@@ -250,6 +250,18 @@ class TextCommandParserTest {
   }
 
   @Test
+  void preservesInventoryViewArguments() {
+    TextCommand command = parser.parse("INV HERE");
+
+    assertEquals(TextCommandType.INVENTORY, command.type());
+    assertEquals("INV", command.aliasUsed());
+    assertEquals(List.of("HERE"), command.args());
+    assertEquals("INV HERE", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertEquals("INVENTORY", command.viewRequestPayload().orElseThrow().viewName());
+  }
+
+  @Test
   void parsesEquipmentAsViewRequest() {
     TextCommand command = parser.parse("eq");
 

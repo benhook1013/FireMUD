@@ -6,6 +6,7 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 
 For control-plane API contracts, see `design/architecture/system-architecture-scripting-control-plane-api.md`.
 For workflow sequencing (pin/rollback orchestration, pause/resume, drain/purge, and convergence), see `design/architecture/system-architecture-scripting-control-plane-operations.md`.
+For canonical custom-event definitions and producer authorization, see `design/architecture/system-architecture-scripting-event-registry.md`.
 
 It complements:
 
@@ -39,8 +40,8 @@ The table below summarizes high-level implementation status categories; verify c
 | Area | Status | Notes |
 | --- | --- | --- |
 | Script runtime & DSL | Implemented | Sandbox execution, core Automation & Scripting Service, and visual DSL editor are in active use, including basic quotas. |
-| Automation queues & script ticks | Implemented | Instance-aware automation queue indexes (for example `automation:queue:{tenantInstanceTag}:<entityId>`) and `automation:tick:{tenantInstanceScriptTag}:...` staging are implemented; script work items flow into tick commands as described under [TL;DR Flow](#tldr-flow). |
-| Integration with tick commands | Implemented | Script-generated tick commands are enqueued into the same per-entity tick queues used by Game Session, and participate in the normal lock/idempotency model. |
+| Automation queues & script ticks | Implemented / evolving | Instance-aware automation queue indexes (for example `automation:queue:{tenantInstanceTag}:<entityId>`), `automation:tick:{tenantInstanceScriptTag}:...` staging, and canonical `automation:quota:<tenantId>:<scriptId>` counters are implemented; the remaining `10.4` work is the final outbox-to-Game Session command handoff. |
+| Integration with tick commands | Planned / active | Script-generated gameplay commands must be handed to Game Session and enqueued through the same per-entity tick queues used by player commands; the durable outbox, audit, and Automation-owned staging substrate now exist, but the final Game Session enqueue bridge remains tracked in `10.4`. |
 | Scheduler leadership & timers | Implemented / evolving | Scheduler leases and heartbeat-driven interval scheduling are implemented; region-scoped Redis timer/checkpoint coordination (for example `automation:timer:{tenantRegionTag}`) with instance-aware stored identities, and long-term audit-retention jobs are tracked in the Automation & Scripting Service README and task list. |
 | Quotas & fairness | Implemented / evolving | Per-script quotas (`ScriptQuotaService`) and basic fairness rules are implemented; multi-level budgets and advanced throttling controls continue to evolve. |
 | Audit & metrics | Implemented / evolving | `script_event_audit` and core automation metrics exist; retention policies and additional dashboards are being refined. |
@@ -70,6 +71,7 @@ The table below summarizes high-level implementation status categories; verify c
 - **Implementers and backend developers**
   - Focus on: [TL;DR Flow](#tldr-flow) and:
     - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` for terminology, DSL semantics, determinism, timers, event lifecycle, **deployment & versioning behavior**, and advanced NPC modules; in particular, see **Determinism & Allowed Non-Determinism**, **Integration with Game Logic & Tick System**, **Script Timers vs Tick Timers**, and **Scheduler Leadership & Coordination**.
+    - `design/architecture/system-architecture-scripting-event-registry.md` for canonical event-type ownership, schema versioning, producer authorization, and snapshot requirements.
     - `design/architecture/system-architecture-scripting-quotas-and-operations.md` for **Per-Script Scheduling Policies**, **Resource Isolation and Multi-Level Budgets**, and outcome-to-metric mapping.
     - `design/architecture/system-architecture-ticks.md` and `design/architecture/system-architecture-transactions.md` for cross-cutting concerns.
 
@@ -198,6 +200,7 @@ This hub intentionally keeps only high-level flows and routing; detailed topics 
 
 - **Cross-service invariants and contracts**
   - `design/architecture/system-architecture-scripting-contracts.md`
+  - `design/architecture/system-architecture-scripting-event-registry.md`
 
 - **Developer tools and helper scripts**
   - See **Developer Tools** in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for CLI and docs-generation helpers.

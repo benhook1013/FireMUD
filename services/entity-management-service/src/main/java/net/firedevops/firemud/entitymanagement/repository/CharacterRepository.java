@@ -21,4 +21,6 @@ public interface CharacterRepository extends JpaRepository<Character, Long> {
 
   Optional<Character> findByTenantIdAndPlayableStateKeyAndNameIgnoreCase(
       Long tenantId, String playableStateKey, String name);
+
+  long countByTenantId(Long tenantId);
 }

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.repository;
 
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.worldmanagement.entity.Region;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -19,6 +20,10 @@ public interface RegionRepository extends JpaRepository<Region, Long> {
   List<Region> findByTenantId(Long tenantId);
 
   List<Region> findByTenantIdOrderByIdAsc(Long tenantId);
+
+  List<Region> findByTenantIdAndVersionIdOrderByIdAsc(Long tenantId, Long versionId);
+
+  Optional<Region> findByTenantIdAndVersionIdAndId(Long tenantId, Long versionId, Long id);
 
   List<Region> findByTenantIdAndShardId(Long tenantId, Integer shardId);
 }

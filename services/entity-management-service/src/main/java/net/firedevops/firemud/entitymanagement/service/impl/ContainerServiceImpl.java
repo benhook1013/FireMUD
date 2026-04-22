@@ -1,5 +1,6 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,12 +26,26 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ContainerServiceImpl implements ContainerService {
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring repositories are framework-managed singletons and only stored")
   private final ContainerInstanceRepository containerInstanceRepository;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring repositories are framework-managed singletons and only stored")
   private final ItemInstanceRepository itemInstanceRepository;
+
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring repositories are framework-managed singletons and only stored")
   private final ItemStackRepository itemStackRepository;
+
   private final ItemTransferSupport itemTransferSupport;
+  private final ItemTransferAuditWriter itemTransferAuditWriter;
   private final ContainerHolderSyncSupport containerHolderSyncSupport;
   private final ContainerHolderPolicySupport containerHolderPolicySupport;
   private final StackableItemSupport stackableItemSupport;
@@ -43,6 +58,7 @@ public class ContainerServiceImpl implements ContainerService {
       ItemRepository itemRepository,
       ItemStackRepository itemStackRepository,
       ItemTransferSupport itemTransferSupport,
+      ItemTransferAuditWriter itemTransferAuditWriter,
       ContainerHolderSyncSupport containerHolderSyncSupport,
       ContainerHolderPolicySupport containerHolderPolicySupport,
       StackableItemSupport stackableItemSupport) {
@@ -52,6 +68,7 @@ public class ContainerServiceImpl implements ContainerService {
     this.itemRepository = itemRepository;
     this.itemStackRepository = itemStackRepository;
     this.itemTransferSupport = itemTransferSupport;
+    this.itemTransferAuditWriter = itemTransferAuditWriter;
     this.containerHolderSyncSupport = containerHolderSyncSupport;
     this.containerHolderPolicySupport = containerHolderPolicySupport;
     this.stackableItemSupport = stackableItemSupport;
@@ -72,6 +89,29 @@ public class ContainerServiceImpl implements ContainerService {
         itemRepository,
         itemStackRepository,
         itemTransferSupport,
+        new NoOpItemTransferAuditWriter(),
+        containerHolderSyncSupport,
+        new ContainerHolderPolicySupport(containerInstanceRepository),
+        new StackableItemSupport());
+  }
+
+  ContainerServiceImpl(
+      ContainerInstanceRepository containerInstanceRepository,
+      ItemInstanceRepository itemInstanceRepository,
+      CharacterRepository characterRepository,
+      ItemRepository itemRepository,
+      ItemStackRepository itemStackRepository,
+      ItemTransferSupport itemTransferSupport,
+      ItemTransferAuditWriter itemTransferAuditWriter,
+      ContainerHolderSyncSupport containerHolderSyncSupport) {
+    this(
+        containerInstanceRepository,
+        itemInstanceRepository,
+        characterRepository,
+        itemRepository,
+        itemStackRepository,
+        itemTransferSupport,
+        itemTransferAuditWriter,
         containerHolderSyncSupport,
         new ContainerHolderPolicySupport(containerInstanceRepository),
         new StackableItemSupport());
@@ -82,10 +122,23 @@ public class ContainerServiceImpl implements ContainerService {
   @Timed(value = "container.list")
   public Page<ContainerContentEntryDto> listContainerContents(
       Long tenantId, Long characterId, Long containerInstanceId, Pageable pageable) {
+    return listContainerContents(tenantId, characterId, containerInstanceId, null, null, pageable);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "container.list")
+  public Page<ContainerContentEntryDto> listContainerContents(
+      Long tenantId,
+      Long characterId,
+      Long containerInstanceId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Pageable pageable) {
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
         containerHolderPolicySupport.requireAccessibleContainer(
-            tenantId, character.getId(), containerInstanceId);
+            tenantId, character.getId(), containerInstanceId, gameInstanceId, roomInstanceId);
     List<ContainerContentEntryDto> entries = new ArrayList<>();
     entries.addAll(
         itemInstanceRepository
@@ -112,18 +165,56 @@ public class ContainerServiceImpl implements ContainerService {
       Long itemId,
       Long itemInstanceId,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId,
+      String sessionId) {
+    return putItemIntoContainer(
+        tenantId,
+        characterId,
+        containerInstanceId,
+        null,
+        null,
+        itemId,
+        itemInstanceId,
+        stackFamilyKey,
+        quantity,
+        effectId,
+        sessionId);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "container.put")
+  public ContainerContentEntryDto putItemIntoContainer(
+      Long tenantId,
+      Long characterId,
+      Long containerInstanceId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      String stackFamilyKey,
+      int quantity,
+      String effectId,
+      String sessionId) {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
         containerHolderPolicySupport.requireAccessibleContainer(
-            tenantId, character.getId(), containerInstanceId);
+            tenantId, character.getId(), containerInstanceId, gameInstanceId, roomInstanceId);
     Item item = requireItem(tenantId, itemId);
     containerHolderPolicySupport.requireCanContainItem(containerInstance, item);
     if (stackableItemSupport.usesStackStorage(item)) {
       String selectedStackFamilyKey =
           moveInventoryStackToContainer(
-              tenantId, characterId, containerInstance, item, stackFamilyKey, quantity);
+              tenantId,
+              characterId,
+              containerInstance,
+              item,
+              stackFamilyKey,
+              quantity,
+              effectId,
+              sessionId);
       return toStackMutationDto(containerInstance, item, selectedStackFamilyKey, quantity);
     }
     List<ItemInstance> carried =
@@ -132,12 +223,16 @@ public class ContainerServiceImpl implements ContainerService {
                 tenantId, characterId, itemId);
     List<ItemInstance> moved = selectCarriedInstances(carried, itemInstanceId, quantity);
     for (ItemInstance instance : moved) {
-      itemTransferSupport.transfer(
-          instance,
-          itemTransferSupport.inventory(tenantId, characterId),
-          itemTransferSupport.container(containerInstance),
-          itemTransferSupport.audit("PUT", characterId));
+      ItemTransferSupport.ExpectedSource expectedSource =
+          itemTransferSupport.inventory(tenantId, characterId);
+      ItemTransferSupport.Destination destination =
+          itemTransferSupport.container(containerInstance);
+      ItemTransferSupport.TransferAuditContext auditContext =
+          itemTransferSupport.audit("PUT", characterId, sessionId, effectId);
+      itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
       itemInstanceRepository.save(instance);
+      itemTransferAuditWriter.recordInstanceTransfer(
+          instance, expectedSource, destination, auditContext);
       containerHolderSyncSupport.requireExistingAndSync(instance);
     }
     return toMutationDto(moved.get(0), quantity);
@@ -153,17 +248,55 @@ public class ContainerServiceImpl implements ContainerService {
       Long itemId,
       Long itemInstanceId,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId,
+      String sessionId) {
+    return takeItemFromContainer(
+        tenantId,
+        characterId,
+        containerInstanceId,
+        null,
+        null,
+        itemId,
+        itemInstanceId,
+        stackFamilyKey,
+        quantity,
+        effectId,
+        sessionId);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "container.take")
+  public InventoryEntryDto takeItemFromContainer(
+      Long tenantId,
+      Long characterId,
+      Long containerInstanceId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      String stackFamilyKey,
+      int quantity,
+      String effectId,
+      String sessionId) {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
         containerHolderPolicySupport.requireAccessibleContainer(
-            tenantId, character.getId(), containerInstanceId);
+            tenantId, character.getId(), containerInstanceId, gameInstanceId, roomInstanceId);
     Item item = requireItem(tenantId, itemId);
     if (stackableItemSupport.usesStackStorage(item)) {
       String selectedStackFamilyKey =
           moveContainerStackToInventory(
-              tenantId, character, containerInstance, item, stackFamilyKey, quantity);
+              tenantId,
+              character,
+              containerInstance,
+              item,
+              stackFamilyKey,
+              quantity,
+              effectId,
+              sessionId);
       return toInventoryStackMutationDto(character, item, selectedStackFamilyKey, quantity);
     }
     List<ItemInstance> contained =
@@ -171,12 +304,15 @@ public class ContainerServiceImpl implements ContainerService {
             tenantId, containerInstance.getId(), itemId);
     List<ItemInstance> moved = selectContainedInstances(contained, itemInstanceId, quantity);
     for (ItemInstance instance : moved) {
-      itemTransferSupport.transfer(
-          instance,
-          itemTransferSupport.container(tenantId, containerInstance.getId()),
-          itemTransferSupport.inventory(character),
-          itemTransferSupport.audit("TAKE", characterId));
+      ItemTransferSupport.ExpectedSource expectedSource =
+          itemTransferSupport.container(tenantId, containerInstance.getId());
+      ItemTransferSupport.Destination destination = itemTransferSupport.inventory(character);
+      ItemTransferSupport.TransferAuditContext auditContext =
+          itemTransferSupport.audit("TAKE", characterId, sessionId, effectId);
+      itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
       itemInstanceRepository.save(instance);
+      itemTransferAuditWriter.recordInstanceTransfer(
+          instance, expectedSource, destination, auditContext);
       containerHolderSyncSupport.requireExistingAndSync(instance);
     }
     return toInventoryMutationDto(moved.get(0), quantity);
@@ -318,7 +454,9 @@ public class ContainerServiceImpl implements ContainerService {
       ContainerInstance containerInstance,
       Item item,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId,
+      String sessionId) {
     ItemStack source =
         requireSingleInventoryStackSource(
             tenantId,
@@ -346,6 +484,14 @@ public class ContainerServiceImpl implements ContainerService {
                 });
     destination.setQuantity(destination.getQuantity() + quantity);
     itemStackRepository.save(destination);
+    itemTransferAuditWriter.recordStackTransfer(
+        tenantId,
+        item,
+        quantity,
+        source.getStackFamilyKey(),
+        itemTransferSupport.inventoryHolder(tenantId, characterId),
+        itemTransferSupport.containerHolder(tenantId, containerInstance.getId()),
+        itemTransferSupport.audit("PUT", characterId, sessionId, effectId));
     return source.getStackFamilyKey();
   }
 
@@ -355,7 +501,9 @@ public class ContainerServiceImpl implements ContainerService {
       ContainerInstance containerInstance,
       Item item,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId,
+      String sessionId) {
     ItemStack source =
         requireSingleContainerStackSource(
             tenantId,
@@ -383,6 +531,14 @@ public class ContainerServiceImpl implements ContainerService {
                 });
     destination.setQuantity(destination.getQuantity() + quantity);
     itemStackRepository.save(destination);
+    itemTransferAuditWriter.recordStackTransfer(
+        tenantId,
+        item,
+        quantity,
+        source.getStackFamilyKey(),
+        itemTransferSupport.containerHolder(tenantId, containerInstance.getId()),
+        itemTransferSupport.inventoryHolder(tenantId, character.getId()),
+        itemTransferSupport.audit("TAKE", character.getId(), sessionId, effectId));
     return source.getStackFamilyKey();
   }
 

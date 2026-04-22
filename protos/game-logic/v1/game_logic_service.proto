@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package game_logic.v1;
 
+import "entity-management/v1/entity_management_service.proto";
 import "shared/v1/errors.proto";
 import "shared/v1/instance_refs.proto";
 
@@ -14,6 +15,30 @@ service GameLogicService {
   rpc ResolveLook(LookRequest) returns (LookResult);
   rpc SendCommunication(SendCommunicationRequest) returns (SendCommunicationResponse);
   rpc ResolveMove(MoveRequest) returns (MoveResult);
+  rpc QueryInventory(entity_management.v1.QueryInventoryRequest)
+      returns (entity_management.v1.QueryInventoryResponse);
+  rpc ListEquipment(entity_management.v1.ListEquipmentRequest)
+      returns (entity_management.v1.ListEquipmentResponse);
+  rpc WearEquipment(entity_management.v1.WearEquipmentItemRequest)
+      returns (entity_management.v1.WearEquipmentItemResponse);
+  rpc RemoveEquipment(entity_management.v1.RemoveEquipmentRequest)
+      returns (entity_management.v1.RemoveEquipmentResponse);
+  rpc ListContainerContents(entity_management.v1.ListContainerContentsRequest)
+      returns (entity_management.v1.ListContainerContentsResponse);
+  rpc PutItemIntoContainer(entity_management.v1.PutItemIntoContainerRequest)
+      returns (entity_management.v1.PutItemIntoContainerResponse);
+  rpc TakeItemFromContainer(entity_management.v1.TakeItemFromContainerRequest)
+      returns (entity_management.v1.TakeItemFromContainerResponse);
+  rpc ListRoomGroundInventory(entity_management.v1.ListRoomGroundInventoryRequest)
+      returns (entity_management.v1.ListRoomGroundInventoryResponse);
+  rpc PickupItemFromRoom(entity_management.v1.PickupItemFromRoomRequest)
+      returns (entity_management.v1.PickupItemFromRoomResponse);
+  rpc DropItemToRoom(entity_management.v1.DropItemToRoomRequest)
+      returns (entity_management.v1.DropItemToRoomResponse);
+  rpc PickupVisibleRoomItem(PickupVisibleRoomItemRequest)
+      returns (entity_management.v1.PickupItemFromRoomResponse);
+  rpc DropCarriedItem(DropCarriedItemRequest)
+      returns (entity_management.v1.DropItemToRoomResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
 }
 
@@ -41,6 +66,7 @@ message LookRequest {
   string character_id = 3;
   shared.v1.RoomInstanceRef room_instance = 4;
   string preferred_locale = 5;
+  string session_attestation = 6;
 }
 
 message LookResult {
@@ -71,6 +97,8 @@ message SendCommunicationRequest {
   string target_character_name = 10;
   string game_instance_id = 11;
   string speaker_name = 12;
+  string session_attestation = 13;
+  string effect_id = 14;
 }
 
 message SendCommunicationResponse {
@@ -91,12 +119,39 @@ message MoveRequest {
   shared.v1.RoomInstanceRef room_instance = 4;
   string direction = 5;
   string preferred_locale = 6;
+  string session_attestation = 7;
 }
 
 message MoveResult {
   bool success = 1;
   LookResult destination_look = 2;
   shared.v1.ErrorDetail error = 3;
+}
+
+message PickupVisibleRoomItemRequest {
+  string tenant_id = 1;
+  string session_id = 2;
+  string account_id = 3;
+  string character_id = 4;
+  string game_instance_id = 5;
+  string room_instance_id = 6;
+  string item_reference = 7;
+  int32 quantity = 8;
+  string session_attestation = 9;
+  string effect_id = 10;
+}
+
+message DropCarriedItemRequest {
+  string tenant_id = 1;
+  string session_id = 2;
+  string account_id = 3;
+  string character_id = 4;
+  string game_instance_id = 5;
+  string room_instance_id = 6;
+  string item_reference = 7;
+  int32 quantity = 8;
+  string session_attestation = 9;
+  string effect_id = 10;
 }
 
 enum CommunicationType {

@@ -38,15 +38,6 @@ tasks.named<BootRun>("bootRun") {
     }
 }
 
-tasks.register<BootRun>("bootRunDevIsolated") {
-    group = "application"
-    description = "Start the TCP proxy in dev with dev-isolated Telnet handling"
-    mainClass.set("net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication")
-    classpath = sourceSets.main.get().runtimeClasspath
-    systemProperty("spring.profiles.active", "dev")
-    environment("TCP_PROXY_DEV_ISOLATED", "true")
-}
-
 val generatedDevCertsRelativePath = "build/generated/dev-certs"
 val generatedDevCertsResourcePath = "$generatedDevCertsRelativePath/certs"
 val effectiveProfile =

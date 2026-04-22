@@ -171,7 +171,7 @@ jobs:
               if (value === "success") return "✅";
               if (value === "failure") return "❌";
               if (value === "cancelled") return "⚪";
-              if (value === "tracked-by-smoke-gate") return "🕒";
+              if (value === "tracked-by-smoke-gate") return "⏳";
               return "⏭️";
             };
 
@@ -179,7 +179,7 @@ jobs:
             if (["failure", "cancelled", "timed_out"].includes(liteResult)) {
               headline = "❌ Smoke tests failed";
             } else if (fullEnabled) {
-              headline = "🕒 Full smoke is tracked by Smoke Gate";
+              headline = "⏳ Full smoke is tracked by Smoke Gate";
             } else if (!liteEnabled) {
               headline = "⏭️ Smoke tests skipped";
             }
@@ -197,9 +197,19 @@ jobs:
               issue_number: context.issue.number
             });
 
-            const existing = comments.find(comment =>
+            const summaryComments = comments.filter(comment =>
               comment.body.startsWith("### Smoke Summary")
             );
+            const existing = summaryComments[0];
+
+            if (summaryComments.length > 1) {
+              for (const comment of summaryComments.slice(1)) {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
 
             if (existing) {
               await github.rest.issues.updateComment({

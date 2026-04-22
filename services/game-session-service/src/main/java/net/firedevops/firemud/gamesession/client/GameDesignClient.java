@@ -10,6 +10,8 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
@@ -53,13 +55,27 @@ public final class GameDesignClient
 
   public ResolveLaunchDescriptorResponse resolveLaunchDescriptor(
       long tenantId, long gameTemplateId, String controlPlaneRequestId) {
-    ResolveLaunchDescriptorRequest request =
+    return resolveLaunchDescriptor(tenantId, gameTemplateId, controlPlaneRequestId, null, null);
+  }
+
+  public ResolveLaunchDescriptorResponse resolveLaunchDescriptor(
+      long tenantId,
+      long gameTemplateId,
+      String controlPlaneRequestId,
+      Long sourceVersionId,
+      Long targetVersionId) {
+    ResolveLaunchDescriptorRequest.Builder request =
         ResolveLaunchDescriptorRequest.newBuilder()
             .setTenantId(Long.toString(tenantId))
             .setGameTemplateId(gameTemplateId)
-            .setControlPlaneRequestId(controlPlaneRequestId)
-            .build();
-    return callStub().resolveLaunchDescriptor(request);
+            .setControlPlaneRequestId(controlPlaneRequestId);
+    if (sourceVersionId != null) {
+      request.setSourceVersionId(sourceVersionId);
+    }
+    if (targetVersionId != null) {
+      request.setTargetVersionId(targetVersionId);
+    }
+    return callStub().resolveLaunchDescriptor(request.build());
   }
 
   public GetPublishedReleaseBundleResponse getPublishedReleaseBundle(
@@ -76,6 +92,16 @@ public final class GameDesignClient
     return callStub()
         .getVersionState(
             GetVersionStateRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setVersionId(versionId)
+                .build());
+  }
+
+  public GetVersionAssetArtifactStateResponse getVersionAssetArtifactState(
+      long tenantId, long versionId) {
+    return callStub()
+        .getVersionAssetArtifactState(
+            GetVersionAssetArtifactStateRequest.newBuilder()
                 .setTenantId(Long.toString(tenantId))
                 .setVersionId(versionId)
                 .build());

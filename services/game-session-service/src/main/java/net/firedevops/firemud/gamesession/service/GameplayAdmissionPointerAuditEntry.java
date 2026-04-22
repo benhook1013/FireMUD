@@ -17,4 +17,5 @@ public record GameplayAdmissionPointerAuditEntry(
     String actorPrincipal,
     String reason,
     String controlPlaneRequestId,
+    String preparedVersionUpgradeId,
     Instant occurredAt) {}

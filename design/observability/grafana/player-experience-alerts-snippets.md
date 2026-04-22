@@ -4,14 +4,14 @@ This file contains reference PromQL expressions and Alertmanager rule snippets f
 
 ## Player Experience SLO Alerts
 
-These example rules enforce the player-centric SLOs defined in the Logging & Monitoring architecture doc. Thresholds and severities may be tuned per environment, but the underlying metric shapes should remain consistent.
+These example rules enforce the target-state player-centric SLOs defined in the Logging & Monitoring architecture doc. Thresholds and severities may be tuned per environment, but the underlying metric shapes should remain consistent once the producers and approved `scope` label are implemented.
 
 ```yaml
 - alert: LoginSuccessRatioLowGateway
   expr: (
-    sum by (tenantId) (rate(login_requests_total{service="spring-cloud-gateway", outcome="success"}[15m]))
+    sum by (scope) (rate(login_requests_total{service="spring-cloud-gateway", outcome="success"}[15m]))
       /
-    sum by (tenantId) (rate(login_requests_total{service="spring-cloud-gateway"}[15m]))
+    sum by (scope) (rate(login_requests_total{service="spring-cloud-gateway"}[15m]))
   ) < 0.995
   for: 15m
   labels:
@@ -25,9 +25,9 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
 
 - alert: LoginSuccessRatioLowTcpProxy
   expr: (
-    sum by (tenantId) (rate(login_requests_total{service="tcp-proxy-service", outcome="success"}[15m]))
+    sum by (scope) (rate(login_requests_total{service="tcp-proxy-service", outcome="success"}[15m]))
       /
-    sum by (tenantId) (rate(login_requests_total{service="tcp-proxy-service"}[15m]))
+    sum by (scope) (rate(login_requests_total{service="tcp-proxy-service"}[15m]))
   ) < 0.995
   for: 15m
   labels:
@@ -42,7 +42,7 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
 - alert: CommandLatencyP99HighGateway
   expr: histogram_quantile(
           0.99,
-          sum by (tenantId, regionId, command, le) (
+          sum by (scope, command, le) (
             rate(command_end_to_end_latency_ms_bucket{service="spring-cloud-gateway", command=~"move|look|combat"}[5m])
           )
         ) > 250
@@ -59,7 +59,7 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
 - alert: CommandLatencyP99HighTcpProxy
   expr: histogram_quantile(
           0.99,
-          sum by (tenantId, regionId, command, le) (
+          sum by (scope, command, le) (
             rate(command_end_to_end_latency_ms_bucket{service="tcp-proxy-service", command=~"move|look|combat"}[5m])
           )
         ) > 250
@@ -76,7 +76,7 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
 - alert: ChatDeliveryLatencyP99High
   expr: histogram_quantile(
           0.99,
-          sum by (tenantId, channel_type, le) (rate(chat_delivery_latency_ms_bucket[5m]))
+          sum by (scope, channel_type, le) (rate(chat_delivery_latency_ms_bucket[5m]))
         ) > 1000
   for: 10m
   labels:
@@ -90,9 +90,9 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
 
 - alert: EntryPathAvailabilityLowGateway
   expr: (
-    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway", outcome="success"}[5m]))
+    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway", outcome="success"}[5m]))
       /
-    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[5m]))
+    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[5m]))
   ) < 0.995
   for: 10m
   labels:
@@ -103,13 +103,13 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
   annotations:
     summary: Gateway entry-path availability degraded
-    description: One or more tenants have acute connection failures on a gateway-owned entry path. Use the short-window view for incident response and the 1-day view for compliance.
+    description: One or more approved scopes have acute connection failures on a gateway-owned entry path. Use the short-window view for incident response and the 1-day view for compliance.
 
 - alert: EntryPathAvailabilityLowGatewayCompliance
   expr: (
-    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway", outcome="success"}[1d]))
+    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway", outcome="success"}[1d]))
       /
-    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[1d]))
+    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[1d]))
   ) < 0.999
   for: 30m
   labels:
@@ -120,13 +120,13 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
   annotations:
     summary: Gateway entry-path availability below 1-day SLO
-    description: One or more tenants have sustained connection failures on a gateway-owned entry path over the compliance window. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
+    description: One or more approved scopes have sustained connection failures on a gateway-owned entry path over the compliance window. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
 
 - alert: EntryPathAvailabilityLowTcpProxy
   expr: (
-    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service", outcome="success"}[5m]))
+    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service", outcome="success"}[5m]))
       /
-    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[5m]))
+    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[5m]))
   ) < 0.995
   for: 10m
   labels:
@@ -137,13 +137,13 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
   annotations:
     summary: TCP Proxy entry-path availability degraded
-    description: One or more tenants have acute connection failures on TCP Proxy entry paths. Use the short-window view for incident response and the 1-day view for compliance.
+    description: One or more approved scopes have acute connection failures on TCP Proxy entry paths. Use the short-window view for incident response and the 1-day view for compliance.
 
 - alert: EntryPathAvailabilityLowTcpProxyCompliance
   expr: (
-    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service", outcome="success"}[1d]))
+    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service", outcome="success"}[1d]))
       /
-    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[1d]))
+    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[1d]))
   ) < 0.999
   for: 30m
   labels:
@@ -154,7 +154,7 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
   annotations:
     summary: TCP Proxy entry-path availability below 1-day SLO
-    description: One or more tenants have sustained connection failures on TCP Proxy entry paths over the compliance window. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
+    description: One or more approved scopes have sustained connection failures on TCP Proxy entry paths over the compliance window. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
 
 - alert: WebSocketEntryPathBlackboxUnavailable
   expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0

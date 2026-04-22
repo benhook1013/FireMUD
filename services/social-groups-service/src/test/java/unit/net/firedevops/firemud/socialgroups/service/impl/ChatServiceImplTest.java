@@ -1,14 +1,18 @@
 package net.firedevops.firemud.socialgroups.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.socialgroups.client.LoggingAdminClient;
+import net.firedevops.firemud.socialgroups.client.ModerationPolicyClient;
 import net.firedevops.firemud.socialgroups.config.ChatProperties;
 import net.firedevops.firemud.socialgroups.dto.ChatMessageDto;
 import net.firedevops.firemud.socialgroups.dto.SendMessageRequestDto;
@@ -29,6 +33,7 @@ class ChatServiceImplTest {
   private ChatMessageRepository repository;
   private ProfanityFilter profanityFilter;
   private LoggingAdminClient loggingAdminClient;
+  private ModerationPolicyClient moderationPolicyClient;
   private RedisTemplate<String, Object> redisTemplate;
   private ListOperations<String, Object> listOps;
   private SimpleMeterRegistry meterRegistry;
@@ -40,10 +45,16 @@ class ChatServiceImplTest {
     repository = mock(ChatMessageRepository.class);
     profanityFilter = mock(ProfanityFilter.class);
     loggingAdminClient = mock(LoggingAdminClient.class);
+    moderationPolicyClient = mock(ModerationPolicyClient.class);
     redisTemplate = mockRedisTemplate();
     listOps = mockListOperations();
     when(redisTemplate.opsForList()).thenReturn(listOps);
     when(profanityFilter.filter(any())).thenAnswer(i -> i.getArgument(0));
+    when(moderationPolicyClient.evaluateChatSend(anyLong(), anyLong()))
+        .thenReturn(
+            net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
+                .setAllowed(true)
+                .build());
     meterRegistry = new SimpleMeterRegistry();
     props = new ChatProperties();
     service =
@@ -52,6 +63,7 @@ class ChatServiceImplTest {
             Mappers.getMapper(ChatMessageMapper.class),
             profanityFilter,
             loggingAdminClient,
+            moderationPolicyClient,
             redisTemplate,
             meterRegistry,
             props);
@@ -68,7 +80,7 @@ class ChatServiceImplTest {
   @Test
   void sendMessageCachesMessageAndIncrementsMetrics() {
     SendMessageRequestDto req =
-        new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "hello");
+        new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "hello", null);
 
     ChatMessageDto dto = service.sendMessage(req);
 
@@ -86,7 +98,7 @@ class ChatServiceImplTest {
     TransactionSynchronizationManager.initSynchronization();
     try {
       SendMessageRequestDto req =
-          new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "hello");
+          new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "hello", null);
 
       ChatMessageDto dto = service.sendMessage(req);
 
@@ -114,7 +126,7 @@ class ChatServiceImplTest {
     doThrow(new RuntimeException("fail")).when(listOps).leftPush(any(), any());
 
     SendMessageRequestDto req =
-        new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "hi");
+        new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "hi", null);
     service.sendMessage(req);
 
     assertEquals(1.0, meterRegistry.get("chat_redis_errors_total").counter().count(), 0.001);
@@ -124,7 +136,7 @@ class ChatServiceImplTest {
   void profanityReportsModerationAfterCommitPath() {
     when(profanityFilter.filter("badword")).thenReturn("cleaned");
     SendMessageRequestDto req =
-        new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "badword");
+        new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "badword", null);
 
     service.sendMessage(req);
 
@@ -132,15 +144,56 @@ class ChatServiceImplTest {
   }
 
   @Test
+  void moderationPolicyDeniesChatBeforePersistence() {
+    when(moderationPolicyClient.evaluateChatSend(1L, 2L))
+        .thenReturn(
+            net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
+                .setAllowed(false)
+                .setAction("chat_mute")
+                .build());
+    SendMessageRequestDto req =
+        new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "hello", null);
+
+    IllegalStateException ex =
+        assertThrows(IllegalStateException.class, () -> service.sendMessage(req));
+
+    assertEquals("Chat send denied by moderation policy: chat_mute", ex.getMessage());
+    verify(repository, never()).save(any());
+  }
+
+  @Test
   void whisperCachesSeparatelyFromTell() {
     SendMessageRequestDto req =
-        new SendMessageRequestDto(1L, 2L, ChatType.WHISPER, null, 7L, null, null, "quiet");
+        new SendMessageRequestDto(1L, 2L, ChatType.WHISPER, null, 7L, null, null, "quiet", null);
 
     service.sendMessage(req);
 
     verify(listOps).leftPush("whisper:1:7", "quiet");
     verify(redisTemplate)
         .expire("whisper:1:7", Duration.ofSeconds(props.getWhispers().historyTtlSeconds()));
+  }
+
+  @Test
+  void sendMessageReturnsExistingMessageForDuplicateEffectId() {
+    ChatMessage existing = new ChatMessage();
+    existing.setId(22L);
+    existing.setTenantId(1L);
+    existing.setSenderAccountId(2L);
+    existing.setType(ChatType.SAY);
+    existing.setContent("hello");
+    existing.setTimestamp(Instant.parse("2026-04-21T00:00:00Z"));
+    existing.setEffectId("fx-comm-1");
+    when(repository.findByTenantIdAndEffectId(1L, "fx-comm-1")).thenReturn(Optional.of(existing));
+
+    ChatMessageDto dto =
+        service.sendMessage(
+            new SendMessageRequestDto(
+                1L, 2L, ChatType.SAY, null, 1L, null, null, "hello", "fx-comm-1"));
+
+    assertEquals(22L, dto.id());
+    assertEquals("fx-comm-1", dto.effectId());
+    verify(repository, never()).save(any(ChatMessage.class));
+    verifyNoInteractions(listOps);
   }
 
   @SuppressWarnings("unchecked")

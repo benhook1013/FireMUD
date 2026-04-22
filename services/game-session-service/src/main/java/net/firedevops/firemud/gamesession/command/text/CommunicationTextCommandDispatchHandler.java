@@ -4,10 +4,11 @@ import org.springframework.stereotype.Component;
 
 @Component
 final class CommunicationTextCommandDispatchHandler implements TextCommandDispatchHandler {
-  private final CommunicationCommandHandler communicationHandler;
+  private final net.firedevops.firemud.gamesession.service.CommandService commandService;
 
-  CommunicationTextCommandDispatchHandler(CommunicationCommandHandler communicationHandler) {
-    this.communicationHandler = communicationHandler;
+  CommunicationTextCommandDispatchHandler(
+      net.firedevops.firemud.gamesession.service.CommandService commandService) {
+    this.commandService = commandService;
   }
 
   @Override
@@ -17,8 +18,8 @@ final class CommunicationTextCommandDispatchHandler implements TextCommandDispat
 
   @Override
   public TextCommandInterpretationResult handle(TextCommandDispatchRequest request) {
-    CommunicationCommandHandlingResult result =
-        communicationHandler.handle(request.sessionContext().orElseThrow(), request.command());
-    return new TextCommandInterpretationResult(result.commandResult(), result.outputs());
+    return new TextCommandInterpretationResult(
+        commandService.enqueue(
+            request.sessionId(), request.command().rawLine(), request.requiresSoloTick()));
   }
 }

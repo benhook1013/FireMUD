@@ -40,6 +40,7 @@ public class LookAggregationService {
     try (GameplayLoggingContext ignored = GameplayLoggingContext.from(request)) {
       RoomSnapshot snapshot = fetchSnapshot(request);
       ListRoomEntitiesResponse entityResponse = fetchEntities(request);
+      requireSameReadFence(snapshot, entityResponse);
 
       LookResult.Builder builder =
           LookResult.newBuilder()
@@ -52,6 +53,9 @@ public class LookAggregationService {
               .setRoomName(snapshot.getRoomName())
               .setShortDescription(snapshot.getShortDescription())
               .setLongDescription(snapshot.getLongDescription())
+              .setWorldSnapshotId(snapshot.getWorldSnapshotId())
+              .setEntitySnapshotId(entityResponse.getEntitySnapshotId())
+              .setLookSnapshotId(snapshot.getWorldSnapshotId())
               .addAllRoomFlags(snapshot.getRoomFlagsList())
               .setAmbientState(toAmbientState(snapshot.getAmbientState()));
 
@@ -74,6 +78,7 @@ public class LookAggregationService {
                   .setTenantId(resolveTenantId(request))
                   .setRoomInstance(resolveRoomInstance(request))
                   .setPreferredLocale(request.getPreferredLocale())
+                  .setSessionAttestation(request.getSessionAttestation())
                   .build());
       if (response.hasError()) {
         throw statusFromError(response.getError(), "WorldManagement");
@@ -91,6 +96,7 @@ public class LookAggregationService {
               ListRoomEntitiesRequest.newBuilder()
                   .setTenantId(resolveTenantId(request))
                   .setRoomInstance(resolveRoomInstance(request))
+                  .setSessionAttestation(request.getSessionAttestation())
                   .build());
       if (response.hasError()) {
         throw statusFromError(response.getError(), "EntityManagement");
@@ -108,6 +114,27 @@ public class LookAggregationService {
     return Status.fromCode(statusCode)
         .withDescription(source + ": " + description)
         .asRuntimeException();
+  }
+
+  private void requireSameReadFence(
+      RoomSnapshot snapshot, ListRoomEntitiesResponse entityResponse) {
+    String worldFence = snapshot.getWorldSnapshotId();
+    String entityFence = entityResponse.getEntitySnapshotId();
+    if (worldFence == null || worldFence.isBlank()) {
+      throw Status.FAILED_PRECONDITION
+          .withDescription("WorldManagement: missing world read fence")
+          .asRuntimeException();
+    }
+    if (entityFence == null || entityFence.isBlank()) {
+      throw Status.FAILED_PRECONDITION
+          .withDescription("EntityManagement: missing entity read fence")
+          .asRuntimeException();
+    }
+    if (!worldFence.equals(entityFence)) {
+      throw Status.FAILED_PRECONDITION
+          .withDescription("LOOK read fence mismatch")
+          .asRuntimeException();
+    }
   }
 
   private Status.Code mapErrorCode(ErrorDetail error) {

@@ -98,18 +98,18 @@ public class HelpCommandHandler {
       case "CONTAINER" ->
           success(
               "CONTAINER <container>\n"
-                  + "Inspect a carried container's contents.\n"
+                  + "Inspect a carried or nearby room-ground container's contents.\n"
                   + "LOOK may show which items are containers.\n"
                   + "See HELP PUT and HELP TAKE for transfer syntax.");
       case "PUT" ->
           success(
               "PUT <item> INTO <container>\n"
-                  + "Move a carried item into a carried container.\n"
+                  + "Move a carried item into a carried or nearby room-ground container.\n"
                   + "PUT <count> <item> INTO <container> moves that many items.");
       case "TAKE" ->
           success(
               "TAKE <item> FROM <container>\n"
-                  + "Move an item out of a carried container.\n"
+                  + "Move an item out of a carried or nearby room-ground container.\n"
                   + "TAKE <count> <item> FROM <container> moves that many items.");
       case "WEAR" ->
           success(

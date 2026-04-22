@@ -58,17 +58,16 @@ Operators should wire alerts directly to these metrics and treat sustained growt
 
 1. Confirm via metrics or `INFO` that AOF size, restart time, or daily growth is outside the agreed budget.
 2. Schedule a maintenance window.
-3. Stop game services for affected scope, or globally for small/self-hosted deployments.
-4. Begin the authoritative tick reset handshake for the affected scope before any Redis wipe:
-   - pause ticks and new command intake
-   - bump `region_epoch` in PostgreSQL so surviving executors become stale by definition
-5. Reset Coordination Redis for the fenced scope by stopping Redis, deleting or recreating the AOF volume, and restarting Redis with the desired AOF configuration.
-6. Complete the remaining reset handshake:
+3. Keep the control-plane path and maintenance tooling alive long enough to execute the canonical reset handshake; do not stop the very components required to pause, fence, audit, and verify the workflow.
+4. Start the reset workflow with `coordination-maintenance pause --operation reset ...` for the affected scope so the deployment maintenance lock is acquired and the scope reaches canonical `PAUSED`.
+5. Run `coordination-maintenance reset ...` for that same scope. This command is the only supported place that bumps `region_epoch` and emits the authoritative old/new epoch evidence for downstream steps.
+6. Reset Coordination Redis for the fenced scope by stopping Redis, deleting or recreating the AOF volume, and restarting Redis with the desired AOF configuration.
+7. Complete the remaining reset handshake with the same maintenance lock token:
    - reconcile old-epoch ledger rows
    - converge accepted-but-unbound command records
    - reinitialize `tick:{tenantRegionTag}:meta`
    - run the post-reset smoke check
-7. Resume ticks and player traffic once services are healthy.
+8. Resume ticks and player traffic only through `coordination-maintenance resume ...`; if the workflow aborts before resume, release the lock explicitly with `coordination-maintenance release-lock ...`.
 
 Manual AOF surgery is not supported. Either the AOF is trusted and replayed as-is, or it is discarded and Redis restarts from a clean keyspace.
 
@@ -123,10 +122,14 @@ Behavior:
 
 Runbook:
 
-1. monitor replication lag
-2. if lag is within target envelope, promotion is acceptable from a replay perspective
-3. if lag is in warning band, investigate and consider delaying promotion
-4. if lag crosses the red line, either wait for recovery or treat promotion as a deliberate drop-recent-coordination-state event with pause, promote, and scoped rebuild/reset
+1. Monitor `redis_replication_lag_ms{redis_role="coordination",nodeId,upstreamNodeId}` as the canonical promotion-lag metric, with `redis_replication_offset_lag_bytes{...}` as supporting evidence.
+2. Compare the worst candidate-promotion lag against the same tail-loss SLO used elsewhere:
+   - acceptable: `redis_replication_lag_ms <= 0.5 * tail_loss_budget_ms`
+   - warning: `0.5 * tail_loss_budget_ms < redis_replication_lag_ms < tail_loss_budget_ms`
+   - red: `redis_replication_lag_ms >= tail_loss_budget_ms`
+3. If lag is in the acceptable band, promotion is acceptable from a replay perspective.
+4. If lag is in the warning band, investigate immediately and delay promotion unless the failover risk of waiting is worse than accepting a wider tail-loss window.
+5. If lag crosses the red line, either wait for recovery or treat promotion as a deliberate drop-recent-coordination-state event with `pause -> promote -> scoped reset/rebuild` under the normal maintenance-lock and epoch-fencing workflow.
 
 ## Key Shape Mistakes and Coordination Resets
 
@@ -148,9 +151,8 @@ Every coordination reset that affects tick execution must include a tick-effect-
 1. detect the issue through CI, logs, or metrics
 2. choose the smallest safe scope
 3. execute the canonical reset workflow for that scope:
-   - `coordination-maintenance pause ...`
-   - bump `region_epoch`
-   - `coordination-maintenance reset ...`
+   - `coordination-maintenance pause --operation reset ...`
+   - `coordination-maintenance reset ...` (this command performs and audits the `region_epoch` bump)
    - `coordination-maintenance reconcile-ledger ...`
    - `coordination-maintenance converge-commands ...`
    - `coordination-maintenance init-meta ...`
@@ -177,7 +179,7 @@ A lightweight unknown-prefix scanner periodically scans with conservative budget
 
 Session schema cleanup is a hygiene and recovery tool, not a normal steady-state path. When cleanup is required after a schema change or persistent unsupported-schema drift:
 
-- operate on per-tenant prefixes such as `session:game:<tenantId>:*`
+- operate on tenant-scoped gameplay/bootstrap prefixes such as `session:game:{tenantGameplayTag}:*` and the current `sessionctx:<tenantId>:*` family
 - run at most one cleanup worker at a time per Coordination Redis deployment
 - use bounded `SCAN` with modest `COUNT` values and strict time budgets
 - delete via `UNLINK` where possible to avoid blocking the event loop
@@ -187,17 +189,40 @@ Session schema cleanup is a hygiene and recovery tool, not a normal steady-state
 - emit cleanup metrics such as `session.cleanup_scanned_total`, `session.cleanup_deleted_total`, and `session.cleanup_duration_seconds`, with tenant context in logs
 - provide a dry-run mode before modifying keys in operator-driven cleanup tooling
 
+Canonical cleanup workflow:
+
+1. `coordination-maintenance pause --operation cleanup --scope tenant --tenant <tenantId>`
+2. `coordination-maintenance session-cleanup --scope tenant --tenant <tenantId> --maintenance-lock-token <token> [--dry-run] [--resume-token <token>]`
+3. `coordination-maintenance resume --scope tenant --tenant <tenantId> --maintenance-lock-token <token>` on success, or `coordination-maintenance release-lock --maintenance-lock-token <token>` on failure or operator abort
+
+The cleanup command is the only supported mutating path for session-schema cleanup. Ad hoc cleanup Jobs must call this verb rather than encoding their own lock, continuation, or abort behavior.
+
 Default runbooks should still prefer fixing deployments and relying on TTL over aggressive keyspace scrubbing.
 
 ## Maintenance Job Coordination
 
-Redis maintenance flows such as session cleanup, scoped resets, normalization migrations, unknown-prefix scanning, and split-brain recovery can place non-trivial load on Coordination Redis. To keep behavior predictable:
+Redis maintenance flows such as session cleanup, scoped resets, normalization migrations, unknown-prefix scanning, and split-brain recovery can place non-trivial load on Coordination Redis. Other operations such as coordinated backups, restore coordination recovery, and topology-changing scaling use the same pause/status/epoch control plane and can invalidate each other if they overlap. To keep behavior predictable:
 
-- one control-plane actor orchestrates Redis-heavy maintenance per deployment
-- only one Redis-intensive maintenance job should run at a time per deployment
+- one control-plane actor orchestrates heavy maintenance per deployment
+- one deployment-wide maintenance lock serializes incompatible backup, restore, reset, cleanup, migration, and topology-changing scale operations
+- coordinated backup jobs must acquire this lock before pausing ticks and must fail closed if an incompatible maintenance operation is already active
+- restore coordination recovery, scoped resets, normalization migrations, split-brain recovery, session cleanup, and topology-changing scale changes must acquire this lock before they pause or mutate coordination state
+- read-only low-impact scanners may run only when they are declared compatible with the active operation and still back off on Redis health degradation
 - dashboards and health endpoints should expose a simple “maintenance in progress” signal while such a job is active
-- fine-grained locks such as `session-cleanup-lock:<tenantId>` and `coord-reset:{tenantRegionTag}` should still be used inside the broader “one heavy job at a time” rule
+- fine-grained locks such as `session-cleanup-lock:<tenantId>` and `coord-reset:{tenantRegionTag}` should still be used inside the broader deployment-wide rule, but they do not replace it
 - maintenance jobs must back off or abort when Redis health signals show elevated latency, `used_cpu_sys`, `used_memory`, or elevated error rates
+
+Canonical maintenance-lock behavior:
+
+- lock identity: one active record per Coordination Redis deployment / gameplay environment boundary
+- minimum fields: `operation`, `scope_type`, `tenantId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference
+- acquisition is fail-closed for incompatible operations; operators may only break the lock with an explicit stale-lock or break-glass evidence record
+- acquisition owner: `coordination-maintenance pause --operation ...` is the canonical lock-acquiring command for multi-step backup, restore, reset, cleanup, migration, and topology-change workflows
+- refresh owner: every subsequent mutating CLI verb in that workflow refreshes the same lock using `maintenanceLockToken`; lock refresh is not a second independent acquisition
+- success release owner: `coordination-maintenance resume ...` is the canonical success-path release step once the scope has safely returned to `RUNNING`
+- failure release owner: `coordination-maintenance release-lock ...` is the canonical failure or operator-abort release step when the workflow stops before resume
+- backup CronJobs treat lock-acquisition failure as a skipped/failed backup attempt and emit the normal backup freshness metrics instead of running without the lock
+- restore recovery and reset tooling must refresh or complete the lock before TTL expiry so another actor cannot start a conflicting pause/reset sequence mid-flow
 
 Canonical maintenance-active signal:
 
@@ -231,16 +256,18 @@ Goal: change how `tenantId` / `regionId` normalization and hash tags are formed 
 
 1. implement the new normalization version in shared helpers
 2. schedule a maintenance window
-3. drive the affected scope to canonical `PAUSED`
+3. drive the affected scope to canonical `PAUSED` through `coordination-maintenance pause --operation migration ...`
 4. deploy services using the new normalization helpers
-5. bump `region_epoch`
+5. run `coordination-maintenance reset ...` for the affected scope so the canonical reset command owns the `region_epoch` bump and emits the audited epoch map
 6. start a fresh Coordination Redis deployment or logical database with an empty keyspace
-7. complete the rest of the canonical reset workflow
+7. complete the rest of the canonical reset workflow with the same maintenance lock token
 8. resume traffic and rebuild coordination state from PostgreSQL plus fresh activity
 
 ### Runbook: In-Place Normalization Migration
 
-This is an advanced option when dropping all coordination state is unacceptable:
+In-place normalization migration is not a first-implementation operator path. Use the reset-based migration above until a future slice ships dedicated rewrite tooling with scope inventory, follow-up handling, audit output, and post-migration verification.
+
+This remains a future advanced option when dropping all coordination state is unacceptable:
 
 1. freeze topology
 2. pause or drain ticks and new commands for affected scope

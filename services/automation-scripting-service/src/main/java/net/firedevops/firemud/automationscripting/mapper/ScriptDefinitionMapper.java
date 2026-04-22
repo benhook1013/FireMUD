@@ -8,6 +8,7 @@ import org.mapstruct.Mapping;
 @Mapper(componentModel = "spring")
 public interface ScriptDefinitionMapper {
   @Mapping(source = "scriptVersion", target = "version")
+  @Mapping(target = "eventBindings", ignore = true)
   ScriptDefinitionDto toDto(ScriptDefinition entity);
 
   @Mapping(source = "version", target = "scriptVersion")

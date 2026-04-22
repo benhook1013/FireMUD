@@ -11,6 +11,16 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
 - Redis, PostgreSQL, and core infrastructure components (Gateway, TCP Proxy, Observability stack) are healthy.
 - The operator has `kubectl` access and a kubeconfig for the target Kubernetes cluster (staging, production, or hobby-self-hosted) from a secure admin workstation or bastion host.
 
+## Implementation Notes
+
+This runbook describes the required deployment flow. Current automation is executable for the canonical preflight policy-ID set, expected-binding report reference, mounted JWT/JWKS contract, and traffic-open backup gates, but some evidence production remains operator- or future-automation-owned:
+
+- Fresh-boundary restore bootstrap and post-restore secret-compliance refresh are canonical requirements, but current restore scripts do not yet automate the full evidence chain.
+- Production release digest manifests are canonical release-lineage evidence, but current overlay CI does not yet enforce their presence or schema.
+- Expected-binding validation is first-pass repository/render validation. Real first-live and reopen decisions still require current environment evidence files produced by operators or automation.
+
+Operators must treat missing real-environment evidence as a blocker even when static preflight policy IDs are present. A successful static report without the required traffic-open, restore, release-manifest, and secret-compliance evidence is not enough to open player-facing traffic.
+
 ## Environment Bootstrap (First Deployment Only)
 
 Before the first player-facing deployment into `hobby-self-hosted`, `staging`, or `production`, operators must complete a bootstrap step that creates the minimum environment trust and secret set before any workload apply:
@@ -24,6 +34,21 @@ Before the first player-facing deployment into `hobby-self-hosted`, `staging`, o
 7. Record bootstrap secret-compliance evidence for each Tier A credential class. First deployment may use immutable initial-provisioning evidence (`lastProvisionedAt`) instead of rotation evidence, but the record must still satisfy the canonical secret-compliance schema before the environment is considered promotable or traffic-open.
 
 Bootstrap is part of the deployment contract, not an informal prerequisite. A player-facing environment is not considered deployable until this bootstrap pass succeeds with environment-specific credentials and bindings.
+
+## Fresh-Boundary Restore Bootstrap
+
+A restore into a new cluster, new namespace boundary, rebuilt control plane, or replacement hobby host is a fresh-boundary restore. It must run the environment bootstrap contract before restored workloads can be treated as player-facing, even when the target environment name is the same as before the incident.
+
+The restore source may provide PostgreSQL data, selected Kubernetes manifests, and non-secret configuration, but the new boundary must create or re-bind environment-owned trust material before normal workload startup:
+
+1. Create the target namespace and keep it in restore quarantine before any Gateway, TCP Proxy, scheduler, worker, or Game Session tick executor can accept traffic or create new coordination state.
+2. Provision registry pull credentials, PostgreSQL admin/application credentials, JWT signing/JWKS resources, cert-manager issuer bindings, workload/bridge/operator certificate resources, backup/object-store credentials, asset-store credentials, outbound-communications bindings, and operator credential bindings for the new boundary.
+3. Restore PostgreSQL data and manifests with normal application workloads held at zero replicas or behind a restore-safe startup gate.
+4. Re-run `./dev-tools/deploy/preflight.sh <environment>` and require the bootstrap, secret, JWT/JWKS, bridge, Redis, external-binding, and service-discovery checks to pass for the new boundary before progressing.
+5. Run the post-restore hardening and coordination recovery sequence from `design/architecture/system-architecture-post-restore-hardening.md`.
+6. Refresh the environment secret-compliance record and recovery record with the new provisioning, rotation, reissuance, and validation evidence before quarantine can be lifted.
+
+Restored snapshot-era Secrets are not authoritative trust material for a fresh-boundary restore. Operators may use restored Secret objects only as temporary inputs to hardening or data recovery, and they must be replaced, rotated, reissued, or explicitly re-bound to the new environment boundary before player traffic reopens.
 
 ## Production Traffic-Open Backup Gate
 
@@ -47,6 +72,7 @@ This is a traffic-open gate, not a routine steady-state rollout gate.
 2. **Verify CI/CD Status**
    - Ensure the GitHub Actions pipeline for the target branch and tag is green.
    - Check that container image digests are available in the configured registry.
+   - For production releases, confirm the release digest manifest exists and binds the release tag, production deployment reference, production attestation, staging deployment record, and exact service digest set being promoted.
    - Confirm deployment evidence includes rollback-mode classification (`rollback-compatible` or `roll-forward-only`) for the release candidate.
    - Treat rollback compatibility as broader than binary compatibility alone: previous digests must remain safe to re-apply against the current database schema, secret/config contract, mounted file-path contract, and expected external bindings.
 3. **Run Preflight Policy Checks**

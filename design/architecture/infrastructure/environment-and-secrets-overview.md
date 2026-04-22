@@ -20,6 +20,17 @@ For the full catalog of environment variables (including defaults and detailed r
 
 This section summarizes the **most important environment variables and rotation behaviors** for on‑call operators. Refer to the catalog document for the full list of variables and detailed defaults.
 
+### Implementation Notes
+
+This document describes the canonical environment and secret target state. The first implementation pass now covers the highest-risk deployment-critical pieces:
+
+- Player-facing JWT signing material can come from `FIREMUD_AUTH_JWT_SECRET_PATH` without requiring inline `firemud.auth.jwt-secret` in non-dev profiles.
+- Account Service can serve JWKS from the environment-provided `jwt-jwks` resource while preserving the packaged classpath fallback for local/dev.
+- Hosted `pr-preview` rendering produces preview-unique JWT signing material and matching JWKS data per namespace instead of relying on one shared inline JWT secret.
+- `dev-tools/deploy/preflight.sh` consumes player-facing expected-binding manifests under `design/operations/environments/`, emits `expectedBindingsRef`, and validates the first required binding fields and policy IDs.
+
+Remaining deployment evidence work is narrower: the traffic-open backup gates validate the first evidence shape, but real environment evidence files still need to be produced by operators or automation before first live traffic; expected-binding validation should also become stricter as richer Kubernetes live-state checks become available. Do not interpret those remaining gaps as alternative supported behavior for staging, production, or hobby/self-hosted traffic.
+
 ### Core Profiles
 
 | Variable | Purpose | Notes |

@@ -13,6 +13,8 @@ import net.firedevops.firemud.gamesession.v1.PingRequest;
 import net.firedevops.firemud.gamesession.v1.PingResponse;
 import net.firedevops.firemud.gamesession.v1.StopSessionRequest;
 import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
+import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
+import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for communicating with the Game Session Service. */
@@ -60,5 +62,16 @@ public class GameSessionClient
     StopSessionRequest request =
         StopSessionRequest.newBuilder().setSessionId(Long.toString(sessionId)).build();
     return stub().stopSession(request);
+  }
+
+  /** Toggle a runtime feature flag in the Game Session Service, the runtime flag authority. */
+  public ToggleFeatureFlagResponse toggleFeatureFlag(long tenantId, String name, boolean enabled) {
+    ToggleFeatureFlagRequest request =
+        ToggleFeatureFlagRequest.newBuilder()
+            .setTenantId(Long.toString(tenantId))
+            .setName(name)
+            .setEnabled(enabled)
+            .build();
+    return stub().toggleFeatureFlag(request);
   }
 }

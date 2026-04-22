@@ -8,12 +8,14 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
+import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -48,6 +50,7 @@ public class PlayCommandHandler {
   private final GameLogicProperties gameLogicProperties;
   private final AccountClient accountClient;
   private final EntityManagementClient entityManagementClient;
+  private final ModerationPolicyClient moderationPolicyClient;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final MeterRegistry meterRegistry;
@@ -61,6 +64,7 @@ public class PlayCommandHandler {
       GameLogicProperties gameLogicProperties,
       AccountClient accountClient,
       EntityManagementClient entityManagementClient,
+      ModerationPolicyClient moderationPolicyClient,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       MeterRegistry meterRegistry) {
@@ -76,6 +80,8 @@ public class PlayCommandHandler {
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
     this.entityManagementClient =
         Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
+    this.moderationPolicyClient =
+        Objects.requireNonNull(moderationPolicyClient, "moderationPolicyClient must not be null");
     this.firstPartyConnectContextRegistry =
         Objects.requireNonNull(
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
@@ -184,7 +190,11 @@ public class PlayCommandHandler {
         }
         Optional<PlayCommandHandlingResult> authorityFailure =
             validateRuntimeAdmission(
-                context, selectedRealm, selectedTenantTag, selection.characterSelector());
+                context,
+                selectedWorld,
+                selectedRealm,
+                selectedTenantTag,
+                selection.characterSelector());
         if (authorityFailure.isPresent()) {
           return authorityFailure.get();
         }
@@ -211,6 +221,11 @@ public class PlayCommandHandler {
               null);
         }
         long gameInstanceId = selectedRealm.getGameInstanceId();
+        Optional<PlayCommandHandlingResult> moderationFailure =
+            validateModerationPolicy(context, selectedRealm, selectedTenantTag);
+        if (moderationFailure.isPresent()) {
+          return moderationFailure.get();
+        }
         long characterId = resolveCharacterId(context, selectedRealm, character, characterName);
         try (GameplayLoggingContext gameplayContext =
             GameplayLoggingContext.open(
@@ -279,6 +294,40 @@ public class PlayCommandHandler {
         }
       }
     }
+  }
+
+  private Optional<PlayCommandHandlingResult> validateModerationPolicy(
+      SessionContext context, GameplayCatalogProperties.Realm selectedRealm, String tenantTag) {
+    var decision =
+        moderationPolicyClient.evaluateGameplayAdmission(
+            selectedRealm.getTenantId(), context.accountId());
+    if (decision.hasError()
+        && decision.getError().getCode() != null
+        && !decision.getError().getCode().isBlank()) {
+      return Optional.of(
+          failure(
+              "MODERATION_POLICY_UNAVAILABLE",
+              "Gameplay admission policy unavailable",
+              "error.play.moderation-policy-unavailable",
+              Map.of("errorCode", decision.getError().getCode()),
+              tenantTag,
+              Long.toString(selectedRealm.getGameInstanceId()),
+              null,
+              null));
+    }
+    if (!decision.getAllowed()) {
+      return Optional.of(
+          failure(
+              "MODERATION_POLICY_DENIED",
+              "Gameplay admission denied by moderation policy",
+              "error.play.moderation-policy-denied",
+              Map.of("action", decision.getAction()),
+              tenantTag,
+              Long.toString(selectedRealm.getGameInstanceId()),
+              null,
+              null));
+    }
+    return Optional.empty();
   }
 
   private Optional<PlayCommandHandlingResult> validateFirstPartyConnectScope(
@@ -354,10 +403,7 @@ public class PlayCommandHandler {
     if (StringUtils.hasText(characterName)) {
       Optional<net.firedevops.firemud.entitymanagement.v1.Character> character =
           entityManagementClient.findCharacterByName(
-              Long.toString(selectedRealm.getTenantId()),
-              Long.toString(selectedRealm.getGameInstanceId()),
-              toPlayableStateScope(selectedRealm),
-              characterName.trim());
+              context, toPlayableStateScope(selectedRealm), characterName.trim());
       if (character.isPresent() && StringUtils.hasText(character.get().getId())) {
         return Long.parseLong(character.get().getId());
       }
@@ -438,6 +484,7 @@ public class PlayCommandHandler {
 
   private Optional<PlayCommandHandlingResult> validateRuntimeAdmission(
       SessionContext context,
+      GameplayCatalogProperties.World selectedWorld,
       GameplayCatalogProperties.Realm selectedRealm,
       String tenantTag,
       String requestedCharacter) {
@@ -455,7 +502,13 @@ public class PlayCommandHandler {
             requestId);
     Optional<PlayCommandHandlingResult> membershipFailure =
         validateMembershipResponse(
-            membershipResponse, context, tenantTag, selectedRealm, requestedCharacterId, requestId);
+            membershipResponse,
+            context,
+            tenantTag,
+            selectedWorld,
+            selectedRealm,
+            requestedCharacterId,
+            requestId);
     if (membershipFailure.isPresent()) {
       return membershipFailure;
     }
@@ -471,9 +524,57 @@ public class PlayCommandHandler {
       GetTenantMembershipForRuntimeResponse response,
       SessionContext context,
       String tenantTag,
+      GameplayCatalogProperties.World selectedWorld,
       GameplayCatalogProperties.Realm selectedRealm,
       long requestedCharacterId,
       String requestId) {
+    if (!selectedRealm.isVisible()) {
+      GetRealmAccessGrantForRuntimeResponse grantResponse =
+          accountClient.getRealmAccessGrantForRuntime(
+              Long.toString(context.accountId()),
+              Long.toString(selectedRealm.getTenantId()),
+              selectedWorld.getSlug(),
+              selectedRealm.getSlug(),
+              requestId);
+      Optional<ErrorDetail> grantError = extractError(grantResponse.getError());
+      if (grantError.isPresent() && isAuthorityUnavailable(grantError.get())) {
+        recordResumeDeniedIfApplicable(
+            context,
+            selectedRealm.getGameInstanceId(),
+            requestedCharacterId,
+            tenantTag,
+            "authority_unavailable");
+        return Optional.of(
+            failure(
+                GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE,
+                GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_MESSAGE,
+                "error.play.membership-unavailable",
+                Map.of(),
+                tenantTag,
+                Long.toString(selectedRealm.getGameInstanceId()),
+                Long.toString(requestedCharacterId),
+                null));
+      }
+      if (grantError.isPresent() || !grantResponse.getGranted()) {
+        recordResumeDeniedIfApplicable(
+            context,
+            selectedRealm.getGameInstanceId(),
+            requestedCharacterId,
+            tenantTag,
+            "access_denied");
+        return Optional.of(
+            failure(
+                GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
+                GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
+                "error.play.world-access-denied",
+                Map.of(),
+                tenantTag,
+                Long.toString(selectedRealm.getGameInstanceId()),
+                Long.toString(requestedCharacterId),
+                null));
+      }
+      return Optional.empty();
+    }
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
       ErrorDetail error = maybeError.get();

@@ -22,6 +22,8 @@ curl http://localhost:8080/ping
 - `ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse)` – returns players, NPCs, and visible items present in a room, scoped by `RoomInstanceRef`.
 - `GetDraftDesignDigest` – returns publish-gating digest for Draft entity templates using typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. Entity Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}`. `appliedCommitId` means the highest Game Design commit whose full revision set has been durably applied to the target Draft entity scope. `contentDigest` must cover only version-scoped entity template/binding rows and must exclude live runtime entities and audit/history metadata.
 
+Gameplay mutation RPCs that change item, equipment, or container state accept an optional `effectId` supplied by Game Session durable effect execution. When present, Entity Management treats `{tenantId, effectId}` as the operation-level idempotency key and returns the stored applied response for duplicate delivery instead of applying the mutation again. Read-only query RPCs do not require an `effectId`.
+
 ```bash
 grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/Ping
 ```
@@ -45,8 +47,8 @@ Entity Management is a required publish-gate participant and must maintain a sta
 
 Implementation Notes:
 
-- The current implementation hashes the tenant’s draft entity-definition tables in their existing tenant-scoped schema and returns synthetic `appliedCommitId = "version:<versionId>"`.
-- That preserves one canonical digest gate now while the future fully version-scoped entity-template graph remains implementation follow-through.
+- The current implementation hashes the version-scoped entity-definition rows for the requested `(tenantId, versionId)` and returns synthetic `appliedCommitId = "version:<versionId>"` until the later applied-revision ledger lands.
+- Current version-scoped digest inputs include `items`, `npcs`, and `crafting_recipes`; later entity-template families must join this same `(tenantId, versionId)` digest contract when introduced.
 
 - Included objects:
   - version-scoped entity-template tables such as item, NPC, equipment, loot-table, and balance-curve definitions keyed by `(tenantId, versionId)`;
@@ -69,7 +71,7 @@ Publish gating must fail closed if Entity Management cannot attest a digest cons
 
 - `tenantId`, `gameInstanceId`, and `roomInstanceId` (a `RoomInstanceRef`) so consumers can unambiguously scope the entity list to a running instance.
 - `entitySnapshotId` so consumers can cache or invalidate entity lists deterministically.
-- `asOfTickId` (or equivalent monotonic read-fence token) echoing the fence used to materialize this entity list.
+- the room-read fence value for this entity list. The live proto carries this as `entitySnapshotId`; future tick-ledger work may add an `asOfTickId` only through a coordinated proto and architecture update.
 - `entities[]`, each with `entityId`, `displayName`, `entityType` (`PLAYER`, `NPC`, `ITEM`), and optional `role`/`affiliation`.
 - `stateFlags` such as `isHidden`, `isInCombat`, or `isQuestTarget` so Game Logic can mask stealthy entities or highlight objectives.
 - `visionPriority` to help sort players before NPCs and list visible items at the end, keeping `LOOK` render ordering consistent.
@@ -80,14 +82,14 @@ Game Logic treats `entitySnapshotId` as the canonical cache key for LOOK-relevan
 - `worldSnapshotId` from World Management’s `GetRoomSnapshot`; and
 - `entitySnapshotId` from `ListRoomEntities`,
 
-then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId + ":" + asOfTickId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically.
+then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically.
 
 Room-entity data is derived from runtime entity state plus authoritative world location. Ground items are discovered by querying items contained by the synthetic room-ground container for the target `RoomInstanceRef`. Characters and NPCs are included when their current location (owned by World Management) matches the target `RoomInstanceRef`:
 
-- The caller obtains the authoritative occupant `entityId` set and read fence from World Management before invoking `ListRoomEntities`.
-- `ListRoomEntities` joins those caller-supplied occupant `entityId` values to its own runtime entity rows to materialize display data plus room-ground inventory state owned by Entity Management.
-- `ListRoomEntities` must accept caller-supplied occupancy references together with the World Management read fence token (`asOfTickId`); when Entity Management cannot serve the same fence it must return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` instead of returning mixed-tick data.
-- The read fence is satisfied only by durable post-commit state. Redis-staged containment changes that have not yet committed the effect guard and container/item row updates for that fence are not eligible to satisfy `asOfTickId`.
+- The caller obtains the authoritative room snapshot and read fence from World Management before invoking `ListRoomEntities`.
+- `ListRoomEntities` materializes display data plus room-ground inventory state owned by Entity Management for the same `RoomInstanceRef`.
+- `ListRoomEntities` must return an Entity Management read fence (`entitySnapshotId`) for the same room scope; when Game Logic cannot align it with the World Management `worldSnapshotId`, composition must fail instead of returning mixed-tick data.
+- The read fence is satisfied only by durable post-commit state. Redis-staged containment changes that have not yet committed the effect guard and container/item row updates for that fence are not eligible to satisfy the room-read fence.
 
 Illustrative `ListRoomEntities` fragments:
 
@@ -98,8 +100,7 @@ Illustrative `ListRoomEntities` fragments:
   "tenantId": "t1",
   "gameInstanceId": "g1",
   "roomInstanceId": "room-antechamber",
-  "entitySnapshotId": "entitysnap-184",
-  "asOfTickId": 184,
+  "entitySnapshotId": "t1:g1:room-antechamber",
   "entities": [
     {
       "entityId": "char-mara",
@@ -115,8 +116,8 @@ Illustrative `ListRoomEntities` fragments:
 ```json
 {
   "error": {
-    "code": "STALE_READ_FENCE",
-    "message": "Entity state is not yet available for the requested room read fence."
+    "code": "READ_FENCE_MISMATCH",
+    "message": "Entity state did not align with the requested room read fence."
   }
 }
 ```

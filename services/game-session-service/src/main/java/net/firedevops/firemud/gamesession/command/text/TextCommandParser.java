@@ -62,9 +62,11 @@ public class TextCommandParser {
                   new TextCommandPayload.AuthoredActionInvocation(
                       commandId, parseRemainingTokens(tokens)));
           case INVENTORY ->
-              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("INVENTORY"));
+              new ParsedCommandData(
+                  parseRemainingTokens(tokens), new TextCommandPayload.ViewRequest("INVENTORY"));
           case EQUIPMENT ->
-              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("EQUIPMENT"));
+              new ParsedCommandData(
+                  parseRemainingTokens(tokens), new TextCommandPayload.ViewRequest("EQUIPMENT"));
           case CONTAINER -> parseContainerView(tokens);
           case GET, DROP, WEAR, REMOVE -> parseItemReference(type, tokens);
           case PUT, TAKE -> parseContainerTransfer(type, tokens);

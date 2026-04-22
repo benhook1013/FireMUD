@@ -5,13 +5,11 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.stereotype.Service;
@@ -19,19 +17,10 @@ import org.springframework.util.StringUtils;
 
 /** Persists session context metadata in Redis keys scoped by tenant/session. */
 @Service
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = true)
 public final class RedisSessionContextService implements SessionContextService {
   private static final int MAX_SAVE_RETRIES = 8;
   private final RedisTemplate<String, Object> redisTemplate;
   private final Duration sessionTtl;
-
-  private static final String CONTEXT_KEY_TEMPLATE = "sessionctx:%d:%d:context";
-  private static final String SESSION_KEY_TEMPLATE = "sessionctx:session:%d:context";
-  private static final String IDENTITY_KEY_TEMPLATE = "sessionctx:%d:identity:%d:%d:context";
-  private static final String NAME_KEY_TEMPLATE = "sessionctx:%d:identity:%d:name:%s:context";
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -171,27 +160,23 @@ public final class RedisSessionContextService implements SessionContextService {
   }
 
   private String contextKey(long tenantId, long sessionId) {
-    return String.format(CONTEXT_KEY_TEMPLATE, tenantId, sessionId);
+    return SessionContextRedisKeys.contextKey(tenantId, sessionId);
   }
 
   private String sessionKey(long sessionId) {
-    return String.format(SESSION_KEY_TEMPLATE, sessionId);
+    return SessionContextRedisKeys.sessionKey(sessionId);
   }
 
   private String identityKey(long tenantId, long gameInstanceId, long characterId) {
-    return String.format(IDENTITY_KEY_TEMPLATE, tenantId, gameInstanceId, characterId);
+    return SessionContextRedisKeys.identityKey(tenantId, gameInstanceId, characterId);
   }
 
   private String nameKey(long tenantId, long gameInstanceId, String characterName) {
-    return String.format(NAME_KEY_TEMPLATE, tenantId, gameInstanceId, normalizeName(characterName));
+    return SessionContextRedisKeys.nameKey(tenantId, gameInstanceId, characterName);
   }
 
   private boolean hasGameplayIdentity(SessionContext context) {
     return context.gameInstanceId() > 0 && context.characterId() > 0;
-  }
-
-  private String normalizeName(String value) {
-    return value.trim().toLowerCase(Locale.ROOT);
   }
 
   private List<String> watchKeys(SessionContext context) {

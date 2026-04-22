@@ -65,6 +65,13 @@ Each persisted script work item must include:
 - `commandCount` (for budgeting/inspection).
 - `cancelReason` (nullable; required when canceled).
 
+When a work item is handed to Game Session, the handoff identity must be explicit:
+
+- Every gameplay command emitted from one outbox work item must derive a stable `automationDispatchId`.
+- If one work item emits exactly one gameplay command, `automationDispatchId` may be derived directly from `outboxWorkItemId`.
+- If one work item emits multiple gameplay commands, each emitted command must use a deterministic suffix or ordinal under the same stable parent identity (for example `<outboxWorkItemId>#<commandOrdinal>`), so duplicate handoff retries remain idempotent per gameplay command rather than only per work item.
+- Game Session dedupe, stale-timeline rejection, replay/no-op outcomes, and later execution-fence reporting must key off that per-command `automationDispatchId`, while operator tooling must still be able to correlate those outcomes back to the parent `outboxWorkItemId` and Trigger Identity.
+
 ### Minimum Status Model
 
 Statuses are a target-state contract; implementations may use different internal names as long as they are mapped 1:1:
@@ -95,6 +102,9 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 
 - Outbox scanning for rebuild and cancellation must be bounded and backpressured (pagination, time windows, per-tenant limits) so it cannot become an unbounded full-table scan on large tenants.
 - Outbox retention must be explicitly defined for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` records, and must preserve enough history for rollback diagnosis and audit queries.
+- The canonical defaults are owned by [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md): `SCRIPT_OUTBOX_HANDED_OFF_RETENTION_DAYS`, `SCRIPT_OUTBOX_CANCELED_RETENTION_DAYS`, `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS`, and `SCRIPT_OUTBOX_TERMINAL_CLEANUP_INTERVAL_SECONDS`.
+- The current Automation & Scripting implementation wires those retention knobs into a scheduled cleanup job for terminal `script_work_items`: `HANDED_OFF` and `CANCELED` rows expire by status-specific retention days, and `DEAD_LETTERED` rows expire by max age plus a row-count cap that removes the oldest excess rows first.
+- Operator-facing replay, purge, and convergence tooling must treat those retention windows as the supported diagnosis horizon rather than inventing ad hoc cleanup timing.
 
 ## `scriptEventId` Lifecycle and Deduplication
 
@@ -144,11 +154,23 @@ Scripts do not execute inside the tick system. The Automation & Scripting Servic
 
 Admission and sandboxing must bound not only how often a handler runs, but also how much work a single admitted run can emit:
 
-- Each DSL run must enforce explicit output budgets before a work item is persisted.
 - Each DSL run must enforce explicit output budgets before a work item is persisted, including `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes`, plus any bounded payload ceilings needed for known large command families.
 - Exceeding an output budget must fail deterministically with a non-success stage-aware outcome. Implementations may classify the failure at `DSL_EVAL` or `WORK_ITEM_PERSIST`, but `finalReason` must use bounded canonical codes such as `command_count_exceeded`, `per_entity_command_limit_exceeded`, or `work_item_size_exceeded`.
 - Output budgets apply equally to core scripts and plugins.
-- Publish-time validation in Game Design should perform conservative worst-case fan-out analysis for bounded loops and bulk action nodes.
+- Publish-time validation in Game Design must perform conservative worst-case fan-out analysis for bounded loops and bulk action nodes using the same component cost metadata that Automation & Scripting uses for runtime revalidation.
+
+### Static Output Cost Contract
+
+Every compiled script artifact must carry enough normalized output-cost metadata for Game Design and Automation & Scripting to reach the same accept/reject decision before runtime:
+
+- Each action/component definition must declare `maxCommandsEmitted`, optional per-entity command distribution rules, `maxSerializedBytesPerCommand`, and whether its output cost is `STATIC`, `BOUNDED_BY_INPUT`, or `UNSUPPORTED_FOR_STATIC_BOUND`.
+- `STATIC` components contribute a fixed cost. `BOUNDED_BY_INPUT` components must name the validated input bound that caps their fan-out, such as a maximum selected-entity count, bounded loop counter, or configured list length. `UNSUPPORTED_FOR_STATIC_BOUND` components are not eligible for publish in live scripts until they are redesigned or given a bounded contract.
+- Branches are analyzed conservatively by taking the maximum cost of mutually exclusive branches and the sum of costs for paths that can both execute in one run.
+- Bounded loops multiply the loop body cost by the validated finite iteration bound. Loops without a finite bound are rejected by loop-safety validation before output-cost analysis.
+- Timer edges that create future triggers do not add same-run command cost beyond the timer-registration command itself, if any; the future trigger is analyzed as its own run.
+- Bulk action nodes must expose an explicit validated maximum fan-out. Runtime-discovered collection sizes without a publish-time upper bound are treated as `UNSUPPORTED_FOR_STATIC_BOUND`.
+- Game Design writes the normalized cost summary into the compiled artifact. Automation & Scripting revalidates the summary against its local component registry and rejects the patch if the summary is missing, stale, or exceeds runtime ceilings.
+- Runtime output budgeting remains mandatory even when static validation passes; the static contract prevents obviously oversized graphs from publishing, while runtime guards protect against registry bugs, corrupted artifacts, or future component changes.
 
 ## Budget Charge Points
 
@@ -180,7 +202,7 @@ The main Redis keys used by the Automation & Scripting Service are:
 | `automation:tick:{tenantInstanceScriptTag}:lock` | Automation & Scripting (`ScriptTickService`) | Per-instance, per-script automation tick lock to serialize staging for a script’s work batch. | Hash-tagged on `{tenantInstanceScriptTag}`. | Short-lived lock. |
 | `automation:tick:{tenantInstanceScriptTag}:queue` | Automation & Scripting (`ScriptTickService`) | Staging queue for batched script events before they are written into per-entity tick queues. | Hash-tagged on `{tenantInstanceScriptTag}`. | Short-lived staging. |
 | `automation:timer:{tenantRegionTag}` | Automation & Scripting scheduler | Region-scoped index of script timers and intervals. | Hash-tagged on `{tenantRegionTag}`. | Persistent while timers are active. |
-| `script-leader:{<tenantId>}` | Automation & Scripting scheduler | Leadership lease for scheduler coordination per tenant. | Hash-tagged per tenant. | Short-lived lease refreshed by the active scheduler instance. |
+| Scheduler leadership state | Automation & Scripting scheduler | Derived scheduler ownership aligned to the canonical runtime and region-scoped coordination model; do not assume a separate first-class `script-leader:*` prefix unless a later Redis design update explicitly introduces it. | Must follow the same slotting and reset rules as the documented scheduler coordination families. | Short-lived and reset-tolerant by design. |
 
 ## Failure Modes and Error Handling
 
@@ -227,7 +249,7 @@ Timer-based triggers such as `onInterval` and `onTimerExpire` are subject to the
 
 ## `onLoad` Semantics and Failure Handling
 
-The `onLoad` lifecycle event is used to initialize shared script state for scripts in a given `<tenantId, scriptPatchVersion>` before that patch becomes active:
+The `onLoad` lifecycle event is a tenant-readiness check for scripts in a given `<tenantId, scriptPatchVersion>` before that patch becomes active:
 
 - `onLoad` handlers run after static validation and compilation succeed, but before the patch is marked `READY` for a tenant.
 - Each `onLoad` execution is keyed by `<tenantId, scriptId, scriptPatchVersion>` and is treated as at-most-once.
@@ -244,5 +266,5 @@ Failure handling:
 - If the dedicated `onLoad` initialization budget is exhausted before completion, the patch must fail deterministically with an explicit bounded reason.
 - If `onLoad` fails with `infrastructure_error`, the service may optionally retry the initialization a bounded number of times using the same `scriptEventId` and idempotent operations.
 
-All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome.
+All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome. A successful `onLoad` contributes to patch readiness aggregation and must use `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`; it does not use live `finalOutcome=success`, which remains reserved for tick handoff.
 Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of all per-script `onLoad` runs; the patch becomes `READY` only after every required `onLoad` handler succeeds.

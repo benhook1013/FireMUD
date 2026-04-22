@@ -17,4 +17,6 @@ public interface InventoryEntryRepository extends JpaRepository<InventoryEntry, 
   @EntityGraph(attributePaths = {"item", "character"})
   Page<InventoryEntry> findByIdCharacterIdAndCharacterTenantId(
       Long characterId, Long tenantId, Pageable pageable);
+
+  long countByCharacterTenantId(Long tenantId);
 }

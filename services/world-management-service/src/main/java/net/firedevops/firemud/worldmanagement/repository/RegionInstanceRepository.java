@@ -9,5 +9,7 @@ import org.springframework.stereotype.Repository;
 public interface RegionInstanceRepository extends JpaRepository<RegionInstance, Long> {
   List<RegionInstance> findByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
 
+  long countByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
+
   void deleteByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
 }

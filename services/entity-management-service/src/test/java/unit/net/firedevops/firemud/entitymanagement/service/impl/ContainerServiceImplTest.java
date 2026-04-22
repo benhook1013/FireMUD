@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -56,7 +57,8 @@ class ContainerServiceImplTest {
     contained.setContainerInstance(containerInstance);
 
     when(characterRepo.findByIdAndTenantId(7L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 7L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 7L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdOrderByIdAsc(
             1L, 500L, Pageable.unpaged()))
@@ -110,7 +112,8 @@ class ContainerServiceImplTest {
     stack.setQuantity(4);
 
     when(characterRepo.findByIdAndTenantId(7L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 7L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 7L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdOrderByIdAsc(
             1L, 500L, Pageable.unpaged()))
@@ -135,6 +138,7 @@ class ContainerServiceImplTest {
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
     ContainerServiceImpl service =
         new ContainerServiceImpl(
             containerInstanceRepo,
@@ -143,6 +147,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            itemTransferAuditWriter,
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
@@ -157,7 +162,8 @@ class ContainerServiceImplTest {
     ItemInstance second = itemInstance(42L, 1L, character, item);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 1L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
     when(itemInstanceRepo
@@ -172,6 +178,13 @@ class ContainerServiceImplTest {
     assertEquals("Torch", stored.itemName());
     assertEquals(1, stored.quantity());
     assertEquals(containerInstance, first.getContainerInstance());
+    ItemTransferSupport transferSupport = new ItemTransferSupport();
+    verify(itemTransferAuditWriter)
+        .recordInstanceTransfer(
+            first,
+            transferSupport.inventory(1L, 1L),
+            transferSupport.container(containerInstance),
+            transferSupport.audit("PUT", 1L));
   }
 
   @Test
@@ -211,7 +224,8 @@ class ContainerServiceImplTest {
     inventoryStack.setQuantity(5);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 1L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(arrows));
     when(itemStackRepo
@@ -270,7 +284,8 @@ class ContainerServiceImplTest {
     second.setContainerInstance(containerInstance);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 1L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
     when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(1L, 500L, 3L))
@@ -313,7 +328,8 @@ class ContainerServiceImplTest {
     Item nestedContainer = item(3L, 1L, "Pouch", true, false);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 1L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(nestedContainer));
 
@@ -370,7 +386,8 @@ class ContainerServiceImplTest {
     second.setQuantity(4);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
+            500L, 1L, 1L, null, null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(arrows));
     when(itemStackRepo

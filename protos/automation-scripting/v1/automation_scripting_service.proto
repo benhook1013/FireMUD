@@ -44,10 +44,18 @@ service AutomationScriptingService {
 service AutomationScriptingControlPlaneService {
   rpc GetScriptPatchStatus(GetScriptPatchStatusRequest) returns (GetScriptPatchStatusResponse);
   rpc ListScriptPatchStatuses(ListScriptPatchStatusesRequest) returns (ListScriptPatchStatusesResponse);
+  rpc ListScriptDeadLetters(ListScriptDeadLettersRequest) returns (ListScriptDeadLettersResponse);
+  rpc ReplayDeadLetteredWorkItems(ReplayDeadLetteredWorkItemsRequest)
+      returns (ReplayDeadLetteredWorkItemsResponse);
 
   // Cancel pending durable work items for a patch so they are never handed off again.
   rpc CancelPendingWorkItemsForPatch(CancelPendingWorkItemsForPatchRequest)
       returns (CancelPendingWorkItemsForPatchResponse);
+
+  rpc GetScriptEventDefinition(GetScriptEventDefinitionRequest)
+      returns (GetScriptEventDefinitionResponse);
+  rpc ListScriptEventDefinitions(ListScriptEventDefinitionsRequest)
+      returns (ListScriptEventDefinitionsResponse);
 
   // Plugin lifecycle/control-plane APIs.
   rpc GetPluginStatus(GetPluginStatusRequest) returns (GetPluginStatusResponse);
@@ -102,10 +110,54 @@ message UpdateScriptRequest {
   string name = 2;
   string version = 3;
   string definition = 4;
+  repeated ScriptEventBinding event_bindings = 5;
 }
 
 message UpdateScriptResponse {
   bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ScriptEventBinding {
+  string event_type = 1;
+  string event_schema_version = 2;
+  string target_scope_type = 3;
+  string target_scope_id = 4;
+  int32 priority = 5;
+  bool requires_exclusive_event = 6;
+}
+
+message ScriptEventDefinition {
+  string event_type = 1;
+  string event_schema_version = 2;
+  string owner_service = 3;
+  repeated string allowed_producer_principals = 4;
+  repeated string required_trigger_identity_fields = 5;
+  string snapshot_authority = 6;
+  string consistency_class = 7;
+  string quota_class = 8;
+  string replay_semantics = 9;
+  repeated string allowed_binding_scopes = 10;
+  bool dry_run_support = 11;
+  string deprecation_status = 12;
+}
+
+message GetScriptEventDefinitionRequest {
+  string event_type = 1;
+  string event_schema_version = 2;
+}
+
+message GetScriptEventDefinitionResponse {
+  ScriptEventDefinition definition = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListScriptEventDefinitionsRequest {
+  string owner_service = 1;
+}
+
+message ListScriptEventDefinitionsResponse {
+  repeated ScriptEventDefinition definitions = 1;
   shared.v1.ErrorDetail error = 2;
 }
 
@@ -148,6 +200,55 @@ message GetDraftDesignDigestResponse {
   shared.v1.ErrorDetail error = 6;
 }
 
+message ListScriptDeadLettersRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  int32 limit = 4;
+}
+
+message ScriptDeadLetterEntry {
+  string work_item_id = 1;
+  string tenant_id = 2;
+  string game_instance_id = 3;
+  string region_id = 4;
+  int64 region_epoch = 5;
+  string entity_id = 6;
+  string script_id = 7;
+  string event_type = 8;
+  string script_patch_version = 9;
+  string script_event_id = 10;
+  string status = 11;
+  string reason = 12;
+  int64 created_at_ms = 13;
+  int64 updated_at_ms = 14;
+}
+
+message ListScriptDeadLettersResponse {
+  repeated ScriptDeadLetterEntry dead_letters = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ReplayDeadLetteredWorkItemsRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  repeated string work_item_ids = 4;
+  string script_patch_version = 5;
+  int64 created_after_ms = 6;
+  int64 created_before_ms = 7;
+  int32 limit = 8;
+  string control_plane_request_id = 9;
+  string actor_principal = 10;
+  string reason = 11;
+}
+
+message ReplayDeadLetteredWorkItemsResponse {
+  int64 replayed_count = 1;
+  int64 rejected_count = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
 enum TriggerMode {
   TRIGGER_MODE_UNSPECIFIED = 0;
   TRIGGER_MODE_NORMAL = 1;
@@ -158,12 +259,15 @@ enum TriggerAdmissionOutcome {
   TRIGGER_ADMISSION_OUTCOME_UNSPECIFIED = 0;
   TRIGGER_ADMISSION_OUTCOME_ADMITTED = 1;
   TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING = 2;
-  TRIGGER_ADMISSION_OUTCOME_DENIED_QUOTA = 3;
-  TRIGGER_ADMISSION_OUTCOME_DENIED_TENANT_BUDGET = 4;
-  TRIGGER_ADMISSION_OUTCOME_DENIED_DISABLED = 5;
-  TRIGGER_ADMISSION_OUTCOME_DENIED_VERSION_UNAVAILABLE = 6;
-  TRIGGER_ADMISSION_OUTCOME_DENIED_POLICY = 7;
+  reserved 3 to 7;
+  reserved "TRIGGER_ADMISSION_OUTCOME_DENIED_QUOTA",
+      "TRIGGER_ADMISSION_OUTCOME_DENIED_TENANT_BUDGET",
+      "TRIGGER_ADMISSION_OUTCOME_DENIED_DISABLED",
+      "TRIGGER_ADMISSION_OUTCOME_DENIED_VERSION_UNAVAILABLE",
+      "TRIGGER_ADMISSION_OUTCOME_DENIED_POLICY";
   TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR = 8;
+  TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED = 9;
+  TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED = 10;
 }
 
 message TriggerScriptEventRequest {
@@ -197,6 +301,14 @@ message TriggerScriptEventRequest {
 
   // Event payload envelope (implementation-specific).
   string payload_json = 14;
+
+  // Registry-controlled schema selector for custom and service-specific events.
+  // Built-in events may default to "v1" when omitted.
+  string event_schema_version = 17;
+
+  // Required when the event registry marks the event as producer-supplied
+  // authoritative snapshot. The token format is registry/event-specific.
+  string read_snapshot_token = 18;
 }
 
 message TriggerScriptEventResponse {
@@ -208,6 +320,7 @@ message TriggerScriptEventResponse {
   TriggerAdmissionOutcome admission_outcome = 2;
   string admission_reason = 3;
   shared.v1.ErrorDetail error = 4;
+  int32 resolved_handler_count = 5;
 }
 
 enum ScriptPatchStatus {
@@ -286,7 +399,9 @@ message GetPluginStatusResponse {
   PluginState plugin_state = 3;
   string status_reason = 4;
   int64 last_changed_at_ms = 5;
-  shared.v1.ErrorDetail error = 6;
+  string control_plane_request_id = 6;
+  string actor_principal = 7;
+  shared.v1.ErrorDetail error = 8;
 }
 
 message SetPluginActiveVersionRequest {

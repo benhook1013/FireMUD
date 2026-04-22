@@ -7,6 +7,7 @@ Copy `.env.sample` to `.env` in the repository root to override default service 
 Start services with:
 
 ```bash
+dev-tools/build-compose-service-jars.sh
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml up --build -d
 ```
 

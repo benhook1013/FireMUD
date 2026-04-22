@@ -42,7 +42,21 @@ final class ItemTransferSupport {
   }
 
   TransferAuditContext audit(String verb, Long actorCharacterId) {
-    return new TransferAuditContext(verb, actorCharacterId);
+    return new TransferAuditContext(verb, actorCharacterId, null, null, null);
+  }
+
+  TransferAuditContext audit(String verb, Long actorCharacterId, String effectId) {
+    return new TransferAuditContext(verb, actorCharacterId, null, effectId, effectId);
+  }
+
+  TransferAuditContext audit(
+      String verb, Long actorCharacterId, String sessionId, String effectId) {
+    return new TransferAuditContext(verb, actorCharacterId, sessionId, effectId, effectId);
+  }
+
+  TransferAuditContext audit(
+      String verb, Long actorCharacterId, String sessionId, String effectId, String correlationId) {
+    return new TransferAuditContext(verb, actorCharacterId, sessionId, effectId, correlationId);
   }
 
   ExpectedSource inventory(Long tenantId, Long characterId) {
@@ -79,6 +93,60 @@ final class ItemTransferSupport {
 
   Destination container(ContainerInstance containerInstance) {
     return new Destination(HolderKind.CONTAINER, null, null, null, null, containerInstance);
+  }
+
+  HolderSnapshot snapshot(ExpectedSource expectedSource) {
+    return new HolderSnapshot(
+        expectedSource.kind(),
+        expectedSource.tenantId(),
+        expectedSource.characterId(),
+        expectedSource.equipmentSlot(),
+        expectedSource.gameInstanceId(),
+        expectedSource.roomInstanceId(),
+        expectedSource.containerInstanceId());
+  }
+
+  HolderSnapshot snapshot(Destination destination) {
+    return switch (destination.kind()) {
+      case INVENTORY ->
+          inventoryHolder(
+              destination.character() != null ? destination.character().getTenantId() : null,
+              requireCharacterId(destination.character()));
+      case ROOM_GROUND ->
+          roomHolder(null, destination.gameInstanceId(), destination.roomInstanceId());
+      case EQUIPMENT ->
+          equipmentHolder(
+              destination.character() != null ? destination.character().getTenantId() : null,
+              requireCharacterId(destination.character()),
+              destination.equipmentSlot());
+      case CONTAINER ->
+          containerHolder(
+              destination.containerInstance() != null
+                  ? destination.containerInstance().getTenantId()
+                  : null,
+              destination.containerInstance() != null
+                  ? destination.containerInstance().getId()
+                  : null);
+    };
+  }
+
+  HolderSnapshot inventoryHolder(Long tenantId, Long characterId) {
+    return new HolderSnapshot(HolderKind.INVENTORY, tenantId, characterId, null, null, null, null);
+  }
+
+  HolderSnapshot roomHolder(Long tenantId, String gameInstanceId, String roomInstanceId) {
+    return new HolderSnapshot(
+        HolderKind.ROOM_GROUND, tenantId, null, null, gameInstanceId, roomInstanceId, null);
+  }
+
+  HolderSnapshot equipmentHolder(Long tenantId, Long characterId, String equipmentSlot) {
+    return new HolderSnapshot(
+        HolderKind.EQUIPMENT, tenantId, characterId, equipmentSlot, null, null, null);
+  }
+
+  HolderSnapshot containerHolder(Long tenantId, Long containerInstanceId) {
+    return new HolderSnapshot(
+        HolderKind.CONTAINER, tenantId, null, null, null, null, containerInstanceId);
   }
 
   private void requireExpectedSource(ItemInstance instance, ExpectedSource expectedSource) {
@@ -295,14 +363,23 @@ final class ItemTransferSupport {
     return character != null ? character.getId() : null;
   }
 
-  private enum HolderKind {
+  enum HolderKind {
     INVENTORY,
     ROOM_GROUND,
     EQUIPMENT,
     CONTAINER
   }
 
-  private record ExpectedSource(
+  record HolderSnapshot(
+      HolderKind kind,
+      Long tenantId,
+      Long characterId,
+      String equipmentSlot,
+      String gameInstanceId,
+      String roomInstanceId,
+      Long containerInstanceId) {}
+
+  record ExpectedSource(
       Long tenantId,
       HolderKind kind,
       Long characterId,
@@ -311,7 +388,7 @@ final class ItemTransferSupport {
       String roomInstanceId,
       Long containerInstanceId) {}
 
-  private record Destination(
+  record Destination(
       HolderKind kind,
       Character character,
       String equipmentSlot,
@@ -319,9 +396,10 @@ final class ItemTransferSupport {
       String roomInstanceId,
       ContainerInstance containerInstance) {}
 
-  record TransferAuditContext(String verb, Long actorCharacterId) {
+  record TransferAuditContext(
+      String verb, Long actorCharacterId, String sessionId, String effectId, String correlationId) {
     static TransferAuditContext unknown() {
-      return new TransferAuditContext("UNKNOWN", null);
+      return new TransferAuditContext("UNKNOWN", null, null, null, null);
     }
   }
 }

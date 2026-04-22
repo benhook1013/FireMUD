@@ -131,6 +131,7 @@ class CommunicationWebSocketCrossServiceTest {
               assertThat(request.getContent()).isEqualTo("hello travelers");
               assertThat(request.getType())
                   .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
+              assertThat(request.getEffectId()).isNotBlank();
             });
 
     assertMetricEventually("gamesession.command.say.invocations", 1.0);
@@ -150,6 +151,7 @@ class CommunicationWebSocketCrossServiceTest {
               assertThat(request.getContent()).isEqualTo("keep quiet");
               assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_WHISPER);
               assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
+              assertThat(request.getEffectId()).isNotBlank();
             });
 
     assertMetricEventually("gamesession.command.whisper.invocations", 1.0);
@@ -170,6 +172,7 @@ class CommunicationWebSocketCrossServiceTest {
               assertThat(request.getContent()).isEqualTo("meet me at the forge");
               assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_TELL);
               assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
+              assertThat(request.getEffectId()).isNotBlank();
             });
 
     assertMetricEventually("gamesession.command.tell.invocations", 1.0);
@@ -256,6 +259,153 @@ class CommunicationWebSocketCrossServiceTest {
       actor.send("TELL Sora Meet me at the forge");
       actor.awaitContains(ChatTestFixtures.canonicalTellText());
       target.awaitContains(ChatTestFixtures.canonicalTellTargetText());
+    }
+  }
+
+  @Test
+  void websocketItemLoopMovesRoomItemThroughInventoryAndBack() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    ENTITY_STUB.resetItemState();
+
+    try (RecordingWebSocketClient client = openSessionClient(sessionId, "item-loop-conn")) {
+      client.send("LOGIN demo@example.com swordfish");
+      client.awaitResponseCount(1);
+      client.send("PLAY demo");
+      client.awaitResponseCount(2);
+      client.send("LOOK");
+      client.awaitContains("Candle-lit Antechamber");
+
+      client.send("INV HERE");
+      client.awaitContains("Room Inventory:");
+      client.awaitContains("- Torch [torch#1] (A small torch)");
+      client.awaitContains("- Backpack [backpack#1] (A weathered backpack)");
+
+      client.send("GET Torch");
+      client.awaitContains("You pick up Torch.");
+      client.awaitContains("Inventory:");
+      client.awaitContains("- Torch [torch#1] (A small torch)");
+      assertThat(ENTITY_STUB.lastPickupRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getGameInstanceId())
+                    .isEqualTo(String.valueOf(DEMO_WORLD_INSTANCE_ID));
+                assertThat(request.getRoomInstanceId()).isEqualTo(ChatTestFixtures.ROOM_ID);
+                assertThat(request.getItemId()).isEqualTo("torch");
+                assertThat(request.getQuantity()).isEqualTo(1);
+                assertThat(request.getEffectId()).isNotBlank();
+              });
+
+      client.send("CONTAINER Backpack");
+      client.awaitContains("Container: Backpack [backpack#1]");
+      client.awaitContains("- Ration [ration#1] (A dry trail ration)");
+
+      client.send("PUT Torch INTO Backpack");
+      client.awaitContains("You put Torch into Backpack.");
+      client.awaitContains("- Torch [torch#1] (A small torch)");
+      assertThat(ENTITY_STUB.lastPutRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getContainerInstanceId()).isEqualTo("container-backpack-1");
+                assertThat(request.getItemId()).isEqualTo("torch");
+                assertThat(request.getItemInstanceId()).isEqualTo("torch-ground-1");
+                assertThat(request.getEffectId()).isNotBlank();
+              });
+
+      client.send("TAKE Torch FROM Backpack");
+      client.awaitContains("You take Torch from Backpack.");
+      client.awaitContains("- Ration [ration#1] (A dry trail ration)");
+      assertThat(ENTITY_STUB.lastTakeRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getContainerInstanceId()).isEqualTo("container-backpack-1");
+                assertThat(request.getItemId()).isEqualTo("torch");
+                assertThat(request.getItemInstanceId()).isBlank();
+                assertThat(request.getEffectId()).isNotBlank();
+              });
+
+      client.send("DROP Torch");
+      client.awaitContains("You drop Torch.");
+      client.send("INV HERE");
+      client.awaitContains("Room Inventory:");
+      client.awaitContains("- Torch [torch#1] (A small torch)");
+      assertThat(ENTITY_STUB.lastDropRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getGameInstanceId())
+                    .isEqualTo(String.valueOf(DEMO_WORLD_INSTANCE_ID));
+                assertThat(request.getRoomInstanceId()).isEqualTo(ChatTestFixtures.ROOM_ID);
+                assertThat(request.getItemId()).isEqualTo("torch");
+                assertThat(request.getQuantity()).isEqualTo(1);
+                assertThat(request.getEffectId()).isNotBlank();
+              });
+    }
+  }
+
+  @Test
+  void websocketEquipmentLoopMovesCarriedItemThroughSlotAndBack() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    ENTITY_STUB.resetItemState();
+
+    try (RecordingWebSocketClient client = openSessionClient(sessionId, "equipment-loop-conn")) {
+      client.send("LOGIN demo@example.com swordfish");
+      client.awaitResponseCount(1);
+      client.send("PLAY demo");
+      client.awaitResponseCount(2);
+
+      client.send("EQUIPMENT");
+      client.awaitContains("You have nothing equipped.");
+
+      client.send("WEAR Leather Cap");
+      client.awaitContains("You wear Leather Cap.");
+      assertThat(ENTITY_STUB.lastWearRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getItemId()).isEqualTo("leather-cap");
+                assertThat(request.getItemInstanceId()).isEqualTo("cap-carried-1");
+                assertThat(request.getEffectId()).isNotBlank();
+              });
+
+      client.send("EQUIPMENT");
+      client.awaitContains("- HEAD: Leather Cap [cap#1] (A small cap)");
+
+      client.send("REMOVE HEAD");
+      client.awaitContains("You remove Leather Cap.");
+      assertThat(ENTITY_STUB.lastRemoveRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getSlot()).isEqualTo("HEAD");
+                assertThat(request.getEffectId()).isNotBlank();
+              });
+
+      client.send("EQUIPMENT");
+      client.awaitContains("You have nothing equipped.");
+
+      client.send("WEAR Iron Boots");
+      client.awaitContains(
+          "ERROR SLOT_INCOMPATIBLE Iron Boots cannot be worn by this body layout.");
+      assertThat(ENTITY_STUB.lastWearRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
+                assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
+                assertThat(request.getItemId()).isEqualTo("iron-boots");
+                assertThat(request.getItemInstanceId()).isEqualTo("boots-carried-1");
+                assertThat(request.getEffectId()).isNotBlank();
+              });
     }
   }
 

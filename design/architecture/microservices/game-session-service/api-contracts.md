@@ -1,5 +1,15 @@
 # Game Session Service API Contracts
 
+## Implementation Notes
+
+This document mixes live and target-state control-plane surfaces. Current live behavior is narrower:
+
+- the shipped pause/resume control path is `PauseTicksForScope` / `ResumeTicksForScope` at the current `{tenantId, gameInstanceId}` runtime boundary;
+- the shipped owner/status read is `GetRuntimeOwnershipStatus`, not yet the fuller target-state `GetRegionTickStatus` surface described below;
+- player-facing prod-like coordinated backup and restore-point recovery are therefore still blocked on the later canonical `tenantId + regionId` status/pause convergence.
+
+Read the pause/status/recovery APIs below as the target-state contract unless the repo implementation or slice docs explicitly say they are already live.
+
 ## Service Interactions
 
 Game Session communicates with other platform services exclusively via gRPC for gameplay-domain work. For gameplay-domain gRPC calls made on behalf of a player, it includes a signed `SessionAttestation` and rotates it on bounded TTL; downstream gameplay services must reject calls missing a valid attestation, or attestations whose destination service/method scope does not match the invoked RPC, even when mTLS is present.
@@ -39,6 +49,13 @@ The internal front-end to lease-owner path is a fenced gameplay contract, not a 
 - `PauseTicks` – temporarily halt tick execution before a backup.
 - `ResumeTicks` – resume tick processing after the backup begins.
 - `GetRegionTickStatus` – returns the canonical per-region pause/status surface for backup orchestration, reset tooling, and recovery gates.
+- `ValidateInstanceCutoverCompatibility` – resolves the target replacement launch descriptor, freezes any approved `remapSetId`, checks target Game Design proof, and returns the canonical multi-participant cutover-preflight report for a source instance and target version.
+- `PrepareVersionUpgrade` – persists one `prepared_version_upgrade` control-plane artifact containing the target launch-descriptor identity, frozen `remapSetId`, participant results, and checked-at timestamp for a source-instance -> target-version cutover attempt. The request must include `controlPlaneRequestId` so retries reuse the same durable preparation instead of creating duplicates.
+- `ExecutePreparedVersionCutover` – executes the canonical prepared cutover workflow for one realm pointer. The request identifies the realm, replacement `gameInstanceId`, durable `preparedVersionUpgradeId`, and expected pointer version; Game Session revalidates the durable preparation against the current pointer and target instance before performing the CAS-guarded swap.
+- `GetPreparedVersionUpgrade` now returns execution state too once a prepared cutover has actually run: the replacement `gameInstanceId`, resulting pointer version, execution timestamp, and execution request id are frozen onto the durable preparation artifact.
+- `EnqueueAutomationCommandIfAbsent` – internal Automation & Scripting handoff API that records or replays a durable automation dispatch row keyed by `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)` before staging the generated command into the normal Game Session tick queue. Duplicate dispatches return `DUPLICATE_NOOP` with the existing `commandId`; new dispatches return `ENQUEUED` after the command ledger row is staged.
+- `SetAdmissionPointer` now consumes that proof for real cutover moves: when a realm pointer changes to a different `gameInstanceId`, the request must carry `preparedVersionUpgradeId`, and Game Session rejects the swap unless the durable preparation is `COMPATIBLE` and still matches the current source instance plus the target instance's frozen `versionId`, `launchDescriptorId`, and `remapSetId`.
+- Admission-pointer audit/list responses now also expose the `preparedVersionUpgradeId` used by a cutover write so operator history preserves the same proof identity that the mutation validated.
 
 Service definitions reside in [../../../../protos/game-session/v1](../../../../protos/game-session/v1). Run `./gradlew generateProto` after modifying these files to regenerate stubs. The generated classes appear under `net.firedevops.firemud.gamesession.v1` in `build/generated/sources/proto/main/{grpc,java}` and are wired into `services/game-session-service/src/main/java/net/firedevops/firemud/service/impl/GameSessionGrpcService.java`.
 
@@ -51,6 +68,20 @@ Service definitions reside in [../../../../protos/game-session/v1](../../../../p
 - `POST /sessions/{id}/refresh-roles` – refresh the player's roles for an active session.
 
 Use `/sessions/{id}/refresh-roles` after updating an account's privileges so the session reflects the latest role assignments.
+
+#### External HTTP route classification
+
+Game Session owns the `/api/session/**` Gateway family, but that family is not a blanket public-write contract.
+
+| Service-local route | External classification | Notes |
+| --- | --- | --- |
+| `GET /ping` | Infra/local health only | Not part of the external admin/product contract. |
+| `POST /sessions` | Internal-only or Logging & Admin-mediated operator write until a dedicated bypass-safe design says otherwise | This is a control-plane instance lifecycle mutation, not a player admission route. |
+| `POST /sessions/{id}/stop` | Internal-only or Logging & Admin-mediated operator write | Stops runtime state and therefore follows the operator-write ingress policy by default. |
+| `POST /sessions/{id}/restart` | Internal-only or Logging & Admin-mediated operator write | Same classification as stop/start lifecycle mutations. |
+| `POST /sessions/{id}/refresh-roles` | Internal-only maintenance path | Used to refresh session/runtime auth context after account-role changes; not a documented external bypass-safe write. |
+
+If a future change wants any of the mutating `/sessions*` routes to be callable directly from external operator tools, the owning contract must explicitly mark that exact route as bypass-safe and explain its auth class, audit behavior, and lease-owner forwarding rules in the same change.
 
 ```bash
 curl http://localhost:8080/ping

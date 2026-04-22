@@ -11,6 +11,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
@@ -82,7 +83,25 @@ class WorldInstanceActivationServiceImplTest {
                     PublishedReleaseBundle.newBuilder()
                         .setId(77L)
                         .setVersionId(11L)
+                        .setAttestationSchemaVersion("v1")
+                        .setManifestHash("manifest-11")
+                        .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
+    when(gameDesignClient.getVersionAssetArtifactState(42L, 11L))
+        .thenReturn(
+            GetVersionAssetArtifactStateResponse.newBuilder()
+                .setArtifactState(
+                    net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+                        .setTenantId("42")
+                        .setVersionId(11L)
+                        .setArtifactState(
+                            net.firedevops.firemud.gamedesign.v1.ArtifactState
+                                .ARTIFACT_STATE_PUBLISHED)
+                        .setStateEpoch(3L)
+                        .setManifestHash("manifest-11")
+                        .addExportedManifestAssetKeys("manifest.json")
                         .build())
                 .build());
     when(gameDesignClient.getVersionState(42L, 11L))
@@ -96,12 +115,12 @@ class WorldInstanceActivationServiceImplTest {
                         .setVersionStateEpoch(77L)
                         .build())
                 .build());
-    when(zoneRepository.findByTenantIdOrderByIdAsc(42L))
+    when(zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L))
         .thenReturn(List.of(templateZone(42L, 11L)));
-    when(roomRepository.findByTenantIdOrderByIdAsc(42L))
+    when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L))
         .thenReturn(List.of(templateRoom(42L, 1021L)));
     when(zoneInstanceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-    when(roomExitRepository.findByTenantIdOrderByIdAsc(42L)).thenReturn(List.of());
+    when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L)).thenReturn(List.of());
     when(roomInstanceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(roomInstanceExitRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -248,11 +267,97 @@ class WorldInstanceActivationServiceImplTest {
         error.getMessage());
   }
 
+  @Test
+  void prepareWorldInstanceRejectsUnsupportedReleaseBundleSchema() {
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.empty());
+    when(gameDesignClient.getPublishedReleaseBundle(42L, 11L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setId(77L)
+                        .setVersionId(11L)
+                        .setAttestationSchemaVersion("v999")
+                        .setManifestHash("manifest-11")
+                        .addRequiredManifestAssetKeys("manifest.json")
+                        .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.prepareWorldInstance(
+                    new PreparedWorldInstanceRequest(
+                        42L,
+                        101L,
+                        7L,
+                        "cp-1",
+                        "ld-1",
+                        11L,
+                        null,
+                        "{}",
+                        "genrev-11",
+                        77L,
+                        "prb:42:11:77",
+                        77L)));
+
+    assertEquals(
+        "SCHEMA_VERSION_UNSUPPORTED: unsupported published release bundle attestation schema v999",
+        error.getMessage());
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsMissingRequiredManifestAssetKeyProof() {
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.empty());
+    when(gameDesignClient.getVersionAssetArtifactState(42L, 11L))
+        .thenReturn(
+            GetVersionAssetArtifactStateResponse.newBuilder()
+                .setArtifactState(
+                    net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+                        .setTenantId("42")
+                        .setVersionId(11L)
+                        .setArtifactState(
+                            net.firedevops.firemud.gamedesign.v1.ArtifactState
+                                .ARTIFACT_STATE_PUBLISHED)
+                        .setStateEpoch(3L)
+                        .setManifestHash("manifest-11")
+                        .build())
+                .build());
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.prepareWorldInstance(
+                    new PreparedWorldInstanceRequest(
+                        42L,
+                        101L,
+                        7L,
+                        "cp-1",
+                        "ld-1",
+                        11L,
+                        null,
+                        "{}",
+                        "genrev-11",
+                        77L,
+                        "prb:42:11:77",
+                        77L)));
+
+    assertEquals(
+        "RELEASE_ATTESTATION_MISMATCH: published asset artifact state is missing required manifest asset keys",
+        error.getMessage());
+  }
+
   private Room templateRoom(long tenantId, long roomId) {
     Zone zone = templateZone(tenantId, 11L);
     Room room = new Room();
     room.setId(roomId);
     room.setTenantId(tenantId);
+    room.setVersionId(11L);
     room.setZone(zone);
     room.setName("Login Hall");
     room.setDescription("A narrow testing hall.");
@@ -263,6 +368,7 @@ class WorldInstanceActivationServiceImplTest {
     Zone zone = new Zone();
     zone.setId(zoneId);
     zone.setTenantId(tenantId);
+    zone.setVersionId(11L);
     zone.setName("Starter Zone");
     return zone;
   }

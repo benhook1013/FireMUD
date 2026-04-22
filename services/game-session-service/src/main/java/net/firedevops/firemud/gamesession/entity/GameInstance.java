@@ -39,6 +39,9 @@ public class GameInstance {
   @Column(name = "generation_config_revision", length = 128)
   private String generationConfigRevision;
 
+  @Column(name = "remap_set_id", length = 64)
+  private String remapSetId;
+
   @Column(name = "script_patch_pinned_at")
   private Instant scriptPatchPinnedAt;
 
@@ -53,4 +56,8 @@ public class GameInstance {
 
   @Column(nullable = false, length = 20)
   private String status;
+
+  @Version
+  @Column(name = "row_version", nullable = false)
+  private Long rowVersion;
 }

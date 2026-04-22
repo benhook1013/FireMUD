@@ -10,7 +10,7 @@ import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
-import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -19,10 +19,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class EquipmentCommandHandlerTest {
-  private final EntityManagementClient entityManagementClient =
-      Mockito.mock(EntityManagementClient.class);
-  private final EquipmentCommandHandler handler =
-      new EquipmentCommandHandler(entityManagementClient);
+  private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
+  private final EquipmentCommandHandler handler = new EquipmentCommandHandler(gameLogicClient);
   private final SessionContext context =
       new SessionContext(
           1L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 77L, "room-7", "jwt-token");
@@ -41,7 +39,7 @@ class EquipmentCommandHandlerTest {
 
   @Test
   void equipmentViewReturnsStructuredEquipmentLines() {
-    when(entityManagementClient.listEquipment("22", "911"))
+    when(gameLogicClient.listEquipment(context))
         .thenReturn(
             ListEquipmentResponse.newBuilder()
                 .addItems(
@@ -68,7 +66,7 @@ class EquipmentCommandHandlerTest {
 
   @Test
   void wearWithItemReferenceReturnsUnavailableResponse() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(QueryInventoryResponse.newBuilder().build());
     TextCommandInterpretationResult result =
         handler.handle(
@@ -83,7 +81,7 @@ class EquipmentCommandHandlerTest {
 
   @Test
   void wearWithItemReferenceCallsEquipmentBackend() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -94,7 +92,7 @@ class EquipmentCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.wearEquipment("22", "911", "3", "3"))
+    when(gameLogicClient.wearEquipment(context, "3", "3"))
         .thenReturn(
             WearEquipmentItemResponse.newBuilder()
                 .setEquipmentItem(
@@ -117,7 +115,7 @@ class EquipmentCommandHandlerTest {
 
   @Test
   void wearRejectsNonEmptyContainerUntilContainerInstancesExist() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -128,7 +126,7 @@ class EquipmentCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.wearEquipment("22", "911", "5", "5"))
+    when(gameLogicClient.wearEquipment(context, "5", "5"))
         .thenReturn(
             WearEquipmentItemResponse.newBuilder()
                 .setEquipmentItem(
@@ -151,7 +149,7 @@ class EquipmentCommandHandlerTest {
 
   @Test
   void removeWithItemReferenceCallsEquipmentBackend() {
-    when(entityManagementClient.listEquipment("22", "911"))
+    when(gameLogicClient.listEquipment(context))
         .thenReturn(
             ListEquipmentResponse.newBuilder()
                 .addItems(
@@ -161,7 +159,7 @@ class EquipmentCommandHandlerTest {
                         .setItemName("Torch")
                         .build())
                 .build());
-    when(entityManagementClient.removeEquipment("22", "911", "HEAD"))
+    when(gameLogicClient.removeEquipment(context, "HEAD"))
         .thenReturn(
             RemoveEquipmentResponse.newBuilder()
                 .setEquipmentItem(
@@ -184,7 +182,7 @@ class EquipmentCommandHandlerTest {
 
   @Test
   void wearPreservesDomainErrorCodeFromBackend() {
-    when(entityManagementClient.queryInventory("22", "911"))
+    when(gameLogicClient.queryInventory(context))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
@@ -195,7 +193,7 @@ class EquipmentCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.wearEquipment("22", "911", "3", "3"))
+    when(gameLogicClient.wearEquipment(context, "3", "3"))
         .thenReturn(
             WearEquipmentItemResponse.newBuilder()
                 .setError(

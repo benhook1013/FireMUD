@@ -47,6 +47,11 @@ public class CommunicationCommandHandler {
   private final MeterRegistry meterRegistry;
 
   public CommunicationCommandHandlingResult handle(SessionContext context, TextCommand command) {
+    return handle(context, command, null);
+  }
+
+  public CommunicationCommandHandlingResult handle(
+      SessionContext context, TextCommand command, String effectId) {
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
@@ -67,11 +72,7 @@ public class CommunicationCommandHandler {
       try {
         SendCommunicationResponse response =
             gameLogicClient.sendCommunication(
-                Long.toString(context.tenantId()),
-                Long.toString(context.sessionId()),
-                Long.toString(context.characterId()),
-                Long.toString(context.accountId()),
-                Long.toString(context.gameInstanceId()),
+                context,
                 StringUtils.hasText(context.characterName())
                     ? context.characterName()
                     : context.loginName(),
@@ -81,7 +82,8 @@ public class CommunicationCommandHandler {
                 mapType(command.type()),
                 parsed.message(),
                 parsed.targetCharacterId().orElse(""),
-                parsed.targetCharacterName().orElse(""));
+                parsed.targetCharacterName().orElse(""),
+                effectId);
         if (!response.getSuccess()) {
           String errorMessage =
               response.hasError() && response.getError().getMessage() != null
@@ -168,10 +170,7 @@ public class CommunicationCommandHandler {
                         "No visible realm matches the current gameplay runtime target"));
     Optional<net.firedevops.firemud.entitymanagement.v1.Character> maybeTargetCharacter =
         entityManagementClient.findCharacterByName(
-            Long.toString(context.tenantId()),
-            Long.toString(context.gameInstanceId()),
-            toPlayableStateScope(currentRealm),
-            targetName);
+            context, toPlayableStateScope(currentRealm), targetName);
     if (maybeTargetCharacter.isEmpty()) {
       return new ParsedCommunication(
           false,

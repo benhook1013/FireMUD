@@ -2,7 +2,7 @@
 
 ## Overview
 
-Manages user accounts and authentication for the platform. It stores profile data and is the sole service that creates and signs JWTs. These tokens authorize access to meta/control services. The Game Session Service relies on Redis session context for gameplay and may request an updated token when a player's roles change. Public login APIs exist for administrators and account portals, but gameplay clients reach them indirectly through the Game Session Service rather than calling the Gateway directly.
+Manages user accounts and authentication for the platform. It stores profile data and is the sole service that creates and signs JWTs. These tokens authorize access to meta/control services, first-party player bootstrap, and gameplay connect-token issuance. First-party gameplay clients call Account Service-owned bootstrap and discovery surfaces through the Gateway before opening `/ws/game/**`; Game Session then consumes the gateway-verified connect context during in-band `LOGIN` and `PLAY`. Credential-bearing Telnet and non-bootstrap gameplay login still reaches Account Service indirectly through Game Session's internal `Authenticate` call.
 
 ### Responsibilities
 
@@ -10,6 +10,7 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Issuing short-lived JWT tokens for internal meta/control APIs, including:
   - Browser JWTs for first-party admin/creator web UIs via `/auth/login`, and
   - Service JWTs for backend gRPC callers via internal authentication flows
+- Issuing first-party player bootstrap tokens and gameplay connect tokens for `/ws/game/**` admission.
 - Tracking profiles, OAuth2 social logins, external account links, and achievements.
 - Managing subscription status and ban enforcement.
 - Self-service account recovery for compromised or lost credentials.

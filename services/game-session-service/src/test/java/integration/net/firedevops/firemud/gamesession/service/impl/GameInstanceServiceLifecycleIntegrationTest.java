@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
@@ -21,7 +23,6 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -51,7 +52,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
       "spring.profiles.active=test",
       "spring.application.name=game-session-service",
       "spring.grpc.server.port=0",
-      "game-session.dev-isolated=false",
       "firemud.database.enabled=false",
       "firemud.redis.enabled=false",
       "spring.data.redis.repositories.enabled=false"
@@ -163,7 +163,25 @@ class GameInstanceServiceLifecycleIntegrationTest {
                     net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
                         .setId(77L)
                         .setVersionId(11L)
+                        .setAttestationSchemaVersion("v1")
+                        .setManifestHash("manifest-11")
+                        .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
+    when(gameDesignClient.getVersionAssetArtifactState(42L, 11L))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse.newBuilder()
+                .setArtifactState(
+                    net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+                        .setTenantId("42")
+                        .setVersionId(11L)
+                        .setArtifactState(
+                            net.firedevops.firemud.gamedesign.v1.ArtifactState
+                                .ARTIFACT_STATE_PUBLISHED)
+                        .setStateEpoch(2L)
+                        .setManifestHash("manifest-11")
+                        .addExportedManifestAssetKeys("manifest.json")
                         .build())
                 .build());
     when(gameDesignClient.getVersionState(42L, 11L))
@@ -187,7 +205,25 @@ class GameInstanceServiceLifecycleIntegrationTest {
                     net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
                         .setId(78L)
                         .setVersionId(12L)
+                        .setAttestationSchemaVersion("v1")
+                        .setManifestHash("manifest-12")
+                        .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-12")
+                        .build())
+                .build());
+    when(gameDesignClient.getVersionAssetArtifactState(42L, 12L))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse.newBuilder()
+                .setArtifactState(
+                    net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+                        .setTenantId("42")
+                        .setVersionId(12L)
+                        .setArtifactState(
+                            net.firedevops.firemud.gamedesign.v1.ArtifactState
+                                .ARTIFACT_STATE_PUBLISHED)
+                        .setStateEpoch(3L)
+                        .setManifestHash("manifest-12")
+                        .addExportedManifestAssetKeys("manifest.json")
                         .build())
                 .build());
     when(gameDesignClient.getVersionState(42L, 12L))
@@ -205,18 +241,19 @@ class GameInstanceServiceLifecycleIntegrationTest {
                         .build())
                 .build());
     when(worldManagementClient.prepareWorldInstance(
-            any(Long.class),
-            any(Long.class),
-            any(Long.class),
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
             any(),
             any(),
-            any(Long.class),
-            any(),
-            any(),
-            any(),
-            any(Long.class),
-            any(),
-            any(Long.class)))
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
                 .setWorldInstance(
@@ -238,8 +275,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                                 .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
                         .build())
                 .build());
-    when(worldManagementClient.activatePreparedWorldInstance(
-            any(Long.class), any(Long.class), any(Long.class)))
+    when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
                 .newBuilder()
@@ -254,8 +290,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                                 .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
                         .build())
                 .build());
-    when(worldManagementClient.failPreparedWorldInstance(
-            any(Long.class), any(Long.class), any(Long.class), any()))
+    when(worldManagementClient.failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse.newBuilder()
                 .setWorldInstance(
@@ -269,7 +304,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                                 .WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION)
                         .build())
                 .build());
-    when(worldManagementClient.getWorldInstanceLifecycle(any(Long.class), any(Long.class)))
+    when(worldManagementClient.getWorldInstanceLifecycle(anyLong(), anyLong()))
         .thenAnswer(
             invocation ->
                 net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse
@@ -287,7 +322,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                             .build())
                     .build());
     when(worldManagementClient.terminateWorldInstance(
-            any(Long.class), any(Long.class), any(Long.class), any(), any()))
+            anyLong(), anyLong(), anyLong(), anyString(), anyString()))
         .thenAnswer(
             invocation ->
                 net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse
@@ -415,7 +450,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
     assertThat(repository.findById(existingId).orElseThrow().getStatus()).isEqualTo("STOPPED");
     verify(worldManagementClient).getWorldInstanceLifecycle(42L, existingId);
     verify(worldManagementClient)
-        .terminateWorldInstance(any(Long.class), eq(existingId), any(Long.class), any(), any());
+        .terminateWorldInstance(anyLong(), eq(existingId), anyLong(), any(), any());
   }
 
   @TestConfiguration
@@ -423,11 +458,6 @@ class GameInstanceServiceLifecycleIntegrationTest {
     @Bean
     SimpleMeterRegistry meterRegistry() {
       return new SimpleMeterRegistry();
-    }
-
-    @Bean
-    DevIsolatedProperties devIsolatedProperties() {
-      return new DevIsolatedProperties(false);
     }
   }
 }

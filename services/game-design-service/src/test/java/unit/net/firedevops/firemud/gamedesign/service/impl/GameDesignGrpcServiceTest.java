@@ -8,30 +8,57 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.gamedesign.dto.AppliedWorldDesignMutationDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
+import net.firedevops.firemud.gamedesign.dto.RevisionDto;
+import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
+import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
+import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
+import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
+import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
+import net.firedevops.firemud.gamedesign.v1.ApproveTemplateRemapSetRequest;
+import net.firedevops.firemud.gamedesign.v1.ApproveTemplateRemapSetResponse;
+import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetRequest;
+import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestResponse;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.GetTemplateRemapSetRequest;
+import net.firedevops.firemud.gamedesign.v1.GetTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
+import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
+import net.firedevops.firemud.gamedesign.v1.SaveRevisionResponse;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsResponse;
+import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
@@ -42,6 +69,8 @@ class GameDesignGrpcServiceTest {
   private final VersionService versionService = Mockito.mock(VersionService.class);
   private final LaunchDescriptorService launchDescriptorService =
       Mockito.mock(LaunchDescriptorService.class);
+  private final TemplateRemapSetService templateRemapSetService =
+      Mockito.mock(TemplateRemapSetService.class);
   private final VersionAssetArtifactService versionAssetArtifactService =
       Mockito.mock(VersionAssetArtifactService.class);
   private final SettingsAuthorityService settingsAuthorityService =
@@ -52,9 +81,61 @@ class GameDesignGrpcServiceTest {
           revisionService,
           versionService,
           launchDescriptorService,
+          templateRemapSetService,
           versionAssetArtifactService,
           settingsAuthorityService,
           new SimpleMeterRegistry());
+
+  @Test
+  void saveRevisionReturnsAppliedWorldMutation() {
+    Mockito.when(revisionService.saveRevision(Mockito.any()))
+        .thenReturn(
+            new RevisionDto(
+                21L,
+                "tenant-1",
+                7L,
+                9L,
+                "{\"kind\":\"world\"}",
+                "WORLD_DESIGN_MUTATION",
+                "rev-1",
+                null,
+                new AppliedWorldDesignMutationDto(
+                    "WORLD_DESIGN_MUTATION_RESULT_APPLIED", "44", 2L, 5L),
+                LocalDateTime.parse("2026-04-22T09:00:00")));
+
+    AtomicReference<SaveRevisionResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.saveRevision(
+          SaveRevisionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .setAuthorAccountId(9L)
+              .setRevisionKind("WORLD_DESIGN_MUTATION")
+              .setData("{\"kind\":\"world\"}")
+              .setWorldDesignMutation(
+                  net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision.newBuilder()
+                      .setLogicalRevisionId("rev-1")
+                      .setCommitId("commit-1")
+                      .setOperation(
+                          WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
+                      .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+                      .setAggregateId("44")
+                      .setExpectedDraftRevisionEpoch(1L)
+                      .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
+                      .setScopeId("44")
+                      .setRegion(RegionDesignMutation.newBuilder().setName("Region A").build())
+                      .build())
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals(21L, ref.get().getRevisionId());
+    assertEquals(
+        WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_APPLIED,
+        ref.get().getAppliedWorldDesignMutation().getResult());
+    assertEquals("44", ref.get().getAppliedWorldDesignMutation().getAggregateId());
+  }
 
   @Test
   void getPublishedReleaseBundleReturnsCanonicalAttestation() {
@@ -96,6 +177,183 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void getPublishedScriptPatchVersionReturnsPublicationReadModel() {
+    Mockito.when(versionService.getPublishedScriptPatchVersion("tenant-1", "patch-1"))
+        .thenReturn(
+            new VersionDto(
+                9L,
+                "tenant-1",
+                3,
+                VersionLifecycleState.PUBLISHED,
+                2L,
+                "patch-1",
+                7L,
+                true,
+                "notes",
+                LocalDateTime.parse("2026-04-14T11:00:00"),
+                LocalDateTime.parse("2026-04-14T12:00:00")));
+    Mockito.when(versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-1"))
+        .thenReturn(
+            new DesignControlPlaneDigestDto(
+                "tenant-1", "patch-1", "script-patch:patch-1", "digest-1", 1));
+    AtomicReference<GetPublishedScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getPublishedScriptPatchVersion(
+          GetPublishedScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setScriptPatchVersion("patch-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals("patch-1", ref.get().getScriptPatch().getScriptPatchVersion());
+    assertEquals(9L, ref.get().getScriptPatch().getVersionId());
+    assertEquals(7L, ref.get().getScriptPatch().getBaseVersionId());
+    assertEquals("digest-1", ref.get().getScriptPatch().getControlPlaneDigest());
+  }
+
+  @Test
+  void publishPluginVersionReturnsPublicationId() {
+    Mockito.when(
+            versionService.publishPluginVersion(
+                "tenant-1",
+                "plugin-1",
+                "plugin-v1",
+                7L,
+                "ability-1",
+                "bundle-1",
+                1,
+                "dist-hash",
+                "dist-path",
+                "notes"))
+        .thenReturn(
+            new PublishedPluginVersionDto(
+                15L,
+                "tenant-1",
+                "plugin-1",
+                "plugin-v1",
+                7L,
+                VersionLifecycleState.PUBLISHED,
+                "ability-1",
+                "bundle-1",
+                1,
+                "dist-hash",
+                "dist-path",
+                "notes",
+                LocalDateTime.parse("2026-04-22T12:00:00")));
+
+    AtomicReference<PublishPluginVersionResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishPluginVersion(
+          PublishPluginVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setPluginId("plugin-1")
+              .setPluginVersionId("plugin-v1")
+              .setBaseVersionId(7L)
+              .setAbilitySchemaDigest("ability-1")
+              .setBundleDigest("bundle-1")
+              .setManifestSchemaVersion(1)
+              .setDistributionManifestHash("dist-hash")
+              .setDistributionManifestPath("dist-path")
+              .setNotes("notes")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals(15L, ref.get().getPublicationId());
+  }
+
+  @Test
+  void getPublishedPluginVersionReturnsPublicationReadModel() {
+    Mockito.when(versionService.getPublishedPluginVersion("tenant-1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            new PublishedPluginVersionDto(
+                15L,
+                "tenant-1",
+                "plugin-1",
+                "plugin-v1",
+                7L,
+                VersionLifecycleState.PUBLISHED,
+                "ability-1",
+                "bundle-1",
+                1,
+                "dist-hash",
+                "dist-path",
+                "notes",
+                LocalDateTime.parse("2026-04-22T12:00:00")));
+
+    AtomicReference<GetPublishedPluginVersionResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getPublishedPluginVersion(
+          GetPublishedPluginVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setPluginId("plugin-1")
+              .setPluginVersionId("plugin-v1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals("plugin-1", ref.get().getPluginVersion().getPluginId());
+    assertEquals("plugin-v1", ref.get().getPluginVersion().getPluginVersionId());
+    assertEquals(7L, ref.get().getPluginVersion().getBaseVersionId());
+    assertEquals("ability-1", ref.get().getPluginVersion().getAbilitySchemaDigest());
+  }
+
+  @Test
+  void getPublishedReleaseBundleReturnsNotFoundWhenAttestationIsAbsent() {
+    Mockito.when(versionService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenThrow(new PublishedReleaseBundleNotFoundException("tenant-1", 7L));
+
+    AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getPublishedReleaseBundle(
+          GetPublishedReleaseBundleRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("NOT_FOUND", ref.get().getError().getCode());
+  }
+
+  @Test
+  void getPublishedReleaseBundleRejectsUnsupportedSchema() {
+    Mockito.when(versionService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenReturn(
+            new PublishedReleaseBundleDto(
+                11L,
+                "tenant-1",
+                7L,
+                8,
+                "v999",
+                "workflow-1",
+                "abc123",
+                List.of("manifest.json"),
+                List.of(),
+                "genrev-1",
+                false,
+                null,
+                LocalDateTime.parse("2026-04-14T12:00:00")));
+
+    AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getPublishedReleaseBundle(
+          GetPublishedReleaseBundleRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("SCHEMA_VERSION_UNSUPPORTED", ref.get().getError().getCode());
+  }
+
+  @Test
   void resolveLaunchDescriptorReturnsDeterministicDescriptor() {
     Mockito.when(
             launchDescriptorService.resolveLaunchDescriptor(
@@ -112,7 +370,8 @@ class GameDesignGrpcServiceTest {
                 "genrev-1",
                 11L,
                 11L,
-                "prb:tenant-1:7:11"));
+                "prb:tenant-1:7:11",
+                ""));
 
     AtomicReference<ResolveLaunchDescriptorResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -140,6 +399,160 @@ class GameDesignGrpcServiceTest {
 
     assertEquals("ld-1", ref.get().getLaunchDescriptor().getLaunchDescriptorId());
     assertEquals("genrev-1", ref.get().getLaunchDescriptor().getGenerationConfigRevision());
+  }
+
+  @Test
+  void resolveLaunchDescriptorSurfacesTypedReleaseBundleNotFoundError() {
+    Mockito.when(
+            launchDescriptorService.resolveLaunchDescriptor(
+                "tenant-1", 9L, "cp-2", null, null, null, null))
+        .thenThrow(
+            new IllegalArgumentException(
+                "RELEASE_BUNDLE_NOT_FOUND: no published release bundle for the resolved version"));
+
+    AtomicReference<ResolveLaunchDescriptorResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.resolveLaunchDescriptor(
+          ResolveLaunchDescriptorRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setGameTemplateId(9L)
+              .setControlPlaneRequestId("cp-2")
+              .build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(ResolveLaunchDescriptorResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+              throw new AssertionError(t);
+            }
+
+            @Override
+            public void onCompleted() {}
+          });
+    }
+
+    assertEquals("RELEASE_BUNDLE_NOT_FOUND", ref.get().getError().getCode());
+  }
+
+  @Test
+  void resolveLaunchDescriptorSurfacesTypedRemapRequiredError() {
+    Mockito.when(
+            launchDescriptorService.resolveLaunchDescriptor(
+                "tenant-1", 9L, "cp-3", null, null, null, null))
+        .thenThrow(
+            new IllegalArgumentException(
+                "LAUNCH_REMAP_REQUIRED: replacement-instance launch requires an approved remapSetId"));
+
+    AtomicReference<ResolveLaunchDescriptorResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.resolveLaunchDescriptor(
+          ResolveLaunchDescriptorRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setGameTemplateId(9L)
+              .setControlPlaneRequestId("cp-3")
+              .build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(ResolveLaunchDescriptorResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+              throw new AssertionError(t);
+            }
+
+            @Override
+            public void onCompleted() {}
+          });
+    }
+
+    assertEquals("LAUNCH_REMAP_REQUIRED", ref.get().getError().getCode());
+  }
+
+  @Test
+  void createTemplateRemapSetReturnsCreatedSet() {
+    Mockito.when(
+            templateRemapSetService.createTemplateRemapSet(
+                Mockito.eq("tenant-1"),
+                Mockito.eq(7L),
+                Mockito.eq(8L),
+                Mockito.eq("cutover prep"),
+                Mockito.anyList()))
+        .thenReturn(sampleRemapSetDto(TemplateRemapSetStatus.DRAFT, null, null));
+
+    AtomicReference<CreateTemplateRemapSetResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.createTemplateRemapSet(
+          CreateTemplateRemapSetRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setSourceVersionId(7L)
+              .setTargetVersionId(8L)
+              .setCreatedReason("cutover prep")
+              .addRemapEntries(
+                  net.firedevops.firemud.gamedesign.v1.TemplateRemapEntry.newBuilder()
+                      .setMappingDomain("ENTITY")
+                      .setMappingType("CLASS_ASSIGNMENT")
+                      .setSourceTemplateKey("class:warrior")
+                      .setTargetTemplateKey("class:guardian")
+                      .build())
+              .build(),
+          new GenericObserver<>(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals("remap-1", ref.get().getRemapSet().getRemapSetId());
+    assertEquals(1, ref.get().getRemapSet().getRemapEntriesCount());
+  }
+
+  @Test
+  void approveTemplateRemapSetReturnsApprovedSet() {
+    Mockito.when(
+            templateRemapSetService.approveTemplateRemapSet(
+                "tenant-1", "remap-1", "validated for cutover"))
+        .thenReturn(
+            sampleRemapSetDto(
+                TemplateRemapSetStatus.APPROVED,
+                "validated for cutover",
+                LocalDateTime.parse("2026-04-20T10:15:00")));
+
+    AtomicReference<ApproveTemplateRemapSetResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.approveTemplateRemapSet(
+          ApproveTemplateRemapSetRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setRemapSetId("remap-1")
+              .setApprovalReason("validated for cutover")
+              .build(),
+          new GenericObserver<>(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals(
+        net.firedevops.firemud.gamedesign.v1.TemplateRemapSetStatus
+            .TEMPLATE_REMAP_SET_STATUS_APPROVED,
+        ref.get().getRemapSet().getStatus());
+  }
+
+  @Test
+  void getTemplateRemapSetReturnsNotFound() {
+    Mockito.when(templateRemapSetService.getTemplateRemapSet("tenant-1", "remap-missing"))
+        .thenThrow(new IllegalArgumentException("NOT_FOUND: template remap set not found"));
+
+    AtomicReference<GetTemplateRemapSetResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getTemplateRemapSet(
+          GetTemplateRemapSetRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setRemapSetId("remap-missing")
+              .build(),
+          new GenericObserver<>(ref));
+    }
+
+    assertEquals("NOT_FOUND", ref.get().getError().getCode());
   }
 
   @Test
@@ -219,6 +632,7 @@ class GameDesignGrpcServiceTest {
             new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
                 "tenant-1",
                 7L,
+                8,
                 "PUBLISHED",
                 2L,
                 "hash-1",
@@ -253,6 +667,7 @@ class GameDesignGrpcServiceTest {
 
     assertEquals(
         "ARTIFACT_STATE_PUBLISHED", ref.get().getArtifactState().getArtifactState().name());
+    assertEquals(8, ref.get().getArtifactState().getExportedVersionNumber());
     assertEquals("hash-1", ref.get().getArtifactState().getManifestHash());
     assertEquals(2, ref.get().getArtifactState().getExportedManifestAssetKeysCount());
   }
@@ -264,6 +679,7 @@ class GameDesignGrpcServiceTest {
             new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
                 "tenant-1",
                 7L,
+                8,
                 "TOMBSTONED",
                 4L,
                 "hash-1",
@@ -303,21 +719,45 @@ class GameDesignGrpcServiceTest {
     assertEquals("wf-1", ref.get().getArtifactState().getLastWorkflowId());
   }
 
-  private static StreamObserver<GetPublishedReleaseBundleResponse> observerFor(
-      AtomicReference<GetPublishedReleaseBundleResponse> ref) {
-    return new StreamObserver<>() {
-      @Override
-      public void onNext(GetPublishedReleaseBundleResponse value) {
-        ref.set(value);
-      }
+  private static <T> StreamObserver<T> observerFor(AtomicReference<T> ref) {
+    return new GenericObserver<>(ref);
+  }
 
-      @Override
-      public void onError(Throwable t) {
-        throw new AssertionError(t);
-      }
+  private TemplateRemapSetDto sampleRemapSetDto(
+      TemplateRemapSetStatus status, String approvalReason, LocalDateTime approvedAt) {
+    return new TemplateRemapSetDto(
+        "remap-1",
+        "tenant-1",
+        7L,
+        8L,
+        status,
+        "cutover prep",
+        approvalReason,
+        LocalDateTime.parse("2026-04-20T10:00:00"),
+        approvedAt,
+        List.of(
+            new TemplateRemapEntryDto(
+                "ENTITY", "CLASS_ASSIGNMENT", "class:warrior", "class:guardian")));
+  }
 
-      @Override
-      public void onCompleted() {}
-    };
+  private static final class GenericObserver<T> implements StreamObserver<T> {
+    private final AtomicReference<T> ref;
+
+    private GenericObserver(AtomicReference<T> ref) {
+      this.ref = ref;
+    }
+
+    @Override
+    public void onNext(T value) {
+      ref.set(value);
+    }
+
+    @Override
+    public void onError(Throwable t) {
+      throw new AssertionError(t);
+    }
+
+    @Override
+    public void onCompleted() {}
   }
 }

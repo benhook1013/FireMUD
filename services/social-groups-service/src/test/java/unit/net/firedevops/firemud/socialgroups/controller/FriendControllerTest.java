@@ -16,25 +16,20 @@ import net.firedevops.firemud.socialgroups.dto.FriendLinkDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
 import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
 import net.firedevops.firemud.socialgroups.service.FriendService;
+import net.firedevops.firemud.test.WithFiremudHttpAuthTestProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(FriendController.class)
 @Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
-@TestPropertySource(
-    properties = {
-      "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000",
-      "firemud.auth.http.enabled=true"
-    })
+@WithFiremudHttpAuthTestProperties
 class FriendControllerTest {
 
   @Autowired private MockMvc mockMvc;

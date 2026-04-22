@@ -28,6 +28,10 @@ service EntityManagementService {
   rpc ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse);
   rpc CleanupRuntimeInstance(CleanupRuntimeInstanceRequest) returns (CleanupRuntimeInstanceResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
+  rpc ValidateEntityTemplateReference(ValidateEntityTemplateReferenceRequest)
+      returns (ValidateEntityTemplateReferenceResponse);
+  rpc ValidateEntityUpgradeMappings(ValidateEntityUpgradeMappingsRequest)
+      returns (ValidateEntityUpgradeMappingsResponse);
 }
 
 message CreateCharacterRequest {
@@ -55,6 +59,7 @@ message UpdateEntityResponse {
 message QueryInventoryRequest {
   string tenant_id = 1;
   string character_id = 2;
+  string session_attestation = 3;
 }
 
 message QueryInventoryResponse {
@@ -87,6 +92,7 @@ message EquipmentItem {
 message ListEquipmentRequest {
   string tenant_id = 1;
   string character_id = 2;
+  string session_attestation = 3;
 }
 
 message ListEquipmentResponse {
@@ -99,6 +105,8 @@ message WearEquipmentItemRequest {
   string character_id = 2;
   string item_id = 3;
   string item_instance_id = 4;
+  string session_attestation = 5;
+  string effect_id = 6;
 }
 
 message WearEquipmentItemResponse {
@@ -110,6 +118,8 @@ message RemoveEquipmentRequest {
   string tenant_id = 1;
   string character_id = 2;
   string slot = 3;
+  string session_attestation = 4;
+  string effect_id = 5;
 }
 
 message RemoveEquipmentResponse {
@@ -133,6 +143,7 @@ message ListContainerContentsRequest {
   string tenant_id = 1;
   string character_id = 2;
   string container_instance_id = 3;
+  string session_attestation = 4;
 }
 
 message ListContainerContentsResponse {
@@ -148,6 +159,8 @@ message PutItemIntoContainerRequest {
   int32 quantity = 5;
   string item_instance_id = 6;
   string stack_family_key = 7;
+  string session_attestation = 8;
+  string effect_id = 9;
 }
 
 message PutItemIntoContainerResponse {
@@ -163,6 +176,8 @@ message TakeItemFromContainerRequest {
   int32 quantity = 5;
   string item_instance_id = 6;
   string stack_family_key = 7;
+  string session_attestation = 8;
+  string effect_id = 9;
 }
 
 message TakeItemFromContainerResponse {
@@ -187,6 +202,7 @@ message ListRoomGroundInventoryRequest {
   string tenant_id = 1;
   string game_instance_id = 2;
   string room_instance_id = 3;
+  string session_attestation = 4;
 }
 
 message ListRoomGroundInventoryResponse {
@@ -204,6 +220,8 @@ message PickupItemFromRoomRequest {
   string container_instance_id = 7;
   string item_instance_id = 8;
   string stack_family_key = 9;
+  string session_attestation = 10;
+  string effect_id = 11;
 }
 
 message PickupItemFromRoomResponse {
@@ -222,6 +240,8 @@ message DropItemToRoomRequest {
   string container_instance_id = 7;
   string item_instance_id = 8;
   string stack_family_key = 9;
+  string session_attestation = 10;
+  string effect_id = 11;
 }
 
 message DropItemToRoomResponse {
@@ -268,6 +288,7 @@ message FindCharacterByNameRequest {
   string name = 2;
   string game_instance_id = 3;
   PlayableStateScope playable_state_scope = 4;
+  string session_attestation = 5;
 }
 
 message FindCharacterByNameResponse {
@@ -278,6 +299,7 @@ message FindCharacterByNameResponse {
 message ListRoomEntitiesRequest {
   string tenant_id = 1;
   shared.v1.RoomInstanceRef room_instance = 2;
+  string session_attestation = 3;
 }
 
 enum EntityType {
@@ -344,6 +366,50 @@ message GetDraftDesignDigestResponse {
   string content_digest = 4;
   int32 digest_schema_version = 5;
   shared.v1.ErrorDetail error = 6;
+}
+
+enum EntityTemplateReferenceType {
+  ENTITY_TEMPLATE_REFERENCE_TYPE_UNSPECIFIED = 0;
+  ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM = 1;
+  ENTITY_TEMPLATE_REFERENCE_TYPE_NPC = 2;
+}
+
+message ValidateEntityTemplateReferenceRequest {
+  string tenant_id = 1;
+  string version_id = 2;
+  EntityTemplateReferenceType template_type = 3;
+  string template_id = 4;
+}
+
+message ValidateEntityTemplateReferenceResponse {
+  bool exists = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+enum UpgradeValidationResult {
+  UPGRADE_VALIDATION_RESULT_UNSPECIFIED = 0;
+  UPGRADE_VALIDATION_RESULT_COMPATIBLE = 1;
+  UPGRADE_VALIDATION_RESULT_REQUIRES_MAPPING = 2;
+  UPGRADE_VALIDATION_RESULT_INCOMPATIBLE = 3;
+  UPGRADE_VALIDATION_RESULT_UNAVAILABLE = 4;
+}
+
+message ValidateEntityUpgradeMappingsRequest {
+  string tenant_id = 1;
+  string source_game_instance_id = 2;
+  string target_version_id = 3;
+  string remap_set_id = 4;
+}
+
+message ValidateEntityUpgradeMappingsResponse {
+  repeated string state_classes_checked = 1;
+  repeated string checked_families = 2;
+  bool has_s2_rows = 3;
+  UpgradeValidationResult result = 4;
+  bool remap_set_required = 5;
+  repeated string reasons = 6;
+  string remap_set_id = 7;
+  shared.v1.ErrorDetail error = 8;
 }
 
 message PingRequest {}

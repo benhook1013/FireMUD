@@ -11,4 +11,6 @@ import org.springframework.stereotype.Repository;
 public interface CharacterFriendRepository
     extends JpaRepository<CharacterFriend, CharacterFriendKey> {
   Page<CharacterFriend> findByIdCharacterId(Long characterId, Pageable pageable);
+
+  long countByTenantId(Long tenantId);
 }

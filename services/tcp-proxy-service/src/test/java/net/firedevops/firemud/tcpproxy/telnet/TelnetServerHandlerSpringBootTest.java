@@ -51,7 +51,6 @@ class TelnetServerHandlerSpringBootTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            false,
             () -> {},
             () -> {},
             meterRegistry.counter("test.connections"),

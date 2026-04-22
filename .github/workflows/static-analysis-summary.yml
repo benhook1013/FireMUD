@@ -58,7 +58,7 @@ jobs:
               if (value === "success") return "✅";
               if (value === "failure") return "❌";
               if (value === "cancelled") return "⚪";
-              if (value === "pending" || value === "in_progress" || value === "queued") return "🟡";
+              if (value === "pending" || value === "in_progress" || value === "queued") return "⏳";
               return "⏭️";
             };
 
@@ -143,7 +143,7 @@ jobs:
             if (failedChecks.length > 0) {
               headline = "❌ Static analysis checks failed";
             } else if (pendingChecks.length > 0) {
-              headline = "🟡 Static analysis checks are still running";
+              headline = "⏳ Static analysis checks are still running";
             }
 
             const body = [
@@ -162,9 +162,19 @@ jobs:
               issue_number: issueNumber,
             });
 
-            const existing = comments.find((comment) =>
+            const summaryComments = comments.filter((comment) =>
               comment.body.startsWith("### Static Analysis Summary")
             );
+            const existing = summaryComments[0];
+
+            if (summaryComments.length > 1) {
+              for (const comment of summaryComments.slice(1)) {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
 
             if (existing) {
               await github.rest.issues.updateComment({

@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.automationscripting.service.redis.AutomationRedisKeys;
 import net.firedevops.firemud.common.redis.RedisAtomicOperations;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -38,8 +39,8 @@ public class ScriptQuotaServiceImpl implements ScriptQuotaService {
 
   @Override
   @Timed(value = "script.quota.tryAcquire")
-  public boolean tryAcquire(Long tenantId, Long scriptId) {
-    String key = quotaKey(tenantId, scriptId);
+  public boolean tryAcquire(String tenantId, String scriptId) {
+    String key = AutomationRedisKeys.automationQuota(tenantId, scriptId);
     Long count =
         RedisAtomicOperations.incrementWithTtl(
             redisTemplate, key, java.time.Duration.ofSeconds(windowSeconds));
@@ -50,9 +51,5 @@ public class ScriptQuotaServiceImpl implements ScriptQuotaService {
       deniedCounter.increment();
     }
     return allowed;
-  }
-
-  private String quotaKey(Long tenantId, Long scriptId) {
-    return "script_quota:" + tenantId + ":" + scriptId;
   }
 }

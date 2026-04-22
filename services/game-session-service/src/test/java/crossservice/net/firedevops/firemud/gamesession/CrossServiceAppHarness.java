@@ -10,6 +10,7 @@ import java.util.stream.Stream;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
+import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
@@ -69,7 +70,6 @@ public final class CrossServiceAppHarness {
     props.put("spring.application.name", "game-session-service");
     props.put("server.port", "0");
     props.put("spring.grpc.server.port", "0");
-    props.put("game-session.dev-isolated", "false");
     props.put("spring.main.allow-bean-definition-overriding", "true");
     props.put("spring.flyway.enabled", "true");
     props.put("spring.flyway.locations", "filesystem:" + gameSessionMigrationDir());
@@ -131,6 +131,20 @@ public final class CrossServiceAppHarness {
     @Primary
     GrpcServiceDiscoverer grpcServiceDiscoverer() {
       return org.mockito.Mockito.mock(GrpcServiceDiscoverer.class);
+    }
+
+    @Bean
+    @Primary
+    ModerationPolicyClient moderationPolicyClient() {
+      ModerationPolicyClient client = org.mockito.Mockito.mock(ModerationPolicyClient.class);
+      org.mockito.Mockito.when(
+              client.evaluateGameplayAdmission(
+                  org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+          .thenReturn(
+              net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
+                  .setAllowed(true)
+                  .build());
+      return client;
     }
 
     @Bean

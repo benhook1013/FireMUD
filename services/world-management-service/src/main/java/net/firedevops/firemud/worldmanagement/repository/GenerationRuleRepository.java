@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement.repository;
 
+import java.util.Optional;
 import net.firedevops.firemud.worldmanagement.entity.GenerationRule;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -11,4 +12,9 @@ public interface GenerationRuleRepository extends JpaRepository<GenerationRule, 
   Page<GenerationRule> findByTenantId(Long tenantId, Pageable pageable);
 
   java.util.List<GenerationRule> findByTenantIdOrderByIdAsc(Long tenantId);
+
+  java.util.List<GenerationRule> findByTenantIdAndVersionIdOrderByIdAsc(
+      Long tenantId, Long versionId);
+
+  Optional<GenerationRule> findByTenantIdAndVersionIdAndId(Long tenantId, Long versionId, Long id);
 }

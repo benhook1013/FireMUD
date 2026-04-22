@@ -2,15 +2,14 @@
 
 ## Goal and Status
 
-Goal: describe the end-to-end Telnet → Gateway → Game Session pipeline as a playable, testable slice, including echo paths, envelopes, reconnection, and a minimal text command protocol. Status: parts of this slice are implemented and under active refinement; where behavior is not yet live, this document still describes the target-state flow, with implementation details tracked in the relevant service design docs and tests.
+Goal: describe the end-to-end Telnet → Gateway → Game Session pipeline as a playable, testable slice, including envelopes, reconnection, and a minimal text command protocol. Status: parts of this slice are implemented and under active refinement; where behavior is not yet live, this document still describes the target-state flow, with implementation details tracked in the relevant service design docs and tests.
 
 This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session path into a playable, testable vertical slice. Each task is intentionally scoped so it can be handed to Codex (or a developer) as a single, self-contained chunk of work.
 
-## 1. Dev Echo Path and Local Telnet Loop
+## 1. Historical Local Telnet Loop
 
-- [x] Add a short "Dev Echo Path" section to `services/tcp-proxy-service/README.md` documenting how to run the proxy with the `dev` profile, which WebSocket URL is used (`/dev/echo`), and how to connect via Telnet locally.
-- [x] Extend or add a Spring Boot integration test in `services/tcp-proxy-service` that runs with the `dev` profile and verifies a Telnet client can send a line and receive the same line back via the `DevEchoWebSocketHandler` (no gateway or game-session involvement).
-- [x] Add a small helper script or documented curl/telnet commands alongside `smoke-test.sh` to manually exercise the Telnet → WebSocket dev echo flow on a developer machine.
+- [x] Historical note: this slice originally used a local echo loop before the full Gateway -> Game Session path was reliable. That shortcut has since been removed in favor of the canonical real-stack smoke scripts.
+- [x] Historical note: the old proxy-only echo helper and tests were deleted when `dev` was normalized to the real local topology.
 
 ## 2. Telnet Session Envelope and Event Metrics
 
@@ -76,8 +75,8 @@ Link to the [Minimal Text Command Protocol](../../architecture/microservices/gam
 - [x] Ensure the `game-session-service` Gradle configuration generates and compiles gRPC stubs from `protos/game-session/v1/game_session_service.proto` into the module, and add a short note in the Game Session design docs describing where the generated stubs are used.
 - [x] Implement a minimal `GameSessionService` gRPC server in `game-session-service` based on the `game_session.v1` proto (at least the `Ping` RPC), reusing existing service-layer logic where possible.
 - [x] Add tests that exercise the `GameSessionService` gRPC `Ping` endpoint and verify it returns a successful `ErrorDetail` code and message.
-- [x] Add a smoke test that starts `game-session-service` in dev-isolated mode (matching the `bootRunDevIsolated` configuration) and verifies a simple request flow (for example starting a session or enqueuing a command) is accepted and logged without hitting external dependencies.
-- [x] Update `services/game-session-service/README.md` or the Game Session design docs with a brief "Dev-isolated mode" section that links to the smoke test, explains when to use it, and clarifies that it avoids database and external service calls.
+- [x] Historical note: this slice originally added a dependency-light smoke path before the full local stack was reliable. That shortcut has since been removed in favor of the canonical real-stack smoke scripts.
+- [x] Historical note: the associated Game Session documentation was later cleaned up so it no longer presents a dedicated dependency-light mode as the normal local workflow.
 
 ## 8. Cross-Service Test Stabilization Follow-Up
 

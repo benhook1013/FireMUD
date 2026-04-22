@@ -54,6 +54,9 @@ public class WorldInstance {
   @Column(name = "version_state_epoch", nullable = false)
   private Long versionStateEpoch;
 
+  @Column(name = "remap_set_id", length = 64)
+  private String remapSetId;
+
   @Column(name = "lifecycle_epoch", nullable = false)
   private Long lifecycleEpoch = 1L;
 
@@ -74,6 +77,10 @@ public class WorldInstance {
 
   @Column(name = "updated_at", nullable = false)
   private Instant updatedAt = Instant.now();
+
+  @Version
+  @Column(name = "row_version", nullable = false)
+  private Long rowVersion;
 
   @PrePersist
   @PreUpdate

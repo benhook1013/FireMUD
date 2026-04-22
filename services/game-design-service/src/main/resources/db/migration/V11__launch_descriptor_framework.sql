@@ -24,6 +24,7 @@ CREATE TABLE launch_descriptor (
     version_state_epoch BIGINT NOT NULL,
     release_bundle_id BIGINT NOT NULL REFERENCES published_release_bundle(id),
     published_release_bundle_ref VARCHAR(128) NOT NULL,
+    remap_set_id VARCHAR(64),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_launch_descriptor_request UNIQUE (tenant_id, game_template_id, control_plane_request_id)
 );

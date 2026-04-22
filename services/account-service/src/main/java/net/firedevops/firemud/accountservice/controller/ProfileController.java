@@ -31,7 +31,7 @@ public class ProfileController {
   @GetMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> getProfile(
       @PathVariable Long accountId, @RequestParam Long tenantId) {
-    SessionContext.requireTenantAccess(tenantId);
+    SessionContext.requireAccountAccess(tenantId, accountId);
     ProfileDto dto = accountService.getProfile(tenantId, accountId);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
@@ -39,7 +39,7 @@ public class ProfileController {
   @PutMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> updateProfile(
       @PathVariable Long accountId, @Valid @RequestBody UpdateProfileRequest request) {
-    SessionContext.requireTenantAccess(request.tenantId());
+    SessionContext.requireAccountAccess(request.tenantId(), accountId);
     ProfileDto dto =
         accountService.updateProfile(
             new UpdateProfileRequest(

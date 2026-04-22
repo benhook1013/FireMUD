@@ -12,5 +12,7 @@ public interface RoomInstanceRepository extends JpaRepository<RoomInstance, Long
   List<RoomInstance> findByTenantIdAndGameInstanceIdOrderByRoomInstanceIdAsc(
       Long tenantId, Long gameInstanceId);
 
+  long countByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
+
   void deleteByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId);
 }

@@ -59,7 +59,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
                     "tester",
                     "cutover",
                     "req-1",
-                    2L)));
+                    2L,
+                    null)));
   }
 
   @Test
@@ -92,7 +93,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
                 "tester",
                 "cutover",
                 "req-2",
-                0L));
+                0L,
+                "pvu-1"));
 
     ArgumentCaptor<GameplayAdmissionPointer> pointerCaptor =
         ArgumentCaptor.forClass(GameplayAdmissionPointer.class);

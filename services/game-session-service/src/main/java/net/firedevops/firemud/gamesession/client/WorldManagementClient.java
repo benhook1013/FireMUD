@@ -20,16 +20,13 @@ import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsRequest;
+import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for the World Management Service. */
 @Component
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = false)
 public final class WorldManagementClient
     extends AbstractBlockingGrpcClient<
         WorldManagementServiceGrpc.WorldManagementServiceBlockingStub> {
@@ -83,6 +80,36 @@ public final class WorldManagementClient
       long releaseBundleId,
       String publishedReleaseBundleRef,
       long versionStateEpoch) {
+    return prepareWorldInstance(
+        tenantId,
+        gameInstanceId,
+        gameTemplateId,
+        controlPlaneRequestId,
+        launchDescriptorId,
+        versionId,
+        scriptPatchVersion,
+        runtimeFlagsJson,
+        generationConfigRevision,
+        releaseBundleId,
+        publishedReleaseBundleRef,
+        versionStateEpoch,
+        null);
+  }
+
+  public PrepareWorldInstanceResponse prepareWorldInstance(
+      long tenantId,
+      long gameInstanceId,
+      long gameTemplateId,
+      String controlPlaneRequestId,
+      String launchDescriptorId,
+      long versionId,
+      String scriptPatchVersion,
+      String runtimeFlagsJson,
+      String generationConfigRevision,
+      long releaseBundleId,
+      String publishedReleaseBundleRef,
+      long versionStateEpoch,
+      String remapSetId) {
     PrepareWorldInstanceRequest.Builder builder =
         PrepareWorldInstanceRequest.newBuilder()
             .setTenantId(Long.toString(tenantId))
@@ -98,6 +125,9 @@ public final class WorldManagementClient
             .setVersionStateEpoch(versionStateEpoch);
     if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
       builder.setScriptPatchVersion(scriptPatchVersion);
+    }
+    if (remapSetId != null && !remapSetId.isBlank()) {
+      builder.setRemapSetId(remapSetId);
     }
     return callStub().prepareWorldInstance(builder.build());
   }
@@ -152,6 +182,19 @@ public final class WorldManagementClient
       builder.setReason(reason);
     }
     return callStub().terminateWorldInstance(builder.build());
+  }
+
+  public ValidateWorldUpgradeMappingsResponse validateWorldUpgradeMappings(
+      long tenantId, long sourceGameInstanceId, long targetVersionId, String remapSetId) {
+    ValidateWorldUpgradeMappingsRequest.Builder builder =
+        ValidateWorldUpgradeMappingsRequest.newBuilder()
+            .setTenantId(Long.toString(tenantId))
+            .setSourceGameInstanceId(Long.toString(sourceGameInstanceId))
+            .setTargetVersionId(Long.toString(targetVersionId));
+    if (remapSetId != null && !remapSetId.isBlank()) {
+      builder.setRemapSetId(remapSetId);
+    }
+    return callStub().validateWorldUpgradeMappings(builder.build());
   }
 
   private WorldManagementServiceGrpc.WorldManagementServiceBlockingStub callStub() {

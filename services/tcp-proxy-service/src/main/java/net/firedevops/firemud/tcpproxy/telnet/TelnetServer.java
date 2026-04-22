@@ -63,7 +63,6 @@ public final class TelnetServer {
   private final int port;
   private final String gatewayWsUrl;
   private final boolean tlsEnabled;
-  private final boolean devIsolated;
   private final String certPath;
   private final String keyPath;
   private final boolean advertiseMcp;
@@ -105,7 +104,6 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_PORT:2323}") int port,
       @Value("${GATEWAY_WS_URL:ws://spring-cloud-gateway:8080/ws/game}") String gatewayWsUrl,
       @Value("${TCP_PROXY_TLS_ENABLED:false}") boolean tlsEnabled,
-      @Value("${TCP_PROXY_DEV_ISOLATED:false}") boolean devIsolated,
       @Value("${TCP_PROXY_TLS_CERT:}") String certPath,
       @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
       @Value("${TCP_PROXY_MCP_ENABLED:false}") boolean advertiseMcp,
@@ -123,7 +121,6 @@ public final class TelnetServer {
     this.boundPort = port;
     this.gatewayWsUrl = gatewayWsUrl;
     this.tlsEnabled = tlsEnabled;
-    this.devIsolated = devIsolated;
     this.certPath = certPath;
     this.keyPath = keyPath;
     this.advertiseMcp = advertiseMcp;
@@ -168,7 +165,6 @@ public final class TelnetServer {
       int port,
       String gatewayWsUrl,
       boolean tlsEnabled,
-      boolean devIsolated,
       String certPath,
       String keyPath,
       boolean advertiseMcp,
@@ -183,7 +179,6 @@ public final class TelnetServer {
         port,
         gatewayWsUrl,
         tlsEnabled,
-        devIsolated,
         certPath,
         keyPath,
         advertiseMcp,
@@ -270,7 +265,6 @@ public final class TelnetServer {
                       .addLast(
                           new TelnetServerHandler(
                               gatewayWsUrl,
-                              devIsolated,
                               () -> {},
                               () -> {},
                               connectionCounter,

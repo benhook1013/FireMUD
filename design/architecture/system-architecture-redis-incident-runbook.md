@@ -7,6 +7,14 @@ For the full design and invariants, see:
 - `design/architecture/system-architecture-redis.md`
 - `design/architecture/system-architecture-redis-operations.md` (including the Redis Metrics Catalog section for metric names and alerting guidance)
 
+## Implementation Notes
+
+The incident flows below describe the target operator model. In the current implementation:
+
+- Game Session already exposes durable command-status lookup and current-boundary runtime ownership inspection through the control-plane gRPC surface.
+- Accepted-but-unstaged commands already converge to `LOST_BEFORE_STAGING` during startup recovery, so command status is no longer purely transient Redis state.
+- The full `coordination-maintenance` replay/reset orchestration referenced below is not yet shipped as a complete repo-local CLI/control-plane surface; where the runbook names those verbs, read them as target-state recovery tooling rather than a claim that every step is already available today.
+
 ## Incident Types
 
 - **Coordination Redis outage or high latency**
@@ -23,7 +31,7 @@ For the full design and invariants, see:
 2. **Stabilize**
    - Reduce incoming player load if necessary (rate-limit new sessions).
    - Pause non-critical background scripts that depend heavily on Coordination Redis.
-3. **Repair**
+3. **Recover**
    - Follow cluster or node failover procedures documented in `design/architecture/system-architecture-redis-operations.md`.
    - If a reset is required, use the coordination reset model and key enumeration strategy from `design/architecture/system-architecture-redis-reset-and-recovery.md` to clear affected prefixes safely.
 4. **Inspect durable command outcomes**
@@ -40,12 +48,12 @@ When Coordination Redis recovers after an outage or severe degradation:
   - If `pending` survives for a region, the next executor correlates it to the durable `tick_batch_id` and then replays the tick as described in the tick system design.
   - If `pending` is missing (for example due to AOF tail loss), treat this as “coordination state may have been partially lost” rather than silently skipping work:
     - Advance to the next `tickId` only after running the tick effect ledger replay controller / reconcile tooling for the affected scope so any lingering `SCHEDULED` effects converge to `APPLIED` or `ABANDONED` with an explicit tail-loss reason.
-    - Converge accepted command records that were never durably bound to a surviving batch to terminal command status fields such as `executionOutcome = LOST_BEFORE_STAGING` and the command-type-appropriate `gameplayResult` (shared default `FAILED`); do not leave dedupe-only command records stranded. See `system-architecture-tick-execution-flows.md` under `Canonical Command Terminal Mapping Table` for the canonical shared mapping.
+    - Converge accepted command records that were never durably bound to a surviving batch to terminal command status fields such as `executionOutcome = LOST_BEFORE_STAGING` and the command-type-appropriate `gameplayResult` (shared default `NOT_APPLIED`); do not leave dedupe-only command records stranded. See `system-architecture-tick-execution-flows.md` under `Canonical Command Terminal Mapping Table` for the canonical shared mapping.
     - Use the resulting ledger outcomes plus service-level idempotency guards to validate that no effect remains indefinitely half-applied.
 - **Leases**
   - Discard any in-memory lease tokens; executors must reacquire `tick-executor-lease:{tenantRegionTag}` in Redis and treat previously held leases as invalid.
 - **Sessions**
-  - If `session:game:<tenantId>:<gameInstanceId>:<sessionId>` keys survive, reconnect flows behave normally.
+  - If `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` keys survive, reconnect flows behave normally.
   - If session keys are lost while game instances remain `RUNNING` in PostgreSQL, treat reconnect attempts as “no active binding” (clients may need to perform a fresh `LOGIN` or be rebound to the existing instance depending on ownership rules).
 
 ## Cache/Rate-Limit Redis Issues
@@ -55,7 +63,7 @@ When Coordination Redis recovers after an outage or severe degradation:
 2. **Stabilize**
    - Throttle non-essential cache usage or temporarily reduce cache TTLs if documented.
    - Confirm that coordination keys are not co-located with caches.
-3. **Repair**
+3. **Recover**
    - Scale the cache deployment or provision additional nodes.
    - Flush or reset specific cache prefixes if needed; do not reset coordination prefixes from the cache deployment.
 
@@ -65,13 +73,15 @@ When session-related metrics indicate schema or TTL problems, use this scoped cl
 
 1. **Detect the issue**
    - Watch `session.cas_unsupported_schema_total` and reconnect error rates for non-zero values outside brief rollout windows.
-   - Interpretation: services and Lua scripts are out of sync on the highest `schemaVersion` in use for `session:game:<tenantId>:<gameInstanceId>:<sessionId>` keys, session payloads have been corrupted, or a major TTL reduction has left an undesirable tail of long-lived sessions.
+   - Interpretation: services and Lua scripts are out of sync on the highest `schemaVersion` in use for `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` keys, session payloads have been corrupted, or a major TTL reduction has left an undesirable tail of long-lived sessions.
 1. **Align deployments**
    - Verify and correct deployments so all Game Session Service instances run a version whose CAS script understands the highest `schemaVersion` currently present in Redis (follow the “scripts first, writers second” rule from the Redis architecture docs).
-1. **Run the session cleanup Job**
-   - Use the session schema/TTL cleanup Job described in [Session Schema Cleanup and Large Keyspaces](./system-architecture-redis-operations.md#session-schema-cleanup-and-large-keyspaces):
-     - Scope the Job to one tenant at a time by prefix (for example `session:game:<tenantId>:*`).
-     - Configure it to delete keys with unsupported `schemaVersion` values or aggressively reduce their TTL so they expire quickly when performing a TTL cut-over.
+1. **Run the canonical session cleanup workflow**
+   - Use the session schema/TTL cleanup flow described in [Session Schema Cleanup and Large Keyspaces](./system-architecture-redis-operations.md#session-schema-cleanup-and-large-keyspaces):
+     - Acquire the maintenance lock and pause the affected tenant scope with `coordination-maintenance pause --operation cleanup --scope tenant --tenant <tenantId>`.
+     - Run `coordination-maintenance session-cleanup --scope tenant --tenant <tenantId> --maintenance-lock-token <token>`, using `--dry-run` first if the blast radius is uncertain.
+     - Configure cleanup to delete keys with unsupported `schemaVersion` values or aggressively reduce their TTL so they expire quickly when performing a TTL cut-over.
+     - Finish through `coordination-maintenance resume ...` on success or `coordination-maintenance release-lock ...` on failure or operator abort.
 1. **Verify recovery**
    - Monitor `session.cas_unsupported_schema_total`, reconnect error rates, and Redis key counts for the affected tenant(s) to confirm the issue has cleared.
    - Affected players may need to log in again; no authoritative PostgreSQL data is lost.
@@ -108,13 +118,15 @@ The following Redis-focused incident flows build on the general recovery steps a
 3. **Act**
    1. If the chosen mode is `replay_first`:
       - Run `coordination-maintenance reconcile-ledger ...` for the affected scope without bumping `region_epoch`; this is the canonical operator entrypoint for the replay controller / maintenance API path.
+      - Run `coordination-maintenance converge-commands ...` for the same scope unless the status surface proves that no accepted command records in the affected scope are unbound or non-terminal. This is a required replay-first step, not an optional reset-only cleanup.
       - Watch `tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_slo_breached`, and command convergence for one emitted replay-convergence budget window. Verify that command outcomes settle into the canonical terminal vocabulary described in `system-architecture-tick-execution-flows.md` rather than inventing a replay-only local interpretation.
       - Escalate to `reset_first` immediately if replay cannot make bounded progress, if inconsistent-state signals appear, or if the region transitions to `STALLED`.
       - Worked example:
         1. Region `(T1, R7)` remains on `region_epoch = 13`, `tick_effects_pending_oldest_age_seconds` exceeds budget, and there is no evidence of mixed-epoch state or duplicate durable batches.
         2. Operator runs `coordination-maintenance reconcile-ledger --scope region --tenant T1 --region R7`.
-        3. The replay controller converges lingering epoch-13 `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `region_epoch`.
-        4. If pending age and stalled signals recover within one emitted budget window, the region stays on epoch `13`; otherwise the operator escalates to `reset_first`.
+        3. Operator runs `coordination-maintenance converge-commands --scope region --tenant T1 --region R7` unless command-status inspection proves there is no affected non-terminal command work.
+        4. The replay controller converges lingering epoch-13 `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `region_epoch`, and command records converge to the canonical terminal vocabulary.
+        5. If pending age and stalled signals recover within one emitted budget window, the region stays on epoch `13`; otherwise the operator escalates to `reset_first`.
    2. If the chosen mode is `reset_first`:
       - Execute the canonical coordination reset workflow for the same scope via `coordination-maintenance`:
         - `pause`
@@ -139,7 +151,7 @@ Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions 
 3. **Act**
    1. For coordination prefixes: follow the region/tenant/cluster reset flow from [Coordination Reset Model](./system-architecture-redis-reset-and-recovery.md#coordination-reset-model) and rely on PostgreSQL/idempotent ticks to rebuild state.
    2. For non-coordination prefixes: write a small migration Job that:
-      - Iterates the affected prefix (for example `automation:queue:<tenantId>:*`).
+      - Iterates the affected prefix (for example `automation:queue:{tenantInstanceTag}:*`).
       - Writes corrected keys using shared builders.
       - Deletes or expires the old keys once consumers have been updated.
    3. Use the `tick-region-logs.json` Kibana saved search to confirm that tick/coordination-related logs for the affected regions no longer show mis-keyed or unknown-prefix warnings after the migration or reset completes.
@@ -147,7 +159,7 @@ Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions 
 ### Automation Queue Schema Mistakes
 
 1. **Detect**
-   - Automation consumers log deserialization errors or unknown `schemaVersion` values for `automation:queue:<tenantId>:*` keys.
+   - Automation consumers log deserialization errors or unknown `schemaVersion` values for `automation:queue:{tenantInstanceTag}:*` keys.
    - Metrics show sustained failures processing automation work items.
 2. **Decide**
    - If automation queues are purely best-effort, consider treating affected items as lost and flushing the prefix.
@@ -155,6 +167,6 @@ Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions 
 3. **Act**
    1. Pause automation processing for the affected tenants or globally, depending on blast radius.
    2. Choose one explicit remediation path:
-      - Best-effort path: flush `automation:queue:<tenantId>:*` and restart consumers.
+      - Best-effort path: flush `automation:queue:{tenantInstanceTag}:*` and restart consumers.
       - Durable path: run the Automation rebuild workflow that re-enqueues from PostgreSQL-backed triggers/quotas, not from Redis queue payload migration.
    3. Resume automation processing and monitor error rates and queue depths until they stabilize.

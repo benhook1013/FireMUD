@@ -44,7 +44,6 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     properties = {
-      "game-session.dev-isolated=false",
       "game-session.require-authenticated-commands=true",
       "firemud.database.enabled=false",
       "spring.data.redis.repositories.enabled=false",

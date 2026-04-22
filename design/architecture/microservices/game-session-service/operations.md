@@ -28,11 +28,10 @@
 - Combined with region sizing, splitting hot regions and merging cold ones, this lease-based ownership model allows FireMUD to scale horizontally without global downtime.
 - The same externalized-state model is the target for ordinary non-edge restart recovery. If a Game Session pod restart still causes client-visible reconnect while Gateway/TCP Proxy stayed healthy, treat that as a gap in takeover implementation or coordination design, not as the intended operating model.
 
-## Dev-Isolated Mode
+## Local Development Path
 
-- Use `./gradlew :game-session-service:bootRunDevIsolated` or set `GAME_SESSION_DEV_ISOLATED=true` when you need to exercise Game Session without PostgreSQL, Redis, or downstream gRPC dependencies. The dev-isolated beans acknowledge commands and lifecycle requests while only recording informational logs instead of accessing external systems.
-- `dev-isolated` is an explicit opt-in for dependency-free local development only. The standard `dev` profile used by Docker Compose and readiness-based smoke tests keeps the canonical readiness group rather than downgrading readiness to local `readinessState` only.
-- The dependency-light dev-isolated path is still available for local experimentation, but the maintained integration and ingress coverage now targets the real login/session flow described in [`02.1-task-list-login-session-hardening-vertical-slice.md`](../../../project-management/vertical-slices/02.1-task-list-login-session-hardening-vertical-slice.md).
+- Use the normal `dev` profile with the real local Postgres, Redis, Gateway, Account, and downstream gameplay-service topology.
+- The maintained integration and ingress coverage now targets the real login/session flow described in [`02.1-task-list-login-session-hardening-vertical-slice.md`](../../../project-management/vertical-slices/02.1-task-list-login-session-hardening-vertical-slice.md), and the canonical operator proof remains the repo smoke scripts under `dev-tools/`.
 
 ## Cross-Service Integration Tests
 

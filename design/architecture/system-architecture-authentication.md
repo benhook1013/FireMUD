@@ -9,6 +9,7 @@ Authentication is performed via plaintext `LOGIN` commands for gameplay protocol
 - Prompt-based `LOGIN` flows (username then password prompts) are part of the target protocol design; until they are fully implemented across transports, clients should use `LOGIN <username> <password> [otp]` / `LOGON ...`.
 - Character selection and gameplay takeover semantics are canonicalized on `{tenantId, gameInstanceId, characterId}`.
 - First-party `/ws/game/**` now uses the concrete bootstrap path documented below: `POST /auth/player-bootstrap`, bootstrap-backed `POST /auth/connect-token`, gateway connect-token enforcement plus signed connect-context, then bare first-party `LOGIN` followed by `PLAY`.
+- The browser-safe `Firemud-Connect-Token` HttpOnly cookie carrier is the target first-party browser contract. The current gateway implementation still accepts the header carrier used by non-browser clients; browser cookie issuance and gateway cookie validation need follow-up implementation before first-party browser gameplay is production-ready.
 - `/sessions/{sessionId}/refresh-roles` exists as an operational hook; until full role-refresh token regeneration is wired end-to-end, implementations may expose a placeholder response while still performing automatic refresh on role updates.
 
 ## Contract Decisions (Normative)
@@ -30,7 +31,7 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 
 - **Account Service** – Verifies credentials (including OTP), issues JWTs, and publishes JWKS for validation.
 - **Game Session Service** – Fronts the `LOGIN` command, stores gameplay session context in Redis, and rebinds sockets on reconnect.
-- **Spring Cloud Gateway** – Pass-through for gameplay login and admin/meta flows; enforces auth header presence on protected routes but does not validate tokens.
+- **Spring Cloud Gateway** – Pass-through for gameplay login and admin/meta flows; enforces auth header presence on protected control-plane routes but does not validate control-plane JWTs. The deliberate exception is `/ws/game/**` edge admission: Gateway validates short-lived gameplay connect tokens, performs replay checks, and emits a signed connect context for Game Session as specified in [Gateway Architecture](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake).
 
 Admin and moderator accounts can optionally enable **two-factor authentication**. When a `two_factor_secret` is present, the Account Service expects a one-time TOTP code during login. The `/auth/login` REST endpoint and the `Authenticate` gRPC call both accept an `otp` field for this purpose. The Game Session Service forwards this OTP when a player logs in.
 
@@ -211,6 +212,7 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
 
 - Bootstrap issuance API: Account Service endpoint (for example `POST /auth/player-bootstrap`) that authenticates the player account for first-party gameplay bootstrap only and returns one short-lived bootstrap token plus expiry metadata.
 - Issuer: Account/authentication control-plane only, after direct player-account authentication. Tenant membership and entitlement checks do not occur here because no gameplay tenant has been selected yet.
+- First-party bootstrap ownership: Account Service owns `POST /auth/player-bootstrap`, bootstrap discovery, `POST /auth/connect-token`, and public-production first-join membership creation. Game Session owns the in-socket `LOGIN`/`PLAY` binding steps and consumes the gateway-signed connect context; it does not own the public first-party bootstrap HTTP surface.
 - Bootstrap-discovery APIs: authenticated first-party HTTP endpoints (for example `GET /auth/bootstrap/worlds`, `GET /auth/bootstrap/worlds/{world}/realms`, `GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters`) that accept only the `player-bootstrap` token profile and return the canonical lobby discovery data used to choose a target before socket open.
   - These endpoints are the canonical pre-socket discovery path for first-party clients.
   - They must apply the same caller-bound membership, realm visibility, and entitlement filtering rules as in-band `WORLDS` / `REALMS` / `CHARS`.
@@ -221,7 +223,7 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
   - `connectScopeId` is an opaque server-issued selector for one caller-visible realm target, not a durable public identifier. Clients may cache it only as a short-lived convenience token for reconnect/bootstrap flows and must be prepared to discard it when discovery, pointer version, or visibility state changes.
   - Discovery responses are snapshot proofs, not durable reservations. `evaluatedAt` and `connectScopeExpiresAt` describe the freshness window for the selector that was returned; they do not promise the realm remains admissible until gameplay starts.
   - `connectScopeId` must not outlive the routing truth it was derived from. If the realm's `pointerVersion`, visibility, or entitlement posture changes such that the previously discovered target is no longer admissible, `POST /auth/connect-token` must reject the stale selector rather than silently translating it to a newer target.
-  - For non-public realms such as playtest forks, visibility is controlled by an explicit realm-access grant. The minimum grant record is `{tenantId, realmSlug, accountId, grantedByAccountId, grantedAt, expiresAt?}`.
+  - For non-public realms such as playtest forks, visibility is controlled by an explicit realm-access grant. The target minimum grant record is `{tenantId, realmSlug, accountId, grantedByAccountId, grantedAt, expiresAt?}`. The current first implementation centralizes Account Service grant authority and runtime reads, but expiry and tenant-admin management UX remain product/control-plane follow-through.
   - Realm-access grants are owned by Account Service. Account Service is the sole writer and read authority for grant visibility decisions; Game Session and frontend callers consume grant-filtered results and must not maintain independent grant stores.
   - `tenantAdmin` is the routine owner of creating and revoking realm-access grants for that tenant through Account Service-owned admin surfaces. `platformAdmin` may do the same only as break-glass support.
   - Required internal read contract: Account Service must expose a caller-bound runtime lookup for realm visibility/admission, for example `GetRealmAccessGrant(accountId, tenantId, realmSlug)` or a batch/list equivalent consumed by bootstrap discovery, in-band `REALMS`, `POST /auth/connect-token`, and `PLAY`.
@@ -230,9 +232,10 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
     - expired grants are treated as non-existent for visibility and admission
     - successful create/revoke must be immediately visible to subsequent discovery/admission reads
     - if grant authority is unavailable, non-public realm discovery and admission fail closed rather than falling back to stale local cache state
-- Connect-token issuance API: control-plane endpoint (for example `POST /auth/connect-token`) that returns exactly one short-lived token per request and logs `accountId`, `tenantId`, `gameInstanceId`, `jti`, and issuance timestamp.
+- Connect-token issuance API: control-plane endpoint (for example `POST /auth/connect-token`) that mints exactly one short-lived token per request and logs `accountId`, `tenantId`, `gameInstanceId`, `jti`, and issuance timestamp.
   - Minimum request fields: `connectScopeId`, `requestId`.
-  - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `realmSlug`, `jti`, `issuedAt`.
+  - Minimum response fields for non-browser clients: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `realmSlug`, `jti`, `issuedAt`.
+  - Browser response mode: first-party browser clients receive the connect token as an HttpOnly cookie rather than as JavaScript-readable response data. The response still returns non-secret metadata (`expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `realmSlug`, `jti`, `issuedAt`) so the client can drive retry UX without reading the token.
   - Before issuance, Account Service must resolve `connectScopeId` to the canonical `{tenantId, realmSlug, gameInstanceId, pointerVersion}` tuple, perform a live membership/public-admission check for `{accountId, tenantId, realmSlug}`, a live runtime entitlement check for `tenantId`, and a live realm-routing read for the selected realm target via the Game Session control-plane API.
   - The resolved tuple used for issuance must be treated as immutable for that request. Issuance may succeed only if `connectScopeId`, current realm visibility/grant state, and current admission-pointer state still converge on the same target at evaluation time.
   - `requestId` is the idempotency key for connect-token issuance. Retrying the same `(accountId, connectScopeId, requestId)` must return the same token payload or the same deterministic application failure; callers must use a new `requestId` when intentionally starting a new issuance attempt after rediscovery.
@@ -241,26 +244,30 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
   - First-party clients may request connect tokens only for realm targets returned by the canonical bootstrap-discovery contract for that caller; hidden or unauthorized realms must not be inferable by probing connect-token issuance directly.
   - If the realm was only caller-visible through an explicit non-public access grant, connect-token issuance must re-check that grant at issuance time rather than trusting earlier discovery alone.
   - Missing required request/response fields are contract violations and must fail closed rather than being defaulted by callers.
-- Transport: `X-Firemud-Connect-Token` header on `/ws/game/**` handshake.
-- Required claims: `accountId`, `tenantId`, `gameInstanceId`, `exp`, `jti`.
+- Transport: connect-token carriage on `/ws/game/**` handshake.
+  - First-party browser clients use the cookie `Firemud-Connect-Token` set by `POST /auth/connect-token` with `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/ws/game`, and `Max-Age` no longer than the connect-token TTL. The cookie value is the connect token; browser JavaScript must not read or persist it.
+  - Server-side and non-browser clients may use the dedicated `X-Firemud-Connect-Token` handshake header.
+  - Gateway must accept exactly one connect-token carrier for non-proxy gameplay handshakes. If both the cookie and header are present, or if either carrier is malformed, Gateway rejects the handshake as `CONNECT_TOKEN_REJECTED` rather than choosing precedence.
+  - Query-string carriage is not allowed in player-facing environments unless a future security review explicitly changes that rule.
+- Required claims: `accountId`, `tenantId`, `gameInstanceId`, `worldSlug`, `realmSlug`, `pointerVersion`, `connectScopeId`, `requestId`, `exp`, `jti`.
 - Lifetime: short-lived (target <= 30 seconds).
 - Signing and verification: token is signed by the Account/authentication control-plane key set and verified only at Gateway for `/ws/game/**` policy decisions.
 - Replay defense: gateway validates `jti` against a bounded replay cache and rejects replays until token expiry.
   - Replay cache owner: Gateway.
-  - Replay key format: `gateway:connect-token:replay:<jti>`.
+  - Replay key format: `gateway:connect-token:jti:<jti>`.
   - Replay TTL: `exp + bounded_skew` (recommended 30 seconds).
   - Capacity policy: bounded cardinality with deterministic eviction (`oldest-expiry-first`) and overload metrics when capacity limits are reached.
 - Enforcement:
   - `/ws/game/**` is the only gameplay WebSocket route.
-  - Non-proxy gameplay clients must present a valid connect token; missing/invalid/expired/replayed tokens are rejected with HTTP `403`.
+  - Non-proxy gameplay clients must present a valid connect token; missing, invalid, expired, replayed, scope-mismatched, or replay-protection-unavailable token state is rejected with HTTP `403` and the bounded handshake classes defined in [Reconnection Strategy](./system-architecture-reconnection.md#http-handshake-failures-on-ws-game).
   - TCP Proxy bridge traffic is admitted without a connect token only when the gateway authenticates the proxy identity over the internal mTLS listener and header-trust checks pass.
-- Error mapping: invalid/expired/replayed/missing token where required maps to HTTP `403` at handshake.
+- Error mapping: connect-token admission failures map to HTTP `403` at handshake, with specific `CONNECT_*` classes when the gateway can classify the failure.
 
 The connect token is not a gameplay authorization grant and does not replace the canonical `LOGIN` + `PLAY` flow. It is an edge-admission artifact bound to a prior first-party bootstrap identity, not a substitute for gameplay authentication or gameplay binding.
 
 #### Gateway-to-Game Session connect context (normative)
 
-Gateway verification of `X-Firemud-Connect-Token` must not be translated into trust of raw forwarded headers. For first-party `/ws/game/**` handshakes, Gateway must attach a short-lived signed connect context that Game Session verifies before applying connect-token scope checks.
+Gateway verification of the presented connect token, whether from `Firemud-Connect-Token` cookie or `X-Firemud-Connect-Token` header, must not be translated into trust of raw forwarded headers. For first-party `/ws/game/**` handshakes, Gateway must attach a short-lived signed connect context that Game Session verifies before applying connect-token scope checks.
 
 - Gateway-issued context fields (minimum): `accountId`, `tenantId`, `gameInstanceId`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`.
 - Transport: single signed compact payload header (for example `X-Firemud-Connect-Context`) plus `kid` metadata if not embedded in payload.
@@ -284,7 +291,7 @@ To remove ambiguity between connect-token admission and `LOGIN`, first-party web
 2. Use bootstrap-authenticated discovery endpoints to select a caller-visible world/realm/character target.
 3. Request a short-lived gameplay connect token for one target selected by `connectScopeId` returned by that discovery contract. This call performs the live membership/public-admission and runtime entitlement checks for that target.
    - The issuance path must also validate the target against the authoritative realm-routing record. If the target is no longer admissible for the selected realm, the request fails before socket open rather than issuing a stale token.
-4. Open gameplay WebSocket on `/ws/game/**` with `X-Firemud-Connect-Token`.
+4. Open gameplay WebSocket on `/ws/game/**` with connect-token carriage appropriate to the client. Browser clients use the `Firemud-Connect-Token` HttpOnly cookie set by `POST /auth/connect-token`; server-side and non-browser clients may use `X-Firemud-Connect-Token`.
 5. Complete gameplay authentication in-band using `LOGIN` (or `LOGON`) and then lobby binding with `PLAY`.
 
 Normative constraints:
@@ -325,9 +332,10 @@ Authorization: Bearer <bootstrapToken>
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-123" }
--> { connectToken, accountId, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production", expiresAt }
+Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
+-> { accountId, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production", expiresAt, jti, issuedAt }
 
-GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 
 LOGIN
 OK LOGIN Logged in
@@ -370,9 +378,10 @@ Authorization: Bearer <bootstrapToken>
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_emberfall_production_v1", requestId: "req-join-1" }
--> { connectToken, accountId, tenantId: "tenant-emberfall", realmSlug: "production", gameInstanceId: "production", expiresAt }
+Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
+-> { accountId, tenantId: "tenant-emberfall", realmSlug: "production", gameInstanceId: "production", expiresAt, jti, issuedAt }
 
-GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 LOGIN
 PLAY emberfall production Mara
 OK PLAY Entered Emberfall / Live Realm as Mara
@@ -390,6 +399,7 @@ Canonical character-creation contract for this flow:
 - Entity Management owns the underlying `CreateCharacter` semantics and persistence contract; Account Service/authentication docs define the admission prerequisites for when this route may be called.
 - `POST /characters` is allowed only after bootstrap discovery has selected a caller-visible realm target and before `POST /auth/connect-token` / gameplay `PLAY` succeed for that new character.
 - The route must reject requests for realms that are not currently visible/admissible to the bootstrap-authenticated account.
+- The current realm-scoped backend creation substrate carries `{tenantId, accountId, name, gameInstanceId, playableStateScope}` into Entity Management. The richer player-facing descriptor for template/race/class/options is still a required product contract before first-party clients can render nontrivial character creation without game-specific assumptions.
 
 Example first-party browser sequence for a playtest fork:
 
@@ -427,9 +437,10 @@ Authorization: Bearer <bootstrapToken>
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_playtest_docks_v4", requestId: "req-456" }
--> { connectToken, accountId, tenantId: "tenant-demo", realmSlug: "playtest-docks", gameInstanceId: "playtest-docks", expiresAt }
+Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
+-> { accountId, tenantId: "tenant-demo", realmSlug: "playtest-docks", gameInstanceId: "playtest-docks", expiresAt, jti, issuedAt }
 
-GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 
 LOGIN
 OK LOGIN Logged in
@@ -467,7 +478,7 @@ After `LOGIN` succeeds, the Game Session Service requires an explicit lobby sele
 - `CHARS <world> [realm]` – list characters for the selected world and optional realm.
 - `PLAY <world> [realm] [character]` – enter gameplay by selecting a world, an optional realm, and an optional character.
 
-`public_production_onboarding` is the first-party lobby route class for the default public production realm. Brand-new authenticated accounts may see that realm before a tenant membership row exists, but the first successful `PLAY` must still atomically create the caller's `player` membership before gameplay binding is committed.
+`public_production_onboarding` is the lobby route class for the default public production realm. Brand-new authenticated accounts may see that realm before a tenant membership row exists. First-party bootstrap clients create the caller's `player` membership during `POST /auth/connect-token` before socket admission, while credential-bearing text clients use the same Account Service writer boundary during `PLAY` before gameplay binding is committed.
 
 Realm discovery and routing contract:
 
@@ -493,7 +504,7 @@ Lobby discovery source-of-truth contract:
 Lobby command classification contract:
 
 - `WORLDS` is an authenticated **pre-tenant discovery** operation, not a normal tenant-scoped route. It runs after account authentication but before a single `tenantId` has been selected.
-- `REALMS <world>`, `CHARS <world> [realm]`, and `PLAY <world> [realm] [character]` participate in `public_production_onboarding` when the selected realm is the default public production realm. Brand-new authenticated accounts may discover that realm without a pre-existing membership row, but the first successful `PLAY` must atomically create the caller's `player` membership before gameplay binding is committed.
+- `REALMS <world>`, `CHARS <world> [realm]`, and `PLAY <world> [realm] [character]` participate in `public_production_onboarding` when the selected realm is the default public production realm. Brand-new authenticated accounts may discover that realm without a pre-existing membership row. For first-party bootstrap clients, `POST /auth/connect-token` creates the caller's `player` membership through the Account Service writer boundary before socket admission. For credential-bearing text clients that do not use connect-token bootstrap, `PLAY` invokes the same writer boundary before gameplay binding is committed.
 - `REALMS <world>` remains a tenant-scoped discovery operation after `<world>` resolves to a canonical `tenantId`, but before the client is bound to one `gameInstanceId`.
 - `CHARS <world> [realm]` and `PLAY <world> [realm] [character]` become tenant/realm-scoped only after `<world>` and optional `[realm]` are resolved server-side to canonical `{tenantId, gameInstanceId}`.
 - Shared auth middleware and route-matrix entries must not model all lobby commands as one undifferentiated tenant-scoped surface.
@@ -503,7 +514,7 @@ The `PLAY` flow:
 - Resolves `<world>` to a canonical `tenantId` and validates it exists.
 - Resolves optional `[realm]` to a canonical realm for that tenant. If no realm is supplied, the tenant's default production realm is selected.
 - Verifies that the account is authorized to play in that `tenantId` using caller-bound gameplay membership authority or the canonical public-production admission policy for the default production realm. Global roles alone must not satisfy gameplay admission.
-- If admission is proceeding through public-production discovery rather than an existing membership row, the first successful `PLAY` must atomically create the caller's `player` membership before gameplay binding is committed. Failed admissions must not leave behind a partial membership grant.
+- If admission is proceeding through public-production discovery rather than an existing membership row, membership creation must go through the Account Service writer boundary before gameplay binding is committed. First-party bootstrap clients normally complete this during `POST /auth/connect-token`; credential-bearing text clients and any non-bootstrap admission path invoke the same boundary during `PLAY`. Failed admissions must not leave behind a partial membership grant.
   - Membership creation writer authority: Account Service only. Game Session must not write membership rows directly.
   - Required API: `EnsurePublicProductionPlayerMembership(accountId, tenantId, realmSlug, requestId)` or protocol-equivalent, owned by Account Service.
   - This API is valid only for the tenant's default production realm under the canonical public-production admission policy; it must fail closed for non-production realms or callers that are not eligible for public admission.
@@ -522,7 +533,7 @@ The `PLAY` flow:
   - First-party `/ws/game/**` contract: if a validated connect token is present, resolved `tenantId` and `gameInstanceId` must match token claims. On mismatch, reject admission with `CONNECT_SCOPE_MISMATCH` and do not bind session scope.
   - Runtime control-plane and admission flows use the realm-routing contract from [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#realm-routing-contract-for-player-addressable-realms) as the source of truth for which concrete `gameInstanceId` is admissible for the selected realm.
 - On successful admission, runtime must return the resolved realm bundle identity at minimum as `versionId`, optional `scriptPatchVersion`, and manifest location/hash (or a stable bundle token that resolves to those fields) so clients can apply realm-specific branding and assets.
-- Binds the socket to a gameplay session key for the chosen world/instance/character identity under `session:game:<tenantId>:<gameInstanceId>:<sessionId>` as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) and [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
+- Binds the socket to a gameplay session key for the chosen world/instance/character identity under `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) and [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
 - Ensures the gameplay session binding is consistent with the tick/lease ownership model for the character’s current `<tenantId, regionId>`. Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, `/ws/game/**` is routed to a stable Game Session service endpoint and the edge does not implement a lease-aware shard routing plane.
 
 `PLAY` returns canonical, stable error codes so clients can recover deterministically:
@@ -546,7 +557,12 @@ First-party gameplay admission and reconnect clients should treat the following 
 
 | Surface | Canonical code | Trigger condition | Required client reaction |
 | --- | --- | --- | --- |
-| `/ws/game/**` handshake (`403`) | `CONNECT_TOKEN_REJECTED` | Connect token is missing, expired, invalid, or replayed where required | Obtain a fresh connect token and open a new socket with bounded retry/backoff. This is a handshake classification, not a post-connect text-protocol `ERROR <CODE>` response. |
+| `/ws/game/**` handshake (`403`) | `CONNECT_TOKEN_MISSING` | Connect token is absent where required | Obtain a fresh connect token and open a new socket with bounded retry/backoff. This is a handshake classification, not a post-connect text-protocol `ERROR <CODE>` response. |
+| `/ws/game/**` handshake (`403`) | `CONNECT_TOKEN_EXPIRED` | Connect token expired before gateway validation completed | Obtain a fresh connect token and open a new socket with bounded retry/backoff. |
+| `/ws/game/**` handshake (`403`) | `CONNECT_TOKEN_REPLAYED` | Connect token `jti` was already used within the replay window | Obtain a fresh connect token and open a new socket with bounded retry/backoff; repeated replay failures should not fast-loop. |
+| `/ws/game/**` handshake (`403`) | `CONNECT_SCOPE_MISMATCH` | Handshake-carried scope does not match the verified connect-token scope | Rerun bootstrap discovery for the intended realm target, obtain a fresh connect token, and open a new socket. |
+| `/ws/game/**` handshake (`403`) | `CONNECT_REPLAY_PROTECTION_UNAVAILABLE` | Gateway cannot validate connect-token replay state and fail-closes | Retry with bounded slower backoff and surface temporary edge-auth-unavailable context rather than backend-outage messaging. |
+| `/ws/game/**` handshake (`403`) | `CONNECT_TOKEN_REJECTED` | Connect token is malformed, signature-invalid, missing required claims, wrong-audience, or otherwise rejected outside the narrower classes above | Obtain a fresh connect token and open a new socket with bounded retry/backoff. |
 | `/ws/game/**` handshake (`403`) | `POLICY_DENY` | Edge policy rejects the handshake for a non-token reason (for example proxy trust/config mismatch) | Treat as non-retriable until operator/client configuration is corrected. This is a handshake classification, not a post-connect text-protocol `ERROR <CODE>` response. |
 | `PLAY` on first-party `/ws/game/**` | `CONNECT_CONTEXT_INVALID` | Required gateway-signed connect context is missing, expired, unverifiable, or otherwise invalid | Refresh connect token, reconnect, then re-`LOGIN`; do not retry `PLAY` on the current socket. |
 | `PLAY` on first-party `/ws/game/**` | `CONNECT_SCOPE_MISMATCH` | Requested `{tenantId, gameInstanceId}` does not match the validated connect-token scope | Re-select the intended world, obtain a fresh connect token for that target, reconnect, and retry `PLAY`. |
@@ -646,7 +662,7 @@ When adding a new public HTTP/gRPC route:
 
 - Classify it using the shared classes from [Authorization Route Matrix](./system-architecture-authz-route-matrix.md): `public`, `account_scoped`, `player_bootstrap_tenant`, `pre_tenant_discovery`, `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, or `cross_tenant_data_bearing`.
 - For all non-public routes, require `AuthTokenInterceptor` and the Tenant Authorization Contract described above.
-- For tenant-scoped routes that must remain reachable when a tenant is `suspended` or `canceled` for billing (for example, updating payment methods, viewing invoices, exporting data), explicitly mark them as **billing-safe control-plane routes** using a shared mechanism such as an annotation or route metadata flag (for example, `@BillingSafe`).
+- For tenant-scoped routes that must remain reachable when a tenant is `suspended` or `canceled` for billing (for example, updating payment methods, viewing invoices, or tenant-scoped data export), explicitly mark them as **billing-safe control-plane routes** using a shared mechanism such as an annotation or route metadata flag (for example, `@BillingSafe`). Full account export remains `account_scoped` and must not be used as the suspended-tenant recovery export.
 - Log and audit cross-tenant operations, especially when initiated by roles such as `platformAdmin`, so misuse or misconfiguration is observable.
 - Register the route and its classification in [Authorization Route Matrix](./system-architecture-authz-route-matrix.md) so middleware and CI policy checks can enforce consistency.
 

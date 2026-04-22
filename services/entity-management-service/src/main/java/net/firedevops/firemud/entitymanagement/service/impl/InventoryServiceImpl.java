@@ -34,6 +34,7 @@ public class InventoryServiceImpl implements InventoryService {
   private final ItemStackRepository itemStackRepository;
   private final ItemVisibleRefAllocator itemVisibleRefAllocator;
   private final ItemTransferSupport itemTransferSupport;
+  private final ItemTransferAuditWriter itemTransferAuditWriter;
   private final ContainerHolderSyncSupport containerHolderSyncSupport;
   private final StackableItemSupport stackableItemSupport;
 
@@ -69,7 +70,7 @@ public class InventoryServiceImpl implements InventoryService {
     if (stackableItemSupport.usesStackStorage(item)) {
       incrementInventoryStack(character, item, quantity);
       return inventoryDtoForStackMutation(
-          character, item, stackableItemSupport.defaultStackFamilyKey(item), quantity);
+          character, item, stackableItemSupport.authoredStackFamilyKey(item), quantity);
     }
     List<ItemInstance> created = createCarriedItemInstances(character, item, quantity);
     return inventoryDtoForMutation(created.get(0), quantity);
@@ -136,7 +137,9 @@ public class InventoryServiceImpl implements InventoryService {
       Long itemInstanceId,
       String containerInstanceId,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId,
+      String sessionId) {
     requirePositiveQuantity(quantity);
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
     String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
@@ -151,7 +154,9 @@ public class InventoryServiceImpl implements InventoryService {
               normalizedRoomInstanceId,
               item,
               normalizeOptionalText(stackFamilyKey),
-              quantity);
+              quantity,
+              effectId,
+              sessionId);
       return roomGroundDtoForStackMutation(
           tenantId,
           normalizedGameInstanceId,
@@ -164,7 +169,12 @@ public class InventoryServiceImpl implements InventoryService {
         requireCarriedItemInstances(
             character, item, itemInstanceId, normalizeOptionalText(containerInstanceId), quantity);
     moveItemInstancesToRoom(
-        character, selected, normalizedGameInstanceId, normalizedRoomInstanceId);
+        character,
+        selected,
+        normalizedGameInstanceId,
+        normalizedRoomInstanceId,
+        effectId,
+        sessionId);
     return roomGroundDtoForMutation(selected.get(0), quantity);
   }
 
@@ -180,7 +190,9 @@ public class InventoryServiceImpl implements InventoryService {
       Long itemInstanceId,
       String containerInstanceId,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId,
+      String sessionId) {
     requirePositiveQuantity(quantity);
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
     String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
@@ -195,7 +207,9 @@ public class InventoryServiceImpl implements InventoryService {
               normalizedRoomInstanceId,
               item,
               normalizeOptionalText(stackFamilyKey),
-              quantity);
+              quantity,
+              effectId,
+              sessionId);
       return inventoryDtoForStackMutation(character, item, selectedStackFamilyKey, quantity);
     }
     List<ItemInstance> selected =
@@ -207,7 +221,7 @@ public class InventoryServiceImpl implements InventoryService {
             itemInstanceId,
             normalizeOptionalText(containerInstanceId),
             quantity);
-    moveItemInstancesToInventory(character, selected);
+    moveItemInstancesToInventory(character, selected, effectId, sessionId);
     return inventoryDtoForMutation(selected.get(0), quantity);
   }
 
@@ -250,7 +264,7 @@ public class InventoryServiceImpl implements InventoryService {
 
   private void incrementInventoryStack(Character character, Item item, int quantity) {
     incrementInventoryStack(
-        character, item, quantity, stackableItemSupport.defaultStackFamilyKey(item));
+        character, item, quantity, stackableItemSupport.authoredStackFamilyKey(item));
   }
 
   private void incrementInventoryStack(
@@ -284,7 +298,9 @@ public class InventoryServiceImpl implements InventoryService {
       String roomInstanceId,
       Item item,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId,
+      String sessionId) {
     ItemStack source =
         requireSingleInventoryStackSource(
             tenantId, character.getId(), item, stackFamilyKey, "Inventory item not found");
@@ -309,6 +325,14 @@ public class InventoryServiceImpl implements InventoryService {
                 });
     destination.setQuantity(destination.getQuantity() + quantity);
     itemStackRepository.save(destination);
+    itemTransferAuditWriter.recordStackTransfer(
+        tenantId,
+        item,
+        quantity,
+        source.getStackFamilyKey(),
+        itemTransferSupport.inventoryHolder(tenantId, character.getId()),
+        itemTransferSupport.roomHolder(tenantId, gameInstanceId, roomInstanceId),
+        itemTransferSupport.audit("DROP", character.getId(), sessionId, effectId));
     return source.getStackFamilyKey();
   }
 
@@ -319,7 +343,9 @@ public class InventoryServiceImpl implements InventoryService {
       String roomInstanceId,
       Item item,
       String stackFamilyKey,
-      int quantity) {
+      int quantity,
+      String effectId,
+      String sessionId) {
     ItemStack source =
         requireSingleRoomStackSource(
             tenantId,
@@ -331,6 +357,14 @@ public class InventoryServiceImpl implements InventoryService {
     requireStackQuantity(source, quantity, "Room ground item not found");
     decrementOrDelete(source, quantity);
     incrementInventoryStack(character, item, quantity, source.getStackFamilyKey());
+    itemTransferAuditWriter.recordStackTransfer(
+        tenantId,
+        item,
+        quantity,
+        source.getStackFamilyKey(),
+        itemTransferSupport.roomHolder(tenantId, gameInstanceId, roomInstanceId),
+        itemTransferSupport.inventoryHolder(tenantId, character.getId()),
+        itemTransferSupport.audit("GET", character.getId(), sessionId, effectId));
     return source.getStackFamilyKey();
   }
 
@@ -448,27 +482,37 @@ public class InventoryServiceImpl implements InventoryService {
       Character character,
       List<ItemInstance> instances,
       String gameInstanceId,
-      String roomInstanceId) {
+      String roomInstanceId,
+      String effectId,
+      String sessionId) {
     for (ItemInstance instance : instances) {
-      itemTransferSupport.transfer(
-          instance,
-          itemTransferSupport.inventory(character.getTenantId(), character.getId()),
-          itemTransferSupport.room(gameInstanceId, roomInstanceId),
-          itemTransferSupport.audit("DROP", character.getId()));
+      ItemTransferSupport.ExpectedSource expectedSource =
+          itemTransferSupport.inventory(character.getTenantId(), character.getId());
+      ItemTransferSupport.Destination destination =
+          itemTransferSupport.room(gameInstanceId, roomInstanceId);
+      ItemTransferSupport.TransferAuditContext auditContext =
+          itemTransferSupport.audit("DROP", character.getId(), sessionId, effectId);
+      itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
       itemInstanceRepository.save(instance);
+      itemTransferAuditWriter.recordInstanceTransfer(
+          instance, expectedSource, destination, auditContext);
       containerHolderSyncSupport.ensureSynced(instance);
     }
   }
 
-  private void moveItemInstancesToInventory(Character character, List<ItemInstance> instances) {
+  private void moveItemInstancesToInventory(
+      Character character, List<ItemInstance> instances, String effectId, String sessionId) {
     for (ItemInstance instance : instances) {
-      itemTransferSupport.transfer(
-          instance,
+      ItemTransferSupport.ExpectedSource expectedSource =
           itemTransferSupport.room(
-              character.getTenantId(), instance.getGameInstanceId(), instance.getRoomInstanceId()),
-          itemTransferSupport.inventory(character),
-          itemTransferSupport.audit("GET", character.getId()));
+              character.getTenantId(), instance.getGameInstanceId(), instance.getRoomInstanceId());
+      ItemTransferSupport.Destination destination = itemTransferSupport.inventory(character);
+      ItemTransferSupport.TransferAuditContext auditContext =
+          itemTransferSupport.audit("GET", character.getId(), sessionId, effectId);
+      itemTransferSupport.transfer(instance, expectedSource, destination, auditContext);
       itemInstanceRepository.save(instance);
+      itemTransferAuditWriter.recordInstanceTransfer(
+          instance, expectedSource, destination, auditContext);
       containerHolderSyncSupport.ensureSynced(instance);
     }
   }
@@ -661,15 +705,17 @@ public class InventoryServiceImpl implements InventoryService {
 
   private Comparator<InventoryEntryDto> inventoryOrdering() {
     return Comparator.comparing((InventoryEntryDto dto) -> dto.itemName().toLowerCase())
-        .thenComparing(dto -> dto.itemInstanceId() == null ? 1 : 0)
-        .thenComparing(dto -> dto.itemInstanceId() == null ? Long.MAX_VALUE : dto.itemInstanceId())
+        .thenComparingInt(dto -> dto.itemInstanceId() == null ? 1 : 0)
+        .thenComparingLong(
+            dto -> dto.itemInstanceId() == null ? Long.MAX_VALUE : dto.itemInstanceId())
         .thenComparing(InventoryEntryDto::itemId);
   }
 
   private Comparator<RoomGroundInventoryEntryDto> roomGroundOrdering() {
     return Comparator.comparing((RoomGroundInventoryEntryDto dto) -> dto.itemName().toLowerCase())
-        .thenComparing(dto -> dto.itemInstanceId() == null ? 1 : 0)
-        .thenComparing(dto -> dto.itemInstanceId() == null ? Long.MAX_VALUE : dto.itemInstanceId())
+        .thenComparingInt(dto -> dto.itemInstanceId() == null ? 1 : 0)
+        .thenComparingLong(
+            dto -> dto.itemInstanceId() == null ? Long.MAX_VALUE : dto.itemInstanceId())
         .thenComparing(RoomGroundInventoryEntryDto::itemId);
   }
 

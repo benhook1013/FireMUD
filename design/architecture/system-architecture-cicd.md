@@ -140,6 +140,13 @@ Deployable artifact lineage rule:
 - Promotion between staging and production must reuse that exact digest; release tags, branch tags, or `latest` tags may be added later as aliases, but they must not point at a rebuilt image if the image is intended to remain promotable.
 - Any workflow that rebuilds from a release tag or branch tip produces a new artifact lineage. Those rebuilt digests are non-promotable until they independently pass staging and produce new deployment evidence plus a new production attestation chain.
 
+Production release digest manifest:
+
+- Each production release must have one canonical release digest manifest under `design/operations/deployments/production/release-manifests/<release-tag-or-deployment-ref>.json`.
+- The manifest binds the release tag, source commit, production deployment reference, production promotion attestation, staging deployment record, release-note/compliance asset refs, and the exact service image digest set.
+- Release-note workflows may publish metadata and compliance assets for a tag, but they do not select promotable runtime artifacts. The production overlay PR and release digest manifest are the authority for which staged digests belong to the release.
+- If a release tag is created before production promotion completes, the release digest manifest may use a deployment-ref filename first, but it must be updated to include the final tag before the release is treated as official.
+
 ### Base Docker Image
 
 The firemud-base image provides a consistent OS and JVM setup across all service containers. It is built using the `buildBaseImage` Gradle task and referenced in each microservice Dockerfile as `ghcr.io/benhook1013/firemud-base:latest`.
@@ -250,8 +257,9 @@ FireMUD uses a simple promotion flow from pull requests through staging to produ
 
 - Feature branches are merged into `develop` after passing CI.
 - Staging promotion is performed by updating the staging Kustomize overlay (for example `k8s/overlays/stage`) to the desired image digests (`image@sha256:...`) via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/stage`. This keeps “what was deployed” traceable in Git history and removes mutable-tag drift.
-- When a release is ready, `release-please` opens a release PR against `main`; after that PR is merged, the release tag (for example `v1.2.3`) is created. Release-tag workflows may publish metadata and additional tags for the already-validated digest set, but must not rebuild the promotable production artifacts.
+- When a release is ready, `release-please` opens a release PR against `main`; after that PR is merged, the release tag (for example `v1.2.3`) is created. Release-tag workflows may publish metadata and additional tags for the already-validated digest set, but must not rebuild or choose the promotable production artifacts.
 - Production promotion is performed by updating the production Kustomize overlay (for example `k8s/overlays/prod`) to image digests that have already passed staging validation, via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/prod` following the deployment runbook.
+- Production release PRs must include a release digest manifest that binds the release tag or deployment reference to the production attestation and exact staged digest set.
 - Overlay PRs are validated by [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml), which checks that referenced images exist in GHCR, enforces digest pinning for staging/production overlays, and blocks staging backup schedules unless the explicit marker `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 - Overlay PRs run the canonical preflight entrypoint (`dev-tools/deploy/preflight.sh`) in `ci-static` context so policy IDs and report shape match operator pre-apply validation. CI-static mode may mark production attestation policy as `not_applicable` when no production promotion is being executed.
 - Production overlay PRs must include exactly one in-repo staging promotion attestation under `design/operations/deployments/production/attestations/<deployment-ref>.json` that follows `system-architecture-promotion-attestation.md`. Production PRs are rejected if they reference digests that cannot be tied to that attestation, a successful staging deployment record with live-state verification, and a staging deployment record whose `secretComplianceStatus` is `pass`.
@@ -292,12 +300,14 @@ FireMUD uses one deployment-evidence chain per deployment event so promotion, ro
    - production: `design/operations/deployments/production/deployments/<overlayCommitSha>.json`
    - hobby-self-hosted: `design/operations/deployments/hobby-self-hosted/deployments/<deployment-ref>.json`
 4. Production promotion references exactly one staging attestation at `design/operations/deployments/production/attestations/<deployment-ref>.json`.
-5. If the release is `roll-forward-only`, production also references `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
+5. Production release publication references one release digest manifest at `design/operations/deployments/production/release-manifests/<release-tag-or-deployment-ref>.json`.
+6. If the release is `roll-forward-only`, production also references `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
 
 Lifecycle rules:
 
 - The deployment record is the canonical answer to “what is currently deployed and promotable for this environment.”
 - Preflight artifacts, secret-compliance snapshots, smoke evidence, and live-state verification are supporting evidence linked from the deployment record rather than parallel sources of truth.
+- Current promotion trust is repository-reviewed evidence with immutable artifact references. CI treats the in-repo deployment record and production attestation as the deterministic promotion index, then verifies digest equality, live-state evidence shape, and immutable secret-compliance references. Detached signatures are not required in the current single-admin/operator model.
 - Re-applying the same overlay commit does not create a second competing promotion record; operators update the same deployment record with a new apply event timestamp, new live-state evidence, and the outcome of the latest smoke checks.
 - A promotion attestation is valid only if its referenced staging deployment record remains the latest successful apply record for that staging overlay commit.
 - Rollback uses the deployment record and original attestation lineage for the digest set being restored.
@@ -325,10 +335,18 @@ Illustrative deployment record shape:
     "game-session-service": "ghcr.io/example/game-session-service@sha256:..."
   },
   "preflightReportPath": "design/operations/deployments/staging/preflight/<git-sha>.json",
-  "liveStateEvidence": [
-    "namespace annotation firemud.io/overlay-sha=<git-sha>",
-    "rollout digests matched reviewed overlay"
-  ],
+  "liveStateEvidence": {
+    "status": "pass",
+    "observedOverlaySha": "<git-sha>",
+    "observedDigests": {
+      "spring-cloud-gateway": "ghcr.io/example/spring-cloud-gateway@sha256:...",
+      "game-session-service": "ghcr.io/example/game-session-service@sha256:..."
+    },
+    "evidenceRefs": [
+      "namespace annotation firemud.io/overlay-sha=<git-sha>",
+      "rollout digests matched reviewed overlay"
+    ]
+  },
   "secretComplianceStatus": "pass",
   "secretComplianceEvidenceRef": "design/operations/secret-compliance/staging.yaml",
   "smokeEvidence": [

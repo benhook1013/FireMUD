@@ -394,6 +394,9 @@ public final class GameSessionGrpcService
       var commandResult = interpretation.commandResult();
       EnqueueCommandResponse.Builder builder =
           EnqueueCommandResponse.newBuilder().setAccepted(commandResult.accepted());
+      if (commandResult.commandId() != null) {
+        builder.setCommandId(commandResult.commandId());
+      }
       if (commandResult.hasError()) {
         builder.setError(
             GrpcAppErrors.error(
@@ -619,6 +622,7 @@ public final class GameSessionGrpcService
                       .setGameInstanceId(Long.toString(realm.getGameInstanceId()))
                       .setPointerVersion(realm.getPointerVersion())
                       .setRequiresCharacterSelection(realm.isRequiresCharacterSelection())
+                      .setVisible(realm.isVisible())
                       .setStateScope(realm.getStateScope().name())
                       .setCharacterCreationPolicy(realm.getCharacterCreationPolicy().name())
                       .build())
@@ -770,8 +774,7 @@ public final class GameSessionGrpcService
   }
 
   private void requireGlobalPrivilegedRole() {
-    List<String> roles = SessionContext.getGlobalRoles();
-    if (roles.contains("platformAdmin") || roles.contains("moderator")) {
+    if (SessionContext.hasGlobalPrivilegedRole()) {
       return;
     }
     throw new AuthorizationException("Admin role required");
@@ -803,6 +806,7 @@ public final class GameSessionGrpcService
         .setGameInstanceId(Long.toString(realm.getGameInstanceId()))
         .setPointerVersion(realm.getPointerVersion())
         .setRequiresCharacterSelection(realm.isRequiresCharacterSelection())
+        .setVisible(realm.isVisible())
         .setStateScope(realm.getStateScope().name())
         .setCharacterCreationPolicy(realm.getCharacterCreationPolicy().name())
         .build();

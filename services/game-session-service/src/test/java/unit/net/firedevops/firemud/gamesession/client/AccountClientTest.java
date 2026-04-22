@@ -10,7 +10,6 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import org.junit.jupiter.api.Test;
 
 class AccountClientTest {
@@ -30,12 +29,7 @@ class AccountClientTest {
           }
         };
     AccountClient client =
-        new AccountClient(
-            endpoints,
-            grpc,
-            new DevIsolatedProperties(false),
-            mock(GrpcChannelFactory.class),
-            stubCustomizer);
+        new AccountClient(endpoints, grpc, mock(GrpcChannelFactory.class), stubCustomizer);
 
     invokeBuildStub(client, mock(ManagedChannel.class));
 

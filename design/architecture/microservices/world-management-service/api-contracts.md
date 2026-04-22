@@ -55,8 +55,9 @@ World Management exposes design-time APIs used by Game Design to write Draft tem
 
 World Management also exposes a read-only design-time synchronization surface so Game Design can validate convergence before publish:
 
-- `GetDraftDesignDigest(GetDraftDesignDigestRequest)` returns `{tenantId, scope, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion}`.
+- `GetDraftDesignDigest(GetDraftDesignDigestRequest)` returns `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}`.
 - `appliedCommitId` means the highest Game Design commit whose complete revision set has been durably applied to the target Draft world scope.
+- Revision-level ledgers may exist for replay and diagnostics, but they are not part of the publish-gate response. World Management must not expose `lastAppliedRevisionId` as a substitute convergence token for multi-revision commits.
 - `contentDigest` must cover only version-scoped template/binding rows and must exclude runtime/instance rows and audit metadata.
 
 Digest input manifest rules live in [`runtime-and-data.md`](./runtime-and-data.md#digest-input-manifest), while generation-input ownership lives in [`procedural-generation-control.md`](./procedural-generation-control.md).
@@ -69,6 +70,13 @@ Digest input manifest rules live in [`runtime-and-data.md`](./runtime-and-data.m
 - Response enumerates the checked world-owned row families, the template identifiers referenced by each family, whether each family is `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`, and whether the supplied `remapSetId` satisfied all required mappings.
 - If the service currently has no `S2` row families for a tenant/version pair, it must report that explicitly rather than implying compatibility from an empty response.
 
+Current live first slice:
+
+- The RPC now exists and returns the canonical cutover-validation payload shape.
+- The implementation currently proves the source `world_instance` exists for `(tenantId, sourceGameInstanceId)`, requires a cutover-eligible world lifecycle state, and verifies retained instance topology rows for `region_instance`, `zone_instance`, and `room_instance` while still reporting the initial World-owned `S3` families only.
+- World therefore currently returns `stateClassesChecked=["S3"]`, `checkedFamilies=["world_instance", "region_instance", "zone_instance", "room_instance", "room_instance_exit", "world_event"]`, `hasS2Rows=false`, and `remapSetRequired=false`; it returns `INCOMPATIBLE` when the source world lifecycle or retained topology is not cutover-eligible.
+- Later World-owned durable metadata families can widen this contract to real `S2` checks without changing the owning RPC surface.
+
 Illustrative responses:
 
 ```json
@@ -76,7 +84,14 @@ Illustrative responses:
   "tenantId": "t1",
   "sourceGameInstanceId": "g-old",
   "targetVersionId": "v2",
-  "checkedFamilies": [],
+  "stateClassesChecked": ["S3"],
+  "checkedFamilies": [
+    "world_instance",
+    "region_instance",
+    "zone_instance",
+    "room_instance",
+    "world_event"
+  ],
   "hasS2Rows": false,
   "result": "COMPATIBLE",
   "remapSetRequired": false
@@ -106,8 +121,7 @@ Illustrative responses:
 `GetRoomSnapshot` is the canonical endpoint feeding Game Logic's `ResolveLook`. It returns:
 
 - `tenantId`, `gameInstanceId`, and `roomInstanceId`, together forming the `RoomInstanceRef`;
-- a stable `worldSnapshotId` for LOOK-relevant world data;
-- `asOfTickId`, or equivalent monotonic room/read fence token;
+- a stable `worldSnapshotId` for LOOK-relevant world data. The live proto uses this as the room-read fence; future tick-ledger work may add an `asOfTickId` only through a coordinated proto and architecture update;
 - `roomName` and optional slug;
 - `shortDescription` and `longDescription`, with truncation rules governed by `LOOK_MAX_DESCRIPTION_CHARS`;
 - `exits`, including label, `targetRoomInstanceId`, and human-friendly direction text;
@@ -120,8 +134,8 @@ Game Logic may memoize snapshots for the duration of a tick but must refresh the
 
 Cross-service LOOK read consistency is fence-based:
 
-- Game Logic must send the same `asOfTickId` fence token from `GetRoomSnapshot` when calling Entity Management `ListRoomEntities`.
-- Entity Management must either answer using the same fence token or return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`.
+- Game Logic must compare the `worldSnapshotId` fence token from `GetRoomSnapshot` with the `entitySnapshotId` returned by Entity Management `ListRoomEntities` for the same room scope.
+- Entity Management must either answer with a matching same-scope fence token or return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`.
 - If fences do not match, Game Logic retries composition instead of returning mixed-state output.
 
 Illustrative `GetRoomSnapshot` fragments:
@@ -131,8 +145,7 @@ Illustrative `GetRoomSnapshot` fragments:
   "tenantId": "t1",
   "gameInstanceId": "g1",
   "roomInstanceId": "room-antechamber",
-  "worldSnapshotId": "worldsnap-184",
-  "asOfTickId": 184,
+  "worldSnapshotId": "t1:g1:room-antechamber",
   "roomName": "Candle-lit Antechamber"
 }
 ```

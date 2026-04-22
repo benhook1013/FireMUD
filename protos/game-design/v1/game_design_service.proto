@@ -3,6 +3,7 @@ syntax = "proto3";
 package gamedesign.v1;
 
 import "shared/v1/errors.proto";
+import "world-management/v1/world_management_service.proto";
 
 option java_package = "net.firedevops.firemud.gamedesign.v1";
 option java_multiple_files = true;
@@ -13,6 +14,11 @@ service GameDesignService {
   rpc PublishVersion(PublishVersionRequest) returns (PublishVersionResponse);
   rpc PublishScriptPatchVersion(PublishScriptPatchVersionRequest)
       returns (PublishScriptPatchVersionResponse);
+  rpc GetPublishedScriptPatchVersion(GetPublishedScriptPatchVersionRequest)
+      returns (GetPublishedScriptPatchVersionResponse);
+  rpc PublishPluginVersion(PublishPluginVersionRequest) returns (PublishPluginVersionResponse);
+  rpc GetPublishedPluginVersion(GetPublishedPluginVersionRequest)
+      returns (GetPublishedPluginVersionResponse);
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
   rpc GetDesignControlPlaneDigest(GetDesignControlPlaneDigestRequest)
       returns (GetDesignControlPlaneDigestResponse);
@@ -23,6 +29,12 @@ service GameDesignService {
       returns (CompareAndSetVersionStateResponse);
   rpc ResolveLaunchDescriptor(ResolveLaunchDescriptorRequest)
       returns (ResolveLaunchDescriptorResponse);
+  rpc CreateTemplateRemapSet(CreateTemplateRemapSetRequest)
+      returns (CreateTemplateRemapSetResponse);
+  rpc ApproveTemplateRemapSet(ApproveTemplateRemapSetRequest)
+      returns (ApproveTemplateRemapSetResponse);
+  rpc GetTemplateRemapSet(GetTemplateRemapSetRequest)
+      returns (GetTemplateRemapSetResponse);
   rpc GetVersionAssetArtifactState(GetVersionAssetArtifactStateRequest)
       returns (GetVersionAssetArtifactStateResponse);
   rpc TombstoneVersionAssets(TombstoneVersionAssetsRequest)
@@ -49,11 +61,43 @@ message SaveRevisionRequest {
   string data = 1;
   string tenant_id = 2;
   int64 author_account_id = 3;
+  int64 version_id = 4;
+  string revision_kind = 5;
+  WorldDesignMutationRevision world_design_mutation = 6;
 }
 
 message SaveRevisionResponse {
   int64 revision_id = 1;
   shared.v1.ErrorDetail error = 2;
+  AppliedWorldDesignMutation applied_world_design_mutation = 3;
+}
+
+message WorldDesignMutationRevision {
+  string logical_revision_id = 1;
+  string commit_id = 2;
+  world_management.v1.WorldDesignMutationOperation operation = 3;
+  world_management.v1.WorldDesignAggregateType aggregate_type = 4;
+  string aggregate_id = 5;
+  int64 expected_draft_revision_epoch = 6;
+  world_management.v1.WorldDesignScopeType scope_type = 7;
+  string scope_id = 8;
+  int64 expected_draft_scope_revision_epoch = 9;
+  world_management.v1.WorldDesignScopeMutationPolicy scope_mutation_policy = 10;
+  oneof payload {
+    world_management.v1.RegionDesignMutation region = 20;
+    world_management.v1.ZoneDesignMutation zone = 21;
+    world_management.v1.RoomDesignMutation room = 22;
+    world_management.v1.RoomExitDesignMutation room_exit = 23;
+    world_management.v1.GenerationRuleDesignMutation generation_rule = 24;
+    world_management.v1.WorldEntitySpawnBindingDesignMutation world_entity_spawn_binding = 25;
+  }
+}
+
+message AppliedWorldDesignMutation {
+  world_management.v1.WorldDesignMutationResult result = 1;
+  string aggregate_id = 2;
+  int64 draft_revision_epoch = 3;
+  int64 draft_scope_revision_epoch = 4;
 }
 
 message PublishVersionRequest {
@@ -76,6 +120,71 @@ message PublishScriptPatchVersionRequest {
 message PublishScriptPatchVersionResponse {
   int64 version_id = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message GetPublishedScriptPatchVersionRequest {
+  string tenant_id = 1;
+  string script_patch_version = 2;
+}
+
+message GetPublishedScriptPatchVersionResponse {
+  PublishedScriptPatchVersion script_patch = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message PublishPluginVersionRequest {
+  string tenant_id = 1;
+  string plugin_id = 2;
+  string plugin_version_id = 3;
+  int64 base_version_id = 4;
+  string ability_schema_digest = 5;
+  string bundle_digest = 6;
+  int32 manifest_schema_version = 7;
+  string distribution_manifest_hash = 8;
+  string distribution_manifest_path = 9;
+  string notes = 10;
+}
+
+message PublishPluginVersionResponse {
+  int64 publication_id = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetPublishedPluginVersionRequest {
+  string tenant_id = 1;
+  string plugin_id = 2;
+  string plugin_version_id = 3;
+}
+
+message GetPublishedPluginVersionResponse {
+  PublishedPluginVersion plugin_version = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message PublishedScriptPatchVersion {
+  string tenant_id = 1;
+  string script_patch_version = 2;
+  int64 version_id = 3;
+  int64 base_version_id = 4;
+  VersionLifecycleState publication_state = 5;
+  string control_plane_digest = 6;
+  int32 digest_schema_version = 7;
+  int64 last_changed_at_ms = 8;
+}
+
+message PublishedPluginVersion {
+  string tenant_id = 1;
+  string plugin_id = 2;
+  string plugin_version_id = 3;
+  int64 publication_id = 4;
+  int64 base_version_id = 5;
+  VersionLifecycleState publication_state = 6;
+  string ability_schema_digest = 7;
+  string bundle_digest = 8;
+  int32 manifest_schema_version = 9;
+  string distribution_manifest_hash = 10;
+  string distribution_manifest_path = 11;
+  int64 last_changed_at_ms = 12;
 }
 
 message ListVersionsRequest {
@@ -146,6 +255,40 @@ message ResolveLaunchDescriptorRequest {
 
 message ResolveLaunchDescriptorResponse {
   LaunchDescriptor launch_descriptor = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message CreateTemplateRemapSetRequest {
+  string tenant_id = 1;
+  int64 source_version_id = 2;
+  int64 target_version_id = 3;
+  string created_reason = 4;
+  repeated TemplateRemapEntry remap_entries = 5;
+}
+
+message CreateTemplateRemapSetResponse {
+  TemplateRemapSet remap_set = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ApproveTemplateRemapSetRequest {
+  string tenant_id = 1;
+  string remap_set_id = 2;
+  string approval_reason = 3;
+}
+
+message ApproveTemplateRemapSetResponse {
+  TemplateRemapSet remap_set = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetTemplateRemapSetRequest {
+  string tenant_id = 1;
+  string remap_set_id = 2;
+}
+
+message GetTemplateRemapSetResponse {
+  TemplateRemapSet remap_set = 1;
   shared.v1.ErrorDetail error = 2;
 }
 
@@ -265,6 +408,33 @@ message LaunchDescriptor {
   int64 version_state_epoch = 9;
   int64 release_bundle_id = 10;
   string published_release_bundle_ref = 11;
+  string remap_set_id = 12;
+}
+
+message TemplateRemapSet {
+  string remap_set_id = 1;
+  string tenant_id = 2;
+  int64 source_version_id = 3;
+  int64 target_version_id = 4;
+  TemplateRemapSetStatus status = 5;
+  string created_reason = 6;
+  string approval_reason = 7;
+  string created_at = 8;
+  string approved_at = 9;
+  repeated TemplateRemapEntry remap_entries = 10;
+}
+
+message TemplateRemapEntry {
+  string mapping_domain = 1;
+  string mapping_type = 2;
+  string source_template_key = 3;
+  string target_template_key = 4;
+}
+
+enum TemplateRemapSetStatus {
+  TEMPLATE_REMAP_SET_STATUS_UNSPECIFIED = 0;
+  TEMPLATE_REMAP_SET_STATUS_DRAFT = 1;
+  TEMPLATE_REMAP_SET_STATUS_APPROVED = 2;
 }
 
 message DesignControlPlaneDigest {
@@ -323,6 +493,7 @@ message VersionAssetArtifactState {
   string last_error_message = 8;
   string updated_at = 9;
   repeated string exported_manifest_asset_keys = 10;
+  int32 exported_version_number = 11;
 }
 
 message VersionAssetDeletionEligibility {

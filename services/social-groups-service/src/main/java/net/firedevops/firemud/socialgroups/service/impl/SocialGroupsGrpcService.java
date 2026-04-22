@@ -81,7 +81,8 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
               request.getRecipientId().isEmpty() ? null : Long.valueOf(request.getRecipientId()),
               request.getGuildId().isEmpty() ? null : Long.valueOf(request.getGuildId()),
               request.getCityId().isEmpty() ? null : Long.valueOf(request.getCityId()),
-              request.getContent());
+              request.getContent(),
+              request.getEffectId().isEmpty() ? null : request.getEffectId());
       chatService.sendMessage(dto);
       SendMessageResponse response = SendMessageResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);

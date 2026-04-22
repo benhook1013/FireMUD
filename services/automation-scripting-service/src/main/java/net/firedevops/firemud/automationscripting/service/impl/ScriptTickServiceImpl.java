@@ -14,6 +14,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.automationscripting.service.redis.AutomationRedisKeys;
 import net.firedevops.firemud.automationscripting.service.tick.ScriptTickService;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
@@ -133,43 +134,51 @@ public class ScriptTickServiceImpl implements ScriptTickService {
 
   @Override
   @Timed(value = "automation.event.enqueue")
-  public void enqueueEvent(Long tenantId, Long scriptId, String eventJson) {
+  public void enqueueEvent(
+      String tenantId, String gameInstanceId, String scriptId, String eventJson) {
     if (!quotaService.tryAcquire(tenantId, scriptId)) {
-      logger.warn("Script quota exceeded for {}:{}", tenantId, scriptId);
+      logger.warn("Script quota exceeded for {}:{}:{}", tenantId, gameInstanceId, scriptId);
       return;
     }
-    redisTemplate.opsForList().rightPush(queueKey(tenantId, scriptId), eventJson);
+    redisTemplate.opsForList().rightPush(queueKey(tenantId, gameInstanceId, scriptId), eventJson);
     enqueueCounter.increment();
-    logger.debug("Queued script event for {}:{}", tenantId, scriptId);
+    logger.debug("Queued script event for {}:{}:{}", tenantId, gameInstanceId, scriptId);
   }
 
   @Override
   @Timed(value = "automation.tick.process")
-  public void processTick(Long tenantId, Long scriptId) {
+  public void processTick(String tenantId, String gameInstanceId, String scriptId) {
     long start = System.nanoTime();
-    String lockKey = lockKey(tenantId, scriptId);
-    String lockToken = lockToken(tenantId, scriptId);
+    String lockKey = lockKey(tenantId, gameInstanceId, scriptId);
+    String lockToken = lockToken(tenantId, gameInstanceId, scriptId);
     Boolean acquired =
         redisTemplate
             .opsForValue()
             .setIfAbsent(lockKey, lockToken, Duration.ofMillis(computeLockTtlMs()));
     if (Boolean.FALSE.equals(acquired)) {
       lockContentionCounter.increment();
-      conflictTracker.recordConflict("script:" + tenantId + ":" + scriptId);
+      conflictTracker.recordConflict("script:" + tenantId + ":" + gameInstanceId + ":" + scriptId);
       logger.debug("Could not acquire tick lock {}", lockKey);
       return;
     }
     acquiredLockTokens.put(lockKey, lockToken);
     try {
-      Long pending = redisTemplate.opsForList().size(pendingKey(tenantId, scriptId));
+      Long pending =
+          redisTemplate.opsForList().size(pendingKey(tenantId, gameInstanceId, scriptId));
       retryQueueDepth.set(pending != null ? pending.intValue() : 0);
       if (pending != null && pending > 0) {
-        logger.info("Replaying {} pending events for {}:{}", pending, tenantId, scriptId);
+        logger.info(
+            "Replaying {} pending events for {}:{}:{}",
+            pending,
+            tenantId,
+            gameInstanceId,
+            scriptId);
         tickTimer.record(
             () -> {
               luaTimer.record(
                   () -> {
-                    executeScriptWithRetry(commitScript, List.of(pendingKey(tenantId, scriptId)));
+                    executeScriptWithRetry(
+                        commitScript, List.of(pendingKey(tenantId, gameInstanceId, scriptId)));
                   });
             });
         awaitReplication();
@@ -180,7 +189,9 @@ public class ScriptTickServiceImpl implements ScriptTickService {
                 () -> {
                   executeScriptWithRetry(
                       stageScript,
-                      List.of(queueKey(tenantId, scriptId), pendingKey(tenantId, scriptId)),
+                      List.of(
+                          queueKey(tenantId, gameInstanceId, scriptId),
+                          pendingKey(tenantId, gameInstanceId, scriptId)),
                       tickMaxEvents);
                 });
           });
@@ -188,18 +199,21 @@ public class ScriptTickServiceImpl implements ScriptTickService {
           () -> {
             luaTimer.record(
                 () -> {
-                  executeScriptWithRetry(commitScript, List.of(pendingKey(tenantId, scriptId)));
+                  executeScriptWithRetry(
+                      commitScript, List.of(pendingKey(tenantId, gameInstanceId, scriptId)));
                 });
           });
       awaitReplication();
     } catch (Exception ex) {
       logger.error("Script tick failed, rolling back", ex);
-      conflictTracker.recordConflict("script:" + tenantId + ":" + scriptId);
+      conflictTracker.recordConflict("script:" + tenantId + ":" + gameInstanceId + ":" + scriptId);
       luaTimer.record(
           () -> {
             executeScriptWithRetry(
                 rollbackScript,
-                List.of(pendingKey(tenantId, scriptId), queueKey(tenantId, scriptId)));
+                List.of(
+                    pendingKey(tenantId, gameInstanceId, scriptId),
+                    queueKey(tenantId, gameInstanceId, scriptId)));
           });
       awaitReplication();
     } finally {
@@ -227,20 +241,20 @@ public class ScriptTickServiceImpl implements ScriptTickService {
     return lockTtl;
   }
 
-  private String queueKey(Long tenantId, Long scriptId) {
-    return "automation:tick:queue:" + tenantId + ":" + scriptId;
+  private String queueKey(String tenantId, String gameInstanceId, String scriptId) {
+    return AutomationRedisKeys.automationTickQueue(tenantId, gameInstanceId, scriptId);
   }
 
-  private String lockKey(Long tenantId, Long scriptId) {
-    return "automation:tick:lock:" + tenantId + ":" + scriptId;
+  private String lockKey(String tenantId, String gameInstanceId, String scriptId) {
+    return AutomationRedisKeys.automationTickLock(tenantId, gameInstanceId, scriptId);
   }
 
-  private String pendingKey(Long tenantId, Long scriptId) {
-    return "automation:tick:pending:" + tenantId + ":" + scriptId;
+  private String pendingKey(String tenantId, String gameInstanceId, String scriptId) {
+    return AutomationRedisKeys.automationTickPending(tenantId, gameInstanceId, scriptId);
   }
 
-  private String lockToken(Long tenantId, Long scriptId) {
-    return tenantId + ":" + scriptId + ":" + UUID.randomUUID();
+  private String lockToken(String tenantId, String gameInstanceId, String scriptId) {
+    return tenantId + ":" + gameInstanceId + ":" + scriptId + ":" + UUID.randomUUID();
   }
 
   private static RedisScript<Long> redisScript(String scriptText) {

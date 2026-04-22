@@ -45,7 +45,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Canonical room-state read fence production and same-fence room-view composition | | ✔ | | | ✔ | ✔ | | | | | |
 | Entity definition and persistence | | | | | ✔ | | | | | | |
 | NPC state, inventory, and stats | | | | | ✔ | | | | | | |
-| Player inventory and stats | | | | | ✔ | | | | | | |
+| Player inventory and stats | | | | | ✔ | ✔ | | | | | |
 | Item definitions and crafting data | | | | | ✔ | | | | | | |
 | Game mechanics and combat resolution | | | | | | ✔ | | | | | |
 | Command parsing and alias resolution | | | | | | ✔ | | | | | |
@@ -79,6 +79,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Game asset publishing & object storage | ✔ | | | | | | | | | | |
 | Asset deletion eligibility oracle (`CanDeleteVersionAssets`) | ✔ | | | | | | | | ✔ | | |
 | Asset purge control-plane workflow (`BeginPurgeVersionAssets` / `FinalizePurgeVersionAssets`) | ✔ | | | | | | | | ✔ | | |
+| Bypass-safe Game Design creator writes for tenant-scoped assets and templates | ✔ | | | | | | | | | | ✔ |
 | TCP/Telnet socket handling | | | | | | | | | | ✔ | |
 | Telnet → WebSocket bridging | | | | | | | | | | ✔ | |
 | WebSocket upgrade, routing, and admin auth gating | | | | | | | | | | | ✔ |
@@ -89,14 +90,15 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | External operator write ingress for moderation, quota overrides, runtime feature flags, and tick remediation | | | | | | | | | ✔ | | ✔ |
 | API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
 
-For the edge-routable services in this matrix, participation does not imply that every mutation may be called directly by external tools. Per the overview’s canonical operator write ingress policy, external mutating operator workflows for moderation, quota overrides, runtime feature-flag overrides, and tick remediation must enter through Logging & Admin. Direct external writes on other edge-routable services require an explicit bypass-safe designation in the owning service contract.
+For the edge-routable services in this matrix, participation does not imply that every mutation may be called directly by external tools. Per the overview’s canonical operator write ingress policy, external mutating operator workflows for moderation, quota overrides, runtime feature-flag overrides, and tick remediation must enter through Logging & Admin. Direct external writes on other edge-routable services require an explicit bypass-safe designation in the owning service contract. Game Design tenant-scoped asset and template creator writes are the current architecture-level bypass-safe write class delegated to an owning service contract.
 
 Service docs may not create new external bypass-safe write classes on their own. If a workflow is not explicitly allowlisted by the overview or this matrix, treat it as non-bypass-safe until the architecture docs are updated.
 
 Route-review example:
 
-- Proposed route: `POST /admin/game-sessions/{id}/feature-flags/{flagKey}:toggle`. Matrix check: `Game Session` participates in `Admin/creator API participation`, but `External operator write ingress for moderation, quota overrides, runtime feature flags, and tick remediation` routes this workflow through `Logging & Admin`, so the direct external Game Session route is not allowed without a design update.
-- Proposed route: `GET /admin/accounts/{id}`. Matrix check: `Account Service` participates in `Admin/creator API participation`, and the request is an external admin read rather than an operator write covered by `External operator write ingress for moderation, quota overrides, runtime feature flags, and tick remediation`, so the route may be edge-routable when the owning service documents it as a bypass-safe read contract.
+- Proposed route: `POST /api/session/game-sessions/{id}/feature-flags/{flagKey}:toggle`. Matrix check: `Game Session` participates in `Admin/creator API participation`, but `External operator write ingress for moderation, quota overrides, runtime feature flags, and tick remediation` routes this workflow through `Logging & Admin`, so the direct external Game Session route is not allowed without a design update.
+- Proposed route: `POST /api/design/templates`. Matrix check: `Game Design` participates in `Admin/creator API participation`, and `Bypass-safe Game Design creator writes for tenant-scoped assets and templates` delegates this domain-local creator write to the Game Design service contract, so the route may be edge-routable when Game Design documents tenant access, validation, and audit behavior.
+- Proposed route: `GET /api/account/accounts/{id}`. Matrix check: `Account Service` participates in `Admin/creator API participation`, and the request is an external admin read rather than an operator write covered by `External operator write ingress for moderation, quota overrides, runtime feature flags, and tick remediation`, so the route may be edge-routable when the owning service documents it as a bypass-safe read contract.
 
 ## Notes on Redis Ownership and Participation
 
@@ -113,9 +115,10 @@ These ownership boundaries are normative per `design/architecture/decisions/adr-
 
 ## Notes on Movement and Moderation Contracts
 
-- **Movement/location write contract orchestration** – Game Session orchestrates movement under tick/effect identity and owns per-session sequencing plus the current execution-region pointer; Game Logic computes deterministic movement outcomes and orchestrates same-fence room-read composition, World Management commits authoritative room occupancy/location and emits the canonical `asOfTickId`, and Entity Management applies entity-side consequences without owning occupancy indexes.
+- **Movement/location write contract orchestration** – Game Session orchestrates movement under tick/effect identity and owns per-session sequencing plus the current execution-region pointer; Game Logic computes deterministic movement outcomes and orchestrates same-fence room-read composition, World Management commits authoritative room occupancy/location and emits the canonical room-read fence, and Entity Management applies entity-side consequences without owning occupancy indexes.
 - **Movement hot-path exception** – The overview’s two-downstream-service ceiling has one explicit initial-slice exception for movement and region-transition orchestration: Game Session may synchronously coordinate Game Logic, World Management, and Entity Management under one fenced tick/effect contract. This exception is valid only with the overview’s documented budget/fallback contract and must not expand to additional participants without a new architecture decision.
-- **Canonical room-state read fence** – World Management emits the canonical `asOfTickId` on `GetRoomSnapshot`; Game Logic orchestrates same-fence room-view composition by propagating that fence unchanged to Entity Management and composing the `LookResult` only when both reads align. Game Session owns request initiation, ordering, and transcript rendering/cache behavior, but it is not the downstream read orchestrator for `GetRoomSnapshot` plus `ListRoomEntities`. See the canonical room runtime contract in `design/architecture/system-architecture-overview.md`.
+- **Canonical room-state read fence** – World Management emits the canonical room-read fence on `GetRoomSnapshot`; Game Logic orchestrates same-fence room-view composition by comparing the World fence with the Entity Management room-entity fence and composing the `LookResult` only when both reads align. Game Session owns request initiation, ordering, and transcript rendering/cache behavior, but it is not the downstream read orchestrator for `GetRoomSnapshot` plus `ListRoomEntities`. See the canonical room runtime contract in `design/architecture/system-architecture-overview.md`.
+- **Item command runtime split** – Game Session owns text-session ingress and transcript rendering for player item commands; Game Logic owns the gameplay-facing item command RPC seam; Entity Management remains authoritative for item/container/equipment persistence, holder mutation, validation, and transfer audit writes.
 - **Tick remediation split** – Logging & Admin owns operator-facing remediation APIs, automation policy, and audit trail; Game Session owns all tick/coordination state mutation and executes pause/resume/remediation control actions through its control-plane APIs.
 - **Replacement-instance compatibility preflight** – Game Session owns `ValidateInstanceCutoverCompatibility` orchestration and result semantics; Game Design, World, Entity, Automation, and Logging/Admin participate as dependency and policy providers for checks.
 - **Moderation policy propagation** – Logging & Admin owns gameplay/chat moderation policy definition and audit trail; Game Session and Social & Groups enforce policy using versioned policy snapshots/events with monotonic invalidation per `{tenantId, policyScope}`, bounded cache staleness, pull-on-miss refresh, and fail-closed behavior for `gameplay_ban` and `chat_ban` when no fresh snapshot is available within the allowed window. See the canonical moderation propagation contract in `design/architecture/system-architecture-overview.md`.

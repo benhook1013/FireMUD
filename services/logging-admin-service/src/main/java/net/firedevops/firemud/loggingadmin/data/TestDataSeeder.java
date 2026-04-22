@@ -2,11 +2,9 @@ package net.firedevops.firemud.loggingadmin.data;
 
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.loggingadmin.entity.FeatureFlag;
 import net.firedevops.firemud.loggingadmin.entity.LogEvent;
 import net.firedevops.firemud.loggingadmin.entity.ModerationAction;
 import net.firedevops.firemud.loggingadmin.entity.PlayerReport;
-import net.firedevops.firemud.loggingadmin.repository.FeatureFlagRepository;
 import net.firedevops.firemud.loggingadmin.repository.LogEventRepository;
 import net.firedevops.firemud.loggingadmin.repository.ModerationActionRepository;
 import net.firedevops.firemud.loggingadmin.repository.PlayerReportRepository;
@@ -20,7 +18,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Profile("dev")
 @RequiredArgsConstructor
 public class TestDataSeeder implements ApplicationRunner {
-  private final FeatureFlagRepository featureFlagRepository;
   private final LogEventRepository logEventRepository;
   private final PlayerReportRepository playerReportRepository;
   private final ModerationActionRepository moderationActionRepository;
@@ -28,14 +25,6 @@ public class TestDataSeeder implements ApplicationRunner {
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
-    if (featureFlagRepository.count() == 0) {
-      FeatureFlag flag = new FeatureFlag();
-      flag.setTenantId(1L);
-      flag.setName("beta_feature");
-      flag.setEnabled(false);
-      featureFlagRepository.save(flag);
-    }
-
     if (logEventRepository.count() == 0) {
       LogEvent event = new LogEvent();
       event.setTenantId(1L);

@@ -8,6 +8,7 @@ import net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepositor
 import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
+import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import org.springframework.stereotype.Service;
@@ -22,6 +23,7 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
   private final RoomRepository roomRepository;
   private final RoomExitRepository roomExitRepository;
   private final GenerationRuleRepository generationRuleRepository;
+  private final WorldEntitySpawnBindingRepository worldEntitySpawnBindingRepository;
   private final ObjectMapper objectMapper;
 
   public WorldDraftDesignDigestServiceImpl(
@@ -30,12 +32,14 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
       RoomRepository roomRepository,
       RoomExitRepository roomExitRepository,
       GenerationRuleRepository generationRuleRepository,
+      WorldEntitySpawnBindingRepository worldEntitySpawnBindingRepository,
       ObjectMapper objectMapper) {
     this.regionRepository = regionRepository;
     this.zoneRepository = zoneRepository;
     this.roomRepository = roomRepository;
     this.roomExitRepository = roomExitRepository;
     this.generationRuleRepository = generationRuleRepository;
+    this.worldEntitySpawnBindingRepository = worldEntitySpawnBindingRepository;
     this.objectMapper = objectMapper;
   }
 
@@ -45,12 +49,15 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
       throw new IllegalArgumentException("version_id is required");
     }
     long tenantKey = Long.parseLong(tenantId);
+    long versionKey = Long.parseLong(versionId);
     try {
       String canonicalJson =
           objectMapper.writeValueAsString(
               Map.of(
                   "regions",
-                  regionRepository.findByTenantIdOrderByIdAsc(tenantKey).stream()
+                  regionRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
                       .map(
                           region ->
                               Map.<String, Object>of(
@@ -64,7 +71,9 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
                                   "spacingMultiplier", region.getSpacingMultiplier()))
                       .toList(),
                   "zones",
-                  zoneRepository.findByTenantIdOrderByIdAsc(tenantKey).stream()
+                  zoneRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
                       .map(
                           zone ->
                               Map.<String, Object>of(
@@ -73,7 +82,9 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
                                   "name", zone.getName()))
                       .toList(),
                   "rooms",
-                  roomRepository.findByTenantIdOrderByIdAsc(tenantKey).stream()
+                  roomRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
                       .map(
                           room ->
                               Map.<String, Object>of(
@@ -87,7 +98,9 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
                                       value(room.getDescriptionLocalizedVariantsJson())))
                       .toList(),
                   "roomExits",
-                  roomExitRepository.findByTenantIdOrderByIdAsc(tenantKey).stream()
+                  roomExitRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
                       .map(
                           roomExit ->
                               Map.<String, Object>of(
@@ -98,13 +111,29 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
                                   "cost", roomExit.getCost()))
                       .toList(),
                   "generationRules",
-                  generationRuleRepository.findByTenantIdOrderByIdAsc(tenantKey).stream()
+                  generationRuleRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
                       .map(
                           rule ->
                               Map.<String, Object>of(
                                   "id", rule.getId(),
                                   "name", rule.getName(),
                                   "value", value(rule.getValue())))
+                      .toList(),
+                  "worldEntitySpawnBindings",
+                  worldEntitySpawnBindingRepository
+                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                      .stream()
+                      .map(
+                          binding ->
+                              Map.<String, Object>of(
+                                  "id", binding.getId(),
+                                  "roomId", binding.getRoom().getId(),
+                                  "entityTemplateType", binding.getEntityTemplateType(),
+                                  "entityTemplateId", binding.getEntityTemplateId(),
+                                  "spawnCount", binding.getSpawnCount(),
+                                  "respawnDelaySeconds", binding.getRespawnDelaySeconds()))
                       .toList()));
       return new WorldDraftDesignDigest(
           tenantId,

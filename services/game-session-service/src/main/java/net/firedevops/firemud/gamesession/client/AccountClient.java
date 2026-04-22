@@ -12,6 +12,8 @@ import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipR
 import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
 import net.firedevops.firemud.account.v1.GetProfileResponse;
+import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
@@ -24,7 +26,6 @@ import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
@@ -41,32 +42,29 @@ public final class AccountClient
   private static final Logger logger = LoggingUtil.getLogger(AccountClient.class);
   private static final JsonMapper JSON_MAPPER = JsonMapper.builder().build();
 
-  private final DevIsolatedProperties devIsolatedProperties;
-
   public AccountClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
-      DevIsolatedProperties devIsolatedProperties,
       GrpcChannelFactory channelFactory,
       BlockingGrpcStubCustomizer stubCustomizer) {
     super(endpoints, tlsProps, channelFactory, stubCustomizer);
-    this.devIsolatedProperties = devIsolatedProperties;
   }
 
   @PostConstruct
   void init() throws Exception {
-    if (devIsolatedProperties.isDevIsolated()) {
-      logger.info("Dev-isolated mode enabled; skipping AccountService channel initialization");
-      return;
-    }
     initClient();
   }
 
   /** Authenticates a player via the Account Service. */
   public AuthenticateResponse authenticate(
       String tenantId, String username, String password, String otp) {
-    if (devIsolatedProperties.isDevIsolated() || stub() == null) {
-      return AuthenticateResponse.newBuilder().setAuthToken("dev-isolated").build();
+    if (stub() == null) {
+      return AuthenticateResponse.newBuilder()
+          .setError(
+              ErrorDetail.newBuilder()
+                  .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                  .setMessage("Authentication service unavailable"))
+          .build();
     }
     AuthenticateRequest request =
         AuthenticateRequest.newBuilder()
@@ -103,8 +101,13 @@ public final class AccountClient
 
   public AuthenticateResponse authenticateForReadiness(
       String tenantId, String username, String password, String otp) {
-    if (devIsolatedProperties.isDevIsolated() || stub() == null) {
-      return AuthenticateResponse.newBuilder().setAuthToken("dev-isolated").build();
+    if (stub() == null) {
+      return AuthenticateResponse.newBuilder()
+          .setError(
+              ErrorDetail.newBuilder()
+                  .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                  .setMessage("Authentication service unavailable"))
+          .build();
     }
     AuthenticateRequest request =
         AuthenticateRequest.newBuilder()
@@ -124,13 +127,12 @@ public final class AccountClient
 
   public GetTenantMembershipForRuntimeResponse getTenantMembershipForRuntime(
       String accountId, String tenantId, String requestId) {
-    if (devIsolatedProperties.isDevIsolated() || stub() == null) {
+    if (stub() == null) {
       return GetTenantMembershipForRuntimeResponse.newBuilder()
-          .setAccountId(accountId)
-          .setTenantId(tenantId)
-          .setGameplayAdmissionAllowed(true)
-          .setMembershipVersion(1L)
-          .setEvaluatedAt(java.time.Instant.now().toString())
+          .setError(
+              ErrorDetail.newBuilder()
+                  .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                  .setMessage("Membership authority unavailable"))
           .build();
     }
     GetTenantMembershipForRuntimeRequest request =
@@ -168,13 +170,12 @@ public final class AccountClient
 
   public GetTenantEntitlementsForRuntimeResponse getTenantEntitlementsForRuntime(
       String tenantId, String requestId) {
-    if (devIsolatedProperties.isDevIsolated() || stub() == null) {
+    if (stub() == null) {
       return GetTenantEntitlementsForRuntimeResponse.newBuilder()
-          .setTenantId(tenantId)
-          .setGameplayAvailable(true)
-          .setEntitlementVersion(1L)
-          .setTenantBillingSequence(1L)
-          .setEvaluatedAt(java.time.Instant.now().toString())
+          .setError(
+              ErrorDetail.newBuilder()
+                  .setCode("ENTITLEMENT_UNAVAILABLE")
+                  .setMessage("Entitlement authority unavailable"))
           .build();
     }
     GetTenantEntitlementsForRuntimeRequest request =
@@ -210,17 +211,61 @@ public final class AccountClient
         .build();
   }
 
+  public GetRealmAccessGrantForRuntimeResponse getRealmAccessGrantForRuntime(
+      String accountId, String tenantId, String worldSlug, String realmSlug, String requestId) {
+    if (stub() == null) {
+      return GetRealmAccessGrantForRuntimeResponse.newBuilder()
+          .setError(
+              ErrorDetail.newBuilder()
+                  .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                  .setMessage("Realm grant authority unavailable"))
+          .build();
+    }
+    GetRealmAccessGrantForRuntimeRequest request =
+        GetRealmAccessGrantForRuntimeRequest.newBuilder()
+            .setAccountId(accountId)
+            .setTenantId(tenantId)
+            .setWorldSlug(worldSlug)
+            .setRealmSlug(realmSlug)
+            .setRequestId(requestId == null ? "" : requestId)
+            .build();
+    try {
+      return callStub().getRealmAccessGrantForRuntime(request);
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+        logger.warn(
+            "Account Service unavailable; rebuilding channel and retrying realm access grant read",
+            ex);
+        try {
+          initClient();
+          return callStub().getRealmAccessGrantForRuntime(request);
+        } catch (Exception retryEx) {
+          logger.warn(
+              "Failed to retry Account Service realm access grant read after channel reload",
+              retryEx);
+        }
+      } else {
+        logger.warn("Failed to call Account Service realm access grant endpoint", ex);
+      }
+    } catch (Exception ex) {
+      logger.warn("Failed to call Account Service realm access grant endpoint", ex);
+    }
+    return GetRealmAccessGrantForRuntimeResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                .setMessage("Realm grant authority unavailable"))
+        .build();
+  }
+
   public EnsurePublicProductionPlayerMembershipResponse ensurePublicProductionPlayerMembership(
       String accountId, String tenantId, String realmSlug, String requestId) {
-    if (devIsolatedProperties.isDevIsolated() || stub() == null) {
+    if (stub() == null) {
       return EnsurePublicProductionPlayerMembershipResponse.newBuilder()
-          .setAccountId(accountId)
-          .setTenantId(tenantId)
-          .setRealmSlug(realmSlug)
-          .setGameplayAdmissionAllowed(true)
-          .setMembershipVersion(1L)
-          .setCreated(true)
-          .setEvaluatedAt(java.time.Instant.now().toString())
+          .setError(
+              ErrorDetail.newBuilder()
+                  .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                  .setMessage("Membership authority unavailable"))
           .build();
     }
     EnsurePublicProductionPlayerMembershipRequest request =
@@ -261,7 +306,7 @@ public final class AccountClient
 
   public AccountPresenceVisibilityPolicy getPresenceVisibilityPolicy(
       long tenantId, long accountId) {
-    if (devIsolatedProperties.isDevIsolated() || stub() == null) {
+    if (stub() == null) {
       return AccountPresenceVisibilityPolicy.FRIENDS_ONLY;
     }
     GetProfileRequest request =

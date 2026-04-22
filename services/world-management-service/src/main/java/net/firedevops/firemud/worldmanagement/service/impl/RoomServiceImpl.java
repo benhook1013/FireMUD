@@ -112,6 +112,7 @@ public class RoomServiceImpl implements RoomService {
     return new RoomSnapshotDto(
         room.getRoomInstanceId(),
         room.getTenantId(),
+        gameInstanceId,
         roomName,
         buildShortDescription(longDescription),
         longDescription,

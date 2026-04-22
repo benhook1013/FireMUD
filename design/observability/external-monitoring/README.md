@@ -4,6 +4,10 @@ This document defines the FireMUD monitoring that must continue to detect and pa
 
 It complements the Prometheus-facing observability contract in `design/architecture/system-architecture-logging-monitoring.md`.
 
+## Implementation Status
+
+This is a prod-like target-state contract. The repository currently provides documentation, reference alert expressions for mirrored entry-path blackbox signals, and static validation of observability assets. It does not yet include an authoritative external monitoring deployment, heartbeat emitter, canary runner, or runtime smoke harness that proves the independent pager path end to end.
+
 ## What This Is
 
 FireMUD uses two observability layers in prod-like environments:

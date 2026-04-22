@@ -2,7 +2,7 @@
 
 Use this template to review any individual microservice in the context of the overall architecture.
 
-First, gather and read. Follow references only when the target service docs clearly defer a canonical contract needed to resolve a contradiction or an implementation-blocking gap. Do not recursively traverse unrelated docs.
+First, gather and read. Follow references and read nearby related files as required when the target service docs clearly defer a canonical contract or when a closely related file is needed to resolve a contradiction or an implementation-blocking gap. Do not recursively traverse unrelated docs.
 
 - The main architecture overview documents you need for context, such as:
   - `design/architecture/system-architecture-overview.md`

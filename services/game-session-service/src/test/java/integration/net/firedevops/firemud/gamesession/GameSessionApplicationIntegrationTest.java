@@ -37,11 +37,7 @@ import tools.jackson.databind.ObjectMapper;
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = GameSessionServiceApplication.class,
-    properties = {
-      "game-session.dev-isolated=false",
-      "spring.application.name=game-session-service",
-      "spring.grpc.server.port=0"
-    })
+    properties = {"spring.application.name=game-session-service", "spring.grpc.server.port=0"})
 class GameSessionApplicationIntegrationTest {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -102,7 +98,25 @@ class GameSessionApplicationIntegrationTest {
                     net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
                         .setId(77L)
                         .setVersionId(11L)
+                        .setAttestationSchemaVersion("v1")
+                        .setManifestHash("manifest-11")
+                        .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
+    when(gameDesignClient.getVersionAssetArtifactState(42L, 11L))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse.newBuilder()
+                .setArtifactState(
+                    net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+                        .setTenantId("42")
+                        .setVersionId(11L)
+                        .setArtifactState(
+                            net.firedevops.firemud.gamedesign.v1.ArtifactState
+                                .ARTIFACT_STATE_PUBLISHED)
+                        .setStateEpoch(2L)
+                        .setManifestHash("manifest-11")
+                        .addExportedManifestAssetKeys("manifest.json")
                         .build())
                 .build());
     when(gameDesignClient.getVersionState(42L, 11L))
@@ -131,7 +145,8 @@ class GameSessionApplicationIntegrationTest {
             "genrev-11",
             77L,
             "prb:42:11:77",
-            77L))
+            77L,
+            null))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
                 .setWorldInstance(

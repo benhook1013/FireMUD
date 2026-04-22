@@ -9,8 +9,8 @@
       "title": "Entry Path Outcomes (rate)",
       "targets": [
         {
-          "expr": "sum by (tenantId, path, outcome) (rate(entrypath_connection_attempts_total[5m]))",
-          "legendFormat": "{{tenantId}} {{path}} {{outcome}}",
+          "expr": "sum by (scope, path, outcome) (rate(entrypath_connection_attempts_total[5m]))",
+          "legendFormat": "{{scope}} {{path}} {{outcome}}",
           "refId": "A"
         }
       ],
@@ -21,8 +21,8 @@
       "title": "Login Outcomes by Service (rate)",
       "targets": [
         {
-          "expr": "sum by (tenantId, service, outcome) (rate(login_requests_total[5m]))",
-          "legendFormat": "{{tenantId}} {{service}} {{outcome}}",
+          "expr": "sum by (scope, service, outcome) (rate(login_requests_total[5m]))",
+          "legendFormat": "{{scope}} {{service}} {{outcome}}",
           "refId": "A"
         }
       ],
@@ -33,8 +33,8 @@
       "title": "Command Latency by Command (p99)",
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (tenantId, command, le) (rate(command_end_to_end_latency_ms_bucket[5m])))",
-          "legendFormat": "{{tenantId}} {{command}}",
+          "expr": "histogram_quantile(0.99, sum by (scope, command, le) (rate(command_end_to_end_latency_ms_bucket[5m])))",
+          "legendFormat": "{{scope}} {{command}}",
           "refId": "A"
         }
       ],
@@ -45,8 +45,8 @@
       "title": "Chat Delivery by Channel (p99)",
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (tenantId, channel_type, le) (rate(chat_delivery_latency_ms_bucket[5m])))",
-          "legendFormat": "{{tenantId}} {{channel_type}}",
+          "expr": "histogram_quantile(0.99, sum by (scope, channel_type, le) (rate(chat_delivery_latency_ms_bucket[5m])))",
+          "legendFormat": "{{scope}} {{channel_type}}",
           "refId": "A"
         }
       ],

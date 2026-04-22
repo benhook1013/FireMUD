@@ -18,7 +18,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.task.TaskRejectedException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -26,10 +25,6 @@ import org.springframework.stereotype.Component;
 
 /** Periodically processes ticks for all running sessions. */
 @Component
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = false)
 public final class TickScheduler {
   private static final Logger logger = LoggerFactory.getLogger(TickScheduler.class);
   private static final int DEFAULT_REJECTION_ALERT_CONSECUTIVE_CYCLES = 3;

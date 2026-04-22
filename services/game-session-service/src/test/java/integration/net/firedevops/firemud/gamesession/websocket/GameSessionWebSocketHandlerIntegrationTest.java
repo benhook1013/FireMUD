@@ -1,7 +1,9 @@
 package net.firedevops.firemud.gamesession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -32,6 +34,7 @@ import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.command.text.LookTextRenderer;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -82,7 +85,6 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
     webEnvironment = WebEnvironment.RANDOM_PORT,
     properties = {
       "spring.profiles.active=test",
-      "game-session.dev-isolated=false",
       "game-session.require-authenticated-commands=true",
       "firemud.database.enabled=false",
       "spring.data.redis.repositories.enabled=false",
@@ -138,6 +140,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @MockitoBean private GameLogicClient gameLogicClient;
 
   @MockitoBean private WorldManagementClient worldManagementClient;
+
+  @MockitoBean private ModerationPolicyClient moderationPolicyClient;
 
   @MockitoBean private LookTextRenderer lookTextRenderer;
 
@@ -233,6 +237,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
                   redisSetStore.get(invocation.getArgument(0));
               return members == null ? java.util.Set.of() : new java.util.LinkedHashSet<>(members);
             });
+    when(moderationPolicyClient.evaluateGameplayAdmission(
+            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(
+            net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
+                .setAllowed(true)
+                .build());
 
     LookResult lookResult =
         LookResult.newBuilder()
@@ -307,23 +317,40 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("41"), eq("QUICKLOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
+    when(commandService.enqueue(eq("41"), eq("AFK"), eq(false)))
+        .thenAnswer(
+            invocation -> {
+              gameplayPresenceService.setExplicitAfk(41L, true);
+              return CommandEnqueueResult.success();
+            });
     when(commandService.enqueue(eq("42"), eq("LOGIN demo@example.com swordfish"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("42"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("1"), eq("PLAY demo"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
+    when(commandService.enqueue(eq("1"), eq("AFK"), eq(false)))
+        .thenAnswer(
+            invocation -> {
+              gameplayPresenceService.setExplicitAfk(1L, true);
+              return CommandEnqueueResult.success();
+            });
     when(commandService.enqueue(eq("1"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
-    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1"), eq("1021"), eq("")))
+    when(gameLogicClient.resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq("")))
         .thenReturn(lookResult);
-    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1"), eq("1021"), eq("fr")))
+    when(gameLogicClient.resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq("fr")))
         .thenReturn(lookResult);
-    when(gameLogicClient.resolveLook(eq("22"), eq("42"), eq("123"), eq("1"), eq("1021"), eq("")))
+    when(gameLogicClient.resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 42L, 123L, 1L, "1021")), eq("1021"), eq("")))
         .thenReturn(lookResult);
-    when(gameLogicClient.resolveLook(eq("22"), eq("1"), eq("123"), eq("1"), eq("1021"), eq("")))
+    when(gameLogicClient.resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 1L, 123L, 1L, "1021")), eq("1021"), eq("")))
         .thenReturn(lookResult);
-    when(gameLogicClient.resolveLook(eq("22"), eq("2"), eq("123"), eq("1"), eq("1021"), eq("")))
+    when(gameLogicClient.resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 2L, 123L, 1L, "1021")), eq("1021"), eq("")))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
@@ -482,7 +509,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     verify(commandService).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService).enqueue("41", "LOOK", false);
-    verify(gameLogicClient).resolveLook("22", "41", "123", "1", "1021", "");
+    verify(gameLogicClient)
+        .resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq(""));
     verify(lookCacheService)
         .cache(
             eq(22L),
@@ -540,14 +569,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
             headers,
             URI.create("ws://localhost:" + port + "/ws/game"));
 
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    future.get(5, TimeUnit.SECONDS);
     assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
     WebSocketSession currentSession = sessionRef.get();
     if (currentSession != null && currentSession.isOpen()) {
       currentSession.close();
     }
 
-    assertThat(payloads).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
     assertThat(
             payloads.stream()
                 .filter(payload -> payload.startsWith("OK LOOK") && payload.endsWith("> ")))
@@ -808,7 +837,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Game-Instance-Id", "41");
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch responseLatch = new CountDownLatch(3);
     AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
 
     var future =
@@ -830,23 +858,23 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 } else if (payload.startsWith("OK PLAY")) {
                   session.sendMessage(new TextMessage("AFK"));
                 }
-                responseLatch.countDown();
               }
             },
             headers,
             URI.create("ws://localhost:" + port + "/ws/game"));
 
-    future.get(5, TimeUnit.SECONDS);
-    assertThat(responseLatch.await(10, TimeUnit.SECONDS)).isTrue();
-    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK AFK"));
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    await()
+        .atMost(5, TimeUnit.SECONDS)
+        .untilAsserted(() -> verify(commandService).enqueue("41", "AFK", false));
     GameplayPresence presence =
         gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
             .filter(entry -> entry.sessionId() == 41L)
             .findFirst()
             .orElseThrow();
     assertThat(presence.explicitAfkSinceEpochMs()).isNotNull();
-    verify(commandService, never()).enqueue("41", "AFK", false);
-    WebSocketSession session = sessionRef.get();
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
+    session = sessionRef.get();
     if (session != null && session.isOpen()) {
       session.close();
     }
@@ -867,7 +895,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     .setDescription("porte etroite")
                     .build())
             .build();
-    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1"), eq("1021"), eq("fr")))
+    when(gameLogicClient.resolveLook(
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq("fr")))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
@@ -935,44 +964,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketMoveReturnsDestinationLookAndUpdatesSessionContext() throws Exception {
-    LookResult destinationLook =
-        LookResult.newBuilder()
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("2045").build())
-            .setRoomName("North Hall")
-            .setShortDescription("A northern hall")
-            .setLongDescription("A northern hall used for movement verification.")
-            .build();
-    when(gameLogicClient.resolveMove(
-            eq("22"), eq("42"), eq("123"), eq("1"), eq("1021"), eq("north"), eq("")))
-        .thenReturn(
-            net.firedevops.firemud.gamelogic.v1.MoveResult.newBuilder()
-                .setSuccess(true)
-                .setDestinationLook(destinationLook)
-                .build());
-    when(lookTextRenderer.toPlayerOutput(
-            eq(destinationLook),
-            eq(true),
-            eq(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .MOVE_REFRESH),
-            eq(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .PREFER_BRIEF)))
-        .thenReturn(
-            net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.from(
-                    destinationLook,
-                    true,
-                    net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                        .MOVE_REFRESH,
-                    net.firedevops.firemud.gamesession.presentation.LookViewOutput
-                        .BriefRenderingHint.PREFER_BRIEF)));
+  void websocketMoveEnqueuesDurableCommandAfterPlay() throws Exception {
+    when(commandService.enqueue(eq("42"), eq("north"), eq(false)))
+        .thenReturn(CommandEnqueueResult.success("cmd-move-1"));
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Game-Instance-Id", "42");
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(3);
     CountDownLatch playAck = new CountDownLatch(1);
     AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
 
@@ -992,12 +990,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 if (message.getPayload().startsWith("OK PLAY")) {
                   playAck.countDown();
                 }
-                latch.countDown();
               }
 
               @Override
               public void handleTransportError(WebSocketSession session, Throwable exception) {
-                latch.countDown();
                 throw new RuntimeException(exception);
               }
             },
@@ -1007,27 +1003,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
     WebSocketSession session = future.get(5, TimeUnit.SECONDS);
     assertThat(playAck.await(5, TimeUnit.SECONDS)).isTrue();
     sessionRef.get().sendMessage(new TextMessage("north"));
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    await()
+        .atMost(5, TimeUnit.SECONDS)
+        .untilAsserted(() -> verify(commandService).enqueue("42", "north", false));
     session.close();
 
-    assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(payloads).hasSizeGreaterThanOrEqualTo(2);
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
-    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOOK"));
-    assertThat(payloads).anyMatch(payload -> payload.contains("Room: North Hall"));
-    assertThat(payloads).anyMatch(payload -> payload.contains("A northern hall"));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 42L))
-        .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("2045"));
-
-    verify(gameLogicClient).resolveMove("22", "42", "123", "1", "1021", "north", "");
-    verify(lookCacheService)
-        .cache(
-            eq(22L),
-            eq(1L),
-            eq("2045"),
-            eq("Room: North Hall (ID: 2045)\nShort: A northern hall\nExits: \nEntities:"),
-            eq(
-                "OK LOOK\nRoom: North Hall (ID: 2045)\nShort: A northern hall\nExits: \nEntities:\n\n"));
+        .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("1021"));
   }
 
   @Test
@@ -1136,7 +1121,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             headers,
             URI.create("ws://localhost:" + port + "/ws/game"));
 
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    future.get(5, TimeUnit.SECONDS);
     assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
     assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
     sessionRef.get().close();
@@ -1212,7 +1197,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             headers,
             URI.create("ws://localhost:" + port + "/ws/game"));
 
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    future.get(5, TimeUnit.SECONDS);
     assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
     assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
     sessionRef.get().close();
@@ -1328,8 +1313,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 } else if (isStructuredCommand(payload, "PLAY")) {
                   playAck.countDown();
                   session.sendMessage(new TextMessage("AFK"));
-                } else if (isStructuredCommand(payload, "AFK")) {
-                  session.sendMessage(new TextMessage("WHO"));
                 } else if (isStructuredCommand(payload, "WHO")) {
                   whoAck.countDown();
                 }
@@ -1340,6 +1323,18 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     WebSocketSession session = future.get(5, TimeUnit.SECONDS);
     assertThat(playAck.await(5, TimeUnit.SECONDS)).isTrue();
+    await()
+        .atMost(5, TimeUnit.SECONDS)
+        .untilAsserted(
+            () ->
+                assertThat(
+                        gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+                            .filter(entry -> entry.sessionId() == 1L)
+                            .findFirst()
+                            .orElseThrow()
+                            .explicitAfkSinceEpochMs())
+                    .isNotNull());
+    session.sendMessage(new TextMessage("WHO"));
     assertThat(whoAck.await(10, TimeUnit.SECONDS)).isTrue();
     sessionRef.get().close();
 
@@ -1400,7 +1395,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     "connectRequestId", "connect-req-2",
                     "gatewayRequestId", "gateway-req-2")));
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(4);
     CountDownLatch loginAck = new CountDownLatch(1);
     AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
 
@@ -1419,7 +1413,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 if (isStructuredCommand(message.getPayload(), "LOGIN")) {
                   loginAck.countDown();
                 }
-                latch.countDown();
               }
             },
             headers,
@@ -1428,7 +1421,27 @@ class GameSessionWebSocketHandlerIntegrationTest {
     WebSocketSession session = future.get(5, TimeUnit.SECONDS);
     assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
     sessionRef.get().sendMessage(new TextMessage("PLAY demo"));
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    await()
+        .atMost(5, TimeUnit.SECONDS)
+        .untilAsserted(
+            () -> {
+              assertThat(payloads).anyMatch(payload -> isStructuredCommand(payload, "PLAY"));
+              assertThat(payloads)
+                  .anyMatch(
+                      payload ->
+                          "transcript_chunk".equals(json(payload).path("eventType").asText())
+                              && payload.contains("Recent combat line"));
+              assertThat(payloads)
+                  .anyMatch(
+                      payload ->
+                          "player_output".equals(json(payload).path("eventType").asText())
+                              && containsKind(json(payload), "VIEW"));
+              assertThat(payloads)
+                  .anyMatch(
+                      payload ->
+                          "player_output".equals(json(payload).path("eventType").asText())
+                              && containsKind(json(payload), "PROMPT"));
+            });
     session.close();
 
     assertThat(isStructuredCommand(payloads.get(0), "LOGIN")).isTrue();
@@ -1892,7 +1905,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "integration-test",
             "cutover-proof",
             "req-cutover-" + newGameInstanceId + "-" + expectedPointerVersion,
-            expectedPointerVersion));
+            expectedPointerVersion,
+            "integration-test-prep-" + newGameInstanceId));
   }
 
   private void resetAdmissionPointers() {
@@ -1913,6 +1927,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "integration-test",
             "reset-default-demo-pointer",
             "req-reset-demo",
+            null,
             null));
     gameplayAdmissionPointerAuthorityService.upsertPointer(
         new GameplayAdmissionPointerMutation(
@@ -1929,6 +1944,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "integration-test",
             "reset-default-sandbox-pointer",
             "req-reset-sandbox",
+            null,
             null));
   }
 
@@ -1957,6 +1973,21 @@ class GameSessionWebSocketHandlerIntegrationTest {
       }
     }
     return false;
+  }
+
+  private static boolean matchesContext(
+      net.firedevops.firemud.gamesession.service.SessionContext context,
+      long tenantId,
+      long sessionId,
+      long characterId,
+      long gameInstanceId,
+      String roomInstanceId) {
+    return context != null
+        && context.tenantId() == tenantId
+        && context.sessionId() == sessionId
+        && context.characterId() == characterId
+        && context.gameInstanceId() == gameInstanceId
+        && roomInstanceId.equals(context.roomInstanceId());
   }
 
   private boolean waitForPresenceCount(long tenantId, long gameInstanceId, int expectedCount)

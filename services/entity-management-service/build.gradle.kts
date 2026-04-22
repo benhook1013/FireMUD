@@ -6,5 +6,6 @@ plugins {
 }
 
 dependencies {
+    implementation(project(":common-security"))
     implementation(libs.spring.boot.starter.cache)
 }

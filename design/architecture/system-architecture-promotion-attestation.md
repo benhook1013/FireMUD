@@ -16,6 +16,12 @@ Canonical storage path:
 
 - `design/operations/deployments/production/attestations/<deployment-ref>.json`
 
+Current trust model:
+
+- For the current single-admin/operator phase, the Git-reviewed in-repo evidence chain is the promotion trust root. CI validates the attestation, referenced staging deployment record, live-state evidence shape, immutable secret-compliance evidence references, and digest equality deterministically from repository state plus registry image availability.
+- The attestation record is not a detached cryptographic signature. If FireMUD later requires multi-party release approval or stronger provenance, add signed/SLSA-style attestations as a new evidence layer without replacing the canonical in-repo promotion index.
+- Operator-authored evidence is acceptable only when it points to immutable artifacts or observed live-state values. Free-form notes can provide context, but they must not be the only proof for digest, smoke, live-state, or secret-compliance decisions.
+
 Required fields:
 
 - `attestationVersion` – schema version string (for example `v1`).
@@ -28,6 +34,7 @@ Required fields:
 - `rollbackMode` – `rollback-compatible` or `roll-forward-only` classification for the promoted digest set. `rollback-compatible` is allowed only when the previous known-good release remains safe to re-apply against the currently bound database schema, secret/config contract, file-path contract, and external-binding contract. Any release that requires new secret formats, new mounted resource shapes, changed credential semantics, or new external target bindings must be classified as `roll-forward-only` unless the prior release is explicitly proven compatible with those bindings.
   Example: switching a player-facing service from inline JWT secret consumption to file-mounted `FIREMUD_AUTH_JWT_SECRET_PATH`, or changing the expected external asset bucket binding, is `roll-forward-only` unless the previous release is proven compatible with the new mount/binding contract.
 - `productionOverlayRef` – target production overlay change identifier (for example the overlay PR deployment-ref or intended overlay commit token).
+- `releaseDigestManifestRef` – required for official production releases; path to the release digest manifest that binds the release tag or deployment reference to this attestation and digest set.
 
 Artifact-lineage rule:
 
@@ -43,11 +50,14 @@ Optional fields:
 
 - Production overlay PRs must include exactly one in-repo attestation artifact.
 - Every production overlay digest must match the digest in `serviceDigests`.
+- Official production release PRs must include exactly one release digest manifest whose `promotionAttestationRef` points to the attestation and whose `serviceDigests` match byte-for-byte.
 - `environment` must be `staging`.
 - `stagingOverlayCommitSha` must exist in Git history and correspond to a successful staging deployment record.
 - The referenced staging deployment record must include live-state verification (`liveStateEvidence`) proving the running digests matched the reviewed overlay after apply.
+- `liveStateEvidence` must be machine-checkable: status `pass`, the observed overlay SHA, and observed running digests for the promoted services must match the referenced staging deployment record and attestation.
 - The referenced staging deployment record must include `deployStatus=pass` and `smokeStatus=pass`.
 - The referenced staging deployment record must include `secretComplianceStatus` set to `pass` and a `secretComplianceEvidenceRef`.
+- The referenced secret-compliance evidence must include immutable artifact identifiers for all required credential classes; warning-only or note-only evidence is not promotable.
 - The referenced production overlay digests must be byte-identical to the staged digests recorded in the deployment record; retags are acceptable, rebuilds are not.
 - `secretComplianceEvidenceRef` may satisfy compliance through either immutable bootstrap provisioning evidence or immutable rotation evidence, as defined in `infrastructure/environment-and-secrets-overview.md`, but warning-only compliance records are never promotable.
 - Attestation schema must validate against the current `attestationVersion`.

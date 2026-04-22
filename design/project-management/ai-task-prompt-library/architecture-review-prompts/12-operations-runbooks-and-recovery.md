@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Operations, Runbooks, and Recovery
 
-Read the following documents. Follow references only when a listed document points to another canonical source needed to judge an implementation-blocking operational gap. Do not recursively traverse the full operations doc tree.
+Read the following documents. Follow references and read nearby related files as required when a listed document points to another canonical source or when a closely related file is needed to judge an implementation-blocking operational gap. Do not recursively traverse the full operations doc tree.
 
 - `design/architecture/system-architecture-runbooks.md`
 - `design/architecture/system-architecture-backup-recovery.md`
@@ -13,8 +13,10 @@ Read the following documents. Follow references only when a listed document poin
 Then:
 
 - Review operations and recovery behavior as a unified design for runbooks, alerts, failure handling, backup recovery, and operator actions.
+- Check each finding against any already created slices or implementation that are clearly relevant, in case the issue has already been resolved in code or tracking and the design now needs to import that decision back into the docs.
 - Do not summarize what already works well or restate the basic runbook structure.
 - Focus on gaps that would leave the first implementation unsafe to operate or impossible to recover consistently.
+- If slices, protos, or current implementation already resolve the seam but the design docs are stale, classify the issue as "import resolved decision back into design" rather than as an unresolved architecture blocker.
 - Do not let dashboard polish, extra nice-to-have alerts, and distant maturity improvements crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve operability.
 - Return at most 5 issues, ordered by severity.
 - For each issue, include:

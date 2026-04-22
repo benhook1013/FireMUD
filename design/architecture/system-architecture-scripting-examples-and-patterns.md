@@ -160,13 +160,14 @@ This example shows how one published plugin version is activated for one running
    - Suppose the plugin manifest contains a binding:
      - `eventType=onEnterRegion`
      - `targetScopeType=REGION`
-     - `targetSelector=market-square`
+     - `targetSelector={"regionTemplateId":"regionTemplateId:market-square"}`
      - `entrypointGraphId=announce-arrival`
-   - After activation, only triggers occurring inside `I7` that match `market-square` resolve this plugin binding. The same tenant’s other instance `I8` does not resolve the plugin unless it separately activates the same `pluginVersionId`.
+     - `bindingId=announce-on-enter-market`
+   - After activation, only triggers occurring inside `I7` that match `regionTemplateId:market-square` resolve this plugin binding. The same tenant’s other instance `I8` does not resolve the plugin unless it separately activates the same `pluginVersionId`.
 
 5. **Trigger execution and audit**
    - When a player enters `market-square` in `I7`, Game Session emits the event to Automation & Scripting.
-   - Automation resolves the active plugin binding for `I7`, executes graph `announce-arrival`, and records the resulting handler activity in `script_event_audit` with `pluginId=town-crier` and `pluginVersionId=town-crier-v3`.
+   - Automation resolves the active plugin binding for `I7`, executes graph `announce-arrival`, and records the resulting handler activity in `script_event_audit` with `pluginId=town-crier`, `pluginVersionId=town-crier-v3`, and `bindingId=announce-on-enter-market`.
 
 6. **Rollback remains instance-scoped**
    - If `town-crier-v3` misbehaves in `I7`, Logging & Admin can disable or roll back that plugin only for `I7`.

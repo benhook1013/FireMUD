@@ -43,7 +43,7 @@ spec:
               until pg_isready -h postgres -p 5432 -U "$FIREMUD_POSTGRES_USER" -d "$FIREMUD_POSTGRES_DB"; do
                 sleep 2
               done
-              psql -h postgres -U "$FIREMUD_POSTGRES_USER" -d "$FIREMUD_POSTGRES_DB" -f /seed/seed.sql
+              psql -v ON_ERROR_STOP=1 -h postgres -U "$FIREMUD_POSTGRES_USER" -d "$FIREMUD_POSTGRES_DB" -f /seed/seed.sql
           envFrom:
             - configMapRef:
                 name: firemud-config

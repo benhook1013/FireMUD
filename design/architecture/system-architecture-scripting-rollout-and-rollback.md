@@ -79,7 +79,7 @@ Convergence timeout semantics (required):
 - If timeout is reached before both convergence APIs report the expected `controlPlaneRequestId`, the rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
 - In `ROLLBACK_CONVERGENCE_TIMEOUT`, Automation admission remains paused for scope safety and ticks remain paused until an operator explicitly issues resume or abort actions.
 - The system must emit terminal event `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`.
-- While timeout terminal state remains active, ingress admissions in scope must record `script_event_audit.finalStage=ADMISSION`, `finalOutcome=rollback_convergence_timeout`, and a bounded `finalReason`.
+- While timeout terminal state remains active, pre-resolution ingress admissions in scope must record an event-scope ingress audit outcome `rollback_convergence_timeout` with a bounded reason. If handler-scoped work is already resolved when the timeout state is observed, its `script_event_audit` row must use `finalStage=ADMISSION`, `finalOutcome=rollback_convergence_timeout`, and a bounded `finalReason`.
 
 ## Pin-State Degraded Operations Policy (Required)
 

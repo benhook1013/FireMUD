@@ -16,6 +16,7 @@ import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.test.WithFiremudHttpAuthTestProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,20 +24,13 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(ProfileController.class)
 @Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
-@TestPropertySource(
-    properties = {
-      "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000",
-      "firemud.auth.http.enabled=true",
-      "firemud.auth.http.role-requirement=PRIVILEGED"
-    })
+@WithFiremudHttpAuthTestProperties
 class ProfileControllerTest {
 
   @Autowired private MockMvc mockMvc;
@@ -91,12 +85,31 @@ class ProfileControllerTest {
   @Test
   void getProfileRejectsCrossTenantScopedAdmin() throws Exception {
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("admin"))));
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
     mockMvc
         .perform(
             get("/profiles/2")
                 .param("tenantId", "1")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void updateProfileAllowsCurrentAccountWithoutPrivilegedTenantRole() throws Exception {
+    UpdateProfileRequest req =
+        new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+    ProfileDto dto =
+        new ProfileDto(1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+    when(accountService.updateProfile(req)).thenReturn(dto);
+
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
+    mockMvc
+        .perform(
+            put("/profiles/2")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"));
   }
 }

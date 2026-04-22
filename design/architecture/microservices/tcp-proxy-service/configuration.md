@@ -47,7 +47,6 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `TCP_PROXY_TLS_PORT` | TCP port for the Telnet-over-TLS listener | `2324` |
 | `TCP_PROXY_TLS_CERT` | Path to the Telnet listener TLS certificate | *(empty)* |
 | `TCP_PROXY_TLS_KEY` | Path to the Telnet listener TLS private key | *(empty)* |
-| `TCP_PROXY_DEV_ISOLATED` | Enable dev-isolated echo mode; intended for local development only | `false` |
 | `TCP_PROXY_MAX_CONNECTIONS` | Maximum concurrent Telnet connections | `0` |
 | `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent Telnet connections per client IP | `0` |
 | `TCP_PROXY_MAX_LINE_BYTES` | Maximum accepted Telnet/MCP line in bytes | `4096` |

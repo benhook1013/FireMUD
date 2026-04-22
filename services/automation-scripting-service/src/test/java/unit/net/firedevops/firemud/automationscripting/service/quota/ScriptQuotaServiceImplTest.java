@@ -39,9 +39,9 @@ class ScriptQuotaServiceImplTest {
 
   @Test
   void tryAcquireAppliesLimit() {
-    assertTrue(service.tryAcquire(1L, 2L));
-    assertTrue(service.tryAcquire(1L, 2L));
-    assertFalse(service.tryAcquire(1L, 2L));
+    assertTrue(service.tryAcquire("tenant-1", "script-1"));
+    assertTrue(service.tryAcquire("tenant-1", "script-1"));
+    assertFalse(service.tryAcquire("tenant-1", "script-1"));
 
     verify(redisTemplate, never())
         .expire(

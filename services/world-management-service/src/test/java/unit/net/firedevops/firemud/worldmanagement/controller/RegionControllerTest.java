@@ -28,7 +28,7 @@ class RegionControllerTest {
 
   @BeforeEach
   void setUpSecurityContext() {
-    installTenantContext(Map.of("1", List.of("admin")));
+    installTenantContext(Map.of("1", List.of("tenantAdmin")));
   }
 
   @AfterEach
@@ -50,7 +50,7 @@ class RegionControllerTest {
 
   @Test
   void moveRejectsCallerWithoutTenantAccess() throws Exception {
-    installTenantContext(Map.of("9", List.of("admin")));
+    installTenantContext(Map.of("9", List.of("tenantAdmin")));
 
     mockMvc
         .perform(post("/regions/4/move").param("tenantId", "1").param("shardId", "3"))

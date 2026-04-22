@@ -148,6 +148,39 @@ jobs:
           preview_max_active=${PREVIEW_MAX_ACTIVE:-1}
           EOF
 
+      - name: Clear previous preview summary comments
+        if: ${{ steps.eligibility.outputs.eligible == 'true' }}
+        uses: actions/github-script@v9
+        env:
+          PREVIEW_PR_NUMBER: ${{ steps.derive.outputs.pr_number }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PREVIEW_PR_NUMBER);
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.info("No PR number available for preview summary cleanup.");
+              return;
+            }
+
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: prNumber,
+            });
+
+            const previewComments = comments.filter((comment) =>
+              comment.body.startsWith("### Preview Summary")
+            );
+
+            for (const comment of previewComments) {
+              await github.rest.issues.deleteComment({
+                ...context.repo,
+                comment_id: comment.id,
+              });
+            }
+
+            core.info(
+              `Deleted ${previewComments.length} previous preview summary comment(s) for PR #${prNumber}.`
+            );
+
   preview-deploy:
     name: Deploy Preview Release
     runs-on:
@@ -418,6 +451,7 @@ jobs:
           game_template_id = 1
           email = "demo@example.com"
           password = "swordfish"
+          control_plane_request_id = f"preview-smoke-bootstrap-{int(time.time())}"
 
           def readiness_ok(url):
             try:
@@ -447,6 +481,36 @@ jobs:
                 return response.status, response.read().decode("utf-8", errors="ignore")
             except urllib.error.HTTPError as exc:
               return exc.code, exc.read().decode("utf-8", errors="ignore")
+            except urllib.error.URLError as exc:
+              return 503, str(exc)
+
+          def bootstrap_session(account_id, timeout_seconds=120):
+            deadline = time.time() + timeout_seconds
+            attempt = 1
+            last_status = None
+            last_body = None
+            while time.time() < deadline:
+              status, session_body = post_json(
+                "http://game-session-service:8080/sessions",
+                {
+                  "tenantId": tenant_id,
+                  "gameTemplateId": game_template_id,
+                  "controlPlaneRequestId": control_plane_request_id,
+                  "ownerAccountId": account_id,
+                },
+              )
+              print(f"Session bootstrap attempt {attempt} returned {status}: {session_body}")
+              if status < 400:
+                return status, session_body
+              last_status = status
+              last_body = session_body
+              if status < 500:
+                break
+              attempt += 1
+              time.sleep(2)
+            raise SystemExit(
+              f"Preview smoke session bootstrap failed with status {last_status}: {last_body}"
+            )
 
           wait_for_ready("account-service", "http://account-service:8080/actuator/health/readiness")
           wait_for_ready("entity-management-service", "http://entity-management-service:8080/actuator/health/readiness")
@@ -472,18 +536,8 @@ jobs:
           if not account_id:
             raise SystemExit(f"Preview smoke account response did not include account id: {account_body}")
 
-          status, session_body = post_json(
-            "http://game-session-service:8080/sessions",
-            {
-              "tenantId": tenant_id,
-              "gameTemplateId": game_template_id,
-              "controlPlaneRequestId": "preview-smoke-bootstrap",
-              "ownerAccountId": account_id,
-            },
-          )
+          status, session_body = bootstrap_session(account_id)
           print(session_body)
-          if status >= 400:
-            raise SystemExit(f"Preview smoke session bootstrap failed with status {status}: {session_body}")
           PY
           BOOTSTRAP_POD_LOG=/tmp/preview-bootstrap-pod.log
           trap 'kubectl -n "${PREVIEW_NAMESPACE}" delete pod preview-smoke-bootstrap --ignore-not-found >/dev/null 2>&1 || true; kubectl -n "${PREVIEW_NAMESPACE}" delete configmap preview-smoke-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true' EXIT
@@ -567,6 +621,7 @@ jobs:
           PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
           PREVIEW_TELNET_PORT: ${{ steps.telnet-port.outputs.telnet_port }}
           PREVIEW_DEPLOY_OUTCOME: ${{ steps.deploy-release.outcome }}
+          PREVIEW_JOB_STATUS: ${{ job.status }}
           PREVIEW_FAILURE_STAGE: ${{ env.PREVIEW_STAGE }}
         with:
           script: |
@@ -578,8 +633,7 @@ jobs:
               return;
             }
 
-            const mode =
-              process.env.PREVIEW_DEPLOY_OUTCOME === "success" ? "success" : "failure";
+            const mode = process.env.PREVIEW_JOB_STATUS === "success" ? "success" : "failure";
             const failureStage =
               process.env.PREVIEW_FAILURE_STAGE && process.env.PREVIEW_FAILURE_STAGE.trim().length > 0
                 ? process.env.PREVIEW_FAILURE_STAGE.trim()
@@ -610,9 +664,19 @@ jobs:
               issue_number: prNumber,
             });
 
-            const existing = comments.find((comment) =>
+            const previewComments = comments.filter((comment) =>
               comment.body.startsWith("### Preview Summary")
             );
+            const existing = previewComments[0];
+
+            if (previewComments.length > 1) {
+              for (const comment of previewComments.slice(1)) {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
 
             if (existing) {
               await github.rest.issues.updateComment({
@@ -703,7 +767,7 @@ jobs:
 
             const body = [
               "### Preview Summary",
-              "⚪ Preview environment destroyed",
+              "⏭️ Preview environment destroyed",
               "",
               `- PR: #${prNumber}`,
               `- Head SHA: \`${process.env.PREVIEW_HEAD_SHA || "unknown"}\``,
@@ -716,9 +780,19 @@ jobs:
               issue_number: prNumber,
             });
 
-            const existing = comments.find((comment) =>
+            const previewComments = comments.filter((comment) =>
               comment.body.startsWith("### Preview Summary")
             );
+            const existing = previewComments[0];
+
+            if (previewComments.length > 1) {
+              for (const comment of previewComments.slice(1)) {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
 
             if (existing) {
               await github.rest.issues.updateComment({

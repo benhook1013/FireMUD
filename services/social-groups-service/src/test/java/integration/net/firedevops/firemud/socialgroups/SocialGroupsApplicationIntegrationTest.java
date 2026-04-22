@@ -6,15 +6,31 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse;
+import net.firedevops.firemud.socialgroups.client.LoggingAdminClient;
+import net.firedevops.firemud.socialgroups.client.ModerationPolicyClient;
+import net.firedevops.firemud.socialgroups.dto.ChatMessageDto;
+import net.firedevops.firemud.socialgroups.dto.SendMessageRequestDto;
+import net.firedevops.firemud.socialgroups.enums.ChatType;
+import net.firedevops.firemud.socialgroups.repository.ChatMessageRepository;
+import net.firedevops.firemud.socialgroups.service.ChatService;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -27,7 +43,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
-    classes = SocialGroupsServiceApplication.class,
+    classes = {
+      SocialGroupsServiceApplication.class,
+      SocialGroupsApplicationIntegrationTest.MockClientsConfiguration.class
+    },
     properties = {
       "spring.profiles.active=test",
       "spring.grpc.server.port=0",
@@ -43,6 +62,10 @@ class SocialGroupsApplicationIntegrationTest {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
   private static final JwtUtil JWT_UTIL =
       new JwtUtil("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 3600000L);
+  private static final LoggingAdminClient TEST_LOGGING_ADMIN_CLIENT =
+      Mockito.mock(LoggingAdminClient.class);
+  private static final ModerationPolicyClient TEST_MODERATION_POLICY_CLIENT =
+      Mockito.mock(ModerationPolicyClient.class);
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -64,6 +87,20 @@ class SocialGroupsApplicationIntegrationTest {
 
   @LocalServerPort private int port;
 
+  @Autowired private ChatService chatService;
+
+  @Autowired private ChatMessageRepository chatMessageRepository;
+
+  @Autowired private RedisTemplate<String, Object> redisTemplate;
+
+  @BeforeEach
+  void setUpClients() {
+    Mockito.reset(TEST_LOGGING_ADMIN_CLIENT, TEST_MODERATION_POLICY_CLIENT);
+    Mockito.when(
+            TEST_MODERATION_POLICY_CLIENT.evaluateChatSend(Mockito.anyLong(), Mockito.anyLong()))
+        .thenReturn(EvaluateModerationPolicyResponse.newBuilder().setAllowed(true).build());
+  }
+
   @Test
   void pingEndpointReturnsPong() throws Exception {
     String token =
@@ -77,5 +114,38 @@ class SocialGroupsApplicationIntegrationTest {
     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
     assertThat(response.statusCode()).isEqualTo(200);
     assertThat(response.body()).contains("pong");
+  }
+
+  @Test
+  void duplicateEffectIdReturnsExistingChatMessageWithoutRepublishing() {
+    SendMessageRequestDto request =
+        new SendMessageRequestDto(
+            1L, 2L, ChatType.SAY, null, 2L, null, null, "hello there", "fx-comm-42");
+
+    ChatMessageDto first = chatService.sendMessage(request);
+    ChatMessageDto replay = chatService.sendMessage(request);
+
+    assertThat(replay.id()).isEqualTo(first.id());
+    assertThat(chatMessageRepository.findByTenantIdAndEffectId(1L, "fx-comm-42"))
+        .hasValueSatisfying(message -> assertThat(message.getId()).isEqualTo(first.id()));
+
+    List<Object> redisRange = redisTemplate.opsForList().range("say:1:2", 0, -1);
+    List<Object> cachedMessages = new ArrayList<>(redisRange == null ? List.of() : redisRange);
+    assertThat(cachedMessages).containsExactly("hello there");
+  }
+
+  @TestConfiguration
+  static class MockClientsConfiguration {
+    @Bean
+    @Primary
+    LoggingAdminClient testLoggingAdminClient() {
+      return TEST_LOGGING_ADMIN_CLIENT;
+    }
+
+    @Bean
+    @Primary
+    ModerationPolicyClient testModerationPolicyClient() {
+      return TEST_MODERATION_POLICY_CLIENT;
+    }
   }
 }

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.springcloudgateway;
 
+import net.firedevops.firemud.test.FiremudAuthTestProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -14,7 +15,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
       "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration,org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration",
       "spring.main.web-application-type=reactive",
       "management.endpoint.health.group.readiness.include=readinessState",
-      "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234"
+      FiremudAuthTestProperties.JWT_SECRET
     })
 @ImportAutoConfiguration
 class GatewayApplicationIntegrationTest {

@@ -15,6 +15,54 @@ public interface InventoryService {
   Page<RoomGroundInventoryEntryDto> listRoomGroundItems(
       Long tenantId, String gameInstanceId, String roomInstanceId, Pageable pageable);
 
+  default RoomGroundInventoryEntryDto dropItemToRoom(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      String containerInstanceId,
+      String stackFamilyKey,
+      int quantity) {
+    return dropItemToRoom(
+        tenantId,
+        characterId,
+        gameInstanceId,
+        roomInstanceId,
+        itemId,
+        itemInstanceId,
+        containerInstanceId,
+        stackFamilyKey,
+        quantity,
+        null);
+  }
+
+  default RoomGroundInventoryEntryDto dropItemToRoom(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      String containerInstanceId,
+      String stackFamilyKey,
+      int quantity,
+      String effectId) {
+    return dropItemToRoom(
+        tenantId,
+        characterId,
+        gameInstanceId,
+        roomInstanceId,
+        itemId,
+        itemInstanceId,
+        containerInstanceId,
+        stackFamilyKey,
+        quantity,
+        effectId,
+        null);
+  }
+
   RoomGroundInventoryEntryDto dropItemToRoom(
       Long tenantId,
       Long characterId,
@@ -24,7 +72,57 @@ public interface InventoryService {
       Long itemInstanceId,
       String containerInstanceId,
       String stackFamilyKey,
-      int quantity);
+      int quantity,
+      String effectId,
+      String sessionId);
+
+  default InventoryEntryDto pickupItemFromRoom(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      String containerInstanceId,
+      String stackFamilyKey,
+      int quantity) {
+    return pickupItemFromRoom(
+        tenantId,
+        characterId,
+        gameInstanceId,
+        roomInstanceId,
+        itemId,
+        itemInstanceId,
+        containerInstanceId,
+        stackFamilyKey,
+        quantity,
+        null);
+  }
+
+  default InventoryEntryDto pickupItemFromRoom(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      String containerInstanceId,
+      String stackFamilyKey,
+      int quantity,
+      String effectId) {
+    return pickupItemFromRoom(
+        tenantId,
+        characterId,
+        gameInstanceId,
+        roomInstanceId,
+        itemId,
+        itemInstanceId,
+        containerInstanceId,
+        stackFamilyKey,
+        quantity,
+        effectId,
+        null);
+  }
 
   InventoryEntryDto pickupItemFromRoom(
       Long tenantId,
@@ -35,5 +133,7 @@ public interface InventoryService {
       Long itemInstanceId,
       String containerInstanceId,
       String stackFamilyKey,
-      int quantity);
+      int quantity,
+      String effectId,
+      String sessionId);
 }

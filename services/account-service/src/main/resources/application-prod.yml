@@ -43,11 +43,12 @@ firemud:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
-  auth:
-    jwt-secret-path: ${FIREMUD_AUTH_JWT_SECRET_PATH:}
-    jwt-secret: ${FIREMUD_AUTH_JWT_SECRET}
-    jwt-expiration-ms: ${FIREMUD_AUTH_JWT_EXPIRATION_MS:3600000}
-    session-expiration-ms: ${FIREMUD_AUTH_SESSION_EXPIRATION_MS:3600000}
+  account:
+    tokens:
+      session-expiration-ms: ${FIREMUD_ACCOUNT_TOKENS_SESSION_EXPIRATION_MS:3600000}
+      player-bootstrap-expiration-ms: ${FIREMUD_ACCOUNT_TOKENS_PLAYER_BOOTSTRAP_EXPIRATION_MS:300000}
+      connect-scope-expiration-ms: ${FIREMUD_ACCOUNT_TOKENS_CONNECT_SCOPE_EXPIRATION_MS:120000}
+      connect-token-expiration-ms: ${FIREMUD_ACCOUNT_TOKENS_CONNECT_TOKEN_EXPIRATION_MS:30000}
   mail:
     from: ${SMTP_FROM:no-reply@firemud.com}
     verification-url: ${FIREMUD_MAIL_VERIFICATION_URL:https://firemud.com/auth/verify-email?token=%s}

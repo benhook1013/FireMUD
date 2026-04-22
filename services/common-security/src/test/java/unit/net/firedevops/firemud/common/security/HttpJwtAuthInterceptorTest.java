@@ -45,7 +45,8 @@ class HttpJwtAuthInterceptorTest {
         new HttpJwtAuthInterceptor(jwtUtil, authenticatedProperties());
     String token =
         jwtUtil.generateToken(
-            "user", Map.of("accountId", "user", "scopedRoles", Map.of("7", List.of("admin"))));
+            "user",
+            Map.of("accountId", "user", "scopedRoles", Map.of("7", List.of("tenantAdmin"))));
     MockHttpServletRequest request = new MockHttpServletRequest();
     request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token);
     MockHttpServletResponse response = new MockHttpServletResponse();
@@ -54,7 +55,7 @@ class HttpJwtAuthInterceptorTest {
 
     assertTrue(result);
     assertEquals("user", SessionContext.getAccountId());
-    assertEquals(List.of("admin"), SessionContext.getScopedRoles("7"));
+    assertEquals(List.of("tenantAdmin"), SessionContext.getScopedRoles("7"));
     interceptor.afterCompletion(request, response, new Object(), null);
     assertTrue(SessionContext.getGlobalRoles().isEmpty());
   }
@@ -72,6 +73,32 @@ class HttpJwtAuthInterceptorTest {
 
     assertFalse(result);
     assertEquals(HttpStatus.FORBIDDEN.value(), response.getStatus());
+  }
+
+  @Test
+  void populatesSharedInternalServiceIdentity() throws Exception {
+    HttpJwtAuthInterceptor interceptor =
+        new HttpJwtAuthInterceptor(jwtUtil, authenticatedProperties());
+    String token =
+        jwtUtil.generateToken(
+            "service:game-session-service",
+            Map.of(
+                "internalService",
+                true,
+                "serviceName",
+                "game-session-service",
+                "serviceInstanceId",
+                "game-session-service-1"));
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token);
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    boolean result = interceptor.preHandle(request, response, new Object());
+
+    assertTrue(result);
+    assertTrue(SessionContext.isInternalService());
+    assertEquals("game-session-service", SessionContext.getServiceName());
+    assertEquals("game-session-service-1", SessionContext.getServiceInstanceId());
   }
 
   private HttpAuthProperties authenticatedProperties() {

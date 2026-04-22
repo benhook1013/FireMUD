@@ -9,6 +9,10 @@ The goals of the subscription system include:
 - Respect tenant isolation while still enabling platform-wide reporting.
 - Coordinate with Stripe while keeping billing state consistent in FireMUD’s own database.
 
+## Implementation Notes
+
+The plan-change timing, over-quota behavior, pending-plan metadata, and full quota-bearing runtime entitlement response described below are canonical target-state behavior. Current implementation has the first runtime availability surface, but quota fields, pending plan metadata, and downgrade/cancellation enforcement still need implementation follow-through.
+
 ## Plan and Entitlement Model
 
 Subscriptions are modeled as **plans** that define resource limits and entitlements, and **subscription** records that attach those plans to specific tenants:
@@ -24,6 +28,8 @@ Subscriptions are modeled as **plans** that define resource limits and entitleme
   - Tracks Stripe `subscription` and `customer` identifiers alongside local fields like `status`, current period boundaries, and any trial or grace-period metadata.
 
 Entitlements exposed to other services are derived from the active subscription’s plan and status and are always scoped to a single tenant (`tenantId`).
+
+Plan entitlements are the source of truth for hosting/runtime quotas only. One-time account, character, or virtual-currency purchases use the purchase-entitlement model in [Account Service Runtime and Data](./runtime-and-data.md#monetization-design) and must not be folded into the tenant hosting subscription row.
 
 ### Authorization Roles for Billing and Subscriptions
 
@@ -74,6 +80,18 @@ State transitions are driven by:
 
 Each transition triggers domain events that downstream services can consume to adjust quotas or availability.
 
+### Plan Changes, Downgrades, and Cancellation Timing
+
+Plan changes have one canonical entitlement timing model:
+
+- Upgrades take effect immediately after Stripe confirms the subscription update and the Account Service commits the new plan snapshot. The next `SubscriptionStatusChanged` event advances `tenantBillingSequence`, and runtime services may admit new load against the higher quota only after observing or refreshing to that sequence.
+- Downgrades default to taking effect at the next billing period boundary. The Account Service records `pending_plan_code`, `pending_effective_at`, and the current period end so creator UIs can show the future quota before it is enforced.
+- Immediate downgrades are allowed only when the caller explicitly chooses immediate effect and acknowledges any over-quota impact. The Account Service must emit a `SubscriptionStatusChanged` event that advances `tenantBillingSequence` and marks the lower plan as current before runtime services enforce it.
+- Cancellation defaults to period-end cancellation. During the paid current period the subscription remains `active` or `grace` according to payment state, with `cancel_at_period_end=true`; at the effective cancellation time it transitions to `canceled` and follows the hard cutoff behavior below.
+- Immediate cancellation transitions to `canceled` immediately after provider confirmation and Account Service commit, then emits the same hard cutoff events as billing suspension.
+
+When a tenant is above the newly effective quota after downgrade or cancellation-to-lower-plan, enforcement is deterministic: existing admitted gameplay sessions and already-running instances are not killed solely for quota excess while the tenant remains `trialing`, `active`, `past_due`, or `grace`; admission for new sessions, new instance starts, scale-out, and quota-increasing operations is denied until observed usage falls below the effective quota or the plan is upgraded. If the new state is `suspended` or `canceled`, the hard cutoff rules apply instead and existing gameplay sessions are revoked. Runtime entitlement responses must include enough quota fields for enforcement points to make this decision without relying on plan-code-specific local tables.
+
 ## Tenant Availability and Quota Enforcement
 
 Subscription status feeds directly into tenant availability and resource enforcement. To keep behavior consistent across services, the following states and effects apply:
@@ -99,7 +117,7 @@ Subscription status feeds directly into tenant availability and resource enforce
     - Admission is closed immediately (no new sessions).
     - Connected gameplay sessions are revoked immediately.
     - Instance processes enter a bounded drain window (target: 5 minutes maximum) for internal cleanup and then stop. During this window they are not gameplay-admissible.
-  - A small, explicitly defined **billing-safe control-plane surface** remains accessible so owners can resolve billing issues or export data. This surface includes actions such as updating payment methods, viewing invoices, and initiating exports, but does not include starting game instances or editing live gameplay configuration. Service-specific docs and shared authorization middleware must explicitly mark which routes participate in this billing-safe surface so they remain reachable while gameplay is blocked.
+  - A small, explicitly defined **billing-safe control-plane surface** remains accessible so owners can resolve billing issues or export tenant-scoped data. This surface includes actions such as updating payment methods, viewing invoices, and initiating tenant-bounded exports, but does not include full account export, starting game instances, or editing live gameplay configuration. Service-specific docs and shared authorization middleware must explicitly mark which routes participate in this billing-safe surface so they remain reachable while gameplay is blocked.
   - As part of the transition into `suspended` or `canceled`, the Account Service must:
     - Write `session:auth:revoked_after:tenant:<tenantId>` with the current timestamp (authoritative writer), and
     - Emit a `TenantBillingStateChanged` event with `billing_state` set to `suspended` or `canceled`.
@@ -121,7 +139,7 @@ The Account Service is the source of truth for per-tenant billing state and enti
 The internal runtime entitlement surface returns a snapshot of:
 
 - The current subscription status for the tenant (for example, `trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`).  
-- The effective plan and quotas (for example, maximum `active_sessions`, maximum concurrent instances, and storage/world-size tiers) derived from the active plan.  
+- The effective plan and quotas (for example, maximum `active_sessions`, maximum concurrent instances, and storage/world-size tiers) derived from the active plan, plus pending plan-change metadata when a period-end downgrade or cancellation is scheduled.  
 - The current billing-state flags used for availability decisions, such as:
   - Whether the tenant is considered **available for gameplay** (for example, `trialing` or `active` vs `suspended`/`canceled`).  
   - Whether new game instances or scaling operations are allowed under the current plan and billing state.

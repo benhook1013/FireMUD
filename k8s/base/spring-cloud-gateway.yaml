@@ -35,6 +35,9 @@ spec:
             - name: grpc-tls
               mountPath: /tls
               readOnly: true
+            - name: jwt-signing-keys
+              mountPath: /var/run/secrets/firemud/jwt
+              readOnly: true
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -100,12 +103,28 @@ spec:
         - name: grpc-tls
           secret:
             secretName: firemud-grpc-tls
+        - name: jwt-signing-keys
+          secret:
+            secretName: jwt-signing-keys
         - name: varlog
           hostPath:
             path: /var/log
         - name: containers
           hostPath:
             path: /var/lib/docker/containers
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: firemud
+  name: spring-cloud-gateway-mtls
+spec:
+  selector:
+    app: spring-cloud-gateway
+  ports:
+    - port: 443
+      targetPort: 8080
+      protocol: TCP
 ---
 apiVersion: v1
 kind: Service

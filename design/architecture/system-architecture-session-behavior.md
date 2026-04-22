@@ -54,6 +54,7 @@ Membership-change event delivery semantics are required, not best-effort folklor
 FireMUD deliberately distinguishes between several types of sessions so that identity, gameplay continuity, and auth token lifetimes can evolve independently:
 
 - **Auth token sessions** – Represented by `session:auth:<scope>:<tokenHash>` entries in Coordination Redis, backing internal JWTs used for meta/control APIs.
+- **Bootstrap transport session contexts** – Current Game Session implementations store pre-auth socket context under the `sessionctx:*` key family. These records may exist before `LOGIN`, may have no account or membership authority, and are used only for bootstrap scope, locale, and reconnect lookup plumbing.
 - **Gameplay sessions** – Tenant-scoped bindings between a connected socket (or reconnect token) and a character in a specific tenant, backed by gameplay Redis keys.
 - **Control-plane UI sessions** – Browser or desktop admin/creator sessions that hold short-lived JWTs client-side and rely on auth token sessions on the server.
 
@@ -80,16 +81,22 @@ FireMUD uses distinct lifetimes and invariants for each session type:
   - Purpose: bind a connected socket or reconnect token to a character in a specific tenant, enforce one session per character, and support reconnect flows.
   - Lifetime: sliding TTL refreshed while the player remains active. When the TTL elapses, the session is considered abandoned and is eligible for cleanup.
 
+- **Bootstrap/pre-auth session contexts**
+  - Keys: current implementation-local `sessionctx:*` entries described in the Game Session runtime docs.
+  - Purpose: remember transport-level bootstrap context before gameplay authentication completes.
+  - Lifetime: bounded by the same session-expiration family for cleanup, but these entries are not logically resumable gameplay sessions until `LOGIN` and `PLAY` have established authenticated gameplay scope.
+
 Game Session must also maintain bounded authoritative secondary indexes for gameplay bindings so takeover, reconnect, and revocation do not require scans:
 
-- `session:game:index:character:<tenantId>:<gameInstanceId>:<characterId>` -> `sessionId`
-- `session:game:index:account-tenant:<accountId>:<tenantId>` -> active `sessionId` set
-- `session:game:index:tenant:<tenantId>` -> active `sessionId` set
+- `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>` -> `sessionId`
+- `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` -> active `sessionId` set
+- `session:game:index:tenant:{tenantGameplayTag}` -> active `sessionId` set
 
 Index contract requirements:
 
 - Game Session is the sole writer for these indexes.
-- Session key creation/update, uniqueness-index update, and reverse-index membership changes must occur atomically with respect to takeover/resume decisions.
+- The session record plus these tenant-scoped indexes must be mutated through one shard-local session-only CAS/update flow where all keys share `{tenantGameplayTag}`. This is the atomic boundary for takeover and resume decisions inside Redis Cluster.
+- Region-local gameplay binding is intentionally outside that atomic boundary and follows the separate session-to-region bridge contract in the Redis architecture docs.
 - Index entries must be removed or expired when the bound gameplay session ends or becomes non-resumable.
 - Billing- and membership-driven revocation flows must use these bounded indexes rather than wildcard key scans.
 
@@ -142,7 +149,7 @@ Subscription and billing state drives how aggressively sessions are revoked:
     - Game Session and world-management flows must reject new game instance creations, restarts, or tenant selection for gameplay for the affected `tenantId` based on `GetTenantEntitlementsForRuntime`.
     - New player logins and tenant-selection attempts for that tenant are rejected with a dedicated billing error code.
   - Existing gameplay sessions for the tenant must be revoked so connected sockets are kicked and cannot reconnect into gameplay for that tenant.
-  - Tenant-scoped authorization must be bulk-revoked by setting `session:auth:revoked_after:tenant:<tenantId>` to "now". The Account Service is the authoritative writer for this watermark and downstream services must not write the watermark key directly. Services must not rely on wildcard deletes (`session:auth:tenant:<tenantId>:*`) in hot paths. Billing-safe and support-safe control-plane routes remain available as described in [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement).
+  - Tenant-scoped authorization must be bulk-revoked by setting `session:auth:revoked_after:tenant:<tenantId>` to "now". The Account Service is the authoritative writer for this watermark and downstream services must not write the watermark key directly. Services must not rely on wildcard deletes (`session:auth:tenant:<tenantId>:*`) in hot paths. Billing-safe and support-safe control-plane routes, including tenant-scoped export, remain available as described in [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement).
 
 ### Control-Plane Logout
 
@@ -175,7 +182,7 @@ Control-plane UIs must treat certain auth failures as hard logout conditions and
 - Meta/control APIs that rely on JWTs return canonical error codes such as:
   - `AUTH_TOKEN_EXPIRED` – The presented JWT is no longer valid because its cryptographic lifetime has ended. Frontends must clear any in-memory token, redirect to login, and display a "Session expired" message.
   - `AUTH_SESSION_REVOKED` – The JWT’s auth token sessions have been revoked due to a security event (for example, password reset, account ban, or "logout all devices"). Frontends must clear in-memory token state, redirect to login, and indicate that the session was ended for security reasons.
-  - `TENANT_BILLING_BLOCKED` – The operation is blocked because the tenant’s billing state (for example, `suspended` or `canceled`) does not allow the requested action. Frontends must keep the user logged in but surface a billing-specific banner or UI state for that tenant and disable gameplay and instance-management actions while still allowing the billing-safe control-plane surface (for example, updating payment details or exporting data).
+  - `TENANT_BILLING_BLOCKED` – The operation is blocked because the tenant’s billing state (for example, `suspended` or `canceled`) does not allow the requested action. Frontends must keep the user logged in but surface a billing-specific banner or UI state for that tenant and disable gameplay and instance-management actions while still allowing the billing-safe control-plane surface (for example, updating payment details or exporting tenant-scoped data).
   - `MEMBERSHIP_AUTH_UNAVAILABLE` – Billing-safe mutation authorization could not be established from live membership authority. Frontends keep auth state, show retriable availability feedback, and block billing-safe mutations until authority recovers.
   - `ADMISSION_POINTER_UNAVAILABLE` – Gameplay admission pointer state is unavailable or ambiguous. Frontends keep auth state and retry admission with bounded backoff instead of logging out.
 - Closing a browser tab or window does not automatically revoke auth token sessions; users must call explicit logout (or an operator must use "logout all devices") to revoke server-side allowlist entries before TTL expiry. On shared devices, UIs must encourage explicit logout from admin and creator sections.

@@ -73,7 +73,7 @@ Fields:
 - `pluginId`
 - `pluginVersionId`
 - `previousDesignStatus`
-- `newDesignStatus` (`UPLOADED` | `SIGNATURE_VERIFIED` | `VALIDATION_FAILED_DESIGN` | `PUBLISHED` | `REVOKED_DESIGN` | `SUPERSEDED`)
+- `newDesignStatus` (`DRAFT` | `UPLOAD_REJECTED` | `SIGNATURE_VERIFIED` | `VALIDATION_FAILED_DESIGN` | `PUBLISHED` | `SUPERSEDED` | `REVOKED_DESIGN`)
 - `tenantSequence`
 - `statusReason` (optional)
 - `occurredAt`

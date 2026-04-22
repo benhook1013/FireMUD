@@ -17,4 +17,5 @@ public record AdmissionPointerDto(
     String actorPrincipal,
     String reason,
     String controlPlaneRequestId,
+    String preparedVersionUpgradeId,
     Instant occurredAt) {}

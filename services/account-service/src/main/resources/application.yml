@@ -82,7 +82,7 @@ firemud:
   auth:
     http:
       enabled: true
-      role-requirement: PRIVILEGED
+      role-requirement: AUTHENTICATED
       public-path-patterns:
         - /auth/login
         - /auth/player-bootstrap

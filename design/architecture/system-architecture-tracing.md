@@ -2,11 +2,15 @@
 
 This document explains how distributed traces are collected and visualized across FireMUD services.
 
+## Implementation Notes
+
+The current implementation exports generic gRPC server spans through the shared `TracingInterceptor` and tags application-level gRPC errors on the active span. The named gameplay, tick, TCP Proxy, and backup spans in the catalog below are target-state instrumentation contracts for future implementation and smoke proofing; do not assume they are emitted by the current services unless a service-specific slice says so. Environments should only claim tenant/region-scoped incident sampling after the collector and service spans both support the required attributes.
+
 ---
 
 ## OpenTelemetry Collector
 
-All services emit spans using the [OpenTelemetry](https://opentelemetry.io/) SDK. A dedicated **OpenTelemetry Collector** runs inside the Kubernetes cluster to receive OTLP traffic and forward it to storage backends. A sample manifest is provided at `k8s/monitoring/otel-collector.yaml`.
+All services emit spans using the OpenTelemetry SDK. A dedicated **OpenTelemetry Collector** runs inside the Kubernetes cluster to receive OTLP traffic and forward it to storage backends. A sample manifest is provided at `k8s/monitoring/otel-collector.yaml`.
 
 - Deploy using the official [`opentelemetry-collector`](https://github.com/open-telemetry/opentelemetry-helm-charts) Helm chart or apply the sample manifest for local demos.
 - The collector runs as the `otel-collector` service inside the cluster so other pods can reach it via `http://otel-collector:4317`.

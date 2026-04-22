@@ -24,7 +24,15 @@ class RoomSnapshotDtoTest {
 
     RoomSnapshotDto snapshot =
         new RoomSnapshotDto(
-            10L, 20L, "Antechamber", "Short desc", "Long desc", exits, ambientState, roomFlags);
+            10L,
+            20L,
+            30L,
+            "Antechamber",
+            "Short desc",
+            "Long desc",
+            exits,
+            ambientState,
+            roomFlags);
 
     exits.clear();
     ambientState.put("weather", "dry");

@@ -9,8 +9,10 @@ import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
-import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
+import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -25,22 +27,27 @@ import org.springframework.util.StringUtils;
 public class ContainerCommandHandler {
   private static final Logger LOG = LoggerFactory.getLogger(ContainerCommandHandler.class);
 
-  private final EntityManagementClient entityManagementClient;
+  private final GameLogicClient gameLogicClient;
 
-  public ContainerCommandHandler(EntityManagementClient entityManagementClient) {
-    this.entityManagementClient =
-        Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
+  public ContainerCommandHandler(GameLogicClient gameLogicClient) {
+    this.gameLogicClient =
+        Objects.requireNonNull(gameLogicClient, "gameLogicClient must not be null");
   }
 
   @Timed(value = "gamesession.command.container")
   public TextCommandInterpretationResult handle(SessionContext context, TextCommand command) {
+    return handle(context, command, null);
+  }
+
+  public TextCommandInterpretationResult handle(
+      SessionContext context, TextCommand command, String effectId) {
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
     return switch (command.type()) {
       case CONTAINER -> describeContainer(context, command);
-      case PUT -> putIntoContainer(context, command);
-      case TAKE -> takeFromContainer(context, command);
+      case PUT -> putIntoContainer(context, command, effectId);
+      case TAKE -> takeFromContainer(context, command, effectId);
       default ->
           new TextCommandInterpretationResult(
               CommandEnqueueResult.failure("INVALID_COMMAND", "Unsupported container command"),
@@ -64,11 +71,11 @@ public class ContainerCommandHandler {
       if (inventory.unavailable()) {
         return containerUnavailable(inventory.reason());
       }
-      Optional<InventoryItem> resolvedContainer =
-          findInventoryItem(inventory.items(), containerReference);
+      Optional<AccessibleContainer> resolvedContainer =
+          resolveAccessibleContainer(context, inventory, containerReference);
       if (resolvedContainer.isEmpty()) {
         return containerInvalidArgument(
-            "No carried container matches \"" + containerReference + "\"");
+            "No accessible container matches \"" + containerReference + "\"");
       }
       return describeResolvedContainer(context, resolvedContainer.orElseThrow());
     } catch (RuntimeException ex) {
@@ -83,7 +90,7 @@ public class ContainerCommandHandler {
   }
 
   private TextCommandInterpretationResult putIntoContainer(
-      SessionContext context, TextCommand command) {
+      SessionContext context, TextCommand command, String effectId) {
     if (command.containerTransferPayload().isEmpty()) {
       return invalidArgument("PUT <item> INTO <container>");
     }
@@ -101,11 +108,11 @@ public class ContainerCommandHandler {
         return containerUnavailable(inventory.reason());
       }
 
-      Optional<InventoryItem> resolvedContainer =
-          findInventoryItem(inventory.items(), transfer.containerReference());
+      Optional<AccessibleContainer> resolvedContainer =
+          resolveAccessibleContainer(context, inventory, transfer.containerReference());
       if (resolvedContainer.isEmpty()) {
         return containerInvalidArgument(
-            "No carried container matches \"" + transfer.containerReference() + "\"");
+            "No accessible container matches \"" + transfer.containerReference() + "\"");
       }
       Optional<InventoryItem> resolvedItem =
           findInventoryItem(inventory.items(), transfer.itemReference());
@@ -113,6 +120,7 @@ public class ContainerCommandHandler {
         return containerInvalidArgument(
             "No carried item matches \"" + transfer.itemReference() + "\"");
       }
+
       InventoryItem inventoryItem = resolvedItem.orElseThrow();
       if (transfer.quantity() > 1
           && ContainerIdentitySupport.matchesExplicitReference(
@@ -121,20 +129,31 @@ public class ContainerCommandHandler {
         return containerInvalidArgument("Explicit item refs require quantity 1 for PUT");
       }
 
+      String selectedItemInstanceId =
+          ContainerIdentitySupport.matchesExplicitReference(inventoryItem, transfer.itemReference())
+                  && !isStackSelection(inventoryItem, transfer.itemReference())
+                  && !inventoryItem.getItemInstanceId().isBlank()
+              ? inventoryItem.getItemInstanceId()
+              : null;
+      String selectedStackFamilyKey = stackFamilyKey(inventoryItem, transfer.itemReference());
+      String containerInstanceId = resolvedContainer.orElseThrow().containerInstanceId();
       var response =
-          entityManagementClient.putItemIntoContainer(
-              Long.toString(context.tenantId()),
-              Long.toString(context.characterId()),
-              ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
-              inventoryItem.getItemId(),
-              ContainerIdentitySupport.matchesExplicitReference(
-                          inventoryItem, transfer.itemReference())
-                      && !isStackSelection(inventoryItem, transfer.itemReference())
-                      && !inventoryItem.getItemInstanceId().isBlank()
-                  ? inventoryItem.getItemInstanceId()
-                  : null,
-              stackFamilyKey(inventoryItem, transfer.itemReference()),
-              transfer.quantity());
+          StringUtils.hasText(effectId)
+              ? gameLogicClient.putItemIntoContainer(
+                  context,
+                  containerInstanceId,
+                  inventoryItem.getItemId(),
+                  selectedItemInstanceId,
+                  selectedStackFamilyKey,
+                  transfer.quantity(),
+                  effectId)
+              : gameLogicClient.putItemIntoContainer(
+                  context,
+                  containerInstanceId,
+                  inventoryItem.getItemId(),
+                  selectedItemInstanceId,
+                  selectedStackFamilyKey,
+                  transfer.quantity());
       if (response.hasError()) {
         return containerFailure(
             errorCode(response.getError().getCode()),
@@ -148,10 +167,10 @@ public class ContainerCommandHandler {
       outputs.add(
           PlayerOutput.message(
               "You put "
-                  + displayInventoryItemName(resolvedItem.orElseThrow())
+                  + displayInventoryItemName(inventoryItem)
                   + quantitySuffix(transfer.quantity())
                   + " into "
-                  + displayInventoryItemName(resolvedContainer.orElseThrow())
+                  + resolvedContainer.orElseThrow().displayName()
                   + "."));
       outputs.addAll(describeResolvedContainer(context, resolvedContainer.orElseThrow()).outputs());
       return new TextCommandInterpretationResult(CommandEnqueueResult.success(), outputs);
@@ -168,7 +187,7 @@ public class ContainerCommandHandler {
   }
 
   private TextCommandInterpretationResult takeFromContainer(
-      SessionContext context, TextCommand command) {
+      SessionContext context, TextCommand command, String effectId) {
     if (command.containerTransferPayload().isEmpty()) {
       return invalidArgument("TAKE <item> FROM <container>");
     }
@@ -186,18 +205,16 @@ public class ContainerCommandHandler {
         return containerUnavailable(inventory.reason());
       }
 
-      Optional<InventoryItem> resolvedContainer =
-          findInventoryItem(inventory.items(), transfer.containerReference());
+      Optional<AccessibleContainer> resolvedContainer =
+          resolveAccessibleContainer(context, inventory, transfer.containerReference());
       if (resolvedContainer.isEmpty()) {
         return containerInvalidArgument(
-            "No carried container matches \"" + transfer.containerReference() + "\"");
+            "No accessible container matches \"" + transfer.containerReference() + "\"");
       }
 
       ListContainerContentsResponse contents =
-          entityManagementClient.listContainerContents(
-              Long.toString(context.tenantId()),
-              Long.toString(context.characterId()),
-              ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()));
+          gameLogicClient.listContainerContents(
+              context, resolvedContainer.orElseThrow().containerInstanceId());
       if (contents.hasError()) {
         return containerFailure(
             errorCode(contents.getError().getCode()), contents.getError().getMessage());
@@ -217,20 +234,31 @@ public class ContainerCommandHandler {
         return containerInvalidArgument("Explicit item refs require quantity 1 for TAKE");
       }
 
+      String selectedItemInstanceId =
+          ContainerIdentitySupport.matchesExplicitReference(containerItem, transfer.itemReference())
+                  && !isStackSelection(containerItem, transfer.itemReference())
+                  && !containerItem.getItemInstanceId().isBlank()
+              ? containerItem.getItemInstanceId()
+              : null;
+      String selectedStackFamilyKey = stackFamilyKey(containerItem, transfer.itemReference());
+      String containerInstanceId = resolvedContainer.orElseThrow().containerInstanceId();
       var response =
-          entityManagementClient.takeItemFromContainer(
-              Long.toString(context.tenantId()),
-              Long.toString(context.characterId()),
-              ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
-              containerItem.getItemId(),
-              ContainerIdentitySupport.matchesExplicitReference(
-                          containerItem, transfer.itemReference())
-                      && !isStackSelection(containerItem, transfer.itemReference())
-                      && !containerItem.getItemInstanceId().isBlank()
-                  ? containerItem.getItemInstanceId()
-                  : null,
-              stackFamilyKey(containerItem, transfer.itemReference()),
-              transfer.quantity());
+          StringUtils.hasText(effectId)
+              ? gameLogicClient.takeItemFromContainer(
+                  context,
+                  containerInstanceId,
+                  containerItem.getItemId(),
+                  selectedItemInstanceId,
+                  selectedStackFamilyKey,
+                  transfer.quantity(),
+                  effectId)
+              : gameLogicClient.takeItemFromContainer(
+                  context,
+                  containerInstanceId,
+                  containerItem.getItemId(),
+                  selectedItemInstanceId,
+                  selectedStackFamilyKey,
+                  transfer.quantity());
       if (response.hasError()) {
         return containerFailure(
             errorCode(response.getError().getCode()),
@@ -246,10 +274,10 @@ public class ContainerCommandHandler {
       outputs.add(
           PlayerOutput.message(
               "You take "
-                  + displayContainerItemName(resolvedItem.orElseThrow())
+                  + displayContainerItemName(containerItem)
                   + quantitySuffix(transfer.quantity())
                   + " from "
-                  + displayInventoryItemName(resolvedContainer.orElseThrow())
+                  + resolvedContainer.orElseThrow().displayName()
                   + "."));
       outputs.addAll(describeResolvedContainer(context, resolvedContainer.orElseThrow()).outputs());
       return new TextCommandInterpretationResult(CommandEnqueueResult.success(), outputs);
@@ -266,12 +294,9 @@ public class ContainerCommandHandler {
   }
 
   private TextCommandInterpretationResult describeResolvedContainer(
-      SessionContext context, InventoryItem containerItem) {
+      SessionContext context, AccessibleContainer containerItem) {
     ListContainerContentsResponse response =
-        entityManagementClient.listContainerContents(
-            Long.toString(context.tenantId()),
-            Long.toString(context.characterId()),
-            ContainerIdentitySupport.resolveContainerInstanceId(containerItem));
+        gameLogicClient.listContainerContents(context, containerItem.containerInstanceId());
     if (response.hasError()) {
       return containerFailure(
           errorCode(response.getError().getCode()), response.getError().getMessage());
@@ -286,15 +311,13 @@ public class ContainerCommandHandler {
             PlayerOutput.view(
                 new InventoryViewOutput(
                     "Container: "
-                        + displayInventoryItemName(containerItem)
-                        + compactReferenceSuffix(containerItem),
+                        + containerItem.displayName()
+                        + compactReferenceSuffix(containerItem.compactReference()),
                     lines))));
   }
 
   private InventoryResolution loadInventory(SessionContext context) {
-    QueryInventoryResponse inventory =
-        entityManagementClient.queryInventory(
-            Long.toString(context.tenantId()), Long.toString(context.characterId()));
+    QueryInventoryResponse inventory = gameLogicClient.queryInventory(context);
     if (inventory.hasError()) {
       return InventoryResolution.unavailable(
           StringUtils.hasText(inventory.getError().getMessage())
@@ -302,6 +325,39 @@ public class ContainerCommandHandler {
               : "Inventory service unavailable");
     }
     return InventoryResolution.available(inventory.getItemsList());
+  }
+
+  private RoomGroundResolution loadRoomGround(SessionContext context) {
+    ListRoomGroundInventoryResponse roomGround =
+        gameLogicClient.listRoomGroundInventory(context, context.roomInstanceId());
+    if (roomGround.hasError()) {
+      return RoomGroundResolution.unavailable(
+          StringUtils.hasText(roomGround.getError().getMessage())
+              ? roomGround.getError().getMessage()
+              : "Room inventory service unavailable");
+    }
+    return RoomGroundResolution.available(roomGround.getItemsList());
+  }
+
+  private Optional<AccessibleContainer> resolveAccessibleContainer(
+      SessionContext context, InventoryResolution inventory, String reference) {
+    Optional<AccessibleContainer> carried =
+        inventory.items().stream()
+            .filter(item -> ContainerIdentitySupport.matchesReference(item, reference))
+            .map(this::toAccessibleContainer)
+            .findFirst();
+    if (carried.isPresent()) {
+      return carried;
+    }
+    RoomGroundResolution roomGround = loadRoomGround(context);
+    if (roomGround.unavailable()) {
+      throw new IllegalStateException(roomGround.reason());
+    }
+    return roomGround.items().stream()
+        .filter(item -> StringUtils.hasText(item.getContainerInstanceId()))
+        .filter(item -> ContainerIdentitySupport.matchesReference(item, reference))
+        .map(this::toAccessibleContainer)
+        .findFirst();
   }
 
   private Optional<InventoryItem> findInventoryItem(List<InventoryItem> items, String reference) {
@@ -314,6 +370,20 @@ public class ContainerCommandHandler {
     return items.stream()
         .filter(item -> ContainerIdentitySupport.matchesReference(item, reference))
         .findFirst();
+  }
+
+  private AccessibleContainer toAccessibleContainer(InventoryItem item) {
+    return new AccessibleContainer(
+        ContainerIdentitySupport.resolveContainerInstanceId(item),
+        displayInventoryItemName(item),
+        ContainerIdentitySupport.compactReference(item));
+  }
+
+  private AccessibleContainer toAccessibleContainer(RoomGroundInventoryItem item) {
+    return new AccessibleContainer(
+        ContainerIdentitySupport.resolveContainerInstanceId(item),
+        StringUtils.hasText(item.getItemName()) ? item.getItemName() : "item",
+        ContainerIdentitySupport.compactReference(item));
   }
 
   private String formatContainerItem(ContainerItem item) {
@@ -368,8 +438,7 @@ public class ContainerCommandHandler {
     return reason;
   }
 
-  private String compactReferenceSuffix(InventoryItem item) {
-    String compactReference = ContainerIdentitySupport.compactReference(item);
+  private String compactReferenceSuffix(String compactReference) {
     return StringUtils.hasText(compactReference) ? " [" + compactReference + "]" : "";
   }
 
@@ -424,4 +493,18 @@ public class ContainerCommandHandler {
       return new InventoryResolution(List.of(), true, reason);
     }
   }
+
+  private record RoomGroundResolution(
+      List<RoomGroundInventoryItem> items, boolean unavailable, String reason) {
+    static RoomGroundResolution available(List<RoomGroundInventoryItem> items) {
+      return new RoomGroundResolution(List.copyOf(items), false, null);
+    }
+
+    static RoomGroundResolution unavailable(String reason) {
+      return new RoomGroundResolution(List.of(), true, reason);
+    }
+  }
+
+  private record AccessibleContainer(
+      String containerInstanceId, String displayName, String compactReference) {}
 }

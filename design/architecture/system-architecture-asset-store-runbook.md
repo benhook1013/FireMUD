@@ -64,7 +64,7 @@ When using a self-hosted MinIO cluster as the asset store:
      launchable in `game_manifest`) are eligible for asset deletion.
    - Retired eligibility must also account for **design-time dependencies**: the version must not be referenced by any game templates. Operators should validate that no normalized `game_template_*_ref` rows in the Game Design Service still reference `(tenantId, versionId)` before deleting the corresponding object-store prefix.
    - Asset deletion eligibility must account for design-history reachability as well as version mappings. Use the Game Design control-plane check `CanDeleteVersionAssets(tenantId, versionId)` that validates no non-Retired `version_asset` references remain, no reachable `revision_asset` / branch references require retained bytes, and no template or launch metadata still points to the version prefix.
-   - Before purge or repair, read `GetVersionAssetArtifactState(tenantId, versionId)` and treat its `artifactState`, `stateEpoch`, and `manifestHash` as the authoritative proof row. Do not infer lifecycle state from bucket listings.
+   - Before purge or repair, read `GetVersionAssetArtifactState(tenantId, versionId)` and treat its `artifactState`, `stateEpoch`, `manifestHash`, `exportedVersionNumber`, and exported manifest asset keys as the authoritative proof row. Do not infer lifecycle state from bucket listings.
    - Do not run deletion as a separate check + manual delete sequence. Start purge only through `BeginPurgeVersionAssets(tenantId, versionId, expectedArtifactStateEpoch)` so eligibility re-check and `version_asset_artifact` state transition are atomic and CAS-guarded.
    - Operators must verify the persisted artifact lifecycle row (`version_asset_artifact`) is `TOMBSTONED` before issuing purge actions. `BeginPurgeVersionAssets` must transition state to `PURGE_IN_PROGRESS` before bytes are removed, and `FinalizePurgeVersionAssets` must transition to retained terminal state `PURGED` after bytes are removed. Do not infer lifecycle state solely from object-store contents.
    - `EXPORTED_UNATTESTED` means bytes were exported but publish did not complete. Such prefixes are not launchable and must be repaired or failed through the documented workflow; operators must not treat them as equivalent to `PUBLISHED`.
@@ -75,9 +75,7 @@ When using a self-hosted MinIO cluster as the asset store:
      a still-published version), operators should re-run the `ExportAssets` Saga step
      for the affected `(tenantId, versionId)` so the manifest and prefix are rebuilt
      from the authoritative repair sources rather than attempting manual repair:
-     ordinary binary assets rebuild from Game Design asset metadata and `version_asset`
-     mappings, while derived artifacts rebuild from the producer-owned immutable
-     artifact contracts defined in `asset-storage.md`.
+     ordinary binary assets rebuild from the immutable Game Design asset byte rows (`game_assets.data` in the current first slice) plus exported asset-key proof, while derived artifacts rebuild from the producer-owned immutable artifact contracts defined in `asset-storage.md`.
    - Use `RepairPublishedVersionAssets(tenantId, versionId, expectedArtifactStateEpoch, repairWorkflowId)` for Published/Active releases rather than ad hoc reruns. That workflow must fail with deterministic application outcomes such as `REPAIR_ATTESTATION_MISMATCH` or `ASSET_ARTIFACT_STATE_CONFLICT` instead of silently mutating attested bytes.
    - Because Published/Active versions are immutable, rerunning `ExportAssets` for a Published/Active version must produce bit-for-bit identical bytes matching the existing `published_release_bundle` attestation returned by `GetPublishedReleaseBundle(tenantId, versionId)`. If any required producer-owned derived artifact can no longer reproduce the attested bytes, fail closed and treat it as a recovery-blocking process bug or data-corruption incident rather than “fixing” the published version in place.
    - Prefer invoking a higher-level admin workflow (for example a `RetireVersion` operation in the Game Design or Logging & Admin Service) that verifies retirement eligibility, updates manifests/internal metadata to retired state, and deletes the corresponding `<tenant>/<version>/` prefix from the object store.
@@ -91,8 +89,8 @@ When using a self-hosted MinIO cluster as the asset store:
 
 Current implementation notes:
 
-- `GetVersionAssetArtifactState` and `RepairPublishedVersionAssets` are now live in `game-design-service`.
-- the purge-specific APIs (`CanDeleteVersionAssets`, `BeginPurgeVersionAssets`, `FinalizePurgeVersionAssets`, `GetVersionAssetPurgeStatus`) are still design-canonical but not implemented yet, so purge must still wait for that control-plane coverage rather than being inferred complete from the repair path.
+- `GetVersionAssetArtifactState`, `RepairPublishedVersionAssets`, `TombstoneVersionAssets`, `CanDeleteVersionAssets`, `BeginPurgeVersionAssets`, `FinalizePurgeVersionAssets`, and `GetVersionAssetPurgeStatus` are now live in `game-design-service`.
+- `version_asset_artifact` remains the persisted proof row for lifecycle state, exported version-number prefix, and exported manifest asset keys, and `version_asset_purge_workflow` is now the retained workflow-status surface for purge start/finalization outcomes.
 
 ## Handling Failed Publish Versions
 

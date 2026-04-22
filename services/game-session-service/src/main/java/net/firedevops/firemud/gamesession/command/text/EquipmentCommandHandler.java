@@ -10,7 +10,7 @@ import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
-import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -21,22 +21,27 @@ import org.springframework.util.StringUtils;
 /** Handles the first equipment command surface in the text session layer. */
 @Component
 public class EquipmentCommandHandler {
-  private final EntityManagementClient entityManagementClient;
+  private final GameLogicClient gameLogicClient;
 
-  public EquipmentCommandHandler(EntityManagementClient entityManagementClient) {
-    this.entityManagementClient =
-        Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
+  public EquipmentCommandHandler(GameLogicClient gameLogicClient) {
+    this.gameLogicClient =
+        Objects.requireNonNull(gameLogicClient, "gameLogicClient must not be null");
   }
 
   @Timed(value = "gamesession.command.equipment")
   public TextCommandInterpretationResult handle(SessionContext context, TextCommand command) {
+    return handle(context, command, null);
+  }
+
+  public TextCommandInterpretationResult handle(
+      SessionContext context, TextCommand command, String effectId) {
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
     return switch (command.type()) {
       case EQUIPMENT -> describeEquipment(context);
-      case WEAR -> wear(context, command);
-      case REMOVE -> remove(context, command);
+      case WEAR -> wear(context, command, effectId);
+      case REMOVE -> remove(context, command, effectId);
       default ->
           new TextCommandInterpretationResult(
               CommandEnqueueResult.failure("INVALID_COMMAND", "Unsupported equipment command"),
@@ -50,9 +55,7 @@ public class EquipmentCommandHandler {
   }
 
   private TextCommandInterpretationResult describeEquipment(SessionContext context) {
-    ListEquipmentResponse equipment =
-        entityManagementClient.listEquipment(
-            Long.toString(context.tenantId()), Long.toString(context.characterId()));
+    ListEquipmentResponse equipment = gameLogicClient.listEquipment(context);
     if (equipment.hasError()) {
       return equipmentUnavailable(equipment.getError().getMessage());
     }
@@ -65,7 +68,8 @@ public class EquipmentCommandHandler {
         List.of(PlayerOutput.view(new InventoryViewOutput("Equipment:", lines))));
   }
 
-  private TextCommandInterpretationResult wear(SessionContext context, TextCommand command) {
+  private TextCommandInterpretationResult wear(
+      SessionContext context, TextCommand command, String effectId) {
     if (command.itemReferencePayload().isEmpty()) {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure("INVALID_ARGUMENT", "WEAR command requires an item"),
@@ -92,11 +96,11 @@ public class EquipmentCommandHandler {
 
     InventoryItem carried = resolution.item().orElseThrow();
     WearEquipmentItemResponse response =
-        entityManagementClient.wearEquipment(
-            Long.toString(context.tenantId()),
-            Long.toString(context.characterId()),
-            carried.getItemId(),
-            carried.getItemInstanceId());
+        StringUtils.hasText(effectId)
+            ? gameLogicClient.wearEquipment(
+                context, carried.getItemId(), carried.getItemInstanceId(), effectId)
+            : gameLogicClient.wearEquipment(
+                context, carried.getItemId(), carried.getItemInstanceId());
     if (response.hasError()) {
       return equipmentFailure(response.getError().getCode(), response.getError().getMessage());
     }
@@ -106,7 +110,8 @@ public class EquipmentCommandHandler {
     return equipmentSuccess("You wear " + response.getEquipmentItem().getItemName() + ".");
   }
 
-  private TextCommandInterpretationResult remove(SessionContext context, TextCommand command) {
+  private TextCommandInterpretationResult remove(
+      SessionContext context, TextCommand command, String effectId) {
     if (command.itemReferencePayload().isEmpty()) {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure("INVALID_ARGUMENT", "REMOVE command requires an item"),
@@ -122,9 +127,7 @@ public class EquipmentCommandHandler {
     if (itemReference.quantity() != 1) {
       return equipmentInvalidArgument("REMOVE", "REMOVE takes a single equipped item at a time");
     }
-    ListEquipmentResponse equipment =
-        entityManagementClient.listEquipment(
-            Long.toString(context.tenantId()), Long.toString(context.characterId()));
+    ListEquipmentResponse equipment = gameLogicClient.listEquipment(context);
     if (equipment.hasError()) {
       return equipmentUnavailable(equipment.getError().getMessage());
     }
@@ -136,10 +139,9 @@ public class EquipmentCommandHandler {
     }
     EquipmentItem worn = resolved.orElseThrow();
     RemoveEquipmentResponse response =
-        entityManagementClient.removeEquipment(
-            Long.toString(context.tenantId()),
-            Long.toString(context.characterId()),
-            worn.getSlot());
+        StringUtils.hasText(effectId)
+            ? gameLogicClient.removeEquipment(context, worn.getSlot(), effectId)
+            : gameLogicClient.removeEquipment(context, worn.getSlot());
     if (response.hasError()) {
       return equipmentFailure(response.getError().getCode(), response.getError().getMessage());
     }
@@ -184,9 +186,7 @@ public class EquipmentCommandHandler {
   }
 
   private EquipmentResolution resolveCarriedItem(SessionContext context, String reference) {
-    var inventory =
-        entityManagementClient.queryInventory(
-            Long.toString(context.tenantId()), Long.toString(context.characterId()));
+    var inventory = gameLogicClient.queryInventory(context);
     if (inventory.hasError()) {
       return EquipmentResolution.unavailable(
           StringUtils.hasText(inventory.getError().getMessage())

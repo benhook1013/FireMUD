@@ -1,6 +1,5 @@
 package net.firedevops.firemud.socialgroups.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
@@ -48,9 +47,6 @@ public class GuildServiceImpl implements GuildService {
   private final GuildMemberRepository guildMemberRepository;
   private final GuildMemberMapper guildMemberMapper;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Injected client is managed by Spring")
   private final LoggingAdminClient loggingAdminClient;
 
   @Override

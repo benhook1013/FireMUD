@@ -25,6 +25,15 @@ public final class EntityManagementStubServer implements AutoCloseable {
                       StreamObserver<ListRoomEntitiesResponse> responseObserver) {
                     responseObserver.onNext(
                         ListRoomEntitiesResponse.newBuilder()
+                            .setTenantId(LookTestFixtures.TENANT)
+                            .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
+                            .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+                            .setEntitySnapshotId(
+                                LookTestFixtures.TENANT
+                                    + ":"
+                                    + LookTestFixtures.GAME_INSTANCE_ID
+                                    + ":"
+                                    + LookTestFixtures.ROOM_INSTANCE_ID)
                             .addAllEntities(LookTestFixtures.sampleEntities().getEntitiesList())
                             .build());
                     responseObserver.onCompleted();

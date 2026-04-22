@@ -40,6 +40,13 @@ Current `06.3` / item-instance note:
 - this only defines author intent for later fungibility work, and does not yet enable runtime stack merge on its own;
 - non-stackable remains the safe default for ordinary physical items, especially equipment, containers, and other stateful items.
 
+Current equipment-schema note:
+
+- slots and body layouts are game-authored versioned concepts, not platform-global enums;
+- item templates use `equipmentSlot` as their default target slot for the current player command loop and may use `equipmentSlotGroupKey` to constrain compatibility against the authored slot definition;
+- characters use a `bodyLayoutKey`; runtime equipment binding rejects a slot when the active version has a body-layout schema for that key and the slot is not included;
+- versions without authored slot/body-layout schema keep a bootstrap fallback that accepts the item template's direct slot string, so early content can run while creator-facing editors are still being built.
+
 ## Related Documentation
 
 - [Game Design Service Architecture](README.md)

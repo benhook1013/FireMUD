@@ -35,7 +35,6 @@ class TelnetPipelineIntegrationTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            false,
             () -> {},
             () -> {},
             registry.counter("connections"),
@@ -87,7 +86,6 @@ class TelnetPipelineIntegrationTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            false,
             () -> {},
             () -> {},
             registry.counter("connections"),

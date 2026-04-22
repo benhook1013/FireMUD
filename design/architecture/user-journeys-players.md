@@ -66,16 +66,16 @@ Player → Account Service
 The first successful session for a new player follows a single canonical onboarding flow regardless of client type:
 
 1. **Authenticate the Platform Account**
-   - **First-party web client** – Obtains a short-lived player bootstrap token through the [Account Service](./microservices/account-service/README.md), uses bootstrap-backed discovery endpoints to choose a world/realm/character target, then requests a connect token and opens the gameplay WebSocket through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md).
+   - **First-party web client** – Obtains a short-lived player bootstrap token through the [Account Service](./microservices/account-service/README.md), uses bootstrap-backed discovery endpoints to choose a world/realm/character target, then requests a connect token and opens the gameplay WebSocket through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Browser clients receive the connect token as the short-lived `Firemud-Connect-Token` HttpOnly cookie, so they do not depend on custom WebSocket headers.
    - **Telnet / MCP client** – Connects through the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) and authenticates in-band with `LOGIN`.
 2. **Browse or Discover Joinable Worlds** – The player may use `WORLDS` before login to browse the platform publicly, then use the same command again after login to see the authenticated discovery set they can actually enter. Existing memberships always qualify. In v1, a live default production realm may also be publicly discoverable even before the player has joined that tenant, so brand-new accounts can still discover where they would enter through the public-production onboarding path. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
-3. **Choose a Realm** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to choose between the default production realm and any explicitly authorized additional realms such as a playtest fork. Hidden or unauthorized realms are never disclosed. Public discovery applies only to the default production realm in v1; any additional realm requires an explicit access grant from the creator or operator. On the default public production realm, the first successful `PLAY` creates the player's `player` membership atomically as part of admission.
-4. **List Characters or Create New** – The player uses `CHARS <world> [realm]` to view the character choices valid for the selected realm target. In shared-state realms this typically means the tenant's normal live durable character roster. In isolated realms it may instead mean copied fork-local state, seeded/sample-state characters, or fresh standalone realm-local state for the same account. If no visible character exists, the client must complete the world's character-creation flow before `PLAY` succeeds unless the resolved realm's policy forbids creation. The authoritative character-creation owner for this step is the [Entity Management Service](./microservices/entity-management-service/README.md), whose `CreateCharacter` contract defines how new player characters are created from published templates. For playtest forks, a player may arrive with copied fork-local character state from the source snapshot. If no visible fork-local character exists for that account, fork policy determines whether the player may create a fresh fork-local character or whether the fork is restricted to copied characters only; whichever policy a fork uses must be surfaced consistently in the lobby/client UX. If a fork permits both copied and newly created fork-local characters, `CHARS` returns them in one fork-local list and the client does not need a separate mode switch. If no visible character exists and fork policy forbids creation, the canonical player-facing failure is a hard character-selection denial rather than a generic `CHARACTER_REQUIRED` prompt.
+3. **Choose a Realm** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to choose between the default production realm and any explicitly authorized additional realms such as a playtest fork. Hidden or unauthorized realms are never disclosed. Public discovery applies only to the default production realm in v1; any additional realm requires an explicit access grant from the creator or operator. On the default public production realm, first-party bootstrap creates the player's `player` membership during connect-token issuance before socket admission; credential-bearing text clients create it through the same Account Service writer boundary during `PLAY`.
+4. **List Characters or Create New** – The player uses `CHARS <world> [realm]` to view the character choices valid for the selected realm target. In shared-state realms this typically means the tenant's normal live durable character roster. In isolated realms it may instead mean copied fork-local state, seeded/sample-state characters, or fresh standalone realm-local state for the same account. The current backend discovery contract is realm-aware: character listing carries the resolved `gameInstanceId` and playable-state scope, and bootstrap/text discovery expose the selected realm's state scope and character-creation policy instead of reading a tenant-wide roster behind a realm label. If no visible character exists, the client must complete the world's character-creation flow before `PLAY` succeeds unless the resolved realm's policy forbids creation. The authoritative character-creation owner for this step is the [Entity Management Service](./microservices/entity-management-service/README.md), whose `CreateCharacter` contract defines how new player characters are created for the selected realm scope. For playtest forks, a player may arrive with copied fork-local character state from the source snapshot. If no visible fork-local character exists for that account, fork policy determines whether the player may create a fresh fork-local character or whether the fork is restricted to copied characters only; whichever policy a fork uses must be surfaced consistently in the lobby/client UX. If a fork permits both copied and newly created fork-local characters, `CHARS` returns them in one fork-local list and the client does not need a separate mode switch. If no visible character exists and fork policy forbids creation, the canonical player-facing failure is a hard character-selection denial rather than a generic `CHARACTER_REQUIRED` prompt.
    - Minimum realm-policy consequence: when the selected realm is isolated-state, character discovery and any allowed creation target only that realm's gameplay state namespace. They must not silently read from or write to the tenant's normal live production roster.
    - `CHARS` must also expose the realm-local creation decision clearly enough that clients do not infer policy from roster shape alone. A realm that denies fresh creation must say so explicitly; a realm that allows fresh realm-local creation may do so alongside copied/seeded characters without introducing a separate client mode switch.
 5. **Bind to Gameplay** – `PLAY <world> [realm] [character]` resolves to canonical `{tenantId, gameInstanceId, characterId}` values and binds the session to the selected realm. After this step, normal gameplay commands become available.
 
-For a first-time join through a publicly discoverable production realm, the first successful `PLAY` creates the player's `player` membership atomically as part of admission. Failed joins do not leave behind partial membership rows.
+For a first-time join through a publicly discoverable production realm, the player's `player` membership is created through the Account Service public-production membership writer boundary before gameplay binding is committed. First-party bootstrap normally reaches that boundary during `POST /auth/connect-token`; text clients that do not use bootstrap reach it during `PLAY`. Failed joins do not leave behind partial membership rows.
 
 This onboarding flow is the only supported way to discover and enter a realm. First-party WebSocket connect tokens and any future hidden Telnet smart-client metadata may narrow the target realm, but they never replace the authenticated lobby contract.
 
@@ -104,7 +104,7 @@ GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/{world}/realms
 GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters
 POST /auth/connect-token { connectScopeId=cs_demo_production_v17 }
-GET /ws/game/** with X-Firemud-Connect-Token
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 LOGIN
 PLAY <world> [realm] [character]
 ```
@@ -118,14 +118,14 @@ GET /auth/bootstrap/worlds/emberfall/realms
 GET /auth/bootstrap/worlds/emberfall/realms/production/characters
 POST /characters { world=emberfall, realm=production, name=Mara, template=human-fighter }
 POST /auth/connect-token { connectScopeId=cs_emberfall_production_v1 }
-GET /ws/game/** with X-Firemud-Connect-Token
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 LOGIN
 PLAY emberfall production Mara
 OK PLAY Entered Emberfall / Live Realm as Mara
 ```
 
 After this first successful join, the player's account now has normal `player` membership for Emberfall, so later discovery no longer depends on public-production visibility alone.
-The player-facing character-creation call in this sequence is the canonical `POST /characters` surface backed by Entity Management's `CreateCharacter` contract. It is permitted only for the currently bootstrap-visible realm target and must complete before the new character is admissible through `PLAY`.
+The player-facing character-creation call in this sequence is the canonical `POST /characters` surface backed by Entity Management's `CreateCharacter` contract. It is permitted only for the currently bootstrap-visible realm target and must complete before the new character is admissible through `PLAY`. The currently resolved backend substrate covers realm scope and creation policy; the remaining product contract is a richer character-creation descriptor that tells first-party clients which template/race/class/options to render for a given published game version.
 Any non-production realm shown in fork/playtest examples is assumed to already be grant-visible to that caller; non-public realms are not publicly discoverable by default.
 
 ---
@@ -154,6 +154,33 @@ Gameplay sessions are managed by the [Game Session Service](./microservices/game
 Game actions are resolved on a fixed tick loop as outlined in the [Tick System](./system-architecture-ticks.md). Players recover from disconnects through the layered reconnect flow described in [Reconnection Strategy](./system-architecture-reconnection.md).
 
 If a tenant is temporarily unavailable because billing or entitlements block gameplay, the player sees a clear tenant-scoped error before `PLAY` succeeds. If a creator or operator cuts a realm over to a replacement instance, reconnect follows the same lobby and admission flow and lands on the currently routable realm target.
+
+The current player-facing gameplay loop includes room views, communication, movement, and the first item-management commands. After `PLAY`, a player can use `LOOK` to read the current room, `INV HERE` to inspect visible room-ground items, `GET <item>` / `DROP <item>` to move items between the room and their carried inventory, `INVENTORY` to inspect carried items, `CONTAINER <item>` / `PUT` / `TAKE` for named carried or nearby room-ground containers, and `EQUIPMENT` / `WEAR` / `REMOVE` for equipment state. Item views expose stable selectors when exact targeting is needed, so duplicate or stack-backed items can be manipulated without relying on prose descriptions alone. Equipment actions are validated against the game's authored slot/body-layout model when that schema exists, so non-humanoid characters or game-specific attachment points produce explicit errors rather than silent no-ops.
+
+Example gameplay transcript:
+
+```text
+LOOK
+The Ember Gate
+You stand before a red stone arch.
+Items here:
+- Torch [torch3]
+INV HERE
+Room Inventory:
+- Torch [torch3]
+GET torch3
+You pick up Torch.
+INVENTORY
+Inventory:
+- Torch [torch3]
+EQUIPMENT
+You have nothing equipped.
+WEAR torch3
+You wear Torch.
+EQUIPMENT
+Equipment:
+- HAND: Torch [torch3]
+```
 
 ```plaintext
 Player → TCP Proxy / Gateway → Game Session Service → Backend Services
@@ -199,9 +226,10 @@ Current gameplay implementation note: the foundational shared communication path
 
 1. **Payment Processing** – The [Account Service](./microservices/account-service/README.md) handles subscriptions, one-time purchases, and optional donations via Stripe.
 2. **Platform Fee & Restrictions** – A small platform fee applies to each transaction and external payment methods are not allowed, per the [Core Requirements](../project-management/core-requirements.md#2.8-moderation-administration--monetization).
-3. **Audit and Compliance** – Transactions are logged through the [Logging & Admin Service](./microservices/logging-admin-service/README.md) for reporting and refunds.
-4. **Tenant Availability & Limits** – Whether a game can start new instances or accept new logins depends on the tenant’s subscription state and plan entitlements as described in the [Subscription Management Design](./microservices/account-service/subscription-management.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md#tenant-configuration--scaling). When a tenant is suspended for billing, login attempts fail with clear errors until billing is resolved.
-5. **Billing Recovery** – Billing-safe management actions stay reachable even when gameplay is suspended so creators can resolve payment issues without operator intervention. Players see tenant-scoped unavailability errors until the creator restores service.
+3. **One-Time Purchase Entitlements** – One-time purchases that grant ongoing value create Account Service-owned purchase entitlements after Stripe success; refunds revoke those entitlements unless the product was explicitly consumed under a non-revocable product contract.
+4. **Audit and Compliance** – Transactions are logged through the [Logging & Admin Service](./microservices/logging-admin-service/README.md) for reporting and refunds.
+5. **Tenant Availability & Limits** – Whether a game can start new instances or accept new logins depends on the tenant’s subscription state and plan entitlements as described in the [Subscription Management Design](./microservices/account-service/subscription-management.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md#tenant-configuration--scaling). When a tenant is suspended for billing, login attempts fail with clear errors until billing is resolved.
+6. **Billing Recovery** – Billing-safe management actions stay reachable even when gameplay is suspended so creators can resolve payment issues without operator intervention. Players see tenant-scoped unavailability errors until the creator restores service.
 
 ```plaintext
 Player → Account Service → Logging & Admin Service
@@ -240,7 +268,9 @@ Account Service → Game Design Service (select tenant) → Game Session Service
 
 ## 9. Account Data Export & Deletion
 
-Players may request a full data export or permanently delete an account through the [Account Service](./microservices/account-service/README.md). Exported data is provided in JSON format for portability. Deletions require confirmation and are recorded by the [Logging & Admin Service](./microservices/logging-admin-service/README.md) for audit purposes.
+Players may request a full account data export or permanently delete an account through the [Account Service](./microservices/account-service/README.md). Exported account data is provided in JSON format for portability and covers the account-owned data the caller is entitled to receive across tenants. Tenant admins also have a separate tenant-scoped billing-safe export for one suspended or canceled tenant; that export is bounded to the tenant and does not expose unrelated account data from other games.
+
+Account deletion requires confirmation, revokes active sessions, and is recorded by the [Logging & Admin Service](./microservices/logging-admin-service/README.md) for audit purposes. Deletion is blocked while the account owns any nonterminal tenant subscription; the creator must first transfer billing ownership or cancel the subscription terminally so payment instruments, invoices, refunds, and tenant hosting responsibility are not orphaned.
 
 ```plaintext
 Player → Account Service → Logging & Admin Service (audit)

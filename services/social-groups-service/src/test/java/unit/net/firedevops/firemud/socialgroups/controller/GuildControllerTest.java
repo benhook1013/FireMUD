@@ -15,6 +15,7 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.socialgroups.dto.CreateGuildRequest;
 import net.firedevops.firemud.socialgroups.dto.GuildDto;
 import net.firedevops.firemud.socialgroups.service.GuildService;
+import net.firedevops.firemud.test.WithFiremudHttpAuthTestProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,7 +24,6 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
@@ -31,12 +31,7 @@ import tools.jackson.databind.ObjectMapper;
 @WebMvcTest(GuildController.class)
 @AutoConfigureMockMvc(addFilters = false)
 @Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
-@TestPropertySource(
-    properties = {
-      "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
-      "firemud.auth.jwt-expiration-ms=3600000",
-      "firemud.auth.http.enabled=true"
-    })
+@WithFiremudHttpAuthTestProperties
 class GuildControllerTest {
 
   @Autowired private MockMvc mockMvc;
@@ -72,7 +67,7 @@ class GuildControllerTest {
   void createGuildRejectsCrossTenantScopedAdmin() throws Exception {
     CreateGuildRequest request = new CreateGuildRequest(1L, 2L, "guild");
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("admin"))));
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(

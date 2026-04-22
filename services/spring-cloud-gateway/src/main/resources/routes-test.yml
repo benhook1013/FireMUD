@@ -5,6 +5,6 @@ spring:
         webflux:
           routes:
             - id: session
-              uri: ws://game-session-service:8080
+              uri: http://game-session-service:8080
               predicates:
                 - Path=/api/session/**

@@ -21,6 +21,17 @@ The tick system serves multiple audiences. Use these companion docs to jump dire
 
 This file provides a **condensed overview and anchor headings** so other docs can deep-link into specific topics. Detailed narrative and worked examples now live primarily in the audience-focused documents.
 
+## Implementation Notes
+
+The target-state tick architecture in this document is intentionally broader than the current live runtime boundary.
+
+Current live substrate to keep in mind while reading:
+
+- the live durable ownership and command-status boundary is currently keyed by `{tenantId, gameInstanceId}`, not true `regionId` partitioning;
+- the live control-plane/status APIs are `GetRuntimeOwnershipStatus` and `GetGameplayCommandStatus`, not the fuller target-state `GetRegionTickStatus` / `GetCommandStatus` contract described later in this doc;
+- the live `executorFence` is an opaque generation token used for compare-and-match stale-fence protection, not yet the richer numeric ordering model used in some target-state examples;
+- the live `tick_batch` / `tick_effect` substrate is real, but the full selected-work manifest and cross-region result-return contract described below are still target-state follow-through rather than fully shipped behavior.
+
 ---
 
 ## Hybrid Tick Model
@@ -121,11 +132,13 @@ Automation & Scripting Service instances typically:
 For any consumer or operator that needs to locate “where a region is” on the `(regionEpoch, tickId)` timeline:
 
 - **Bootstrap** from a durable view:
-  - Game Session exposes a control/status API (for example `GetRegionTickStatus`) backed by a PostgreSQL `RegionStatus` or equivalent table that records the latest committed `(regionEpoch, tickId)` per `<tenantId, regionId>`.
-  - New consumers and operational tools obtain their initial view of the timeline from this API or table; they do not infer it from Redis coordination keys.
+  - Target-state, Game Session exposes a control/status API such as `GetRegionTickStatus` backed by a PostgreSQL `RegionStatus` or equivalent table that records the latest committed `(regionEpoch, tickId)` per `<tenantId, regionId>`.
+  - Current live boundary: the equivalent owner-of-record/status read is `GetRuntimeOwnershipStatus` over the current `{tenantId, gameInstanceId}` ownership row. New consumers and operational tools should bootstrap from that live surface today and treat the region-scoped API described here as target-state until true region partitioning lands.
 - Minimum `RegionStatus` contract (required for consumers and admission control):
   - Timeline: `regionEpoch`, `lastCommittedTickId`, and an `updatedAt`/`lastCommitTimestamp`.
-  - Ownership fencing: a durable monotonic `executorFence` (or equivalent name) that increments on every successful lease acquisition for the region and is recorded on tick batches and other durable tick-control writes.
+  - Ownership fencing: a durable `executorFence` (or equivalent name) recorded on tick batches and other durable tick-control writes.
+    - Target-state may choose a monotonic numeric fence.
+    - Current live boundary uses an opaque generation token and compare-and-match semantics rather than numeric old/new ordering.
   - Health: a bounded `status`/`health` value (for example `RUNNING`, `DEGRADED`, `PAUSED`, `STALLED`).
   - Backlog indicators:
     - Minimum required when cross-region gameplay, replay-driven admission control, or backlog-based shedding is enabled: retry depth and remote follow-up lag/backlog so origin-side admission control can shed load without relying on Redis hints.
@@ -258,11 +271,14 @@ Region split/merge operations interact directly with tick idempotency, Redis key
    - Wait for any in-flight `tick:{tenantRegionTag}:pending` work to commit or be recovered to a terminal state.
 2. **Converge durable outcomes**
    - Run the tick effect ledger replay controller/reconcile tooling for the affected scope so any lingering `SCHEDULED` effects converge to `APPLIED` or `ABANDONED` before moving queues or entities.
+   - Accepted command records that never became durably tied to a surviving `tick_batch_id` converge to terminal command status (`executionOutcome = LOST_BEFORE_STAGING`, default `gameplayResult = NOT_APPLIED`) as part of the same reset/topology scope; do not leave old-epoch dedupe rows stranded in pre-batch states.
 3. **Sever the old timeline for any mapping change (required)**
    - If the operation changes region boundaries or re-homes entities to a different region mapping, bump `regionEpoch` for all affected `<tenantId, regionId>` pairs as part of the topology change (the same epoch-severing mechanism used by scoped coordination resets).
    - Only topology operations that preserve entity-to-region ownership exactly may skip an epoch bump, and those exceptions must be explicitly documented and audited in the maintenance record.
-4. **Migrate coordination state using shared key builders**
-   - Move only reset-tolerant, purely coordination structures (queues, timers, retry metadata) using versioned tooling that uses the shared key builders and Lua Script Registry descriptors.
+4. **Reset or migrate coordination state using shared key builders**
+   - First implementation resets/rebuilds coordination state from durable PostgreSQL state after the epoch bump instead of moving live Redis keys.
+   - Future in-place migration may move only reset-tolerant, purely coordination structures (queues, timers, retry metadata) using versioned tooling that uses the shared key builders and Lua Script Registry descriptors.
+   - Queue entries, timers, and retry records that are purely coordination state are not reconstructed from old Redis keys unless dedicated migration tooling re-derives them from durable intent under the new mapping. The default fate for accepted-but-unbound queued commands is the explicit command outcome above, not silent replay on the new epoch.
    - Do not hand-edit `tick:*`, `timer:*`, `retry:*`, or lease/lock keys.
 5. **Handle cross-region follow-ups explicitly**
    - Durable follow-up rows in PostgreSQL are the source of truth for cross-region work. Topology changes must ensure follow-ups are either:

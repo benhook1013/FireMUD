@@ -21,7 +21,7 @@ Audit and outcomes must distinguish between:
 - “DSL evaluated successfully” vs
 - “commands were accepted into the tick system”.
 
-By default, `script_event_audit.finalOutcome=success` must mean “commands were accepted into the tick system”, not merely that the DSL evaluated. The audit record must also be stage-aware (for example `finalStage=TICK_HANDOFF`) as specified in `design/architecture/system-architecture-scripting-observability-contract.md`.
+By default, live `script_event_audit.finalOutcome=success` must mean “commands were accepted into the tick system”, not merely that the DSL evaluated. The audit record must also be stage-aware (for example `finalStage=TICK_HANDOFF`) as specified in `design/architecture/system-architecture-scripting-observability-contract.md`. Dry-run/test success uses the separate non-committing outcome `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`.
 
 ### 3) Version Fencing (Rollback Safety)
 
@@ -41,6 +41,7 @@ To make script patch rollback meaningful:
 - **Entity-scoped events** (`onSpawn`, `onEnterRegion`, `onCommand`, custom events) must treat the unique trigger identity as including at least `tenantId`, `gameInstanceId`, `regionId`, `entityId`, `scriptId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and `isDryRun`. For gameplay/runtime triggers, `regionEpoch` is required to fence across scoped coordination resets as defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md`.
 - **Scheduler events** (`onInterval`, `onTimerExpire`) must use deterministic identities that include the due point plus `regionEpoch`, `scriptPatchVersion`, and `isDryRun` so leader catch-up and retries do not double-fire. For tick-cadence scheduling (for example `onInterval` configured in ticks), the due point must be expressed as `dueTickId` in the canonical tick timeline. For wall-clock timers, the due point must be expressed as absolute `dueAt` (and still include `regionEpoch` to fence across coordination resets).
 - Scheduler identities and durable timer state must also include `gameInstanceId`. For plugin timers, `pluginId` and `pluginVersionId` are additionally required so multi-instance and plugin-version rollbacks cannot alias timer state.
+- **Tenant-readiness `onLoad` events** are keyed by `<tenantId, scriptId, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>` and intentionally omit `gameInstanceId`, `regionId`, `regionEpoch`, and `entityId` because they run before any instance pins the patch. Automation & Scripting owns deterministic `scriptEventId` generation for this lifecycle path.
 
 Callers must reuse the same `scriptEventId` on retries for live ingress. For dry-run/test ingress, server-generated IDs are preferred by default; if caller-supplied IDs are accepted, they must be collision-validated in the dry-run namespace.
 
@@ -134,7 +135,7 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 - A successfully admitted trigger must still be prevented from emitting unbounded work.
 - The Automation & Scripting Service must enforce explicit ceilings including `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes` before durable persistence/handoff.
 - Output-budget violations must be recorded as non-success stage-aware outcomes and must not partially persist oversized work items.
-- Publish-time validation in Game Design should conservatively reject graphs whose bounded worst-case fan-out exceeds runtime ceilings.
+- Publish-time validation in Game Design must conservatively reject graphs whose bounded worst-case fan-out exceeds runtime ceilings, using the shared static output cost contract in `design/architecture/system-architecture-scripting-runtime-execution.md#static-output-cost-contract`.
 
 ## Related Documents
 

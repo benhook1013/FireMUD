@@ -8,7 +8,6 @@ import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -41,7 +40,6 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   private final SessionStateService sessionStateService;
   private final MeterRegistry meterRegistry;
   private final PingService pingService;
-  private final DevIsolatedProperties devIsolatedProperties;
   private final DisconnectDeduplicationService disconnectDeduplicationService;
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
 
@@ -53,14 +51,12 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       SessionStateService sessionStateService,
       MeterRegistry meterRegistry,
       PingService pingService,
-      DevIsolatedProperties devIsolatedProperties,
       DisconnectDeduplicationService disconnectDeduplicationService,
       GameplayPresenceLifecycleService gameplayPresenceLifecycleService) {
     this.repository = repository;
     this.sessionStateService = sessionStateService;
     this.meterRegistry = meterRegistry;
     this.pingService = pingService;
-    this.devIsolatedProperties = devIsolatedProperties;
     this.disconnectDeduplicationService = disconnectDeduplicationService;
     this.gameplayPresenceLifecycleService = gameplayPresenceLifecycleService;
   }
@@ -174,14 +170,6 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       return SessionValidationResult.failed(
           GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "tenantId must be numeric"));
     }
-    // Dev-isolated mode never persists GameInstance records, so this lookup currently always fails
-    // and propagates NOT_FOUND. We should skip the DB check or seed the session state when
-    // dev-isolated
-    // mode is enabled so buffered input/disconnect hooks remain usable in that profile.
-    if (devIsolatedProperties.isDevIsolated()) {
-      return new SessionValidationResult(
-          sessionId, tenantId, buildDevIsolatedInstance(sessionId, tenantId), null);
-    }
     Optional<GameInstance> maybeInstance = repository.findById(sessionId);
     if (maybeInstance.isEmpty()) {
       return SessionValidationResult.failed(
@@ -193,17 +181,6 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
           GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "Tenant does not own session"));
     }
     return new SessionValidationResult(sessionId, tenantId, instance, null);
-  }
-
-  private GameInstance buildDevIsolatedInstance(long sessionId, long tenantId) {
-    GameInstance instance = new GameInstance();
-    instance.setId(sessionId);
-    instance.setTenantId(tenantId);
-    instance.setRuntimeVersion("dev-isolated");
-    instance.setScriptPatchVersion(null);
-    instance.setOwnerAccountId(0L);
-    instance.setStatus("RUNNING");
-    return instance;
   }
 
   private record SessionValidationResult(

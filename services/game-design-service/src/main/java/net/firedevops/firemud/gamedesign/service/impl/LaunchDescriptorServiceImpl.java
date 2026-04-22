@@ -10,6 +10,7 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
+import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.model.TemplateReferencePhase;
@@ -20,6 +21,7 @@ import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
+import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +37,7 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
   private final LaunchDescriptorRepository launchDescriptorRepository;
   private final VersionRepository versionRepository;
   private final PublishedReleaseBundleService publishedReleaseBundleService;
+  private final TemplateRemapSetService templateRemapSetService;
   private final ObjectMapper objectMapper;
 
   @Override
@@ -118,8 +121,19 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     String resolvedScriptPatchVersion =
         resolveScriptPatchVersion(template, requestedScriptPatchVersion, version);
     String resolvedRuntimeFlagsJson = resolveRuntimeFlagsJson(template, requestedRuntimeFlagsJson);
-    var bundle =
-        publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, resolvedVersionId);
+    String remapSetId = null;
+    if (sourceVersionId != null && !sourceVersionId.equals(resolvedVersionId)) {
+      TemplateRemapSetDto remapSet =
+          templateRemapSetService
+              .findApprovedTemplateRemapSet(tenantId, sourceVersionId, resolvedVersionId)
+              .orElseThrow(
+                  () ->
+                      new IllegalArgumentException(
+                          "LAUNCH_REMAP_REQUIRED: replacement-instance launch requires an approved remapSetId"));
+      remapSetId = remapSet.remapSetId();
+    }
+    var bundle = requirePublishedReleaseBundle(tenantId, resolvedVersionId);
+    PublishedReleaseBundleContract.requireSupportedSchemaForLaunch(bundle);
     LaunchDescriptor descriptor = new LaunchDescriptor();
     descriptor.setLaunchDescriptorId("ld-" + UUID.randomUUID());
     descriptor.setTenantId(tenantId);
@@ -134,12 +148,14 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     descriptor.setReleaseBundleId(bundle.id());
     descriptor.setPublishedReleaseBundleRef(
         releaseBundleRef(tenantId, bundle.id(), resolvedVersionId));
+    descriptor.setRemapSetId(remapSetId);
     logger.info(
-        "Resolved launch descriptor tenant={} template={} controlPlaneRequestId={} version={}",
+        "Resolved launch descriptor tenant={} template={} controlPlaneRequestId={} version={} remapSetId={}",
         tenantId,
         gameTemplateId,
         controlPlaneRequestId,
-        resolvedVersionId);
+        resolvedVersionId,
+        remapSetId);
     return toDto(launchDescriptorRepository.save(descriptor));
   }
 
@@ -181,6 +197,16 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     return requested;
   }
 
+  private net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto
+      requirePublishedReleaseBundle(String tenantId, long resolvedVersionId) {
+    try {
+      return publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, resolvedVersionId);
+    } catch (PublishedReleaseBundleNotFoundException ex) {
+      throw new IllegalArgumentException(
+          "RELEASE_BUNDLE_NOT_FOUND: no published release bundle for the resolved version");
+    }
+  }
+
   private ResolvedLaunchDescriptorDto toDto(LaunchDescriptor descriptor) {
     return new ResolvedLaunchDescriptorDto(
         descriptor.getLaunchDescriptorId(),
@@ -193,7 +219,8 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
         descriptor.getGenerationConfigRevision(),
         descriptor.getVersionStateEpoch(),
         descriptor.getReleaseBundleId(),
-        descriptor.getPublishedReleaseBundleRef());
+        descriptor.getPublishedReleaseBundleRef(),
+        descriptor.getRemapSetId());
   }
 
   private String hashRequest(

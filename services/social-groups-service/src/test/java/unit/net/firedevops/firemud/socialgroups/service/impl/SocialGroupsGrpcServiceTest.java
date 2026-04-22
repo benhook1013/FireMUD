@@ -173,9 +173,47 @@ class SocialGroupsGrpcServiceTest {
 
     verify(chat)
         .sendMessage(
-            new SendMessageRequestDto(1L, 2L, ChatType.WHISPER, "", 7L, null, null, "quiet"));
+            new SendMessageRequestDto(1L, 2L, ChatType.WHISPER, "", 7L, null, null, "quiet", null));
     assertNotNull(ref.get());
     assertEquals(true, ref.get().getSuccess());
+  }
+
+  @Test
+  void sendMessageMapsEffectIdToDomainRequest() {
+    PingService ping = Mockito.mock(PingService.class);
+    ChatService chat = Mockito.mock(ChatService.class);
+    GuildService guild = Mockito.mock(GuildService.class);
+    FriendService friend = Mockito.mock(FriendService.class);
+    MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
+
+    service.sendMessage(
+        net.firedevops.firemud.socialgroups.v1.SendMessageRequest.newBuilder()
+            .setTenantId("1")
+            .setSenderId("2")
+            .setType(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY)
+            .setContent("hello")
+            .setEffectId("fx-comm-2")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(SendMessageResponse value) {}
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    verify(chat)
+        .sendMessage(
+            new SendMessageRequestDto(
+                1L, 2L, ChatType.SAY, "", null, null, null, "hello", "fx-comm-2"));
   }
 
   @Test

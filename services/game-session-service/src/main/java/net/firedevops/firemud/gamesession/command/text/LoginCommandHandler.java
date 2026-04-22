@@ -9,7 +9,6 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.client.AccountClient;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -18,11 +17,9 @@ import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
-import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedGameInstanceRegistry;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -38,8 +35,6 @@ public final class LoginCommandHandler {
   private final CommandService commandService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final GameplayWorldCatalog gameplayWorldCatalog;
-  private final DevIsolatedProperties devIsolatedProperties;
-  private final DevIsolatedGameInstanceRegistry devIsolatedGameInstanceRegistry;
 
   @Autowired
   public LoginCommandHandler(
@@ -49,8 +44,6 @@ public final class LoginCommandHandler {
       CommandService commandService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       GameplayWorldCatalog gameplayWorldCatalog,
-      DevIsolatedProperties devIsolatedProperties,
-      ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedGameInstanceRegistryProvider,
       MeterRegistry meterRegistry) {
     this.gameInstanceRepository =
         Objects.requireNonNull(gameInstanceRepository, "gameInstanceRepository must not be null");
@@ -63,9 +56,6 @@ public final class LoginCommandHandler {
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
     this.gameplayWorldCatalog =
         Objects.requireNonNull(gameplayWorldCatalog, "gameplayWorldCatalog must not be null");
-    this.devIsolatedProperties =
-        Objects.requireNonNull(devIsolatedProperties, "devIsolatedProperties must not be null");
-    this.devIsolatedGameInstanceRegistry = devIsolatedGameInstanceRegistryProvider.getIfAvailable();
     Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
   }
 
@@ -84,11 +74,6 @@ public final class LoginCommandHandler {
 
     long bootstrapGameInstanceId = resolveBootstrapGameInstanceId(numericSessionId);
     Optional<GameInstance> maybeInstance = gameInstanceRepository.findById(bootstrapGameInstanceId);
-    if (maybeInstance.isEmpty()
-        && devIsolatedProperties.isDevIsolated()
-        && devIsolatedGameInstanceRegistry != null) {
-      maybeInstance = devIsolatedGameInstanceRegistry.findById(bootstrapGameInstanceId);
-    }
     if (maybeInstance.isEmpty()) {
       return failure("SESSION_NOT_FOUND", "Session not found");
     }
@@ -110,11 +95,7 @@ public final class LoginCommandHandler {
 
     Long authenticatedAccountId = parseAccountId(authResponse.getAccountId());
     if (authenticatedAccountId == null || authenticatedAccountId <= 0) {
-      if (devIsolatedProperties.isDevIsolated()) {
-        authenticatedAccountId = instance.getOwnerAccountId();
-      } else {
-        return invalidAccountFailure();
-      }
+      return invalidAccountFailure();
     }
     if (!Objects.equals(authenticatedAccountId, instance.getOwnerAccountId())) {
       return accountMismatchFailure();

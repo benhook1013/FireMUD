@@ -5,12 +5,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
-import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -25,17 +24,22 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class InventoryCommandHandler {
   private static final Logger LOG = LoggerFactory.getLogger(InventoryCommandHandler.class);
-  private final EntityManagementClient entityManagementClient;
+  private final GameLogicClient gameLogicClient;
 
   @Timed(value = "gamesession.command.inventory")
   public InventoryCommandHandlingResult handle(SessionContext context, TextCommand command) {
+    return handle(context, command, null);
+  }
+
+  public InventoryCommandHandlingResult handle(
+      SessionContext context, TextCommand command, String effectId) {
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
     return switch (command.type()) {
       case INVENTORY -> describeInventorySurface(context, command);
-      case GET -> mutateItem(context, command, true);
-      case DROP -> mutateItem(context, command, false);
+      case GET -> mutateItem(context, command, true, effectId);
+      case DROP -> mutateItem(context, command, false, effectId);
       default ->
           new InventoryCommandHandlingResult(
               CommandEnqueueResult.failure("INVALID_COMMAND", "Unsupported inventory command"),
@@ -58,9 +62,7 @@ public class InventoryCommandHandler {
 
   private InventoryCommandHandlingResult describeInventory(SessionContext context) {
     try {
-      var response =
-          entityManagementClient.queryInventory(
-              Long.toString(context.tenantId()), Long.toString(context.characterId()));
+      var response = gameLogicClient.queryInventory(context);
       if (response.hasError()) {
         return inventoryUnavailable(
             StringUtils.hasText(response.getError().getMessage())
@@ -83,11 +85,7 @@ public class InventoryCommandHandler {
 
   private InventoryCommandHandlingResult describeRoomInventory(SessionContext context) {
     try {
-      var response =
-          entityManagementClient.listRoomGroundInventory(
-              Long.toString(context.tenantId()),
-              Long.toString(context.gameInstanceId()),
-              context.roomInstanceId());
+      var response = gameLogicClient.listRoomGroundInventory(context, context.roomInstanceId());
       if (response.hasError()) {
         return inventoryUnavailable(
             StringUtils.hasText(response.getError().getMessage())
@@ -156,7 +154,7 @@ public class InventoryCommandHandler {
   }
 
   private InventoryCommandHandlingResult mutateItem(
-      SessionContext context, TextCommand command, boolean pickup) {
+      SessionContext context, TextCommand command, boolean pickup, String effectId) {
     String verb = pickup ? "GET" : "DROP";
     if (command.itemReferencePayload().isEmpty()) {
       return new InventoryCommandHandlingResult(
@@ -176,43 +174,12 @@ public class InventoryCommandHandler {
     String itemReferenceValue = itemReference.reference();
     try {
       if (pickup) {
-        var roomEntities =
-            entityManagementClient.listRoomGroundInventory(
-                Long.toString(context.tenantId()),
-                Long.toString(context.gameInstanceId()),
-                context.roomInstanceId());
-        if (roomEntities.hasError()) {
-          return inventoryUnavailable(
-              StringUtils.hasText(roomEntities.getError().getMessage())
-                  ? roomEntities.getError().getMessage()
-                  : "Room entities unavailable");
-        }
-        Optional<ResolvedItem> resolved =
-            findRoomGroundItem(roomEntities.getItemsList(), itemReferenceValue);
-        if (resolved.isEmpty()) {
-          return inventoryMutationFailure(
-              "INVALID_ARGUMENT",
-              itemReferenceValue,
-              "No room item matches \"" + itemReferenceValue + "\"");
-        }
-        ResolvedItem item = resolved.orElseThrow();
-        if (itemReference.quantity() > 1 && item.explicitInstanceReference()) {
-          return inventoryMutationFailure(
-              "INVALID_ARGUMENT",
-              itemReferenceValue,
-              "Explicit item refs require quantity 1 for GET");
-        }
         var response =
-            entityManagementClient.pickupItemFromRoom(
-                Long.toString(context.tenantId()),
-                Long.toString(context.characterId()),
-                Long.toString(context.gameInstanceId()),
-                context.roomInstanceId(),
-                item.itemId(),
-                item.explicitInstanceReference() ? item.itemInstanceId() : null,
-                item.containerInstanceId(),
-                item.stackFamilyKey(),
-                itemReference.quantity());
+            StringUtils.hasText(effectId)
+                ? gameLogicClient.pickupVisibleRoomItem(
+                    context, itemReferenceValue, itemReference.quantity(), effectId)
+                : gameLogicClient.pickupVisibleRoomItem(
+                    context, itemReferenceValue, itemReference.quantity());
         if (response.hasError()) {
           return inventoryMutationFailure(
               errorCode(response.getError().getCode()),
@@ -225,45 +192,16 @@ public class InventoryCommandHandler {
         return inventoryMutationSuccess(
             context,
             "GET",
-            displayItemName(response.getInventoryItem(), item.itemName()),
+            displayItemName(response.getInventoryItem(), itemReferenceValue),
             itemReference.quantity());
       }
 
-      var inventoryResponse =
-          entityManagementClient.queryInventory(
-              Long.toString(context.tenantId()), Long.toString(context.characterId()));
-      if (inventoryResponse.hasError()) {
-        return inventoryUnavailable(
-            StringUtils.hasText(inventoryResponse.getError().getMessage())
-                ? inventoryResponse.getError().getMessage()
-                : "Inventory unavailable");
-      }
-      Optional<ResolvedItem> resolved =
-          findCarriedItem(inventoryResponse.getItemsList(), itemReferenceValue);
-      if (resolved.isEmpty()) {
-        return inventoryMutationFailure(
-            "INVALID_ARGUMENT",
-            itemReferenceValue,
-            "No carried item matches \"" + itemReferenceValue + "\"");
-      }
-      ResolvedItem item = resolved.orElseThrow();
-      if (itemReference.quantity() > 1 && item.explicitInstanceReference()) {
-        return inventoryMutationFailure(
-            "INVALID_ARGUMENT",
-            itemReferenceValue,
-            "Explicit item refs require quantity 1 for DROP");
-      }
       var response =
-          entityManagementClient.dropItemToRoom(
-              Long.toString(context.tenantId()),
-              Long.toString(context.characterId()),
-              Long.toString(context.gameInstanceId()),
-              context.roomInstanceId(),
-              item.itemId(),
-              item.explicitInstanceReference() ? item.itemInstanceId() : null,
-              item.containerInstanceId(),
-              item.stackFamilyKey(),
-              itemReference.quantity());
+          StringUtils.hasText(effectId)
+              ? gameLogicClient.dropCarriedItem(
+                  context, itemReferenceValue, itemReference.quantity(), effectId)
+              : gameLogicClient.dropCarriedItem(
+                  context, itemReferenceValue, itemReference.quantity());
       if (response.hasError()) {
         return inventoryMutationFailure(
             errorCode(response.getError().getCode()),
@@ -276,7 +214,7 @@ public class InventoryCommandHandler {
       return inventoryMutationSuccess(
           context,
           "DROP",
-          displayItemName(response.getRoomGroundItem(), item.itemName()),
+          displayItemName(response.getRoomGroundItem(), itemReferenceValue),
           itemReference.quantity());
     } catch (RuntimeException ex) {
       LOG.warn(
@@ -344,75 +282,6 @@ public class InventoryCommandHandler {
     return command.args().size() == 1 && "HERE".equalsIgnoreCase(command.args().get(0));
   }
 
-  private Optional<ResolvedItem> findRoomGroundItem(
-      List<RoomGroundInventoryItem> items, String reference) {
-    return items.stream()
-        .filter(item -> matchesReference(item, reference))
-        .findFirst()
-        .map(
-            item ->
-                new ResolvedItem(
-                    item.getItemId(),
-                    item.getItemInstanceId(),
-                    item.getItemName(),
-                    item.getContainerInstanceId(),
-                    matchesExplicitInstanceReference(item, reference),
-                    stackFamilyKey(item, reference)));
-  }
-
-  private Optional<ResolvedItem> findCarriedItem(List<InventoryItem> items, String reference) {
-    return items.stream()
-        .filter(item -> ContainerIdentitySupport.matchesReference(item, reference))
-        .findFirst()
-        .map(
-            item ->
-                new ResolvedItem(
-                    item.getItemId(),
-                    item.getItemInstanceId(),
-                    item.getItemName(),
-                    ContainerIdentitySupport.resolveContainerInstanceId(item),
-                    ContainerIdentitySupport.matchesExplicitReference(item, reference)
-                        && !isStackSelection(item),
-                    stackFamilyKey(item, reference)));
-  }
-
-  private boolean matchesReference(RoomGroundInventoryItem item, String reference) {
-    return matchesReference(item.getItemId(), reference)
-        || matchesReference(item.getItemName(), reference)
-        || matchesReference(item.getVisibleRef(), reference)
-        || matchesReference(item.getContainerInstanceId(), reference)
-        || matchesReference(item.getItemInstanceId(), reference);
-  }
-
-  private boolean matchesExplicitInstanceReference(RoomGroundInventoryItem item, String reference) {
-    return matchesReference(item.getItemInstanceId(), reference)
-        || (!isStackSelection(item)
-            && (matchesReference(item.getVisibleRef(), reference)
-                || matchesReference(item.getContainerInstanceId(), reference)));
-  }
-
-  private boolean isStackSelection(InventoryItem item) {
-    return !StringUtils.hasText(item.getItemInstanceId())
-        && StringUtils.hasText(item.getVisibleRef());
-  }
-
-  private boolean isStackSelection(RoomGroundInventoryItem item) {
-    return !StringUtils.hasText(item.getItemInstanceId())
-        && StringUtils.hasText(item.getVisibleRef());
-  }
-
-  private String stackFamilyKey(InventoryItem item, String reference) {
-    return isStackSelection(item) && matchesReference(item.getVisibleRef(), reference)
-        ? item.getVisibleRef()
-        : null;
-  }
-
-  private String stackFamilyKey(RoomGroundInventoryItem item, String reference) {
-    return isStackSelection(item) && matchesReference(item.getVisibleRef(), reference)
-        ? item.getVisibleRef()
-        : null;
-  }
-
   private String stackSelectionGuidance(String reason, String itemReference, String guidance) {
     if (reason != null && reason.contains("explicit stack selection required")) {
       return "Multiple stack families match \"" + itemReference + "\". " + guidance;
@@ -420,21 +289,7 @@ public class InventoryCommandHandler {
     return reason;
   }
 
-  private boolean matchesReference(String candidate, String reference) {
-    return StringUtils.hasText(candidate)
-        && StringUtils.hasText(reference)
-        && candidate.equalsIgnoreCase(reference);
-  }
-
   private String errorCode(String errorCode) {
     return StringUtils.hasText(errorCode) ? errorCode : "INVENTORY_UNAVAILABLE";
   }
-
-  private record ResolvedItem(
-      String itemId,
-      String itemInstanceId,
-      String itemName,
-      String containerInstanceId,
-      boolean explicitInstanceReference,
-      String stackFamilyKey) {}
 }

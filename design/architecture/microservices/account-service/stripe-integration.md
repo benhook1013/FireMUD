@@ -9,6 +9,10 @@ At a high level, the goals of the integration are:
 - Keep sensitive Stripe data and API keys confined to the Account Service boundary.
 - Ensure idempotent, auditable payment flows that cooperate with existing saga and multi-tenancy patterns.
 
+## Implementation Notes
+
+The `purchase_entitlement` and account-deletion billing-owner precondition contracts below are canonical target-state behavior. Current payment code records payment transactions, donations, refunds, platform fees, and creator shares, but still needs durable purchased-entitlement fulfillment/revocation and active-subscription deletion guards.
+
 ## Domain Model
 
 The Account Service owns billing records and maps them to Stripe resources while keeping `accountId` and `tenantId` as the primary internal keys:
@@ -17,6 +21,11 @@ The Account Service owns billing records and maps them to Stripe resources while
   - Represents a single payment attempt or completed charge, including one-time purchases, hosting fees, and donations.  
   - Key fields: internal ID, `accountId`, optional `tenantId`, `amount_cents`, `platform_fee_cents`, `creator_share_cents`, `status` (`pending`, `succeeded`, `refunded`, `failed`), `provider` (`stripe`), and `provider_id` (Stripe `payment_intent` ID).  
   - Records whether the transaction is a `donation` and which internal entity it relates to (for example, hosting subscription, in-game item purchase).
+
+- `purchase_entitlement`  
+  - Represents the durable product grant created by a successful one-time purchase when the product has ongoing account, tenant, character, virtual-currency, or gameplay value.  
+  - Key fields: internal ID, `accountId`, `tenantId`, optional `characterId`, `product_code`, `grant_status` (`pending`, `active`, `revoked`, `consumed_nonrevocable`), `payment_transaction_id`, `provider_event_id`, `granted_at`, and optional `revoked_at` / `revocation_reason`.  
+  - This table is the entitlement authority for one-time purchases. `payment_transaction` remains the financial/provider audit record and must not be treated as proof that gameplay value is currently active.
 
 - `subscription`  
   - Represents a recurring billing agreement between a creator (platform account) and the platform for a specific tenant’s hosting plan.  
@@ -40,9 +49,10 @@ All payment flows follow the same high-level pattern: create or reuse a Stripe c
    - Verifies the webhook signature.  
    - Locates the `payment_transaction` row by `provider_id`.  
    - Sets `status` to `succeeded` or `failed` and records Stripe failure codes where applicable.  
+   - For product purchases that grant ongoing value, idempotently creates or activates the corresponding `purchase_entitlement` row using the Stripe event ID and product grant key as fulfillment idempotency inputs.  
    - Emits domain events or saga steps so other services (for example, Logging & Admin, in-game unlocks) can react.
 
-Refunds call Stripe’s `Refund` API and update the `payment_transaction` `status` to `refunded`, enabling chargeback handling workflows.
+Refunds call Stripe’s `Refund` API and update the `payment_transaction` `status` to `refunded`, enabling chargeback handling workflows. If the refunded payment created a `purchase_entitlement`, the refund workflow must revoke that entitlement unless it has already been consumed under a product contract that is explicitly non-revocable. Non-revocable consumption must be recorded as `consumed_nonrevocable` with a reason so support, audit, and revenue-sharing reports can explain why financial refund and product state diverged.
 
 ### Subscriptions and Hosting Plans
 
@@ -59,6 +69,7 @@ Subscription creation, lifecycle, and entitlements are covered in more detail in
 Stripe integration must preserve tenant isolation while allowing platform-level reporting:
 
 - Each hosted game (`tenantId`) that requires billing has exactly one primary subscription record linking `accountId` and `tenantId`.  
+- Account deletion is blocked while the account owns any nonterminal tenant subscription (`trialing`, `active`, `past_due`, `grace`, or `suspended`). The creator must first cancel terminally or transfer billing ownership for every affected tenant; the platform must not delete the account and leave Stripe subscriptions, shared payment instruments, or tenant billing ownership orphaned.  
 - Stripe customer IDs are per-account, not per-tenant, to reduce duplication; per-tenant subscriptions are differentiated by products/prices and metadata. This makes payment instruments an **account-owned shared resource** even when a caller is operating through a tenant-scoped billing-safe surface.  
 - Tenant-scoped billing-safe APIs that mutate payment methods must therefore follow an explicit shared-instrument contract:
   - The mutation request must carry an acknowledgement field (for example `acknowledgeSharedInstrumentImpact=true`) so callers cannot accidentally apply an account-wide billing instrument change through a tenant-scoped route.

@@ -251,4 +251,51 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       responseObserver.onCompleted();
     }
   }
+
+  @Override
+  @Timed(value = "loggingadminGrpc.evaluateModerationPolicy")
+  public void evaluateModerationPolicy(
+      EvaluateModerationPolicyRequest request,
+      StreamObserver<EvaluateModerationPolicyResponse> responseObserver) {
+    try {
+      var decision =
+          moderationService.evaluatePolicy(
+              Long.valueOf(request.getTenantId()),
+              Long.valueOf(request.getAccountId()),
+              request.getScope());
+      EvaluateModerationPolicyResponse.Builder response =
+          EvaluateModerationPolicyResponse.newBuilder()
+              .setAllowed(decision.allowed())
+              .setAction(decision.action() == null ? "" : decision.action())
+              .setReason(decision.reason() == null ? "" : decision.reason());
+      if (decision.expiresAt() != null) {
+        response.setExpiresAtEpochSeconds(decision.expiresAt().getEpochSecond());
+      }
+      responseObserver.onNext(response.build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      EvaluateModerationPolicyResponse response =
+          EvaluateModerationPolicyResponse.newBuilder()
+              .setAllowed(false)
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "EvaluateModerationPolicy",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      EvaluateModerationPolicyResponse response =
+          EvaluateModerationPolicyResponse.newBuilder()
+              .setAllowed(false)
+              .setError(
+                  GrpcAppErrors.internal(meterRegistry, logger, "EvaluateModerationPolicy", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
 }

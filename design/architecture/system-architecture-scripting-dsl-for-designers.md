@@ -69,7 +69,7 @@ When designing scripts, it helps to think in terms of a few core ideas:
   - A **trigger** is a concrete event such as `onEnterRegion`, `onSpawn`, `onCommand`, or a custom event emitted by a service.
   - Each trigger starts a **single run** of your script’s graph for a specific context (for example, a particular NPC or region).
   - Common triggers are surfaced as **event source nodes** in the visual editor.
-  - There is also a script-level lifecycle event, `onLoad`, which runs once per script version for a tenant to initialize shared script state; per-entity setup should still use events like `onSpawn` and `onEnterRegion`. From a designer’s perspective:
+  - There is also a script-level lifecycle event, `onLoad`, which runs once per script version for a tenant as a readiness gate before that patch can go live there; per-entity setup should still use events like `onSpawn` and `onEnterRegion`. From a designer’s perspective:
     - `onLoad` is a **gate**: if it fails for a tenant (for example, misconfiguration or sandbox errors), the new patch will **not** go live there and the previous patch continues to run instead.
     - You fix `onLoad` failures by correcting the script or configuration and publishing a new patch; there is no automatic retry for logical failures.
     - Tooling in the Game Design and Logging & Admin services surfaces `onLoad` status per tenant (for example, `READY` vs `FAILED`), and runtime failures appear in `script_event_audit`. See the reference doc for the full `onLoad` lifecycle semantics and the quotas/operations doc for where to inspect audit records.

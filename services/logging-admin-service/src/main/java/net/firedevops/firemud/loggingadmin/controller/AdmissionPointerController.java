@@ -6,6 +6,9 @@ import java.util.List;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
+import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
+import net.firedevops.firemud.loggingadmin.dto.PrepareVersionUpgradeRequest;
+import net.firedevops.firemud.loggingadmin.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
 import net.firedevops.firemud.loggingadmin.service.AdmissionPointerService;
 import org.springframework.http.ResponseEntity;
@@ -17,7 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/admin/admission-pointers")
+@RequestMapping("/admission-pointers")
 public class AdmissionPointerController {
   private final AdmissionPointerService admissionPointerService;
 
@@ -49,5 +52,39 @@ public class AdmissionPointerController {
       @Valid @RequestBody SetAdmissionPointerRequest request) {
     SessionContext.requireTenantAccess(request.tenantId());
     return ResponseEntity.ok(ApiResponse.success(admissionPointerService.setPointer(request)));
+  }
+
+  @PostMapping("/cutover")
+  @Timed(
+      value = "executePreparedVersionCutover",
+      description = "Execute a prepared version cutover for one admission pointer")
+  public ResponseEntity<ApiResponse<AdmissionPointerDto>> executePreparedVersionCutover(
+      @Valid @RequestBody ExecutePreparedVersionCutoverRequest request) {
+    SessionContext.requireTenantAccess(request.tenantId());
+    return ResponseEntity.ok(
+        ApiResponse.success(admissionPointerService.executePreparedVersionCutover(request)));
+  }
+
+  @PostMapping("/version-upgrades")
+  @Timed(
+      value = "prepareVersionUpgrade",
+      description = "Persist a prepared version upgrade compatibility proof")
+  public ResponseEntity<ApiResponse<PreparedVersionUpgradeDto>> prepareVersionUpgrade(
+      @Valid @RequestBody PrepareVersionUpgradeRequest request) {
+    SessionContext.requireTenantAccess(request.tenantId());
+    return ResponseEntity.ok(
+        ApiResponse.success(admissionPointerService.prepareVersionUpgrade(request)));
+  }
+
+  @GetMapping("/version-upgrades/{tenantId}/{preparationId}")
+  @Timed(
+      value = "getPreparedVersionUpgrade",
+      description = "Read a prepared version upgrade compatibility proof")
+  public ResponseEntity<ApiResponse<PreparedVersionUpgradeDto>> getPreparedVersionUpgrade(
+      @PathVariable long tenantId, @PathVariable String preparationId) {
+    SessionContext.requireTenantAccess(tenantId);
+    return ResponseEntity.ok(
+        ApiResponse.success(
+            admissionPointerService.getPreparedVersionUpgrade(tenantId, preparationId)));
   }
 }

@@ -34,10 +34,16 @@ spec:
             - configMapRef:
                 name: firemud-config
             - secretRef:
-                name: firemud-secret
+                name: postgres-credentials
           volumeMounts:
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            - name: jwt-signing-keys
+              mountPath: /var/run/secrets/firemud/jwt
+              readOnly: true
+            - name: jwt-jwks
+              mountPath: /var/run/secrets/firemud/jwks
               readOnly: true
           securityContext:
             runAsNonRoot: true
@@ -104,6 +110,12 @@ spec:
         - name: grpc-tls
           secret:
             secretName: firemud-grpc-tls
+        - name: jwt-signing-keys
+          secret:
+            secretName: jwt-signing-keys
+        - name: jwt-jwks
+          secret:
+            secretName: jwt-jwks
         - name: varlog
           hostPath:
             path: /var/log

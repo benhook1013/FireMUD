@@ -19,11 +19,13 @@ Before applying scaling changes, classify the change:
   - Safe to execute with normal rollout and validation.
 - **Topology-changing scaling**:
   - Any split/merge/re-home of regions, or any change that moves entities between region mappings.
-  - Must follow the topology-change protocol from `system-architecture-ticks.md`:
+  - Must acquire the deployment maintenance lock described in `system-architecture-redis-operations.md#maintenance-job-coordination` before freezing, fencing, or mutating region mappings. If a coordinated backup, restore recovery, reset, cleanup, or migration is active, defer the topology change rather than overlapping control-plane operations.
+  - First implementation must use reset-first topology changes rather than in-place coordination-key migration unless a future topology migration slice explicitly ships the required rewrite tooling.
+  - Target-state topology changes follow the topology-change protocol from `system-architecture-ticks.md`:
     1. Freeze/fence affected scope.
     2. Converge ledger outcomes.
     3. Bump `region_epoch` for mapping changes.
-    4. Migrate coordination keys via shared tooling.
+    4. Reset/rebuild coordination keys from durable state for first implementation; migrate coordination keys via shared tooling only after that tooling exists.
     5. Reconcile cross-region follow-ups.
     6. Resume.
 

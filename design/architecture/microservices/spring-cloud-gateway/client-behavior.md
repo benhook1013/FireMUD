@@ -21,12 +21,13 @@
 
 ## WebSocket Close and Handshake Classification
 
-- Non-`101` `/ws/game/**` handshake failures must emit the canonical bounded error class through the gateway response/logging path so clients and operators can distinguish retry classes such as `CONNECT_TOKEN_REJECTED`, `POLICY_DENY`, `BACKEND_UNAVAILABLE`, and `REPLAY_CHECK_UNAVAILABLE`.
+- Non-`101` `/ws/game/**` handshake failures must emit the canonical bounded error class through the gateway response/logging path so clients and operators can distinguish retry classes such as `CONNECT_TOKEN_REJECTED`, `POLICY_DENY`, `BACKEND_UNAVAILABLE`, and `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`.
 - First-party gameplay handshake failures should use the more specific bounded classes now implemented at the gateway edge where applicable:
   - `CONNECT_TOKEN_MISSING`
   - `CONNECT_TOKEN_EXPIRED`
   - `CONNECT_TOKEN_REPLAYED`
   - `CONNECT_SCOPE_MISMATCH`
+  - `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`
   - `CONNECT_TOKEN_REJECTED` for malformed or otherwise rejected tokens outside the narrower classes above
 - A concrete wire-level example remains the `X-Firemud-Handshake-Error-Class` response header paired with matching structured-log fields; downstream clients and operator tooling may rely on that bounded header/value surface rather than parsing free-form text.
 - The gateway observability contract requires `gateway.websocket.closes{reason,subreason}`, `gateway.websocket.handshake.rejected`, and `gateway.websocket.slow_client_closes`.
@@ -53,6 +54,16 @@
 - `/api/social/**` -> Social Groups Service.
 
 The canonical external allowlist stops there. World Management, Entity Management, Game Logic, and Automation & Scripting do not expose direct Gateway-routed external APIs in the base architecture unless a dedicated design update extends the allowlist.
+
+Gateway routes strip the first two path segments before forwarding these REST families to their owning services. For example, `/api/admin/admission-pointers` is forwarded to Logging & Admin as `/admission-pointers`, and `/api/account/auth/login` is forwarded to Account as `/auth/login`. `/api/session/**` is forwarded as an HTTP control-plane family, while `/ws/game/**` remains the separate gameplay WebSocket path. The `/assets/**` object-store route keeps its dedicated single-prefix strip behavior.
+
+These public prefixes are route families, not blanket permission to expose every service-local path under the same subtree:
+
+- owning service contracts must publish the externally allowed route inventory for their family;
+- internal-only or operator/debug service-local subtrees such as `/internal/**` and `/actuator/**` remain non-public even when the service has a public `/api/{service}/**` prefix, and the gateway now blocks `/api/{public-family}/internal/**` and `/api/{public-family}/actuator/**` requests instead of forwarding them; and
+- gateway config and filters must converge on deny-by-default behavior for undocumented internal subtrees instead of treating the coarse family prefix as the final exposure contract.
+
+Current route YAML still forwards coarse `/api/{service}/**` families. Treat that as an implementation gap to converge, not as permission for external clients to rely on undocumented service-local internal paths.
 
 ## Tenant and Header Trust Model
 

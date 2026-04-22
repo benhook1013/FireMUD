@@ -8,11 +8,17 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
+import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
+import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
+import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
+import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import org.springframework.stereotype.Component;
@@ -67,5 +73,19 @@ public class GameSessionControlPlaneClient
 
   public SetAdmissionPointerResponse setAdmissionPointer(SetAdmissionPointerRequest request) {
     return stub().setAdmissionPointer(request);
+  }
+
+  public ExecutePreparedVersionCutoverResponse executePreparedVersionCutover(
+      ExecutePreparedVersionCutoverRequest request) {
+    return stub().executePreparedVersionCutover(request);
+  }
+
+  public PrepareVersionUpgradeResponse prepareVersionUpgrade(PrepareVersionUpgradeRequest request) {
+    return stub().prepareVersionUpgrade(request);
+  }
+
+  public GetPreparedVersionUpgradeResponse getPreparedVersionUpgrade(
+      GetPreparedVersionUpgradeRequest request) {
+    return stub().getPreparedVersionUpgrade(request);
   }
 }

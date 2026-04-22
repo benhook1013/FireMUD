@@ -17,6 +17,7 @@ CREATE TABLE world_instance (
     failure_reason VARCHAR(500),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    row_version BIGINT NOT NULL DEFAULT 0,
     CONSTRAINT uk_world_instance_tenant_game_instance UNIQUE (tenant_id, game_instance_id)
 );
 

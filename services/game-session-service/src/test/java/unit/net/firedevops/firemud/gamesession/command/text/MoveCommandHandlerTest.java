@@ -22,18 +22,14 @@ import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class MoveCommandHandlerTest {
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
-  private final SessionContextService sessionContextService =
-      Mockito.mock(SessionContextService.class);
   private final LookCommandHandler lookCommandHandler = Mockito.mock(LookCommandHandler.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final EffectiveSettingsResolver settingsResolver =
@@ -52,7 +48,6 @@ class MoveCommandHandlerTest {
     handler =
         new MoveCommandHandler(
             gameLogicClient,
-            sessionContextService,
             lookCommandHandler,
             gameLogicProperties,
             settingsResolver,
@@ -63,7 +58,7 @@ class MoveCommandHandlerTest {
   }
 
   @Test
-  void moveSuccessUpdatesSessionAndReturnsStructuredDestinationLook() {
+  void moveSuccessPreparesUpdatedSessionAndStructuredDestinationLook() {
     LookResult destinationLook =
         LookResult.newBuilder()
             .setRoomInstance(
@@ -74,7 +69,7 @@ class MoveCommandHandlerTest {
                     .build())
             .setRoomName("Crafting Hall of Ember")
             .build();
-    when(gameLogicClient.resolveMove("22", "42", "911", "7", "R-1021", "north", ""))
+    when(gameLogicClient.resolveMove(context, "R-1021", "north", ""))
         .thenReturn(
             MoveResult.newBuilder().setSuccess(true).setDestinationLook(destinationLook).build());
     PlayerOutput destinationOutput =
@@ -100,21 +95,19 @@ class MoveCommandHandlerTest {
                     .PREFER_BRIEF)))
         .thenReturn(destinationOutput);
 
-    MoveCommandHandlingResult result =
-        handler.handle(
+    PreparedMoveCommandResult result =
+        handler.prepare(
             context, new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(result.responseOutput()).isEqualTo(destinationOutput);
-
-    ArgumentCaptor<SessionContext> contextCaptor = ArgumentCaptor.forClass(SessionContext.class);
-    verify(sessionContextService).save(contextCaptor.capture());
-    assertThat(contextCaptor.getValue().roomInstanceId()).isEqualTo("R-2045");
-    assertThat(contextCaptor.getValue().loginName()).isEqualTo("emberline@example.com");
-    assertThat(contextCaptor.getValue().characterName()).isEqualTo("Emberline");
+    assertThat(result.updatedContext()).isNotNull();
+    assertThat(result.updatedContext().roomInstanceId()).isEqualTo("R-2045");
+    assertThat(result.updatedContext().loginName()).isEqualTo("emberline@example.com");
+    assertThat(result.updatedContext().characterName()).isEqualTo("Emberline");
     verify(lookCommandHandler)
         .toPlayerOutput(
-            contextCaptor.getValue(),
+            result.updatedContext(),
             destinationLook,
             true,
             net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
@@ -125,7 +118,7 @@ class MoveCommandHandlerTest {
 
   @Test
   void moveFailurePropagatesInvalidExitWithoutSavingSession() {
-    when(gameLogicClient.resolveMove("22", "42", "911", "7", "R-1021", "west", ""))
+    when(gameLogicClient.resolveMove(context, "R-1021", "west", ""))
         .thenReturn(
             MoveResult.newBuilder()
                 .setSuccess(false)
@@ -136,8 +129,8 @@ class MoveCommandHandlerTest {
                         .build())
                 .build());
 
-    MoveCommandHandlingResult result =
-        handler.handle(
+    PreparedMoveCommandResult result =
+        handler.prepare(
             context, new TextCommand(TextCommandType.MOVE, java.util.List.of("west"), "MOVE west"));
 
     assertThat(result.commandResult().accepted()).isFalse();
@@ -147,7 +140,6 @@ class MoveCommandHandlerTest {
             new TextPlayerOutputRenderer(new PresentationProperties())
                 .render(result.responseOutput(), "fr"))
         .isEqualTo("ERROR INVALID_EXIT Aucune sortie WEST depuis la salle R-1021.");
-    verify(sessionContextService, never()).save(any());
     verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any());
   }
 
@@ -156,7 +148,6 @@ class MoveCommandHandlerTest {
     handler =
         new MoveCommandHandler(
             gameLogicClient,
-            sessionContextService,
             lookCommandHandler,
             gameLogicProperties,
             new EffectiveSettingsResolver(
@@ -175,17 +166,18 @@ class MoveCommandHandlerTest {
                     .build())
             .setRoomName("Crafting Hall of Ember")
             .build();
-    when(gameLogicClient.resolveMove("22", "42", "911", "7", "R-1021", "north", ""))
+    when(gameLogicClient.resolveMove(context, "R-1021", "north", ""))
         .thenReturn(
             MoveResult.newBuilder().setSuccess(true).setDestinationLook(destinationLook).build());
 
-    MoveCommandHandlingResult result =
-        handler.handle(
+    PreparedMoveCommandResult result =
+        handler.prepare(
             context, new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(result.responseOutput()).isNull();
-    verify(sessionContextService).save(any(SessionContext.class));
+    assertThat(result.updatedContext()).isNotNull();
+    assertThat(result.updatedContext().roomInstanceId()).isEqualTo("R-2045");
     verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any());
   }
 }

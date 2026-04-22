@@ -8,6 +8,9 @@ This document summarizes the canonical Redis-related metrics, alerting surfaces,
 - `redis_coordination_aof_growth_bytes_total`
 - `redis_coordinator_restart_duration_seconds`
 - `redis_coordination_tail_loss_ms{tenantId,regionId}`
+- `redis_replication_lag_ms{redis_role,nodeId,upstreamNodeId}`
+- `redis_replication_offset_lag_bytes{redis_role,nodeId,upstreamNodeId}`
+- `coordination_maintenance_active{scope_type,tenantId,regionId,operation}`
 - error and outcome metrics for stale lease, stale lock, unsupported epoch, and similar replay/coordination failures
 - size and count metrics for coordination prefixes such as `tick:*`, `timer:*`, `retry:*`, `session:*`, and `tick-executor-lease:*`
 - over-budget and oversize counters such as:
@@ -132,7 +135,7 @@ To keep Coordination Redis predictable:
   - hard safety cap around 50–100 commands per entity queue
 - `timer:{tenantRegionTag}`
   - hard safety cap around a few thousand to ten thousand timers per region depending on deployment
-- `session:game:<tenantId>:<gameInstanceId>:<sessionId>`
+- `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`
   - target serialized session value size around 16–32 KB
 
 Exceeding a budget must result in explicit logs, metrics, and controlled failure modes rather than silent degradation or unbounded growth.
@@ -151,3 +154,9 @@ These are conservative heuristics used to spot unintended coordination misuse ea
 ## Tail-Loss and Budget Alerts
 
 Alerts and dashboards should reference the explicit SLOs and budgets defined in [`system-architecture-redis-operations.md`](./system-architecture-redis-operations.md), using clear labels and scope-aware wording so incidents tie back to agreed envelopes rather than vague “Redis is bad” signals.
+
+Replica-promotion dashboards should use `redis_replication_lag_ms` as the canonical decision metric and compare it directly against `tail_loss_budget_ms` for the affected deployment:
+
+- acceptable band: `redis_replication_lag_ms <= 0.5 * tail_loss_budget_ms`
+- warning band: `0.5 * tail_loss_budget_ms < redis_replication_lag_ms < tail_loss_budget_ms`
+- red line: `redis_replication_lag_ms >= tail_loss_budget_ms`

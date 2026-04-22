@@ -20,8 +20,10 @@ public final class LookTestFixtures {
 
   public static RoomSnapshot sampleRoomSnapshot() {
     return RoomSnapshot.newBuilder()
+        .setTenantId(TENANT)
         .setRoomInstanceId(ROOM_INSTANCE_ID)
         .setGameInstanceId(GAME_INSTANCE_ID)
+        .setWorldSnapshotId(readFence())
         .setRoomName(ROOM_NAME)
         .setShortDescription(
             "You stand in a basalt chamber warmed by the brazier near the western wall.")
@@ -72,6 +74,10 @@ public final class LookTestFixtures {
             .addStateFlags("wearable:BACK")
             .build();
     return ListRoomEntitiesResponse.newBuilder()
+        .setTenantId(TENANT)
+        .setGameInstanceId(GAME_INSTANCE_ID)
+        .setRoomInstanceId(ROOM_INSTANCE_ID)
+        .setEntitySnapshotId(readFence())
         .addEntities(kobold)
         .addEntities(player)
         .addEntities(item)
@@ -147,5 +153,9 @@ public final class LookTestFixtures {
         .addEntities(playerEntity)
         .addEntities(itemEntity)
         .build();
+  }
+
+  private static String readFence() {
+    return TENANT + ":" + GAME_INSTANCE_ID + ":" + ROOM_INSTANCE_ID;
   }
 }

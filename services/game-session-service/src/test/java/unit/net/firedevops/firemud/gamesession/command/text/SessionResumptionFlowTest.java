@@ -25,8 +25,8 @@ import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
@@ -53,14 +53,12 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
-import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedGameInstanceRegistry;
 import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import org.springframework.beans.factory.ObjectProvider;
 
 @SuppressWarnings("unchecked")
 class SessionResumptionFlowTest {
@@ -74,12 +72,13 @@ class SessionResumptionFlowTest {
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
+  private final ModerationPolicyClient moderationPolicyClient =
+      Mockito.mock(ModerationPolicyClient.class);
   private final GameSessionProperties properties = new GameSessionProperties();
   private final GameplayCatalogProperties gameplayCatalogProperties =
       new GameplayCatalogProperties();
   private final GameplayWorldCatalog worldCatalog =
       new GameplayWorldCatalog(gameplayCatalogProperties);
-  private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final LookTextRenderer lookTextRenderer = Mockito.mock(LookTextRenderer.class);
@@ -89,8 +88,6 @@ class SessionResumptionFlowTest {
   private final InMemorySessionContextService sessionContextService =
       new InMemorySessionContextService();
   private SessionAuthenticationService sessionAuthenticationService;
-  private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
-      Mockito.mock(ObjectProvider.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
   private final AccountRecentPresenceService accountRecentPresenceService =
@@ -141,6 +138,11 @@ class SessionResumptionFlowTest {
                 .setMembershipVersion(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
+    when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong()))
+        .thenReturn(
+            net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
+                .setAllowed(true)
+                .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
@@ -151,13 +153,7 @@ class SessionResumptionFlowTest {
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
     sessionAuthenticationService =
-        new SessionAuthenticationService(
-            sessionContextService,
-            properties,
-            instanceRepository,
-            devIsolatedProperties,
-            devIsolatedRegistryProvider);
-    when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
+        new SessionAuthenticationService(sessionContextService, properties, instanceRepository);
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
             instanceRepository,
@@ -166,8 +162,6 @@ class SessionResumptionFlowTest {
             commandService,
             firstPartyConnectContextRegistry,
             worldCatalog,
-            devIsolatedProperties,
-            devIsolatedRegistryProvider,
             meterRegistry);
     lookHandler =
         new LookCommandHandler(
@@ -182,14 +176,13 @@ class SessionResumptionFlowTest {
                 (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()),
             meterRegistry,
             lookCacheService,
-            devIsolatedProperties,
             new TextPlayerOutputRenderer(new PresentationProperties()));
     LookResult lookResult =
         LookResult.newBuilder()
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
             .build();
     when(gameLogicClient.resolveLook(
-            anyString(), anyString(), anyString(), anyString(), anyString(), anyString()))
+            org.mockito.ArgumentMatchers.any(SessionContext.class), anyString(), anyString()))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             Mockito.eq(lookResult),
@@ -211,6 +204,7 @@ class SessionResumptionFlowTest {
             gameLogicProperties,
             accountClient,
             entityManagementClient,
+            moderationPolicyClient,
             firstPartyConnectContextRegistry,
             gameplayPresenceLifecycleService,
             meterRegistry);
@@ -237,9 +231,9 @@ class SessionResumptionFlowTest {
                 gameplayPresenceService,
                 new GameplayPresenceActivityResolver(new PresenceProperties())),
             new FriendsCommandHandler(Mockito.mock(SocialGroupsClient.class)),
-            new InventoryCommandHandler(entityManagementClient),
-            new EquipmentCommandHandler(entityManagementClient),
-            new ContainerCommandHandler(entityManagementClient),
+            new InventoryCommandHandler(gameLogicClient),
+            new EquipmentCommandHandler(gameLogicClient),
+            new ContainerCommandHandler(gameLogicClient),
             sessionAuthenticationService,
             communicationHandler,
             worldsHandler,

@@ -49,6 +49,9 @@ class LookAggregationServiceTest {
     RoomSnapshot.Builder snapshotBuilder =
         RoomSnapshot.newBuilder()
             .setRoomInstanceId("1021")
+            .setTenantId("tenant-1")
+            .setGameInstanceId("game-1")
+            .setWorldSnapshotId("tenant-1:game-1:1021")
             .setRoomName("Candle-lit Antechamber")
             .setShortDescription("short desc")
             .setLongDescription("long desc")
@@ -70,7 +73,14 @@ class LookAggregationServiceTest {
             .setRole("guard")
             .addStateFlags("isAlert")
             .build();
-    entityResponse = ListRoomEntitiesResponse.newBuilder().addEntities(entity).build();
+    entityResponse =
+        ListRoomEntitiesResponse.newBuilder()
+            .setTenantId("tenant-1")
+            .setGameInstanceId("game-1")
+            .setRoomInstanceId("1021")
+            .setEntitySnapshotId("tenant-1:game-1:1021")
+            .addEntities(entity)
+            .build();
     when(worldStub.getRoomSnapshot(any()))
         .thenReturn(GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build());
     when(entityStub.listRoomEntities(any())).thenReturn(entityResponse);
@@ -81,7 +91,12 @@ class LookAggregationServiceTest {
             .setSessionId("session-1")
             .setCharacterId("player-1")
             .setPreferredLocale("fr")
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setTenantId("tenant-1")
+                    .setGameInstanceId("game-1")
+                    .setRoomInstanceId("1021")
+                    .build())
             .build();
   }
 
@@ -117,7 +132,14 @@ class LookAggregationServiceTest {
             .addStateFlags("wearable:BACK")
             .build();
     when(entityStub.listRoomEntities(any()))
-        .thenReturn(ListRoomEntitiesResponse.newBuilder().addEntities(item).build());
+        .thenReturn(
+            ListRoomEntitiesResponse.newBuilder()
+                .setTenantId("tenant-1")
+                .setGameInstanceId("game-1")
+                .setRoomInstanceId("1021")
+                .setEntitySnapshotId("tenant-1:game-1:1021")
+                .addEntities(item)
+                .build());
 
     LookResult result = service.resolve(request);
 
@@ -127,13 +149,29 @@ class LookAggregationServiceTest {
   }
 
   @Test
+  void rejectsMixedReadFenceComposition() {
+    when(entityStub.listRoomEntities(any()))
+        .thenReturn(
+            ListRoomEntitiesResponse.newBuilder()
+                .setTenantId("tenant-1")
+                .setGameInstanceId("game-1")
+                .setRoomInstanceId("1021")
+                .setEntitySnapshotId("tenant-1:game-1:other-room")
+                .build());
+
+    assertThatThrownBy(() -> service.resolve(request))
+        .isInstanceOf(StatusRuntimeException.class)
+        .hasMessageContaining("LOOK read fence mismatch");
+  }
+
+  @Test
   void resolveAddsGameplayLoggingContext() {
     when(worldStub.getRoomSnapshot(any()))
         .thenAnswer(
             ignored -> {
               assertThat(MDC.get("tenantId")).isEqualTo("tenant-1");
               assertThat(MDC.get("characterId")).isEqualTo("player-1");
-              assertThat(MDC.get("gameInstanceId")).isNull();
+              assertThat(MDC.get("gameInstanceId")).isEqualTo("game-1");
               return GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build();
             });
 

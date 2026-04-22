@@ -2,30 +2,29 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.opentelemetry.api.trace.Span;
+import java.time.Instant;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRateLimiter;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.slf4j.Logger;
 import org.slf4j.MDC;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 /** Default implementation of {@link CommandService}. */
 @Service
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = false)
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected collaborators are framework-managed and retained internally")
@@ -38,23 +37,26 @@ public class CommandServiceImpl implements CommandService {
   private final TickService tickService;
 
   private final SessionRateLimiter sessionRateLimiter;
-  private final DevIsolatedProperties devIsolatedProperties;
   private final GameInstanceRepository gameInstanceRepository;
+  private final GameplayCommandRepository gameplayCommandRepository;
   private final SessionContextService sessionContextService;
+  private final ScriptEventPublisher scriptEventPublisher;
 
   private record QueueTarget(long tenantId, long queueTargetId) {}
 
   public CommandServiceImpl(
       TickService tickService,
       SessionRateLimiter sessionRateLimiter,
-      DevIsolatedProperties devIsolatedProperties,
       GameInstanceRepository gameInstanceRepository,
-      SessionContextService sessionContextService) {
+      GameplayCommandRepository gameplayCommandRepository,
+      SessionContextService sessionContextService,
+      ScriptEventPublisher scriptEventPublisher) {
     this.tickService = tickService;
     this.sessionRateLimiter = sessionRateLimiter;
-    this.devIsolatedProperties = devIsolatedProperties;
     this.gameInstanceRepository = gameInstanceRepository;
+    this.gameplayCommandRepository = gameplayCommandRepository;
     this.sessionContextService = sessionContextService;
+    this.scriptEventPublisher = scriptEventPublisher;
   }
 
   @Override
@@ -80,14 +82,6 @@ public class CommandServiceImpl implements CommandService {
           sessionIdText,
           GameSessionCommandLogSanitizer.sanitize(command));
 
-      if (devIsolatedProperties.isDevIsolated()) {
-        logger.info(
-            "Dev-isolated mode enabled; acknowledging enqueue for session {} command {}",
-            sessionIdText,
-            GameSessionCommandLogSanitizer.sanitize(command));
-        return CommandEnqueueResult.success();
-      }
-
       if (command == null || command.isBlank()) {
         return CommandEnqueueResult.failure("INVALID_ARGUMENT", "Command cannot be blank");
       }
@@ -107,16 +101,132 @@ public class CommandServiceImpl implements CommandService {
         return CommandEnqueueResult.failure("NOT_FOUND", "Unable to resolve command queue target");
       }
 
-      try {
+      GameplayCommand gameplayCommand =
+          persistAcceptedCommand(
+              sessionId, command, requiresSoloTick, queueTarget.get(), sessionContext);
+      logger.info(
+          "Accepted gameplay command commandId={} tenantId={} gameInstanceId={} sessionId={} command={}",
+          gameplayCommand.getCommandId(),
+          gameplayCommand.getTenantId(),
+          gameplayCommand.getGameInstanceId(),
+          sessionId,
+          gameplayCommand.getSanitizedCommandText());
+
+      try (MDC.MDCCloseable commandIdContext =
+          MDC.putCloseable("commandId", gameplayCommand.getCommandId())) {
         tickService.enqueueCommand(
             queueTarget.get().tenantId(),
             queueTarget.get().queueTargetId(),
+            gameplayCommand.getCommandId(),
             command,
             requiresSoloTick);
-        return CommandEnqueueResult.success();
+        markStaged(gameplayCommand);
+        triggerImmediateTick(queueTarget.get());
+        sessionContext.ifPresent(context -> publishScriptEvent(context, gameplayCommand));
+        return CommandEnqueueResult.success(gameplayCommand.getCommandId());
       } catch (IllegalArgumentException ex) {
-        return CommandEnqueueResult.failure("INVALID_ARGUMENT", ex.getMessage());
+        markFailed(gameplayCommand, "INVALID_ARGUMENT", ex.getMessage());
+        return CommandEnqueueResult.failure(
+            gameplayCommand.getCommandId(), "INVALID_ARGUMENT", ex.getMessage());
       }
+    }
+  }
+
+  private GameplayCommand persistAcceptedCommand(
+      long sessionId,
+      String command,
+      boolean requiresSoloTick,
+      QueueTarget queueTarget,
+      Optional<SessionContext> sessionContext) {
+    Instant now = Instant.now();
+    GameplayCommand gameplayCommand = new GameplayCommand();
+    gameplayCommand.setCommandId("cmd-" + UUID.randomUUID());
+    gameplayCommand.setTenantId(queueTarget.tenantId());
+    gameplayCommand.setGameInstanceId(queueTarget.queueTargetId());
+    gameplayCommand.setSessionId(sessionId);
+    sessionContext
+        .map(SessionContext::accountId)
+        .filter(id -> id > 0)
+        .ifPresent(gameplayCommand::setAccountId);
+    sessionContext
+        .map(SessionContext::characterId)
+        .filter(id -> id > 0)
+        .ifPresent(gameplayCommand::setCharacterId);
+    gameplayCommand.setCommandName(commandName(command));
+    gameplayCommand.setCommandText(command);
+    gameplayCommand.setSanitizedCommandText(GameSessionCommandLogSanitizer.sanitize(command));
+    gameplayCommand.setRequiresSoloTick(requiresSoloTick);
+    gameplayCommand.setExecutionOutcome("ACCEPTED");
+    gameplayCommand.setGameplayResult("PENDING");
+    gameplayCommand.setAcceptedAt(now);
+    gameplayCommand.setLastAttemptAt(now);
+    gameplayCommand.setAttemptCount(1);
+    return gameplayCommandRepository.save(gameplayCommand);
+  }
+
+  private void markStaged(GameplayCommand gameplayCommand) {
+    Instant now = Instant.now();
+    gameplayCommand.setExecutionOutcome("STAGED");
+    gameplayCommand.setStagedAt(now);
+    gameplayCommand.setLastAttemptAt(now);
+    gameplayCommandRepository.save(gameplayCommand);
+    logger.info(
+        "Staged gameplay command commandId={} tenantId={} gameInstanceId={}",
+        gameplayCommand.getCommandId(),
+        gameplayCommand.getTenantId(),
+        gameplayCommand.getGameInstanceId());
+  }
+
+  private void markFailed(GameplayCommand gameplayCommand, String code, String message) {
+    Instant now = Instant.now();
+    gameplayCommand.setExecutionOutcome("FAILED");
+    gameplayCommand.setGameplayResult("NOT_APPLIED");
+    gameplayCommand.setCompletedAt(now);
+    gameplayCommand.setLastAttemptAt(now);
+    gameplayCommand.setFailureCode(code);
+    gameplayCommand.setFailureMessage(message);
+    gameplayCommandRepository.save(gameplayCommand);
+    logger.warn(
+        "Failed gameplay command staging commandId={} tenantId={} gameInstanceId={} code={} message={}",
+        gameplayCommand.getCommandId(),
+        gameplayCommand.getTenantId(),
+        gameplayCommand.getGameInstanceId(),
+        code,
+        message);
+  }
+
+  private String commandName(String command) {
+    String trimmed = command == null ? "" : command.trim();
+    if (trimmed.isEmpty()) {
+      return "UNKNOWN";
+    }
+    int firstSpace = trimmed.indexOf(' ');
+    String token = firstSpace < 0 ? trimmed : trimmed.substring(0, firstSpace);
+    return token.toUpperCase(java.util.Locale.ROOT);
+  }
+
+  private void triggerImmediateTick(QueueTarget queueTarget) {
+    try {
+      tickService.processTick(queueTarget.tenantId(), queueTarget.queueTargetId());
+    } catch (RuntimeException ex) {
+      logger.warn(
+          "Immediate tick kick failed tenantId={} queueTargetId={}",
+          queueTarget.tenantId(),
+          queueTarget.queueTargetId(),
+          ex);
+    }
+  }
+
+  private void publishScriptEvent(SessionContext context, GameplayCommand gameplayCommand) {
+    try {
+      scriptEventPublisher.publishCommandEvent(context, gameplayCommand);
+    } catch (RuntimeException ex) {
+      logger.warn(
+          "Script event publish failed commandId={} tenantId={} gameInstanceId={}",
+          gameplayCommand.getCommandId(),
+          gameplayCommand.getTenantId(),
+          gameplayCommand.getGameInstanceId(),
+          ex);
     }
   }
 

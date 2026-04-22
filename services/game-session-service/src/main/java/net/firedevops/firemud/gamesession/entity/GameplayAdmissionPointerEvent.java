@@ -54,6 +54,9 @@ public class GameplayAdmissionPointerEvent {
   @Column(name = "control_plane_request_id", nullable = false, length = 120)
   private String controlPlaneRequestId;
 
+  @Column(name = "prepared_version_upgrade_id", length = 64)
+  private String preparedVersionUpgradeId;
+
   @Column(name = "occurred_at", nullable = false)
   private Instant occurredAt;
 }

@@ -76,50 +76,6 @@ management:
 spring:
   config:
     activate:
-      on-profile: dev
-    import: "optional:classpath:routes-dev.yml"
-  data:
-    redis:
-      host: ${FIREMUD_REDIS_CACHE_HOST:redis}
-      port: ${FIREMUD_REDIS_CACHE_PORT:6379}
-  cloud:
-    gateway:
-      server:
-        webflux:
-          metrics:
-            enabled: true
-          default-filters:
-            - name: Retry
-              args:
-                retries: 3
-                statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
-                series: SERVER_ERROR
-                methods: GET,POST
-                backoff:
-                  firstBackoff: 50ms
-                  maxBackoff: 500ms
-                  factor: 2
-                  basedOnPreviousValue: false
-          httpclient:
-            pool:
-              type: fixed
-              maxConnections: 500
-              acquireTimeout: 5000
-
-firemud:
-  gateway:
-    gameplay:
-      bridge:
-        upstream-url: ws://game-session-service.default.svc.cluster.local:8080/ws/game
-  grpc:
-    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
-    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
-    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
----
-
-spring:
-  config:
-    activate:
       on-profile: prod
     import: "optional:classpath:routes-prod.yml"
   data:

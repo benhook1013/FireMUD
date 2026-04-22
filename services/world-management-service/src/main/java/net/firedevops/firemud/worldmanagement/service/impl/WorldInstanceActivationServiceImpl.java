@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +49,7 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
   static final String STATUS_FAILED_PRE_ACTIVATION = "FAILED_PRE_ACTIVATION";
   static final String STATUS_TERMINATING = "TERMINATING";
   static final String STATUS_TERMINATED = "TERMINATED";
+  private static final String SUPPORTED_RELEASE_ATTESTATION_SCHEMA_VERSION = "v1";
 
   private final WorldInstanceRepository worldInstanceRepository;
   private final RegionInstanceRepository regionInstanceRepository;
@@ -165,6 +167,7 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
     worldInstance.setReleaseBundleId(request.releaseBundleId());
     worldInstance.setPublishedReleaseBundleRef(request.publishedReleaseBundleRef());
     worldInstance.setVersionStateEpoch(request.versionStateEpoch());
+    worldInstance.setRemapSetId(normalizeBlank(request.remapSetId()));
     worldInstance.setLifecycleEpoch(1L);
     worldInstance.setStatus(STATUS_PREPARING);
     worldInstance.setCreatedAt(Instant.now());
@@ -182,7 +185,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
     region.setGeneratorParams("{}");
     region.setSpacingMultiplier(1.0);
     RegionInstance savedRegion = regionInstanceRepository.save(region);
-    materializeRoomTopology(savedRegion, request.tenantId(), request.gameInstanceId());
+    materializeRoomTopology(
+        savedRegion, request.tenantId(), request.versionId(), request.gameInstanceId());
 
     logger.info(
         "Prepared world instance tenant={} gameInstanceId={} launchDescriptorId={} versionId={}",
@@ -221,7 +225,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
             worldInstance.getGenerationConfigRevision(),
             worldInstance.getReleaseBundleId(),
             worldInstance.getPublishedReleaseBundleRef(),
-            worldInstance.getVersionStateEpoch()));
+            worldInstance.getVersionStateEpoch(),
+            worldInstance.getRemapSetId()));
     worldInstance.setStatus(STATUS_ACTIVE);
     worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
     worldInstance.setFailureReason(null);
@@ -274,7 +279,6 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
   }
 
   @Override
-  @Transactional
   @Timed(value = "world.terminateInstance")
   public WorldInstanceLifecycleSnapshotDto terminateWorldInstance(
       long tenantId,
@@ -297,7 +301,6 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
       worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
       worldInstance = worldInstanceRepository.save(worldInstance);
     } else if (STATUS_TERMINATING.equals(worldInstance.getStatus())) {
-      requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
       if (!terminationRequestId.equals(worldInstance.getTerminationRequestId())) {
         throw new IllegalArgumentException(
             "INVALID_WORLD_INSTANCE_STATE: world instance is terminating under a different request id");
@@ -364,7 +367,9 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
           bundleResponse.getError().getCode() + ": " + bundleResponse.getError().getMessage());
     }
     var bundle = bundleResponse.getBundle();
+    requireSupportedReleaseAttestationSchema(bundle.getAttestationSchemaVersion());
     if (bundle.getId() != request.releaseBundleId()
+        || bundle.getVersionId() != request.versionId()
         || !bundle.getGenerationConfigRevision().equals(request.generationConfigRevision())) {
       throw new IllegalArgumentException(
           "RELEASE_ATTESTATION_MISMATCH: world activation request does not match the published release bundle");
@@ -373,6 +378,26 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
         .equals(request.publishedReleaseBundleRef())) {
       throw new IllegalArgumentException(
           "RELEASE_ATTESTATION_MISMATCH: published release bundle ref mismatch");
+    }
+    var artifactStateResponse =
+        gameDesignClient.getVersionAssetArtifactState(request.tenantId(), request.versionId());
+    if (artifactStateResponse.hasError()) {
+      throw new IllegalArgumentException(
+          artifactStateResponse.getError().getCode()
+              + ": "
+              + artifactStateResponse.getError().getMessage());
+    }
+    var artifactState = artifactStateResponse.getArtifactState();
+    if (artifactState.getArtifactState()
+            != net.firedevops.firemud.gamedesign.v1.ArtifactState.ARTIFACT_STATE_PUBLISHED
+        || !artifactState.getManifestHash().equals(bundle.getManifestHash())) {
+      throw new IllegalArgumentException(
+          "RELEASE_ATTESTATION_MISMATCH: published asset artifact state does not match the published release bundle");
+    }
+    var exportedKeys = new HashSet<>(artifactState.getExportedManifestAssetKeysList());
+    if (!exportedKeys.containsAll(bundle.getRequiredManifestAssetKeysList())) {
+      throw new IllegalArgumentException(
+          "RELEASE_ATTESTATION_MISMATCH: published asset artifact state is missing required manifest asset keys");
     }
     var versionStateResponse =
         gameDesignClient.getVersionState(request.tenantId(), request.versionId());
@@ -403,9 +428,10 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
   }
 
   private void materializeRoomTopology(
-      RegionInstance regionInstance, long tenantId, long gameInstanceId) {
+      RegionInstance regionInstance, long tenantId, long versionId, long gameInstanceId) {
     Map<Long, ZoneInstance> zoneInstancesByTemplateId = new LinkedHashMap<>();
-    for (Zone templateZone : zoneRepository.findByTenantIdOrderByIdAsc(tenantId)) {
+    for (Zone templateZone :
+        zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, versionId)) {
       ZoneInstance zoneInstance = new ZoneInstance();
       zoneInstance.setTenantId(tenantId);
       zoneInstance.setGameInstanceId(gameInstanceId);
@@ -416,7 +442,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
       ZoneInstance savedZoneInstance = zoneInstanceRepository.save(zoneInstance);
       zoneInstancesByTemplateId.put(templateZone.getId(), savedZoneInstance);
     }
-    List<Room> templateRooms = roomRepository.findByTenantIdOrderByIdAsc(tenantId);
+    List<Room> templateRooms =
+        roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, versionId);
     Map<Long, RoomInstance> roomInstancesByTemplateId = new LinkedHashMap<>();
     for (Room templateRoom : templateRooms) {
       ZoneInstance zoneInstance = zoneInstancesByTemplateId.get(templateRoom.getZone().getId());
@@ -438,7 +465,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
       RoomInstance savedRoomInstance = roomInstanceRepository.save(roomInstance);
       roomInstancesByTemplateId.put(templateRoom.getId(), savedRoomInstance);
     }
-    for (RoomExit templateExit : roomExitRepository.findByTenantIdOrderByIdAsc(tenantId)) {
+    for (RoomExit templateExit :
+        roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, versionId)) {
       RoomInstance fromRoomInstance =
           roomInstancesByTemplateId.get(templateExit.getFromRoom().getId());
       RoomInstance toRoomInstance = roomInstancesByTemplateId.get(templateExit.getToRoom().getId());
@@ -480,7 +508,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
         && existing.getGenerationConfigRevision().equals(request.generationConfigRevision())
         && existing.getReleaseBundleId().equals(request.releaseBundleId())
         && existing.getPublishedReleaseBundleRef().equals(request.publishedReleaseBundleRef())
-        && existing.getVersionStateEpoch().equals(request.versionStateEpoch());
+        && existing.getVersionStateEpoch().equals(request.versionStateEpoch())
+        && equalsNullable(existing.getRemapSetId(), normalizeBlank(request.remapSetId()));
   }
 
   private WorldInstanceLifecycleSnapshotDto snapshot(WorldInstance worldInstance) {
@@ -496,7 +525,8 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
         worldInstance.getPublishedReleaseBundleRef(),
         worldInstance.getVersionStateEpoch(),
         worldInstance.getLifecycleEpoch(),
-        worldInstance.getStatus());
+        worldInstance.getStatus(),
+        worldInstance.getRemapSetId());
   }
 
   private boolean equalsNullable(String left, String right) {
@@ -509,5 +539,13 @@ public class WorldInstanceActivationServiceImpl implements WorldInstanceActivati
 
   private String releaseBundleRef(long tenantId, long versionId, long releaseBundleId) {
     return "prb:" + tenantId + ":" + versionId + ":" + releaseBundleId;
+  }
+
+  private void requireSupportedReleaseAttestationSchema(String schemaVersion) {
+    if (!SUPPORTED_RELEASE_ATTESTATION_SCHEMA_VERSION.equals(schemaVersion)) {
+      throw new IllegalArgumentException(
+          "SCHEMA_VERSION_UNSUPPORTED: unsupported published release bundle attestation schema "
+              + schemaVersion);
+    }
   }
 }

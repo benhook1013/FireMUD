@@ -20,6 +20,7 @@ public final class GameInstanceTestFixtures {
           release_bundle_id BIGINT,
           version_state_epoch BIGINT,
           generation_config_revision VARCHAR(128),
+          remap_set_id VARCHAR(64),
           script_patch_pinned_at TIMESTAMP NULL,
           script_patch_pinned_by VARCHAR(200) NULL,
           script_patch_pinned_reason VARCHAR(500) NULL,
@@ -35,6 +36,7 @@ public final class GameInstanceTestFixtures {
     jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS version_state_epoch BIGINT");
     jdbc.execute(
         "ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS generation_config_revision VARCHAR(128)");
+    jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS remap_set_id VARCHAR(64)");
   }
 
   public static long insertRunningGameInstance(
@@ -53,9 +55,10 @@ public final class GameInstanceTestFixtures {
                   release_bundle_id,
                   version_state_epoch,
                   generation_config_revision,
+                  remap_set_id,
                   owner_account_id,
                   status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
                 """,
                 Long.class,
                 tenantId,
@@ -67,6 +70,7 @@ public final class GameInstanceTestFixtures {
                 700L,
                 700L,
                 "genrev:test:" + gameTemplateId,
+                null,
                 ownerAccountId,
                 "ACTIVE"))
         .orElseThrow(() -> new IllegalStateException("Game instance insert did not return an id"));

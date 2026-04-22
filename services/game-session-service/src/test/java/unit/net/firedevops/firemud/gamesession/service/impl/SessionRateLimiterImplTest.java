@@ -9,7 +9,6 @@ import static org.mockito.Mockito.verify;
 
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
@@ -27,8 +26,7 @@ class SessionRateLimiterImplTest {
               }
               return null;
             });
-    SessionRateLimiterImpl limiter =
-        new SessionRateLimiterImpl(redis, 2, new DevIsolatedProperties(false));
+    SessionRateLimiterImpl limiter = new SessionRateLimiterImpl(redis, 2);
     assertTrue(limiter.allow(1L));
     assertTrue(limiter.allow(1L));
     assertFalse(limiter.allow(1L));

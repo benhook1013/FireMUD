@@ -13,11 +13,9 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import net.firedevops.firemud.cache.LookCacheService;
-import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
@@ -41,7 +39,6 @@ class LookCommandHandlerTest {
       Mockito.mock(SessionAuthenticationService.class);
   private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
-  private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final EffectiveSettingsResolver settingsResolver = defaultSettingsResolver();
   private final TextPlayerOutputRenderer outputRenderer =
@@ -55,7 +52,6 @@ class LookCommandHandlerTest {
           settingsResolver,
           meterRegistry,
           lookCacheService,
-          devIsolatedProperties,
           outputRenderer);
   private final SessionContext sessionContext =
       new SessionContext(1L, 22L, 123L, 911L, 0L, "room-42", "jwt");
@@ -71,7 +67,7 @@ class LookCommandHandlerTest {
     when(sessionAuthenticationService.resolveSessionContext(
             String.valueOf(sessionContext.sessionId())))
         .thenReturn(Optional.of(sessionContext));
-    when(gameLogicClient.resolveLook("22", "1", "911", "0", "room-42", "")).thenReturn(lookResult);
+    when(gameLogicClient.resolveLook(sessionContext, "room-42", "")).thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
             eq(false),
@@ -119,7 +115,7 @@ class LookCommandHandlerTest {
 
   @Test
   void mapsLookErrorResponseToErrorPlayerOutput() {
-    when(gameLogicClient.resolveLook("22", "1", "911", "0", "room-42", ""))
+    when(gameLogicClient.resolveLook(sessionContext, "room-42", ""))
         .thenReturn(
             lookResult.toBuilder()
                 .setError(
@@ -147,7 +143,7 @@ class LookCommandHandlerTest {
   void propagatesInfrastructureFailuresFromGrpcAsBefore() {
     StatusRuntimeException worldDown =
         new StatusRuntimeException(Status.UNAVAILABLE.withDescription("WorldManagement: down"));
-    when(gameLogicClient.resolveLook("22", "1", "911", "0", "room-42", "")).thenThrow(worldDown);
+    when(gameLogicClient.resolveLook(sessionContext, "room-42", "")).thenThrow(worldDown);
 
     PlayerOutput response = handler.describePlayerOutput("123", true);
 
@@ -224,8 +220,7 @@ class LookCommandHandlerTest {
         new SessionContext(17L, 22L, 123L, "demo", 911L, "demo", 77L, "room-42", "jwt");
     when(sessionAuthenticationService.resolveSessionContext("played"))
         .thenReturn(Optional.of(playedContext));
-    when(gameLogicClient.resolveLook("22", "17", "911", "77", "room-42", ""))
-        .thenReturn(lookResult);
+    when(gameLogicClient.resolveLook(playedContext, "room-42", "")).thenReturn(lookResult);
 
     handler.describePlayerOutput("played", true);
 
@@ -247,24 +242,6 @@ class LookCommandHandlerTest {
                     + "Long: Detailed look text\n"
                     + "Exits: \n"
                     + "Entities:\n\n"));
-  }
-
-  @Test
-  void devIsolatedReturnsLegacyDescription() {
-    LookCommandHandler devHandler =
-        new LookCommandHandler(
-            gameLogicClient,
-            lookTextRenderer,
-            sessionAuthenticationService,
-            gameLogicProperties,
-            settingsResolver,
-            new SimpleMeterRegistry(),
-            lookCacheService,
-            new DevIsolatedProperties(true),
-            outputRenderer);
-    PlayerOutput response = devHandler.describePlayerOutput("123", true);
-    assertEquals(LookCommandConstants.ROOM_DESCRIPTION, response.text());
-    Mockito.verifyNoInteractions(gameLogicClient, lookCacheService);
   }
 
   private static EffectiveSettingsResolver defaultSettingsResolver() {

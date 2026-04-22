@@ -14,6 +14,9 @@ public class Zone {
   @Column(nullable = false)
   private Long tenantId;
 
+  @Column(nullable = false)
+  private Long versionId = 1L;
+
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "region_id", nullable = false)
   private Region region;

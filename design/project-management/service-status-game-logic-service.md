@@ -4,8 +4,9 @@
 
 - Core command parsing and rule-processing scaffolding is present.
 - The data-driven `LOOK` path is implemented through Game Logic aggregation over World and Entity services.
-- The `SAY`/chat path is implemented at the current slice level, including Game Logic participation and transcript-oriented cross-service behavior.
-- Movement/pathfinding primitives exist through `MovementTravelService`.
+- The `SAY`/`WHISPER`/`TELL` path is implemented at the current slice level, including Game Logic participation, recipient/observer metadata, and transcript-oriented cross-service behavior.
+- Movement/pathfinding primitives exist through `MovementTravelService` and the current movement command path uses Game Logic resolution.
+- The first item/container/equipment command surface is exposed through Game Logic RPCs, with Entity Management remaining authoritative for item/container/equipment persistence.
 
 ## Current Role In The Platform
 
@@ -15,7 +16,7 @@
 
 ## Partial / Stubbed / Deferred Areas
 
-- The current command fabric is ahead of some deeper gameplay systems; movement, richer action handling, and broader runtime rules are still the natural next expansion areas.
+- The current item/container/equipment Game Logic seam is intentionally thin and still delegates most validation to Entity Management; richer rule-level orchestration, room visibility combination, and future authored item behavior remain follow-through for later item-system depth.
 - Some chat and gameplay dependencies are still exercised through slice-oriented fixtures and regression harnesses rather than full production-grade orchestration.
 - Publish-copy/version synchronization work remains incomplete.
 

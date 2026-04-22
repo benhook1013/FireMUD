@@ -11,14 +11,9 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.socialgroups.v1.ListFriendPresenceRequest;
 import net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse;
 import net.firedevops.firemud.socialgroups.v1.SocialGroupsServiceGrpc;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component
-@ConditionalOnProperty(
-    name = "game-session.dev-isolated",
-    havingValue = "false",
-    matchIfMissing = false)
 public final class SocialGroupsClient
     extends AbstractBlockingGrpcClient<SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;

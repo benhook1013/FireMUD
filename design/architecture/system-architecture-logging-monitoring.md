@@ -4,6 +4,15 @@ This document describes how FireMUD collects logs, metrics, and traces across al
 
 For the canonical definition of environment classes and which ones are considered player-facing or prod-like, see [Deployment Environments](./infrastructure/deployment-environments.md#terms) and [Deployment Environments](./infrastructure/deployment-environments.md#canonical-environment-classes). In this document, “prod-like” means `hobby-self-hosted`, `staging`, and `production` unless a section explicitly narrows the requirement further.
 
+## Implementation Notes
+
+The current implemented baseline is narrower than the full target-state observability contract:
+
+- Runtime identity, startup logging, shared HTTP/gRPC request logging, bounded WebSocket/Telnet handler logging, `grpc.app_error`, and the first bounded gameplay command counters are implemented.
+- Raw runtime or gameplay identifiers such as `serviceInstanceId`, `tenantId`, `sessionId`, `characterId`, and `script_patch_version` are not approved as ordinary Prometheus metric labels. These identifiers belong in structured logs and traces unless a future architecture update records a narrow low-cardinality exception.
+- The player-experience SLI catalog below is a target-state metric contract. It describes the operator-visible SLO surface FireMUD wants, but it is not fully implemented by the current services. Before implementing any metric that needs tenant or region scoping, reconcile the label shape with the cardinality policy, for example through a bounded environment-specific scope label or an explicitly documented exception.
+- Synthetic player-flow canaries, the independent deadman/heartbeat mirror, and the related canonical canary alert families are target-state prod-like requirements. The current shared Prometheus rules include entry-path blackbox alert examples, but the canary/deadman contract is not yet implemented end to end in this repository.
+
 ---
 
 ## Logging Pipeline
@@ -141,33 +150,36 @@ Runtime identity should be exposed consistently enough that operators and admin 
 
 FireMUD’s metrics are designed around low- and medium-cardinality labels so dashboards and alerts remain reliable even at scale. To keep this consistent:
 
-- Allowed labels typically include `service`, `job`, `grpc_method`, `status`, `code`, `tenantId`, `regionId`, `redis_role`, `effect_type`, `outcome`, and other explicitly documented dimensions in the Redis, tick, and gRPC architecture docs.
-- Disallowed labels include per-request or per-entity identifiers such as `traceId`, `spanId`, `characterId`, `sessionId`, and arbitrary error messages or stack traces. These belong in logs and traces, not in metric label sets.
+- Allowed labels typically include bounded values such as `service`, `job`, `grpc_method`, `status`, `code`, `redis_role`, `effect_type`, `outcome`, `type`, `reason`, and other explicitly documented bounded dimensions in the Redis, tick, and gRPC architecture docs.
+- Disallowed labels on ordinary gameplay/session counters and timers include raw runtime, tenant, request, session, player, or entity identifiers such as `serviceInstanceId`, `tenantId`, `regionId`, `traceId`, `spanId`, `characterId`, `sessionId`, `gameInstanceId`, `script_patch_version`, and arbitrary error messages or stack traces. These belong in logs and traces unless a specific operational metric contract explicitly approves them.
+- Existing Redis, tick, backup, and control-plane operational metrics may retain explicitly documented `tenantId`/`regionId` scope labels where those labels identify the operational region being managed rather than individual player/session activity.
+- If a player SLO truly needs tenant or region drilldown, use an explicitly documented bounded scope label or record a narrow approved exception here before adding raw identifiers to producers, dashboards, or alerts.
 - When in doubt, prefer coarser labels (for example `error_code` from a bounded enum or small string set) and aggregate multiple rare values into an `other` bucket rather than exposing them as unbounded labels.
 - New metrics must document their label sets in the relevant architecture or service README and confirm that they conform to these guardrails before being added to dashboards or alerts.
 
-### Player Experience SLIs and SLOs
+### Player Experience SLIs and SLOs (Target-State Contract)
 
-In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines, FireMUD tracks a small set of player-centric SLIs. These are expressed as Prometheus metrics with environment-specific SLO targets:
+In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines, FireMUD tracks a small set of player-centric SLIs. These are target-state Prometheus metrics with environment-specific SLO targets. The current services emit narrower gameplay and edge metrics; do not treat the metric names in this section as implemented until producers and smoke checks exist.
 
 - **Login success ratio**
   - SLI: fraction of successful login attempts over total login attempts, for example `login_requests_total{outcome="success"}` vs `login_requests_total`.
-  - SLO (production starting point): ≥ 99.5% success over a 15-minute rolling window, evaluated per `tenantId` and, where applicable, `regionId`.
-  - Instrumentation: emitted by Spring Cloud Gateway (and any protocol-bridging entry points such as the TCP Proxy) for login-related routes, with labels at least `{tenantId, regionId, outcome}`.
+  - SLO (production starting point): ≥ 99.5% success over a 15-minute rolling window, evaluated per approved tenant/region scope once the metric label shape is reconciled with the cardinality policy.
+  - Instrumentation: target-state instrumentation should be emitted by Spring Cloud Gateway (and any protocol-bridging entry points such as the TCP Proxy) for login-related routes, with bounded labels for outcome and any approved tenant/region scope. Do not add raw `tenantId` or `regionId` labels until the exception or bounded replacement is documented here.
 - **Command end-to-end latency**
-  - SLI: gateway-to-domain command latency, measured from reception at Gateway or TCP Proxy through to domain commit, for example `command_end_to_end_latency_ms` histogram with labels such as `command`, `tenantId`, `regionId`.
-  - SLO: 99% of core gameplay commands (movement, look, combat) complete in < 250ms over a 5-minute window, per `tenantId`/`regionId`.
-  - Instrumentation: emitted by Gateway (and optionally the TCP Proxy for Telnet) with labels `{command, tenantId, regionId}`. Core commands such as movement, LOOK, and combat should use a small, documented set of `command` label values so per-command latency panels remain low-cardinality.
+  - SLI: gateway-to-domain command latency, measured from reception at Gateway or TCP Proxy through to domain commit, for example `command_end_to_end_latency_ms` histogram with labels such as `scope` and `command`.
+  - SLO: 99% of core gameplay commands (movement, look, combat) complete in < 250ms over a 5-minute window, per approved tenant/region scope.
+  - Instrumentation: target-state instrumentation should be emitted by Gateway (and optionally the TCP Proxy for Telnet) with bounded labels for command and any approved tenant/region scope. Core commands such as movement, LOOK, and combat should use a small, documented set of `command` label values so per-command latency panels remain low-cardinality.
   - Recording rules and alerts for the bounded core-command SLO set must preserve the `command` label. An additional aggregate “all core commands” panel is allowed for high-level dashboards, but it must not be the sole paging signal because it can hide a single broken command behind healthy higher-volume commands.
-  - Phase-split drilldown metrics must also be emitted for bounded command stages so operators can distinguish edge, dispatch, tick-wait, and domain-commit latency without depending entirely on traces. Use a histogram such as `command_latency_stage_ms_bucket{service,tenantId,regionId,command,stage,le}` where `stage` is a bounded enum such as `edge_queue`, `dispatch`, `tick_wait`, or `domain_commit`.
+  - Phase-split drilldown metrics must also be emitted for bounded command stages so operators can distinguish edge, dispatch, tick-wait, and domain-commit latency without depending entirely on traces. Use a histogram such as `command_latency_stage_ms_bucket{service,scope,command,stage,le}` where `scope` is an approved bounded tenant/region scope and `stage` is a bounded enum such as `edge_queue`, `dispatch`, `tick_wait`, or `domain_commit`.
 - **Telnet and WebSocket path availability**
   - SLI: fraction of successful connection attempts over total attempts for each entry path (Telnet and WebSocket). This SLI must be computed from an explicit attempts counter so it captures all failure modes, not just cap rejections.
-  - SLO: ≥ 99.9% of connection attempts succeed over a 1-day window, evaluated per `tenantId` and `path`; sustained deviations are treated as P0 incidents for the affected entry path.
+  - SLO: ≥ 99.9% of connection attempts succeed over a 1-day window, evaluated per approved scope and `path`; sustained deviations are treated as P0 incidents for the affected entry path.
   - Instrumentation:
-    - Edge services (TCP Proxy and Gateway) must emit `entrypath_connection_attempts_total{tenantId,path,outcome}` where:
+    - Edge services (TCP Proxy and Gateway) must emit a bounded attempts counter such as `entrypath_connection_attempts_total{scope,path,outcome}` where:
+      - `scope` is an approved low-cardinality tenant/region/environment scope, not a raw unbounded identifier.
       - `path` is a bounded enum (for example `telnet` or `websocket`).
       - `outcome` is a bounded enum (for example `success`, `limit_exceeded`, `auth_failed`, `upstream_unreachable`, `timeout`, `protocol_error`, `unknown`).
-    - The SLI should be computed as `sum(rate(entrypath_connection_attempts_total{outcome="success"}[...])) / sum(rate(entrypath_connection_attempts_total[...]))` per `{tenantId,path}`.
+    - The SLI should be computed as `sum(rate(entrypath_connection_attempts_total{outcome="success"}[...])) / sum(rate(entrypath_connection_attempts_total[...]))` per `{scope,path}`.
     - Auxiliary meters such as `tcpproxy_connections_limit_exceeded_total` remain useful drilldowns but are not sufficient to define availability by themselves.
     - Prod-like environments must also run **independent synthetic probes** from outside the gameplay ingress boundary and export a low-cardinality metric such as `entrypath_blackbox_probe_success{path,target}`. These probes are the authoritative detection source for total entry-path outages that prevent traffic from ever reaching Gateway or TCP Proxy (for example LB, DNS, TLS, or ingress policy failures), while `entrypath_connection_attempts_total` remains the authoritative in-service breakdown for `outcome` analysis once traffic reaches the edge.
   - Alert routing:
@@ -177,9 +189,9 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
     - Also publish short-window recording rules and alerts (for example 5-minute and 30-minute availability or burn-rate views) so acute entry-path failures are detected quickly and do not wait for a 1-day window to move materially.
     - Blackbox probe alerts must exist alongside the in-service SLI alerts so “no requests reached the service” is still detected as a P0 edge-path outage.
 - **Chat delivery latency**
-  - SLI: time from chat message submission to delivery to all intended recipients, for example `chat_delivery_latency_ms` histogram keyed by `tenantId` and chat channel type.
+  - SLI: time from chat message submission to delivery to all intended recipients, for example `chat_delivery_latency_ms` histogram keyed by approved scope and chat channel type.
   - SLO: 99% of chat messages are delivered in < 1s over a 5-minute window for active regions.
-  - Instrumentation: emitted by the chat/social service responsible for delivering chat events, with labels `{tenantId, channel_type}` and an explicit distinction between player-visible channels (global, zone, party) and system channels.
+  - Instrumentation: emitted by the chat/social service responsible for delivering chat events, with labels for approved scope and `channel_type`, plus an explicit distinction between player-visible channels (global, zone, party) and system channels.
 
 Environment and service docs that introduce new player-facing flows should:
 
@@ -191,26 +203,26 @@ Grafana dashboards under `design/observability/grafana` include:
 - `player-experience.json` – canonical SLO compliance dashboard for player SLIs.
 - `player-experience-drilldown.json` – incident drilldown dashboard for per-outcome and per-command/channel investigation after an SLO breach.
 
-### Player Experience Metrics Catalog (Contract)
+### Player Experience Metrics Catalog (Target-State Contract)
 
-The metrics below are treated as the canonical Prometheus-facing shapes for player experience SLIs/SLOs. Services may emit additional drilldown metrics, but dashboards and alerts should prefer these names and label sets:
+The metrics below are the desired Prometheus-facing shapes for player experience SLIs/SLOs after the scope-label decision is implemented. They are not the current implemented service metric set. Services may emit additional bounded drilldown metrics, but dashboards and alerts should prefer these names once producers exist and the scope label has been reconciled with the metrics-cardinality policy:
 
 - Login:
-  - `login_requests_total{tenantId,regionId,outcome}` where `outcome` is a bounded enum (for example `success`, `invalid_credentials`, `rate_limited`, `upstream_error`, `timeout`, `unknown`).
+  - `login_requests_total{scope,outcome}` where `scope` is an approved bounded tenant/region/environment scope and `outcome` is a bounded enum (for example `success`, `invalid_credentials`, `rate_limited`, `upstream_error`, `timeout`, `unknown`).
 - Commands:
-  - `command_end_to_end_latency_ms_bucket{tenantId,regionId,command,le}` with `command` drawn from a documented, bounded command set for core SLO coverage.
+  - `command_end_to_end_latency_ms_bucket{scope,command,le}` with `scope` drawn from an approved bounded scope and `command` drawn from a documented, bounded command set for core SLO coverage.
     - Starting bounded set for SLO coverage (normalize synonyms/aliases in instrumentation): `move`, `look`, `combat`.
     - Alert rules and dashboards may filter to this bounded set (for example `command=~"move|look|combat"`) so the SLO signal stays stable even when new commands are introduced.
-  - `command_latency_stage_ms_bucket{service,tenantId,regionId,command,stage,le}` for bounded stage-level drilldown. Required `stage` values are `edge_queue`, `dispatch`, `tick_wait`, and `domain_commit`; environment overlays may add a small number of additional bounded stages only with a design update here.
+  - `command_latency_stage_ms_bucket{service,scope,command,stage,le}` for bounded stage-level drilldown. Required `stage` values are `edge_queue`, `dispatch`, `tick_wait`, and `domain_commit`; environment overlays may add a small number of additional bounded stages only with a design update here.
 - Entry-path availability:
-  - `entrypath_connection_attempts_total{tenantId,path,outcome}` with bounded enums for `path` and `outcome` as described above.
+  - `entrypath_connection_attempts_total{scope,path,outcome}` with bounded enums for `scope`, `path`, and `outcome` as described above.
 - Synthetic player-flow canaries:
   - `playerflow_canary_success{flow,path,target}` for the mirrored result of the most recent synthetic login or representative-command run.
   - `playerflow_canary_latency_ms{flow,path,target}` for the mirrored latency of the same synthetic run in milliseconds.
 - Chat:
-  - `chat_delivery_latency_ms_bucket{tenantId,channel_type,le}` with `channel_type` drawn from a bounded enum (global/zone/party/system, etc.).
+  - `chat_delivery_latency_ms_bucket{scope,channel_type,le}` with bounded `scope` and `channel_type` drawn from a bounded enum (global/zone/party/system, etc.).
 
-### Synthetic Player-Flow Canaries (Normative)
+### Synthetic Player-Flow Canaries (Target-State Prod-Like Contract)
 
 Live-traffic SLIs remain the authoritative compliance view for player experience, but they are not sufficient to detect outages in low-traffic periods or low-volume environments. Prod-like environments must also run **independent synthetic canaries** for the most critical player flows:
 
@@ -233,7 +245,7 @@ Live-traffic SLIs remain the authoritative compliance view for player experience
   - These canaries are an outage-detection path, not the primary SLO compliance metric. They complement, but do not replace, `login_requests_total` and `command_end_to_end_latency_ms_bucket`.
   - The canary execution system should live outside the normal player request path failure domain where practical, and must alert independently from live-traffic volume.
 
-#### Canary Alert Contract (Normative)
+#### Canary Alert Contract (Target-State Prod-Like Contract)
 
 To keep synthetic canaries actionable instead of merely visible, prod-like environments must install a canonical alert set for canary failures:
 
@@ -348,7 +360,7 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
 - **Entry-path availability**
   - Recording rules mirroring both the short-window detection view and the 1-day compliance view for `EntryPathAvailabilityLowGateway` and `EntryPathAvailabilityLowTcpProxy`, scoped by `service` and `path`, based on `entrypath_connection_attempts_total`.
 - **Chat delivery latency**
-  - Recording rule mirroring `ChatDeliveryLatencyP99High`, based on `chat_delivery_latency_ms_bucket` with per-tenant/channel dimensions preserved.
+  - Recording rule mirroring `ChatDeliveryLatencyP99High`, based on `chat_delivery_latency_ms_bucket` with approved scope and channel dimensions preserved.
 - **Backup health**
   - Recording rules mirroring missed backup, missed verification, and scoped pause-budget breaches, based on `backup_last_success_timestamp_seconds`, `backup_verify_last_success_timestamp_seconds`, `backup_tick_pause_wait_seconds`, `backup_tick_pause_duration_seconds`, and their matching emitted budget gauges.
   - Canonical fallback recordings should expose at least:
