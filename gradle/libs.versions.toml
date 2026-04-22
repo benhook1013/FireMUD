@@ -44,7 +44,7 @@ flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql
 mapstruct = { module = "org.mapstruct:mapstruct", version = "1.6.3" }
 mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version = "1.6.3" }
 
-lombok = { module = "org.projectlombok:lombok", version = "1.18.44" }
+lombok = { module = "org.projectlombok:lombok", version = "1.18.46" }
 lombok-mapstruct-binding = { module = "org.projectlombok:lombok-mapstruct-binding", version = "0.2.0" }
 
 grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version = "1.80.0" }
@@ -70,7 +70,7 @@ argon2 = { module = "de.mkammerer:argon2-jvm", version = "2.12" }
 
 grpc-spring-boot-starter = { module = "org.springframework.grpc:spring-grpc-spring-boot-starter", version = "1.0.3" }
 postgresql = { module = "org.postgresql:postgresql", version = "42.7.10" }
-aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.37" }
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.38" }
 h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
 springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "3.0.3" }
