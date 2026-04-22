@@ -11,8 +11,13 @@ import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPa
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionResponse;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusRequest;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -88,6 +93,71 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         .cancelPendingForPatch(
             new ScriptWorkItemService.CancelPendingForPatchCommand(
                 "1", "patch-1", "game-1", "region-1", "", "", "rollback_epoch_advanced"));
+  }
+
+  @Test
+  void getsScriptPatchStatusFromWorkItemReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.getPatchStatus("1", "patch-1"))
+        .thenReturn(
+            java.util.Optional.of(
+                new ScriptWorkItemService.PatchStatusSummary(
+                    "patch-1",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
+                    "runtime_work_terminal",
+                    123L)));
+    AutomationScriptingControlPlaneGrpcService service =
+        new AutomationScriptingControlPlaneGrpcService(
+            new BuiltInScriptEventRegistryService(), workItemService);
+    AtomicReference<GetScriptPatchStatusResponse> ref = new AtomicReference<>();
+
+    service.getScriptPatchStatus(
+        GetScriptPatchStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setScriptPatchVersion("patch-1")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getStatus()).isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY);
+    assertThat(ref.get().getStatusReason()).isEqualTo("runtime_work_terminal");
+    assertThat(ref.get().getLastChangedAtMs()).isEqualTo(123L);
+  }
+
+  @Test
+  void listsScriptPatchStatusesFromWorkItemReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(
+            workItemService.listPatchStatuses(
+                "1", ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED, 10L, 20L))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.PatchStatusSummary(
+                    "patch-2",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED,
+                    "terminal_work_failed",
+                    15L)));
+    AutomationScriptingControlPlaneGrpcService service =
+        new AutomationScriptingControlPlaneGrpcService(
+            new BuiltInScriptEventRegistryService(), workItemService);
+    AtomicReference<ListScriptPatchStatusesResponse> ref = new AtomicReference<>();
+
+    service.listScriptPatchStatuses(
+        ListScriptPatchStatusesRequest.newBuilder()
+            .setTenantId("1")
+            .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED)
+            .setChangedAfterMs(10L)
+            .setChangedBeforeMs(20L)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getPatchesList()).hasSize(1);
+    assertThat(ref.get().getPatches(0).getScriptPatchVersion()).isEqualTo("patch-2");
+    assertThat(ref.get().getPatches(0).getStatus())
+        .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
   }
 
   private static <T> StreamObserver<T> observer(AtomicReference<T> ref) {

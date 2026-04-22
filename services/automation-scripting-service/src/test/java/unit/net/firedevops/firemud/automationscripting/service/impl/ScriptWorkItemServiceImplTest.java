@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
@@ -13,6 +14,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageRequest;
@@ -136,6 +138,58 @@ class ScriptWorkItemServiceImplTest {
 
     assertThat(result.deadLetteredDeleted()).isEqualTo(1L);
     verify(workItemRepository).deleteAll(List.of(old));
+  }
+
+  @Test
+  void summarizesPatchStatusFromDurableWorkItems() {
+    ScriptWorkItem pending = workItem("patch-1", "PENDING_EVALUATION", Instant.ofEpochMilli(100));
+    ScriptWorkItem handedOff = workItem("patch-1", "HANDED_OFF", Instant.ofEpochMilli(200));
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(List.of(pending, handedOff));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, outboxProperties());
+
+    Optional<ScriptWorkItemService.PatchStatusSummary> status =
+        service.getPatchStatus("1", "patch-1");
+
+    assertThat(status).isPresent();
+    assertThat(status.get().status())
+        .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_ONLOAD_RUNNING);
+    assertThat(status.get().statusReason()).isEqualTo("runtime_work_active");
+    assertThat(status.get().lastChangedAtMs()).isEqualTo(200L);
+  }
+
+  @Test
+  void listsPatchStatusesWithFilters() {
+    ScriptWorkItem ready = workItem("patch-ready", "HANDED_OFF", Instant.ofEpochMilli(200));
+    ScriptWorkItem failed = workItem("patch-failed", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(workItemRepository.findDistinctScriptPatchVersionsByTenantId("1"))
+        .thenReturn(List.of("patch-ready", "patch-failed"));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-ready"))
+        .thenReturn(List.of(ready));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-failed"))
+        .thenReturn(List.of(failed));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(workItemRepository, auditRepository, outboxProperties());
+
+    List<ScriptWorkItemService.PatchStatusSummary> statuses =
+        service.listPatchStatuses("1", ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED, 250L, 0L);
+
+    assertThat(statuses).hasSize(1);
+    assertThat(statuses.get(0).scriptPatchVersion()).isEqualTo("patch-failed");
+    assertThat(statuses.get(0).status()).isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
+  }
+
+  private static ScriptWorkItem workItem(String patchVersion, String status, Instant updatedAt) {
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setScriptPatchVersion(patchVersion);
+    item.setStatus(status);
+    item.setUpdatedAt(updatedAt);
+    return item;
   }
 
   private static ScriptOutboxProperties outboxProperties() {

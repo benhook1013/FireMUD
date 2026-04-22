@@ -16,6 +16,7 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsR
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
 import net.firedevops.firemud.automationscripting.v1.ScriptEventDefinition;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatusEntry;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -33,13 +34,6 @@ public final class AutomationScriptingControlPlaneGrpcService
       ScriptEventRegistryService eventRegistryService, ScriptWorkItemService workItemService) {
     this.eventRegistryService = eventRegistryService;
     this.workItemService = workItemService;
-  }
-
-  private static ErrorDetail notImplemented(String method) {
-    return ErrorDetail.newBuilder()
-        .setCode("NOT_IMPLEMENTED")
-        .setMessage(method + " is not implemented yet")
-        .build();
   }
 
   @Override
@@ -96,7 +90,18 @@ public final class AutomationScriptingControlPlaneGrpcService
     GetScriptPatchStatusResponse.Builder response = GetScriptPatchStatusResponse.newBuilder();
     try {
       requireAdminRole();
-      response.setError(notImplemented("GetScriptPatchStatus"));
+      workItemService
+          .getPatchStatus(request.getTenantId(), request.getScriptPatchVersion())
+          .ifPresentOrElse(
+              summary ->
+                  response
+                      .setStatus(summary.status())
+                      .setStatusReason(summary.statusReason())
+                      .setLastChangedAtMs(summary.lastChangedAtMs()),
+              () -> response.setError(notFound("GetScriptPatchStatus", "script_patch_not_found")));
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
     } catch (AdminAuthorizationException ex) {
       response.setError(authorizationError(ex));
     }
@@ -112,7 +117,18 @@ public final class AutomationScriptingControlPlaneGrpcService
     ListScriptPatchStatusesResponse.Builder response = ListScriptPatchStatusesResponse.newBuilder();
     try {
       requireAdminRole();
-      response.setError(notImplemented("ListScriptPatchStatuses"));
+      workItemService
+          .listPatchStatuses(
+              request.getTenantId(),
+              request.getStatus(),
+              request.getChangedAfterMs(),
+              request.getChangedBeforeMs())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addPatches);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
     } catch (AdminAuthorizationException ex) {
       response.setError(authorizationError(ex));
     }
@@ -183,6 +199,15 @@ public final class AutomationScriptingControlPlaneGrpcService
         .addAllAllowedBindingScopes(definition.allowedBindingScopes())
         .setDryRunSupport(definition.dryRunSupport())
         .setDeprecationStatus(definition.deprecationStatus())
+        .build();
+  }
+
+  private static ScriptPatchStatusEntry toProto(ScriptWorkItemService.PatchStatusSummary summary) {
+    return ScriptPatchStatusEntry.newBuilder()
+        .setScriptPatchVersion(summary.scriptPatchVersion())
+        .setStatus(summary.status())
+        .setStatusReason(summary.statusReason())
+        .setLastChangedAtMs(summary.lastChangedAtMs())
         .build();
   }
 }

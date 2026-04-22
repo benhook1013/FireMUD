@@ -202,6 +202,8 @@ Outputs: same as `SetPinnedScriptPatchVersion`.
 
 #### `GetScriptPatchStatus`
 
+Implementation note: the current Automation & Scripting API exposes the runtime-readiness subset of this contract from durable `script_work_items`: `status`, `statusReason`, and `lastChangedAt`. The richer design-time compatibility fields such as `baseVersionId`, `abilitySchemaDigest`, and `supersededByScriptPatchVersion` remain target-state companion data from the publication/control-plane model rather than current response fields.
+
 Inputs:
 
 - `tenantId`

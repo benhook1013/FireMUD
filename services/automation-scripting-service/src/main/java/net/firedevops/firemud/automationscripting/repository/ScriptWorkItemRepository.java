@@ -6,6 +6,8 @@ import java.util.List;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -29,6 +31,13 @@ public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, 
 
   List<ScriptWorkItem> findByTenantIdAndScriptPatchVersionAndStatusInOrderByCreatedAtAscIdAsc(
       String tenantId, String scriptPatchVersion, Collection<String> statuses);
+
+  List<ScriptWorkItem> findByTenantIdAndScriptPatchVersion(
+      String tenantId, String scriptPatchVersion);
+
+  @Query(
+      "select distinct item.scriptPatchVersion from ScriptWorkItem item where item.tenantId = :tenantId")
+  List<String> findDistinctScriptPatchVersionsByTenantId(@Param("tenantId") String tenantId);
 
   List<ScriptWorkItem> findByStatusOrderByCreatedAtAscIdAsc(String status, Pageable pageable);
 
