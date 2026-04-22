@@ -12,6 +12,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
@@ -38,6 +39,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository eventAuditRepository;
   private final ScriptEventRegistryService eventRegistryService;
+  private final AutomationQueueService automationQueueService;
   private final ScriptOutputProperties outputProperties;
 
   public ScriptEventIngressServiceImpl(
@@ -46,12 +48,14 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       ScriptWorkItemRepository workItemRepository,
       ScriptEventAuditRepository eventAuditRepository,
       ScriptEventRegistryService eventRegistryService,
+      AutomationQueueService automationQueueService,
       ScriptOutputProperties outputProperties) {
     this.repository = repository;
     this.bindingRepository = bindingRepository;
     this.workItemRepository = workItemRepository;
     this.eventAuditRepository = eventAuditRepository;
     this.eventRegistryService = eventRegistryService;
+    this.automationQueueService = automationQueueService;
     this.outputProperties = outputProperties;
   }
 
@@ -187,6 +191,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setReadSnapshotToken(normalize(request.getReadSnapshotToken()));
     item.setPayloadJson(normalize(request.getPayloadJson()));
     ScriptWorkItem saved = workItemRepository.save(item);
+    automationQueueService.enqueueWorkItem(saved);
     persistHandlerAudit(request, schemaVersion, binding, saved);
   }
 

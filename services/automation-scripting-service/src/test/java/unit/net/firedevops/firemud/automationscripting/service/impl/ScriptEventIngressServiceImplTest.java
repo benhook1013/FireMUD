@@ -18,6 +18,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
@@ -44,6 +45,7 @@ class ScriptEventIngressServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository eventAuditRepository =
         Mockito.mock(ScriptEventAuditRepository.class);
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
     when(workItemRepository.save(Mockito.any(ScriptWorkItem.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(repository
@@ -70,6 +72,7 @@ class ScriptEventIngressServiceImplTest {
             workItemRepository,
             eventAuditRepository,
             new BuiltInScriptEventRegistryService(),
+            automationQueueService,
             outputProperties());
 
     ScriptEventIngressService.TriggerAdmission admission =
@@ -106,6 +109,7 @@ class ScriptEventIngressServiceImplTest {
     verify(eventAuditRepository).save(eventAuditCaptor.capture());
     assertThat(eventAuditCaptor.getValue().getFinalStage()).isEqualTo("ADMISSION");
     assertThat(eventAuditCaptor.getValue().getFinalOutcome()).isEqualTo("work_item_persisted");
+    verify(automationQueueService).enqueueWorkItem(Mockito.any(ScriptWorkItem.class));
   }
 
   @Test
@@ -121,6 +125,7 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(ScriptEventAuditRepository.class),
             new BuiltInScriptEventRegistryService(),
+            Mockito.mock(AutomationQueueService.class),
             outputProperties());
 
     ScriptEventIngressService.TriggerAdmission admission =
@@ -158,6 +163,7 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(ScriptEventAuditRepository.class),
             new BuiltInScriptEventRegistryService(),
+            Mockito.mock(AutomationQueueService.class),
             outputProperties());
 
     ScriptEventIngressService.TriggerAdmission admission =
@@ -198,6 +204,7 @@ class ScriptEventIngressServiceImplTest {
             workItemRepository,
             Mockito.mock(ScriptEventAuditRepository.class),
             new BuiltInScriptEventRegistryService(),
+            Mockito.mock(AutomationQueueService.class),
             outputProperties);
 
     ScriptEventIngressService.TriggerAdmission admission =
@@ -253,6 +260,7 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(ScriptEventAuditRepository.class),
             new BuiltInScriptEventRegistryService(),
+            Mockito.mock(AutomationQueueService.class),
             outputProperties());
 
     ScriptEventIngressService.TriggerAdmission admission =
@@ -285,6 +293,7 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(ScriptEventAuditRepository.class),
             new BuiltInScriptEventRegistryService(),
+            Mockito.mock(AutomationQueueService.class),
             outputProperties());
 
     assertThrows(
