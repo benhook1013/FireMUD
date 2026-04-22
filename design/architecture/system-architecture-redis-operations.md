@@ -179,7 +179,7 @@ A lightweight unknown-prefix scanner periodically scans with conservative budget
 
 Session schema cleanup is a hygiene and recovery tool, not a normal steady-state path. When cleanup is required after a schema change or persistent unsupported-schema drift:
 
-- operate on per-tenant prefixes such as `session:game:<tenantId>:*`
+- operate on tenant-scoped gameplay/bootstrap prefixes such as `session:game:{tenantGameplayTag}:*` and the current `sessionctx:<tenantId>:*` family
 - run at most one cleanup worker at a time per Coordination Redis deployment
 - use bounded `SCAN` with modest `COUNT` values and strict time budgets
 - delete via `UNLINK` where possible to avoid blocking the event loop
@@ -188,6 +188,14 @@ Session schema cleanup is a hygiene and recovery tool, not a normal steady-state
 - resume from the last cursor or continuation token across bounded runs
 - emit cleanup metrics such as `session.cleanup_scanned_total`, `session.cleanup_deleted_total`, and `session.cleanup_duration_seconds`, with tenant context in logs
 - provide a dry-run mode before modifying keys in operator-driven cleanup tooling
+
+Canonical cleanup workflow:
+
+1. `coordination-maintenance pause --operation cleanup --scope tenant --tenant <tenantId>`
+2. `coordination-maintenance session-cleanup --scope tenant --tenant <tenantId> --maintenance-lock-token <token> [--dry-run] [--resume-token <token>]`
+3. `coordination-maintenance resume --scope tenant --tenant <tenantId> --maintenance-lock-token <token>` on success, or `coordination-maintenance release-lock --maintenance-lock-token <token>` on failure or operator abort
+
+The cleanup command is the only supported mutating path for session-schema cleanup. Ad hoc cleanup Jobs must call this verb rather than encoding their own lock, continuation, or abort behavior.
 
 Default runbooks should still prefer fixing deployments and relying on TTL over aggressive keyspace scrubbing.
 

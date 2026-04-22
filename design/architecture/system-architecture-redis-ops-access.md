@@ -134,6 +134,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `coordination-maintenance converge-commands`
   - `coordination-maintenance init-meta`
   - `coordination-maintenance rebind-sessions`
+  - `coordination-maintenance session-cleanup`
   - `coordination-maintenance smoke-check`
   - `coordination-maintenance resume`
   - `coordination-maintenance release-lock`
@@ -184,6 +185,13 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
     - accepts the scope grammar above.
     - requires `--maintenance-lock-token <token>`.
     - accepts either `--region-epoch <epoch> --current-tick-id <tickId>` for `--scope region` or `--region-epoch-map <path> --current-tick-id <tickId>` for tenant/cluster scopes.
+  - `coordination-maintenance session-cleanup`
+    - accepts only `--scope tenant --tenant <tenantId>` in first implementation; broader cleanup scopes are out of contract until explicitly designed.
+    - requires `--maintenance-lock-token <token>`.
+    - accepts `--dry-run`, `--resume-token <token>`, `--batch-size <n>`, and `--max-runtime-seconds <n>`.
+    - walks only the documented tenant-scoped gameplay-session and bootstrap/session-context families for that tenant, using bounded `SCAN` windows and `UNLINK` where applicable.
+    - must emit structured progress and completion audit output containing the tenant, prefixes visited, scanned count, deleted count, continuation or resume token, and the concrete abort/completion reason.
+    - must fail closed when Redis latency/health exceeds the documented cleanup budget, when the maintenance lock is lost, or when the workflow encounters an unsupported schema family outside the explicit cleanup contract.
   - `coordination-maintenance smoke-check`
     - accepts the scope grammar above.
     - requires `--maintenance-lock-token <token>`.
