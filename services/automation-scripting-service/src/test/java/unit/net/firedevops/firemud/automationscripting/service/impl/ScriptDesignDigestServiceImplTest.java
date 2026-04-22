@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -15,13 +16,14 @@ import tools.jackson.databind.ObjectMapper;
 
 class ScriptDesignDigestServiceImplTest {
   @Mock private ScriptDefinitionRepository repository;
+  @Mock private ScriptEventBindingRepository bindingRepository;
 
   private ScriptDesignDigestServiceImpl service;
 
   @BeforeEach
   void setUp() {
     MockitoAnnotations.openMocks(this);
-    service = new ScriptDesignDigestServiceImpl(repository, new ObjectMapper());
+    service = new ScriptDesignDigestServiceImpl(repository, bindingRepository, new ObjectMapper());
   }
 
   @Test
@@ -33,6 +35,10 @@ class ScriptDesignDigestServiceImplTest {
     one.setDefinition("return 1");
     when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
         .thenReturn(List.of(one));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of());
 
     var digest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
 
@@ -48,6 +54,10 @@ class ScriptDesignDigestServiceImplTest {
     one.setScriptVersion("patch-1");
     one.setDefinition("return 1");
     when(repository.findByTenantIdOrderByNameAscScriptVersionAsc(1L)).thenReturn(List.of(one));
+    when(bindingRepository
+            .findByTenantIdOrderByScriptPatchVersionAscEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L))
+        .thenReturn(List.of());
 
     var digest = service.getDraftDesignDigestForVersion("1", "7");
 

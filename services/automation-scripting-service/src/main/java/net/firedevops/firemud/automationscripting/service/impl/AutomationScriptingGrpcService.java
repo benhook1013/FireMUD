@@ -115,7 +115,8 @@ public class AutomationScriptingGrpcService
       response
           .setAdmitted(admission.admitted())
           .setAdmissionOutcome(TriggerAdmissionOutcome.valueOf(admission.outcome()))
-          .setAdmissionReason(admission.reason());
+          .setAdmissionReason(admission.reason())
+          .setResolvedHandlerCount(admission.resolvedHandlerCount());
       if (!admission.admitted()) {
         response.setError(
             GrpcAppErrors.error(
@@ -296,7 +297,18 @@ public class AutomationScriptingGrpcService
               Long.parseLong(request.getTenantId()),
               request.getName(),
               request.getVersion(),
-              request.getDefinition());
+              request.getDefinition(),
+              request.getEventBindingsList().stream()
+                  .map(
+                      binding ->
+                          new ScriptDefinitionDto.EventBindingDto(
+                              binding.getEventType(),
+                              binding.getEventSchemaVersion(),
+                              binding.getTargetScopeType(),
+                              binding.getTargetScopeId(),
+                              binding.getPriority(),
+                              binding.getRequiresExclusiveEvent()))
+                  .toList());
       scriptService.updateScript(dto);
       UpdateScriptResponse resp = UpdateScriptResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(resp);

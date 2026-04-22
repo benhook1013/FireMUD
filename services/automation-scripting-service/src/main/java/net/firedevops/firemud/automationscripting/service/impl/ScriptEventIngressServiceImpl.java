@@ -2,7 +2,9 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import java.util.Map;
 import java.util.Set;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
@@ -20,10 +22,14 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name();
 
   private final ScriptEventIngressAuditRepository repository;
+  private final ScriptEventBindingRepository bindingRepository;
   private final Map<String, EventDefinition> eventDefinitions;
 
-  public ScriptEventIngressServiceImpl(ScriptEventIngressAuditRepository repository) {
+  public ScriptEventIngressServiceImpl(
+      ScriptEventIngressAuditRepository repository,
+      ScriptEventBindingRepository bindingRepository) {
     this.repository = repository;
+    this.bindingRepository = bindingRepository;
     this.eventDefinitions =
         Map.of(
             key("onLoad", DEFAULT_SCHEMA_VERSION),
@@ -52,10 +58,16 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     ScriptEventIngressAudit existing = findExisting(request, schemaVersion);
     if (existing != null) {
       return new TriggerAdmission(
-          existing.isAdmitted(), existing.getAdmissionOutcome(), existing.getAdmissionReason());
+          existing.isAdmitted(),
+          existing.getAdmissionOutcome(),
+          existing.getAdmissionReason(),
+          existing.getResolvedHandlerCount());
     }
 
     TriggerAdmission admission = validate(request, schemaVersion);
+    if (admission.admitted()) {
+      admission = admissionWithHandlers(request, schemaVersion);
+    }
     ScriptEventIngressAudit audit = new ScriptEventIngressAudit();
     audit.setTenantId(requiredText(request.getTenantId(), "tenant_id"));
     audit.setGameInstanceId(normalize(request.getGameInstanceId()));
@@ -78,6 +90,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setAdmitted(admission.admitted());
     audit.setAdmissionOutcome(admission.outcome());
     audit.setAdmissionReason(admission.reason());
+    audit.setResolvedHandlerCount(admission.resolvedHandlerCount());
     repository.save(audit);
     return admission;
   }
@@ -107,11 +120,38 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         return rejected("missing_trigger_identity");
       }
     }
-    return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_for_handler_resolution");
+    return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_for_handler_resolution", 0);
   }
 
   private TriggerAdmission rejected(String reason) {
-    return new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, reason);
+    return new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, reason, 0);
+  }
+
+  private TriggerAdmission admissionWithHandlers(
+      TriggerScriptEventRequest request, String schemaVersion) {
+    long tenantKey = Long.parseLong(request.getTenantId());
+    int handlerCount =
+        (int)
+            bindingRepository
+                .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
+                    tenantKey,
+                    request.getScriptPatchVersion(),
+                    request.getEventType(),
+                    schemaVersion)
+                .stream()
+                .filter(binding -> matchesScope(binding, request))
+                .count();
+    String reason = handlerCount == 0 ? "admitted_no_handlers" : "admitted_handlers_resolved";
+    return new TriggerAdmission(true, OUTCOME_ADMITTED, reason, handlerCount);
+  }
+
+  private boolean matchesScope(ScriptEventBinding binding, TriggerScriptEventRequest request) {
+    return switch (binding.getTargetScopeType()) {
+      case "GLOBAL" -> binding.getTargetScopeId().isBlank();
+      case "ENTITY" -> binding.getTargetScopeId().equals(request.getEntityId());
+      case "REGION" -> binding.getTargetScopeId().equals(request.getRegionId());
+      default -> false;
+    };
   }
 
   private ScriptEventIngressAudit findExisting(
@@ -124,15 +164,12 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     }
     var existing =
         repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndPluginIdAndPluginVersionIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 request.getTenantId(),
                 normalize(request.getGameInstanceId()),
                 normalize(request.getRegionId()),
                 request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
                 normalize(request.getEntityId()),
-                normalize(request.getScriptId()),
-                normalize(request.getPluginId()),
-                normalize(request.getPluginVersionId()),
                 request.getEventType(),
                 schemaVersion,
                 request.getScriptPatchVersion(),

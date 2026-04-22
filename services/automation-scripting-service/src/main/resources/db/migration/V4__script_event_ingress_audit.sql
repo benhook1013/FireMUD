@@ -20,6 +20,7 @@ CREATE TABLE script_event_ingress_audit (
     admitted BOOLEAN NOT NULL,
     admission_outcome VARCHAR(128) NOT NULL,
     admission_reason VARCHAR(256) NOT NULL,
+    resolved_handler_count INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     row_version INT NOT NULL DEFAULT 0,
     CONSTRAINT uq_script_event_ingress_audit_identity UNIQUE (
@@ -28,9 +29,6 @@ CREATE TABLE script_event_ingress_audit (
         region_id,
         region_epoch,
         entity_id,
-        script_id,
-        plugin_id,
-        plugin_version_id,
         event_type,
         event_schema_version,
         script_patch_version,

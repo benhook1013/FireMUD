@@ -102,11 +102,21 @@ message UpdateScriptRequest {
   string name = 2;
   string version = 3;
   string definition = 4;
+  repeated ScriptEventBinding event_bindings = 5;
 }
 
 message UpdateScriptResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message ScriptEventBinding {
+  string event_type = 1;
+  string event_schema_version = 2;
+  string target_scope_type = 3;
+  string target_scope_id = 4;
+  int32 priority = 5;
+  bool requires_exclusive_event = 6;
 }
 
 message GetScriptStatusRequest {
@@ -218,6 +228,7 @@ message TriggerScriptEventResponse {
   TriggerAdmissionOutcome admission_outcome = 2;
   string admission_reason = 3;
   shared.v1.ErrorDetail error = 4;
+  int32 resolved_handler_count = 5;
 }
 
 enum ScriptPatchStatus {

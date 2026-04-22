@@ -19,7 +19,7 @@ The automation-scripting APIs rely on a small number of stable identifiers for i
 RPC expectations:
 
 - `Ping` – safe to retry freely; no side effects.
-- `UpdateScript` / `NotifyScriptVersionUpdate` – **idempotent with respect to their request identifiers** (for example, script IDs and patch versions). Callers should treat transport-level retries as safe as long as they resend the same payload.
+- `UpdateScript` / `NotifyScriptVersionUpdate` – **idempotent with respect to their request identifiers** (for example, script IDs, patch versions, and event-binding identity). Callers should treat transport-level retries as safe as long as they resend the same payload.
 - `GetScriptPatchStatus` / `ListScriptPatchStatuses` – visibility over patch lifecycle states (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `ROLLED_BACK`).
 - Plugin control-plane mutating RPCs (`SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`) are idempotent with respect to `controlPlaneRequestId`.
 - Event ingress RPCs (for example, `TriggerScriptEvent`) – **idempotent with respect to `scriptEventId`**:
@@ -27,7 +27,7 @@ RPC expectations:
   - For entity-scoped external gameplay/runtime events, the Trigger Identity is at least `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, eventSchemaVersion, scriptPatchVersion, scriptEventId>`.
   - For plugin triggers, Trigger Identity also includes `<pluginId, pluginVersionId>`.
   - For tick-aligned scheduler events, Trigger Identity also includes `regionEpoch`, and `scriptEventId` must be deterministic and derived from a due point (for example `dueTickId` / `dueAt`) plus the stable identity fields above.
-  - The service records at most one ingress audit row per event-scope Trigger Identity, then later records handler-scoped `script_event_audit` rows per resolved handler before any commands flow into tick queues.
+  - The service records at most one ingress audit row per event-scope Trigger Identity, resolves matching script event bindings for that patch/event/scope, then later records handler-scoped `script_event_audit` rows per resolved handler before any commands flow into tick queues.
 
 Callers and infrastructure components may retry these RPCs at the transport layer only when they reuse the same identifiers; changing identifiers creates new triggers and must be treated as new work.
 
@@ -41,12 +41,13 @@ The proto files in this directory define several RPCs consumed by domain service
   - `AutomationScriptingControlPlaneService` exposes script patch lifecycle APIs (`GetScriptPatchStatus`, `ListScriptPatchStatuses`) and rollback-support hooks (`CancelPendingWorkItemsForPatch`) as specified in `design/architecture/system-architecture-scripting-control-plane-api.md`.
   - It also exposes plugin lifecycle APIs (`GetPluginStatus`, `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`) for operator orchestration via Logging & Admin.
 - **Design-time APIs**
-  - `UpdateScript` – uploads or replaces a script definition for later use as part of the Game Design → Automation & Scripting publish Saga.
+  - `UpdateScript` – uploads or replaces a script definition and its event bindings for later use as part of the Game Design → Automation & Scripting publish Saga.
   - `GetScriptStatus` – queries whether a script is queued or running for a given entity.
   - `NotifyScriptVersionUpdate` – informs the service that a new `script_patch_version` is available; the service reloads affected scripts, executes any required `onLoad` initialization, and updates its runtime registry.
 - **Event ingress APIs**
   - RPCs such as `TriggerScriptEvent` (or the actual event-ingress names defined here) are called by the Game Session Service and other domain services to deliver script events. Requests carry `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch` (when tick-aligned), `entityId`, `scriptEventId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `readSnapshotToken` when required by the registry, and an event payload envelope. For plugin triggers, requests also carry `pluginId` and `pluginVersionId`.
   - Event-ingress RPCs are **idempotent** with respect to Trigger Identity (including `scriptEventId`). The Automation & Scripting Service must deduplicate repeated deliveries using the rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication` and `design/architecture/system-architecture-scripting-contracts.md`.
+  - A successful event-scope admission returns `resolvedHandlerCount` so callers and smoke tests can distinguish "accepted but no handlers matched" from "accepted and fan-out found concrete script handlers"; per-handler success or failure remains asynchronous and is not summarized by the unary response.
 
 For metric names, outcomes, and operational semantics of these RPCs, see:
 

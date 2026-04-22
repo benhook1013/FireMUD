@@ -7,15 +7,12 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface ScriptEventIngressAuditRepository
     extends JpaRepository<ScriptEventIngressAudit, Long> {
   Optional<ScriptEventIngressAudit>
-      findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndPluginIdAndPluginVersionIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+      findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
           String tenantId,
           String gameInstanceId,
           String regionId,
           Long regionEpoch,
           String entityId,
-          String scriptId,
-          String pluginId,
-          String pluginVersionId,
           String eventType,
           String eventSchemaVersion,
           String scriptPatchVersion,

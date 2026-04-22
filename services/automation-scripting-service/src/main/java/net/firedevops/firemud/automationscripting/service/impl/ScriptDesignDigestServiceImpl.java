@@ -6,20 +6,25 @@ import java.security.NoSuchAlgorithmException;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
 public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService {
-  private static final int DIGEST_SCHEMA_VERSION = 1;
+  private static final int DIGEST_SCHEMA_VERSION = 2;
 
   private final ScriptDefinitionRepository repository;
+  private final ScriptEventBindingRepository bindingRepository;
   private final ObjectMapper objectMapper;
 
   public ScriptDesignDigestServiceImpl(
-      ScriptDefinitionRepository repository, ObjectMapper objectMapper) {
+      ScriptDefinitionRepository repository,
+      ScriptEventBindingRepository bindingRepository,
+      ObjectMapper objectMapper) {
     this.repository = repository;
+    this.bindingRepository = bindingRepository;
     this.objectMapper = objectMapper;
   }
 
@@ -35,10 +40,21 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
                         "version", script.getScriptVersion(),
                         "definition", script.getDefinition()))
             .toList();
+    List<Map<String, Object>> bindings =
+        bindingRepository
+            .findByTenantIdOrderByScriptPatchVersionAscEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                tenantKey)
+            .stream()
+            .map(this::bindingDigest)
+            .toList();
     try {
       String canonicalJson =
           objectMapper.writeValueAsString(
-              Map.of("tenantId", tenantId, "versionId", versionId, "scripts", scripts));
+              Map.of(
+                  "tenantId", tenantId,
+                  "versionId", versionId,
+                  "scripts", scripts,
+                  "eventBindings", bindings));
       return new ScriptDraftDesignDigest(
           tenantId,
           versionId,
@@ -65,6 +81,13 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
                         "version", script.getScriptVersion(),
                         "definition", script.getDefinition()))
             .toList();
+    List<Map<String, Object>> bindings =
+        bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                tenantKey, scriptPatchVersion)
+            .stream()
+            .map(this::bindingDigest)
+            .toList();
     if (scripts.isEmpty()) {
       throw new IllegalArgumentException("script patch version not found");
     }
@@ -74,7 +97,8 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
               Map.of(
                   "tenantId", tenantId,
                   "scriptPatchVersion", scriptPatchVersion,
-                  "scripts", scripts));
+                  "scripts", scripts,
+                  "eventBindings", bindings));
       return new ScriptDraftDesignDigest(
           tenantId,
           scriptPatchVersion,
@@ -84,6 +108,20 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
     } catch (Exception ex) {
       throw new IllegalStateException("failed to compute automation script digest", ex);
     }
+  }
+
+  private Map<String, Object> bindingDigest(
+      net.firedevops.firemud.automationscripting.entity.ScriptEventBinding binding) {
+    return Map.of(
+        "scriptPatchVersion", binding.getScriptPatchVersion(),
+        "eventType", binding.getEventType(),
+        "eventSchemaVersion", binding.getEventSchemaVersion(),
+        "scriptId", binding.getScriptId(),
+        "targetScopeType", binding.getTargetScopeType(),
+        "targetScopeId", binding.getTargetScopeId(),
+        "priority", binding.getPriority(),
+        "requiresExclusiveEvent", binding.isRequiresExclusiveEvent(),
+        "enabled", binding.isEnabled());
   }
 
   private String sha256(String value) {

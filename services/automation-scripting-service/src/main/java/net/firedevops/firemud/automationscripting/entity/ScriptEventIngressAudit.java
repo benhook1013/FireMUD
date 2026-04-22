@@ -78,6 +78,9 @@ public class ScriptEventIngressAudit {
   private String admissionReason;
 
   @Column(nullable = false)
+  private int resolvedHandlerCount;
+
+  @Column(nullable = false)
   private Instant createdAt = Instant.now();
 
   @Version

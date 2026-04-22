@@ -212,7 +212,8 @@ class AutomationScriptingGrpcServiceTest {
             new ScriptEventIngressService.TriggerAdmission(
                 true,
                 TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name(),
-                "admitted_for_handler_resolution"));
+                "admitted_handlers_resolved",
+                2));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             Mockito.mock(PingService.class),
@@ -256,5 +257,6 @@ class AutomationScriptingGrpcServiceTest {
     assertEquals(
         TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED,
         ref.get().getAdmissionOutcome());
+    assertEquals(2, ref.get().getResolvedHandlerCount());
   }
 }
