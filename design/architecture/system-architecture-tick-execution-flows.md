@@ -58,6 +58,10 @@ Within a region’s tick, each command proceeds through several phases:
      - Optionally writes a best-effort Redis hint marker such as `remote:<tenantId>:<entityId>` (for the target entity) to reduce latency when the target region drains follow-ups.
      - If the command needs to wait for remote completion, the origin region creates or updates a separate durable cross-region coordinator record. This waiting state is **not** kept as a non-terminal row inside the origin tick batch.
        - Minimum coordinator fields include coordinator identity (`tenantId`, `gameInstanceId`, `commandId`), origin scope (`originRegionId`, `originRegionEpoch`, `originTickId`), target scope (`targetRegionId`, `targetRegionEpoch`, `dueTickId`), lifecycle state (`PENDING_REMOTE`, `REMOTE_APPLIED`, `REMOTE_ABANDONED`, `REMOTE_TIMEOUT_ABANDONED`, `LATE_RESULT_IGNORED`, `LATE_RESULT_RECONCILED`), origin-timeline deadline (`originDeadlineRegionEpoch`, `originDeadlineTickId`; storage may use names such as `remote_deadline_region_epoch` / `remote_deadline_tick_id`), final player-facing/result-facing projection fields when applicable (`executionOutcome`, `gameplayResult`), and `updatedAt`.
+       - Target completion is returned through one durable origin-owned result path, not an unspecified transient message:
+         - the target leg writes an origin-addressed result or inbox row keyed to the coordinator identity (for example `commandId` plus origin/target scope),
+         - the row records the target terminal outcome, target ledger identity, and any command-specific result payload needed by origin reconciliation,
+         - origin-side processing claims and applies that result idempotently when advancing the coordinator lifecycle.
    - The target region later drains these follow-ups into its own tick pipeline and applies them under its lease and locks.
 5. **Completion / Finalization (optional)**
    - Many commands do not need global awareness of “all regions finished”; origin and target regions can operate independently with eventual consistency.
@@ -436,9 +440,14 @@ Required policy defaults:
 
 - Deadlines are tick-based on the origin region timeline and recorded durably with the origin coordinating effect (`originDeadlineRegionEpoch`, `originDeadlineTickId`; storage may use names such as `remote_deadline_region_epoch` / `remote_deadline_tick_id`), not inferred from wall-clock timers.
 - The origin region is the only clock that evaluates remote completion timeouts. Target-region `dueTickId` controls when the remote leg first becomes eligible to run; it does not define when the origin gives up waiting for the result.
+- If the origin scope is canonical `PAUSED` or `STALLED`, normal tick-clock timeout progression is suspended. A durable recovery/controller path may still converge overdue coordinators to `REMOTE_TIMEOUT_ABANDONED` using the stored origin deadline plus control-plane health evidence when normal origin ticks are not advancing.
 - The coordinator lifecycle above is outside the committing origin tick batch:
   - The origin tick that creates the remote follow-up still commits normally once its own batch rows are terminal.
   - Later remote results or timeouts enqueue subsequent origin-region work or update the separate coordinator record; they do not retroactively keep the original tick non-terminal.
+- Remote result return-path contract:
+  - target regions do not mutate origin coordinator rows directly through ad hoc RPCs or transient bus messages;
+  - they write one durable origin-addressed result row keyed by coordinator identity;
+  - origin-side reconciliation is the only component that advances the coordinator from `PENDING_REMOTE` to `REMOTE_APPLIED`, `REMOTE_ABANDONED`, `REMOTE_TIMEOUT_ABANDONED`, `LATE_RESULT_IGNORED`, or `LATE_RESULT_RECONCILED`.
 - If origin has already reached `REMOTE_TIMEOUT_ABANDONED`, any later remote result must not silently mutate prior terminal state:
   - Default: record `LATE_RESULT_IGNORED` for observability and keep origin terminal state unchanged.
   - Feature-specific override: `LATE_RESULT_RECONCILED` is allowed only if the feature documents an explicit reconciliation/compensation flow.
@@ -486,7 +495,7 @@ To illustrate how cross-region flows compose from the phases above, consider a *
    - In the next tick for `<tenantId, regionB>`, the target region’s executor:
      - Computes the damage amount as a percentage of the target’s authoritative current HP.
      - Acquires the target’s lock (`tick:{tenantRegionTag}:lock:<entityId>` for the target entity) and applies damage via Entity Management using the normal `(tenantId, regionId, region_epoch, tickId, effectKey)` idempotency rules.
-     - Emits a result back to region A containing `casterEntityId` and the actual `damageApplied`.
+     - Writes a durable origin-addressed result row for region A containing `casterEntityId`, the actual `damageApplied`, and the target terminal outcome keyed to the coordinator identity.
 4. **Heal Leg (origin region)**
    - When region A receives the lifesteal result, it enqueues a local “apply lifesteal heal” command for the caster.
    - In a subsequent tick for `<tenantId, regionA>`, the executor:
@@ -501,5 +510,5 @@ To illustrate how cross-region flows compose from the phases above, consider a *
 Throughout this sequence:
 
 - Each leg is idempotent and keyed by `(region_epoch, tickId)` and effect identity in the domain services.
-- Region executors never hold cross-region locks; they coordinate via queued commands, durable follow-up records, and result messages.
+- Region executors never hold cross-region locks; they coordinate via queued commands, durable follow-up records, and durable origin-addressed result rows.
 - Retries due to lock contention or transient failures are handled by the standard retry queues and idempotent handlers in each region without breaking the overall experience.

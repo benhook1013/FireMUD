@@ -497,6 +497,7 @@ Cross-region tick-driven flows (such as combat actions that affect entities in m
 Operationally:
 
 - Timeouts waiting for remote results are treated as equivalent to a failed remote leg; origin-ledger entries for those coordinating effects converge to `ABANDONED` with a timeout reason and a corresponding `PARTIAL` or `FAILED` high-level outcome.
+- If the origin scope is canonical `PAUSED` or `STALLED`, timeout convergence is owned by the documented recovery/controller path rather than by a normally advancing origin tick clock. Operators should not expect paused regions to age coordinator deadlines automatically without that recovery path.
 - Explicit `ABANDONED` outcomes from a target region (for example, entity no longer valid, region reset, or unrecoverable domain error) are treated the same way at the origin.
 - Late remote results are handled by the required lifecycle in `system-architecture-tick-execution-flows.md`:
   - Once origin has reached timeout-abandoned terminal state, late replies are either explicitly ignored (`LATE_RESULT_IGNORED`) or reconciled by a documented feature-specific compensation flow (`LATE_RESULT_RECONCILED`), never silently merged.
