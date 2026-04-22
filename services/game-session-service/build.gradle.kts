@@ -48,6 +48,7 @@ dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation(libs.spring.boot.starter.websocket)
     implementation(project(":common-security"))
+    implementation(project(":automation-scripting-service"))
     implementation(libs.jjwt.api)
     runtimeOnly(libs.jjwt.impl)
     runtimeOnly(libs.jjwt.jackson)

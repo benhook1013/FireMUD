@@ -74,6 +74,7 @@ previewStack:
     ASSET_STORE_REGION: ap-southeast-2
     ASSET_STORE_ACCESS_KEY: minio
     ASSET_STORE_SECRET_KEY: minio123
+    FIREMUD_SERVICES_AUTOMATION_SCRIPTING_SERVICE: automation-scripting-service:6565
     FIREMUD_SERVICES_GAME_LOGIC_SERVICE: game-logic-service:6565
     FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE: logging-admin-service:6565
     FIREMUD_AUTH_JWT_SECRET_PATH: /var/run/secrets/firemud/jwt/current.key

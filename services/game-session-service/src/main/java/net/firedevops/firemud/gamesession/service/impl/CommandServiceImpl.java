@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRateLimiter;
@@ -39,6 +40,7 @@ public class CommandServiceImpl implements CommandService {
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
   private final SessionContextService sessionContextService;
+  private final ScriptEventPublisher scriptEventPublisher;
 
   private record QueueTarget(long tenantId, long queueTargetId) {}
 
@@ -47,12 +49,14 @@ public class CommandServiceImpl implements CommandService {
       SessionRateLimiter sessionRateLimiter,
       GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
-      SessionContextService sessionContextService) {
+      SessionContextService sessionContextService,
+      ScriptEventPublisher scriptEventPublisher) {
     this.tickService = tickService;
     this.sessionRateLimiter = sessionRateLimiter;
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.sessionContextService = sessionContextService;
+    this.scriptEventPublisher = scriptEventPublisher;
   }
 
   @Override
@@ -118,6 +122,7 @@ public class CommandServiceImpl implements CommandService {
             requiresSoloTick);
         markStaged(gameplayCommand);
         triggerImmediateTick(queueTarget.get());
+        sessionContext.ifPresent(context -> publishScriptEvent(context, gameplayCommand));
         return CommandEnqueueResult.success(gameplayCommand.getCommandId());
       } catch (IllegalArgumentException ex) {
         markFailed(gameplayCommand, "INVALID_ARGUMENT", ex.getMessage());
@@ -208,6 +213,19 @@ public class CommandServiceImpl implements CommandService {
           "Immediate tick kick failed tenantId={} queueTargetId={}",
           queueTarget.tenantId(),
           queueTarget.queueTargetId(),
+          ex);
+    }
+  }
+
+  private void publishScriptEvent(SessionContext context, GameplayCommand gameplayCommand) {
+    try {
+      scriptEventPublisher.publishCommandEvent(context, gameplayCommand);
+    } catch (RuntimeException ex) {
+      logger.warn(
+          "Script event publish failed commandId={} tenantId={} gameInstanceId={}",
+          gameplayCommand.getCommandId(),
+          gameplayCommand.getTenantId(),
+          gameplayCommand.getGameInstanceId(),
           ex);
     }
   }

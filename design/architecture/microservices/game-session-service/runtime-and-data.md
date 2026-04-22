@@ -124,6 +124,7 @@ Feature flags are stored in the `feature_flag` table and can be toggled through 
 Each running game instance has a pinned `scriptPatchVersion` alongside its `runtimeVersion`:
 
 - Event ingress to the Automation & Scripting Service includes the currently pinned `scriptPatchVersion` so script evaluation is tied to the active patch for the instance.
+- Current Game Session emits `onCommand` events after durable player-command staging and immediate tick kick when a gameplay session context, pinned script patch, and current runtime ownership row are all available. The request uses the live `{tenantId, gameInstanceId}` boundary as the current region surrogate until true region partitioning is shipped, includes the current `regionEpoch`, and carries a producer-supplied `readSnapshotToken` derived from the command and ownership fence.
 - Script-generated commands accepted from the Automation & Scripting Service must carry the originating `scriptPatchVersion`, `scriptId`, and `scriptEventId`.
 - On execution, Game Session enforces a version fence: if a queued command’s `scriptPatchVersion` does not match the instance’s currently pinned value, it must not be executed and the drop must be observable for operators.
 

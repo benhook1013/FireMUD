@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRateLimiter;
@@ -36,7 +37,12 @@ class CommandServiceImplTest {
     SessionContextService sessionContextService = Mockito.mock(SessionContextService.class);
     CommandServiceImpl service =
         new CommandServiceImpl(
-            tickService, rateLimiter, repository, commandRepository, sessionContextService);
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            sessionContextService,
+            Mockito.mock(ScriptEventPublisher.class));
 
     CommandEnqueueResult result = service.enqueue("5", "look", false);
 
@@ -65,7 +71,12 @@ class CommandServiceImplTest {
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
     CommandServiceImpl service =
         new CommandServiceImpl(
-            tickService, rateLimiter, repository, commandRepository, sessionContextService);
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            sessionContextService,
+            Mockito.mock(ScriptEventPublisher.class));
 
     CommandEnqueueResult result = service.enqueue("7", "look", true);
 
@@ -95,14 +106,22 @@ class CommandServiceImplTest {
         .thenReturn(
             Optional.of(new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room", "jwt")));
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
+    ScriptEventPublisher scriptEventPublisher = Mockito.mock(ScriptEventPublisher.class);
     CommandServiceImpl service =
         new CommandServiceImpl(
-            tickService, rateLimiter, repository, commandRepository, sessionContextService);
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            sessionContextService,
+            scriptEventPublisher);
 
     CommandEnqueueResult result = service.enqueue("17", "look", false);
 
     assertTrue(result.accepted());
     verify(tickService, times(1)).enqueueCommand(9L, 99L, result.commandId(), "look", false);
+    verify(scriptEventPublisher, times(1))
+        .publishCommandEvent(Mockito.any(SessionContext.class), Mockito.any(GameplayCommand.class));
   }
 
   @Test
@@ -135,7 +154,12 @@ class CommandServiceImplTest {
 
     CommandServiceImpl service =
         new CommandServiceImpl(
-            tickService, rateLimiter, repository, commandRepository, sessionContextService);
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            sessionContextService,
+            Mockito.mock(ScriptEventPublisher.class));
 
     CommandEnqueueResult result = service.enqueue("17", "look", false);
 
@@ -159,7 +183,12 @@ class CommandServiceImplTest {
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
         new CommandServiceImpl(
-            tickService, rateLimiter, repository, commandRepository, sessionContextService);
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            sessionContextService,
+            Mockito.mock(ScriptEventPublisher.class));
 
     service.enqueue("17", "LOGIN demo@example.com swordfish", false);
 
@@ -193,7 +222,12 @@ class CommandServiceImplTest {
             Mockito.eq(false));
     CommandServiceImpl service =
         new CommandServiceImpl(
-            tickService, rateLimiter, repository, commandRepository, sessionContextService);
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            sessionContextService,
+            Mockito.mock(ScriptEventPublisher.class));
 
     CommandEnqueueResult result = service.enqueue("17", "look", false);
 

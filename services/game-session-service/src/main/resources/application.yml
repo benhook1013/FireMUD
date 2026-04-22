@@ -82,6 +82,7 @@ firemud:
               visible: true
               requires-character-selection: true
   services:
+    automation-scripting-service: automation-scripting-service:6565
     game-logic-service: game-logic-service:6565
   conflict:
     ttlSeconds: 300
