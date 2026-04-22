@@ -5,7 +5,7 @@
 - The service owns the scripting runtime, event ingestion, quotas, and sandbox execution model described in the architecture docs.
 - Script authoring and control-plane integration with Game Design are documented and substantially modeled in the current design set.
 - Runtime/data, operations, configuration, and sandbox-specific docs are now split and maintained as the canonical reference set.
-- The current runtime implementation includes event-scope ingress admission with serialized payload-size enforcement, durable script event bindings, durable `script_work_items`, handler-scoped audit rows, pending-work cancellation, pending-work claiming, a first Game Session `onCommand` producer, script-patch status reads derived from durable work, a durable plugin runtime registry/control-plane state transition surface, and scheduled terminal outbox cleanup governed by the documented retention knobs.
+- The current runtime implementation includes event-scope ingress admission with serialized payload-size enforcement, durable script event bindings, durable `script_work_items`, handler-scoped audit rows, pending-work cancellation, pending-work claiming, a first Game Session `onCommand` producer, canonical instance-aware Automation Redis key helpers for queue/tick staging plus quota counters, script-patch status reads derived from durable work, a durable plugin runtime registry/control-plane state transition surface, and scheduled terminal outbox cleanup governed by the documented retention knobs.
 
 ## Current Role In The Platform
 

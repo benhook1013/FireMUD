@@ -29,14 +29,16 @@ class AutomationQueueServiceImplTest {
 
   @Test
   void enqueueEventPushesToRedis() {
-    service.enqueueEvent(1L, 2L, "evt");
-    verify(listOps).rightPush("automation:queue:{tenant:1}:2", "evt");
+    service.enqueueEvent("tenant-1", "instance-1", "entity-1", "evt");
+    verify(listOps)
+        .rightPush("automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1", "evt");
   }
 
   @Test
   void drainEventsRetrievesAndDeletes() {
-    when(listOps.range("automation:queue:{tenant:1}:2", 0, -1)).thenReturn(List.of("evt1", "evt2"));
-    service.drainEvents(1L, 2L);
-    verify(redisTemplate).delete("automation:queue:{tenant:1}:2");
+    when(listOps.range("automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1", 0, -1))
+        .thenReturn(List.of("evt1", "evt2"));
+    service.drainEvents("tenant-1", "instance-1", "entity-1");
+    verify(redisTemplate).delete("automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1");
   }
 }
