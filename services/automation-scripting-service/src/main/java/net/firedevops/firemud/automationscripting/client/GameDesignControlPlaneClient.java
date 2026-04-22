@@ -10,6 +10,8 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,7 +56,7 @@ public class GameDesignControlPlaneClient
   public GetPublishedPluginVersionResponse getPublishedPluginVersion(
       String tenantId, String pluginId, String pluginVersionId) {
     if (stub() == null) {
-      return unavailable();
+      return unavailablePluginVersion();
     }
     try {
       return stub()
@@ -67,12 +69,40 @@ public class GameDesignControlPlaneClient
                   .build());
     } catch (RuntimeException ex) {
       logger.warn("Game Design getPublishedPluginVersion failed", ex);
-      return unavailable();
+      return unavailablePluginVersion();
     }
   }
 
-  private static GetPublishedPluginVersionResponse unavailable() {
+  public GetPublishedReleaseBundleResponse getPublishedReleaseBundle(
+      String tenantId, long versionId) {
+    if (stub() == null) {
+      return unavailableReleaseBundle();
+    }
+    try {
+      return stub()
+          .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+          .getPublishedReleaseBundle(
+              GetPublishedReleaseBundleRequest.newBuilder()
+                  .setTenantId(tenantId)
+                  .setVersionId(versionId)
+                  .build());
+    } catch (RuntimeException ex) {
+      logger.warn("Game Design getPublishedReleaseBundle failed", ex);
+      return unavailableReleaseBundle();
+    }
+  }
+
+  private static GetPublishedPluginVersionResponse unavailablePluginVersion() {
     return GetPublishedPluginVersionResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("GAME_DESIGN_UNAVAILABLE")
+                .setMessage("Game Design service unavailable"))
+        .build();
+  }
+
+  private static GetPublishedReleaseBundleResponse unavailableReleaseBundle() {
+    return GetPublishedReleaseBundleResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
                 .setCode("GAME_DESIGN_UNAVAILABLE")

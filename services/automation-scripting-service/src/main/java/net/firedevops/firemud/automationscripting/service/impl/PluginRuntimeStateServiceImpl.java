@@ -9,6 +9,7 @@ import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,6 +19,8 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are internal Spring collaborators")
 public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService {
+  private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";
+
   private final PluginRuntimeStateRepository repository;
   private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
@@ -104,6 +107,32 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     if (publication.getPluginVersion().getBaseVersionId() != runtimeVersionId) {
       throw new IllegalArgumentException(
           "PLUGIN_BASE_VERSION_MISMATCH: plugin base version does not match runtime version");
+    }
+    requireAbilitySchemaMatch(
+        command, runtimeVersionId, publication.getPluginVersion().getAbilitySchemaDigest());
+  }
+
+  private void requireAbilitySchemaMatch(
+      ActivationCommand command, long runtimeVersionId, String pluginAbilitySchemaDigest) {
+    var releaseBundle =
+        gameDesignControlPlaneClient.getPublishedReleaseBundle(
+            command.tenantId(), runtimeVersionId);
+    if (releaseBundle.hasError() && !releaseBundle.getError().getCode().isBlank()) {
+      throw new IllegalArgumentException(
+          "GAME_INSTANCE_RUNTIME_UNAVAILABLE: " + releaseBundle.getError().getMessage());
+    }
+    ParticipantDigest automationDigest =
+        releaseBundle.getBundle().getParticipantDigestsList().stream()
+            .filter(
+                digest -> PARTICIPANT_KEY_AUTOMATION_SCRIPTING.equals(digest.getParticipantKey()))
+            .findFirst()
+            .orElseThrow(
+                () ->
+                    new IllegalArgumentException(
+                        "PLUGIN_ABILITY_SCHEMA_MISMATCH: runtime ability schema digest is unavailable"));
+    if (!automationDigest.getContentDigest().equals(pluginAbilitySchemaDigest)) {
+      throw new IllegalArgumentException(
+          "PLUGIN_ABILITY_SCHEMA_MISMATCH: plugin ability schema digest does not match runtime version");
     }
   }
 

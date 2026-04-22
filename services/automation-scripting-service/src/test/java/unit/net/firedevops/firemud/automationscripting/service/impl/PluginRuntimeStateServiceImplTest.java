@@ -12,7 +12,10 @@ import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateR
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.PublishedPluginVersion;
+import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
@@ -57,6 +60,19 @@ class PluginRuntimeStateServiceImplTest {
                         .setGameInstanceId("game-1")
                         .setRuntimeVersionId("7")
                         .setStatus("RUNNING")
+                        .build())
+                .build());
+    when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setVersionId(7L)
+                        .addParticipantDigests(
+                            ParticipantDigest.newBuilder()
+                                .setParticipantKey("AUTOMATION_SCRIPTING")
+                                .setContentDigest("ability-1")
+                                .build())
                         .build())
                 .build());
     PluginRuntimeStateService service =
@@ -191,6 +207,19 @@ class PluginRuntimeStateServiceImplTest {
                         .setStatus("RUNNING")
                         .build())
                 .build());
+    when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setVersionId(7L)
+                        .addParticipantDigests(
+                            ParticipantDigest.newBuilder()
+                                .setParticipantKey("AUTOMATION_SCRIPTING")
+                                .setContentDigest("ability-1")
+                                .build())
+                        .build())
+                .build());
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(repository, gameDesignClient, gameSessionClient);
 
@@ -202,5 +231,65 @@ class PluginRuntimeStateServiceImplTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "PLUGIN_BASE_VERSION_MISMATCH: plugin base version does not match runtime version");
+  }
+
+  @Test
+  void rejectsActivationWhenAbilitySchemaDigestDoesNotMatchRuntimeVersion() {
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            GetPublishedPluginVersionResponse.newBuilder()
+                .setPluginVersion(
+                    PublishedPluginVersion.newBuilder()
+                        .setTenantId("1")
+                        .setPluginId("plugin-1")
+                        .setPluginVersionId("plugin-v1")
+                        .setBaseVersionId(7L)
+                        .setPublicationState(
+                            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setAbilitySchemaDigest("ability-plugin")
+                        .setBundleDigest("bundle-1")
+                        .setManifestSchemaVersion(1)
+                        .build())
+                .build());
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setRuntimeVersionId("7")
+                        .setStatus("RUNNING")
+                        .build())
+                .build());
+    when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setVersionId(7L)
+                        .addParticipantDigests(
+                            ParticipantDigest.newBuilder()
+                                .setParticipantKey("AUTOMATION_SCRIPTING")
+                                .setContentDigest("ability-runtime")
+                                .build())
+                        .build())
+                .build());
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(repository, gameDesignClient, gameSessionClient);
+
+    assertThatThrownBy(
+            () ->
+                service.setActiveVersion(
+                    new PluginRuntimeStateService.ActivationCommand(
+                        "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "PLUGIN_ABILITY_SCHEMA_MISMATCH: plugin ability schema digest does not match runtime version");
   }
 }
