@@ -41,6 +41,7 @@ import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantResult;
 import net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto;
+import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
@@ -64,6 +65,7 @@ import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
+import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
@@ -832,10 +834,6 @@ public class AccountServiceImpl implements AccountService {
         accountId, tenantId, worldSlug, realmSlug);
   }
 
-  private boolean hasAnyMembership(Long accountId) {
-    return accountTenantMembershipRepository.existsByAccountId(accountId);
-  }
-
   private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {
     long now = System.currentTimeMillis();
     String secret = jwtAuthProperties.getJwtSecret();
@@ -969,28 +967,67 @@ public class AccountServiceImpl implements AccountService {
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "account.export")
-  public AccountDataExportDto exportAccountData(Long tenantId, Long accountId) {
+  public AccountDataExportDto exportAccountData(Long accountId) {
+    Account account = requireAccount(accountId);
+    List<ProfileDto> profiles =
+        profileRepository.findByAccountId(accountId).stream().map(profileMapper::toDto).toList();
+    return new AccountDataExportDto(accountMapper.toDto(account), profiles);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "account.tenant_export")
+  public TenantDataExportDto exportTenantData(Long tenantId, Long accountId) {
     Account account = requireAccount(accountId);
     Profile profile =
         profileRepository.findByAccountIdAndTenantId(accountId, tenantId).orElse(null);
-    return new AccountDataExportDto(
-        accountMapper.toDto(account), profile != null ? profileMapper.toDto(profile) : null);
+    if (!accountTenantMembershipRepository.existsByAccountIdAndTenantId(accountId, tenantId)
+        && profile == null) {
+      throw new IllegalArgumentException("Tenant data not found");
+    }
+    return new TenantDataExportDto(
+        tenantId,
+        accountMapper.toDto(account),
+        profile != null ? profileMapper.toDto(profile) : null);
   }
 
   @Override
   @Transactional
   @Timed(value = "account.delete")
-  public void deleteAccount(Long tenantId, Long accountId) {
+  public void deleteAccount(Long accountId) {
     Account account = requireAccount(accountId);
-    paymentTransactionRepository.deleteByAccountId(accountId, tenantId);
-    subscriptionRepository.deleteByAccountId(accountId, tenantId);
-    profileRepository
-        .findByAccountIdAndTenantId(accountId, tenantId)
-        .ifPresent(profileRepository::delete);
-    accountTenantMembershipRepository.deleteByAccountIdAndTenantId(accountId, tenantId);
-    if (!hasAnyMembership(accountId)) {
-      accountRepository.delete(account);
+    List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions =
+        subscriptionRepository.findByAccountId(accountId);
+    Optional<net.firedevops.firemud.accountservice.entity.Subscription> blockingSubscription =
+        subscriptions.stream().filter(this::isNonterminalSubscription).findFirst();
+    if (blockingSubscription.isPresent()) {
+      throw new AccountLifecycleException(
+          "ACCOUNT_DELETE_ACTIVE_BILLING_OWNER",
+          "Account has nonterminal tenant subscriptions; cancel or end subscriptions first");
     }
+    emailVerificationTokenRepository.deleteByAccountId(accountId);
+    passwordResetTokenRepository.deleteByAccountId(accountId);
+    accountRealmAccessGrantRepository.deleteByAccountId(accountId);
+    externalAccountRepository.deleteByAccountId(accountId);
+    paymentTransactionRepository.deleteByAccountId(accountId);
+    subscriptionRepository.deleteByAccountId(accountId);
+    profileRepository.deleteByAccountId(accountId);
+    accountTenantMembershipRepository.deleteByAccountId(accountId);
+    accountRepository.delete(account);
+  }
+
+  private boolean isNonterminalSubscription(
+      net.firedevops.firemud.accountservice.entity.Subscription subscription) {
+    String status =
+        subscription.getStatus() == null
+            ? ""
+            : subscription.getStatus().trim().toLowerCase(java.util.Locale.ROOT);
+    boolean terminalStatus =
+        switch (status) {
+          case "canceled", "cancelled", "ended", "expired" -> true;
+          default -> false;
+        };
+    return !terminalStatus || subscription.getEndedAt() == null;
   }
 
   @Override
@@ -1004,7 +1041,6 @@ public class AccountServiceImpl implements AccountService {
     net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
         new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
     token.setAccount(account);
-    token.setTenantId(request.tenantId());
     token.setToken(java.util.UUID.randomUUID().toString());
     token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
     passwordResetTokenRepository.save(token);
@@ -1015,10 +1051,6 @@ public class AccountServiceImpl implements AccountService {
                 account.getEmail(),
                 "Password Reset",
                 String.format(readTemplate("password-reset.txt"), url)));
-    runAfterCommit(
-        () ->
-            notificationService.sendNotification(
-                request.tenantId(), account.getId(), "Password reset requested"));
   }
 
   @Override
@@ -1027,7 +1059,7 @@ public class AccountServiceImpl implements AccountService {
   public void completePasswordReset(CompletePasswordResetRequest request) {
     net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
         passwordResetTokenRepository
-            .findByTokenAndTenantId(request.token(), request.tenantId())
+            .findByToken(request.token())
             .orElseThrow(() -> new IllegalArgumentException("Invalid token"));
     if (token.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
       throw new IllegalArgumentException("Token expired");
@@ -1041,11 +1073,10 @@ public class AccountServiceImpl implements AccountService {
   @Override
   @Transactional
   @Timed(value = "account.request_email_verification")
-  public void requestEmailVerification(Long tenantId, Long accountId) {
+  public void requestEmailVerification(Long accountId) {
     Account account = requireAccount(accountId);
     EmailVerificationToken token = new EmailVerificationToken();
     token.setAccount(account);
-    token.setTenantId(tenantId);
     token.setToken(java.util.UUID.randomUUID().toString());
     token.setExpiresAt(java.time.LocalDateTime.now().plusHours(24));
     emailVerificationTokenRepository.save(token);
@@ -1056,10 +1087,6 @@ public class AccountServiceImpl implements AccountService {
                 account.getEmail(),
                 "Email Verification",
                 String.format(readTemplate("email-verification.txt"), url)));
-    runAfterCommit(
-        () ->
-            notificationService.sendNotification(
-                tenantId, accountId, "Email verification requested"));
   }
 
   @Override
@@ -1068,7 +1095,7 @@ public class AccountServiceImpl implements AccountService {
   public void verifyEmail(VerifyEmailRequest request) {
     EmailVerificationToken token =
         emailVerificationTokenRepository
-            .findByTokenAndTenantId(request.token(), request.tenantId())
+            .findByToken(request.token())
             .orElseThrow(() -> new IllegalArgumentException("Invalid token"));
     if (token.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
       throw new IllegalArgumentException("Token expired");
@@ -1114,10 +1141,6 @@ public class AccountServiceImpl implements AccountService {
                 account.getEmail(),
                 "Username Reminder",
                 String.format(readTemplate("username-reminder.txt"), account.getUsername())));
-    runAfterCommit(
-        () ->
-            notificationService.sendNotification(
-                request.tenantId(), account.getId(), "Username reminder requested"));
   }
 
   private String hashPassword(String password) {

@@ -12,7 +12,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public interface PasswordResetTokenRepository extends JpaRepository<PasswordResetToken, Long> {
-  Optional<PasswordResetToken> findByTokenAndTenantId(String token, Long tenantId);
+  Optional<PasswordResetToken> findByToken(String token);
+
+  void deleteByAccountId(Long accountId);
 
   @Modifying
   @Transactional

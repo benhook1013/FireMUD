@@ -5,5 +5,4 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 /** Request object for username recovery emails. */
-public record UsernameRecoveryRequest(
-    @NotNull Long tenantId, @NotNull @Email @Size(max = 100) String email) {}
+public record UsernameRecoveryRequest(@NotNull @Email @Size(max = 100) String email) {}

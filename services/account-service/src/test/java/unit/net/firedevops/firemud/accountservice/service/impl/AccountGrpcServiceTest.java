@@ -370,13 +370,13 @@ class AccountGrpcServiceTest {
   void exportAccountErrorReturnsDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(accountService.exportAccountData(1L, 2L))
+    Mockito.when(accountService.exportAccountData(2L))
         .thenThrow(new IllegalArgumentException("missing"));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<ExportAccountResponse> ref = new AtomicReference<>();
     service.exportAccount(
-        ExportAccountRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
+        ExportAccountRequest.newBuilder().setAccountId("2").build(),
         new StreamObserver<ExportAccountResponse>() {
           @Override
           public void onNext(ExportAccountResponse value) {
@@ -403,7 +403,7 @@ class AccountGrpcServiceTest {
 
     AtomicReference<DeleteAccountResponse> ref = new AtomicReference<>();
     service.deleteAccount(
-        DeleteAccountRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
+        DeleteAccountRequest.newBuilder().setAccountId("2").build(),
         new StreamObserver<DeleteAccountResponse>() {
           @Override
           public void onNext(DeleteAccountResponse value) {
@@ -462,7 +462,7 @@ class AccountGrpcServiceTest {
 
     AtomicReference<DeleteAccountResponse> ref = new AtomicReference<>();
     service.deleteAccount(
-        DeleteAccountRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
+        DeleteAccountRequest.newBuilder().setAccountId("2").build(),
         new StreamObserver<DeleteAccountResponse>() {
           @Override
           public void onNext(DeleteAccountResponse value) {

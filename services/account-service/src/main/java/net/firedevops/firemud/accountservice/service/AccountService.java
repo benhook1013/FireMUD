@@ -17,6 +17,7 @@ import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantResult;
 import net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto;
+import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 
 public interface AccountService {
@@ -56,9 +57,11 @@ public interface AccountService {
 
   ProfileDto updateProfile(UpdateProfileRequest request);
 
-  AccountDataExportDto exportAccountData(Long tenantId, Long accountId);
+  AccountDataExportDto exportAccountData(Long accountId);
 
-  void deleteAccount(Long tenantId, Long accountId);
+  TenantDataExportDto exportTenantData(Long tenantId, Long accountId);
+
+  void deleteAccount(Long accountId);
 
   void requestPasswordReset(PasswordResetRequest request);
 
@@ -67,7 +70,7 @@ public interface AccountService {
   void linkExternalAccount(
       net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest request);
 
-  void requestEmailVerification(Long tenantId, Long accountId);
+  void requestEmailVerification(Long accountId);
 
   void verifyEmail(net.firedevops.firemud.accountservice.dto.VerifyEmailRequest request);
 
