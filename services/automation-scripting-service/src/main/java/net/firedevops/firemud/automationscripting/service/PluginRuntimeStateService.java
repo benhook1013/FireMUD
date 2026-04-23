@@ -14,6 +14,9 @@ public interface PluginRuntimeStateService {
 
   PolicyReconciliationResult reconcileActivePluginPolicy(int maxItems);
 
+  PluginPolicyConvergence getPluginPolicyConvergence(
+      String tenantId, String gameInstanceId, int maxResults);
+
   record ActivationCommand(
       String tenantId,
       String gameInstanceId,
@@ -35,6 +38,24 @@ public interface PluginRuntimeStateService {
       String previousPluginVersionId, String activePluginVersionId, String controlPlaneRequestId) {}
 
   record PolicyReconciliationResult(int inspectedCount, int disabledCount) {}
+
+  record PluginPolicyConvergence(
+      int inspectedCount,
+      int failClosedCount,
+      boolean converged,
+      long evaluatedAtMs,
+      java.util.List<PluginPolicyViolation> violations) {
+    public PluginPolicyConvergence {
+      violations = java.util.List.copyOf(violations);
+    }
+  }
+
+  record PluginPolicyViolation(
+      String gameInstanceId,
+      String pluginId,
+      String activePluginVersionId,
+      String reason,
+      long lastChangedAtMs) {}
 
   record PluginRuntimeStatus(
       String activePluginVersionId,

@@ -22,6 +22,8 @@ import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusReq
 import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetAutomationPinConvergenceRequest;
 import net.firedevops.firemud.automationscripting.v1.GetAutomationPinConvergenceResponse;
+import net.firedevops.firemud.automationscripting.v1.GetPluginPolicyConvergenceRequest;
+import net.firedevops.firemud.automationscripting.v1.GetPluginPolicyConvergenceResponse;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionRequest;
@@ -40,6 +42,7 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRoll
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
+import net.firedevops.firemud.automationscripting.v1.PluginPolicyViolation;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsRequest;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsResponse;
 import net.firedevops.firemud.automationscripting.v1.ScriptDeadLetterEntry;
@@ -544,6 +547,36 @@ public final class AutomationScriptingControlPlaneGrpcService
   }
 
   @Override
+  @Timed(value = "automationGrpc.controlPlane.getPluginPolicyConvergence")
+  public void getPluginPolicyConvergence(
+      GetPluginPolicyConvergenceRequest request,
+      StreamObserver<GetPluginPolicyConvergenceResponse> responseObserver) {
+    GetPluginPolicyConvergenceResponse.Builder response =
+        GetPluginPolicyConvergenceResponse.newBuilder();
+    try {
+      requireAdminRole();
+      PluginRuntimeStateService.PluginPolicyConvergence convergence =
+          pluginRuntimeStateService.getPluginPolicyConvergence(
+              request.getTenantId(), request.getGameInstanceId(), request.getMaxResults());
+      response
+          .setInspectedCount(convergence.inspectedCount())
+          .setFailClosedCount(convergence.failClosedCount())
+          .setConverged(convergence.converged())
+          .setEvaluatedAtMs(convergence.evaluatedAtMs());
+      convergence.violations().stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addViolations);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
   @Timed(value = "automationGrpc.controlPlane.setPluginActiveVersion")
   public void setPluginActiveVersion(
       SetPluginActiveVersionRequest request,
@@ -631,6 +664,17 @@ public final class AutomationScriptingControlPlaneGrpcService
 
   private static void requireAdminRole() {
     AdminRoleGuard.requireAdminRole();
+  }
+
+  private static PluginPolicyViolation toProto(
+      PluginRuntimeStateService.PluginPolicyViolation violation) {
+    return PluginPolicyViolation.newBuilder()
+        .setGameInstanceId(violation.gameInstanceId())
+        .setPluginId(violation.pluginId())
+        .setActivePluginVersionId(violation.activePluginVersionId())
+        .setReason(violation.reason())
+        .setLastChangedAtMs(violation.lastChangedAtMs())
+        .build();
   }
 
   private static ErrorDetail authorizationError(AdminAuthorizationException ex) {

@@ -191,6 +191,46 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     return new PolicyReconciliationResult(activeStates.size(), disabledCount);
   }
 
+  @Override
+  @Transactional(readOnly = true)
+  public PluginPolicyConvergence getPluginPolicyConvergence(
+      String tenantId, String gameInstanceId, int maxResults) {
+    requireText(tenantId, "tenant_id");
+    int limit = Math.max(1, maxResults <= 0 ? 100 : maxResults);
+    List<PluginRuntimeState> activeStates =
+        normalize(gameInstanceId).isBlank()
+            ? repository
+                .findByTenantIdAndPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+                    tenantId, PluginState.PLUGIN_STATE_ENABLED.name(), "", PageRequest.of(0, limit))
+            : repository
+                .findByTenantIdAndGameInstanceIdAndPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+                    tenantId,
+                    gameInstanceId,
+                    PluginState.PLUGIN_STATE_ENABLED.name(),
+                    "",
+                    PageRequest.of(0, limit));
+    long evaluatedAtMs = Instant.now().toEpochMilli();
+    List<PluginPolicyViolation> violations =
+        activeStates.stream()
+            .map(state -> violationForCurrentPolicy(state))
+            .flatMap(Optional::stream)
+            .toList();
+    return new PluginPolicyConvergence(
+        activeStates.size(), violations.size(), violations.isEmpty(), evaluatedAtMs, violations);
+  }
+
+  private Optional<PluginPolicyViolation> violationForCurrentPolicy(PluginRuntimeState state) {
+    return disableReasonForCurrentPolicy(state)
+        .map(
+            reason ->
+                new PluginPolicyViolation(
+                    state.getGameInstanceId(),
+                    state.getPluginId(),
+                    normalize(state.getActivePluginVersionId()),
+                    reason,
+                    state.getLastChangedAt().toEpochMilli()));
+  }
+
   private Optional<String> disableReasonForCurrentPolicy(PluginRuntimeState state) {
     var publication =
         gameDesignControlPlaneClient.getPublishedPluginVersion(

@@ -440,6 +440,39 @@ class PluginRuntimeStateServiceImplTest {
     Mockito.verify(repository, Mockito.never()).save(Mockito.any());
   }
 
+  @Test
+  void policyConvergenceReportsFailClosedActivePlugins() {
+    PluginRuntimeState active = activePluginState();
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    when(repository
+            .findByTenantIdAndGameInstanceIdAndPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+                Mockito.eq("1"),
+                Mockito.eq("game-1"),
+                Mockito.eq(PluginState.PLUGIN_STATE_ENABLED.name()),
+                Mockito.eq(""),
+                Mockito.any()))
+        .thenReturn(List.of(active));
+    when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            publishedPluginVersion(
+                PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_BLOCKED, false));
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository, gameDesignClient, Mockito.mock(GameSessionControlPlaneClient.class));
+
+    PluginRuntimeStateService.PluginPolicyConvergence convergence =
+        service.getPluginPolicyConvergence("1", "game-1", 10);
+
+    assertThat(convergence.inspectedCount()).isEqualTo(1);
+    assertThat(convergence.failClosedCount()).isEqualTo(1);
+    assertThat(convergence.converged()).isFalse();
+    assertThat(convergence.violations()).hasSize(1);
+    assertThat(convergence.violations().get(0).reason())
+        .isEqualTo("plugin_component_policy_blocked");
+  }
+
   private static PluginRuntimeState activePluginState() {
     PluginRuntimeState active = new PluginRuntimeState();
     active.setTenantId("1");

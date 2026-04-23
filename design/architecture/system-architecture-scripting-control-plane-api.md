@@ -465,6 +465,27 @@ Boundary rule:
 
 - This API reports runtime state for one `(tenantId, gameInstanceId, pluginId)` only. It must not be overloaded to synthesize design-time publication status or signer-verification history from Game Design.
 
+#### `GetPluginPolicyConvergence`
+
+Purpose: provide an operator-visible signer/component-policy convergence read for enabled plugin runtime states so scheduled reconciliation is not an invisible background process.
+
+Request fields:
+
+- `tenantId`
+- optional `gameInstanceId`
+- optional `maxResults`
+
+Response fields:
+
+- `inspectedCount`
+- `failClosedCount`
+- `converged`
+- `evaluatedAtMs`
+- repeated `violations[]` with `gameInstanceId`, `pluginId`, `activePluginVersionId`, `reason`, and `lastChangedAtMs`
+- `error`
+
+Current implementation note: Automation evaluates enabled runtime states against current Game Design publication metadata on demand. Reasons match the scheduled reconciler's fail-closed reasons, including `signer_policy_unavailable`, `signer_revoked`, `plugin_component_policy_blocked`, `component_policy_unavailable`, and `plugin_version_not_published`.
+
 #### `SetPluginActiveVersion`
 
 Inputs:

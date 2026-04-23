@@ -14,4 +14,16 @@ public interface PluginRuntimeStateRepository extends JpaRepository<PluginRuntim
 
   List<PluginRuntimeState> findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
       String pluginState, String activePluginVersionId, Pageable pageable);
+
+  List<PluginRuntimeState>
+      findByTenantIdAndPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+          String tenantId, String pluginState, String activePluginVersionId, Pageable pageable);
+
+  List<PluginRuntimeState>
+      findByTenantIdAndGameInstanceIdAndPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+          String tenantId,
+          String gameInstanceId,
+          String pluginState,
+          String activePluginVersionId,
+          Pageable pageable);
 }
