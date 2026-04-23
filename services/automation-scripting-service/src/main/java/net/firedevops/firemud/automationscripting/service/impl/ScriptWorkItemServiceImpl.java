@@ -8,7 +8,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
@@ -16,10 +15,10 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
-import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,7 +46,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private final ScriptEventAuditRepository auditRepository;
   private final ScriptEventIngressAuditRepository ingressAuditRepository;
   private final ScriptOutboxProperties outboxProperties;
-  private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
+  private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
   private final PluginRuntimeStateService pluginRuntimeStateService;
 
   public ScriptWorkItemServiceImpl(
@@ -55,13 +54,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       ScriptEventAuditRepository auditRepository,
       ScriptEventIngressAuditRepository ingressAuditRepository,
       ScriptOutboxProperties outboxProperties,
-      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       PluginRuntimeStateService pluginRuntimeStateService) {
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
     this.ingressAuditRepository = ingressAuditRepository;
     this.outboxProperties = outboxProperties;
-    this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
+    this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
   }
 
@@ -210,7 +209,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         scriptPatchVersion,
         workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
             tenantId, gameInstanceId, scriptPatchVersion),
-        gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, gameInstanceId),
+        scriptPatchPinProjectionService.getPinConvergence(tenantId, gameInstanceId).summary(),
         now);
   }
 
@@ -234,11 +233,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                 keys.add(
                     new InstancePatchKey(pair.getGameInstanceId(), pair.getScriptPatchVersion())));
     if (gameInstanceId != null && !gameInstanceId.isBlank()) {
-      GetGameInstanceRuntimeStateResponse runtime =
-          gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, gameInstanceId);
-      if (runtime.hasRuntimeState()
-          && !runtime.getRuntimeState().getPinnedScriptPatchVersion().isBlank()) {
-        String currentPatchVersion = runtime.getRuntimeState().getPinnedScriptPatchVersion();
+      Optional<ScriptPatchPinProjectionService.PinConvergenceSummary> pinSummary =
+          scriptPatchPinProjectionService.getPinConvergence(tenantId, gameInstanceId).summary();
+      if (pinSummary.isPresent()
+          && !pinSummary.get().observedPinnedScriptPatchVersion().isBlank()) {
+        String currentPatchVersion = pinSummary.get().observedPinnedScriptPatchVersion();
         if (scriptPatchVersion == null
             || scriptPatchVersion.isBlank()
             || scriptPatchVersion.equals(currentPatchVersion)) {
@@ -255,8 +254,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                     key.scriptPatchVersion(),
                     workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
                         tenantId, key.gameInstanceId(), key.scriptPatchVersion()),
-                    gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-                        tenantId, key.gameInstanceId()),
+                    scriptPatchPinProjectionService
+                        .getPinConvergence(tenantId, key.gameInstanceId())
+                        .summary(),
                     now))
         .flatMap(Optional::stream)
         .filter(
@@ -392,14 +392,12 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       String gameInstanceId,
       String scriptPatchVersion,
       List<ScriptWorkItem> workItems,
-      GetGameInstanceRuntimeStateResponse runtime,
+      Optional<ScriptPatchPinProjectionService.PinConvergenceSummary> runtimeObservation,
       Instant now) {
-    if (runtime.hasRuntimeState()) {
-      String pinnedScriptPatchVersion = runtime.getRuntimeState().getPinnedScriptPatchVersion();
+    if (runtimeObservation.isPresent()) {
+      ScriptPatchPinProjectionService.PinConvergenceSummary runtime = runtimeObservation.get();
+      String pinnedScriptPatchVersion = runtime.observedPinnedScriptPatchVersion();
       if (scriptPatchVersion.equals(pinnedScriptPatchVersion)) {
-        long lastChangedAtMs =
-            maxLastChangedAtMs(
-                workItems, runtime.getRuntimeState().getScriptPatchPinnedAtMs(), now);
         return Optional.of(
             new PatchInstanceRolloutSummary(
                 tenantId,
@@ -407,15 +405,12 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                 scriptPatchVersion,
                 ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED,
                 "runtime_pin_matches_patch",
-                lastChangedAtMs,
-                now.toEpochMilli(),
-                0L,
-                false));
+                maxLastChangedAtMs(workItems, runtime.observedAtMs(), now),
+                runtime.projectionAsOfMs(),
+                runtime.projectionLagMs(),
+                runtime.projectionStale()));
       }
       if (!workItems.isEmpty()) {
-        long lastChangedAtMs =
-            maxLastChangedAtMs(
-                workItems, runtime.getRuntimeState().getScriptPatchPinnedAtMs(), now);
         return Optional.of(
             new PatchInstanceRolloutSummary(
                 tenantId,
@@ -423,10 +418,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                 scriptPatchVersion,
                 ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
                 "runtime_pin_differs_from_patch",
-                lastChangedAtMs,
-                now.toEpochMilli(),
-                0L,
-                false));
+                maxLastChangedAtMs(workItems, runtime.observedAtMs(), now),
+                runtime.projectionAsOfMs(),
+                runtime.projectionLagMs(),
+                runtime.projectionStale()));
       }
       return Optional.empty();
     }
@@ -486,14 +481,14 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private boolean eligibleForReplay(ScriptWorkItem item) {
-    var runtime =
-        gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-            item.getTenantId(), item.getGameInstanceId());
-    if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
+    Optional<ScriptPatchPinProjectionService.PinConvergenceSummary> runtime =
+        scriptPatchPinProjectionService
+            .getPinConvergence(item.getTenantId(), item.getGameInstanceId())
+            .summary();
+    if (runtime.isEmpty() || runtime.get().projectionStale()) {
       return false;
     }
-    if (!item.getScriptPatchVersion()
-        .equals(runtime.getRuntimeState().getPinnedScriptPatchVersion())) {
+    if (!item.getScriptPatchVersion().equals(runtime.get().observedPinnedScriptPatchVersion())) {
       return false;
     }
     Optional<ScriptEventIngressAudit> audit =

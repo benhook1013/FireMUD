@@ -8,7 +8,6 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
-import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
@@ -17,11 +16,10 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
-import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
-import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageRequest;
@@ -53,7 +51,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
-            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class));
 
     long canceled =
@@ -87,7 +85,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
-            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class));
 
     List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(10);
@@ -106,7 +104,7 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(ScriptEventAuditRepository.class),
             ingressAuditRepository(),
             outboxProperties(),
-            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class));
 
     assertThatThrownBy(() -> service.claimPendingForEvaluation(0))
@@ -134,7 +132,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             properties,
-            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptWorkItemService.TerminalCleanupResult result = service.cleanupTerminalWorkItems();
@@ -169,7 +167,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             properties,
-            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptWorkItemService.TerminalCleanupResult result = service.cleanupTerminalWorkItems();
@@ -192,7 +190,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
-            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class));
 
     Optional<ScriptWorkItemService.PatchStatusSummary> status =
@@ -223,7 +221,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
-            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class));
 
     List<ScriptWorkItemService.PatchStatusSummary> statuses =
@@ -264,7 +262,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
-            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptWorkItemService.AutomationDrainStatusSummary summary =
@@ -293,7 +291,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
-            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptWorkItemService.AutomationDrainStatusSummary summary =
@@ -309,29 +307,26 @@ class ScriptWorkItemServiceImplTest {
   void getsInstanceRolloutStatusFromRuntimePin() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
-    GameSessionControlPlaneClient gameSessionClient =
-        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptPatchPinProjectionService pinProjectionService =
+        Mockito.mock(ScriptPatchPinProjectionService.class);
     when(workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
             "1", "game-1", "patch-1"))
         .thenReturn(List.of());
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(
-            GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setRuntimeState(
-                    GameInstanceRuntimeState.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("game-1")
-                        .setPinnedScriptPatchVersion("patch-1")
-                        .setScriptPatchPinnedAtMs(150L)
-                        .build())
-                .build());
+            new ScriptPatchPinProjectionService.PinConvergenceLookup(
+                Optional.of(
+                    new ScriptPatchPinProjectionService.PinConvergenceSummary(
+                        "1", "game-1", "patch-1", "req-1", 150L, 151L, 0L, false)),
+                "",
+                ""));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
-            gameSessionClient,
+            pinProjectionService,
             Mockito.mock(PluginRuntimeStateService.class));
 
     Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> summary =
@@ -352,27 +347,21 @@ class ScriptWorkItemServiceImplTest {
     canceled.setGameInstanceId("game-1");
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
-    GameSessionControlPlaneClient gameSessionClient =
-        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptPatchPinProjectionService pinProjectionService =
+        Mockito.mock(ScriptPatchPinProjectionService.class);
     when(workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
             "1", "game-1", "patch-1"))
         .thenReturn(List.of(canceled));
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(
-            GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setError(
-                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                        .setCode("GAME_SESSION_UNAVAILABLE")
-                        .setMessage("down")
-                        .build())
-                .build());
+            new ScriptPatchPinProjectionService.PinConvergenceLookup(Optional.empty(), "", ""));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
-            gameSessionClient,
+            pinProjectionService,
             Mockito.mock(PluginRuntimeStateService.class));
 
     Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> summary =
@@ -390,8 +379,8 @@ class ScriptWorkItemServiceImplTest {
   void listsInstanceRolloutsFromDistinctPairsAndRuntimeFilter() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
-    GameSessionControlPlaneClient gameSessionClient =
-        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptPatchPinProjectionService pinProjectionService =
+        Mockito.mock(ScriptPatchPinProjectionService.class);
     ScriptWorkItem ready = workItem("patch-1", "HANDED_OFF", Instant.ofEpochMilli(250));
     ready.setTenantId("1");
     ready.setGameInstanceId("game-1");
@@ -411,24 +400,21 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
             "1", "game-1", "patch-1"))
         .thenReturn(List.of(ready));
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(
-            GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setRuntimeState(
-                    GameInstanceRuntimeState.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("game-1")
-                        .setPinnedScriptPatchVersion("patch-2")
-                        .setScriptPatchPinnedAtMs(260L)
-                        .build())
-                .build());
+            new ScriptPatchPinProjectionService.PinConvergenceLookup(
+                Optional.of(
+                    new ScriptPatchPinProjectionService.PinConvergenceSummary(
+                        "1", "game-1", "patch-2", "req-2", 260L, 261L, 0L, false)),
+                "",
+                ""));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
-            gameSessionClient,
+            pinProjectionService,
             Mockito.mock(PluginRuntimeStateService.class));
 
     List<ScriptWorkItemService.PatchInstanceRolloutSummary> summaries =
@@ -473,7 +459,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
-            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class));
 
     List<ScriptWorkItemService.DeadLetterSummary> deadLetters =
@@ -502,8 +488,8 @@ class ScriptWorkItemServiceImplTest {
     ScriptEventAudit audit = new ScriptEventAudit();
     ScriptEventIngressAudit ingressAudit = new ScriptEventIngressAudit();
     ingressAudit.setPluginId("");
-    GameSessionControlPlaneClient gameSessionClient =
-        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptPatchPinProjectionService pinProjectionService =
+        Mockito.mock(ScriptPatchPinProjectionService.class);
     PluginRuntimeStateService pluginRuntimeStateService =
         Mockito.mock(PluginRuntimeStateService.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -525,24 +511,21 @@ class ScriptWorkItemServiceImplTest {
                 "event-1",
                 false))
         .thenReturn(Optional.of(ingressAudit));
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(
-            GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setRuntimeState(
-                    GameInstanceRuntimeState.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("game-1")
-                        .setPinnedScriptPatchVersion("patch-1")
-                        .setRuntimeVersionId("7")
-                        .build())
-                .build());
+            new ScriptPatchPinProjectionService.PinConvergenceLookup(
+                Optional.of(
+                    new ScriptPatchPinProjectionService.PinConvergenceSummary(
+                        "1", "game-1", "patch-1", "req-1", 500L, 501L, 0L, false)),
+                "",
+                ""));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
             auditRepository,
             ingressAuditRepository,
             outboxProperties(),
-            gameSessionClient,
+            pinProjectionService,
             pluginRuntimeStateService);
 
     ScriptWorkItemService.ReplayResult result =
@@ -581,8 +564,8 @@ class ScriptWorkItemServiceImplTest {
     item.setEventType("onCommand");
     item.setEventSchemaVersion("v1");
     item.setScriptEventId("event-1");
-    GameSessionControlPlaneClient gameSessionClient =
-        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptPatchPinProjectionService pinProjectionService =
+        Mockito.mock(ScriptPatchPinProjectionService.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptEventIngressAuditRepository ingressAuditRepository = ingressAuditRepository();
@@ -601,24 +584,21 @@ class ScriptWorkItemServiceImplTest {
                 "event-1",
                 false))
         .thenReturn(Optional.empty());
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(
-            GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setRuntimeState(
-                    GameInstanceRuntimeState.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("game-1")
-                        .setPinnedScriptPatchVersion("patch-2")
-                        .setRuntimeVersionId("7")
-                        .build())
-                .build());
+            new ScriptPatchPinProjectionService.PinConvergenceLookup(
+                Optional.of(
+                    new ScriptPatchPinProjectionService.PinConvergenceSummary(
+                        "1", "game-1", "patch-2", "req-2", 600L, 601L, 0L, false)),
+                "",
+                ""));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
             auditRepository,
             ingressAuditRepository,
             outboxProperties(),
-            gameSessionClient,
+            pinProjectionService,
             Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptWorkItemService.ReplayResult result =
