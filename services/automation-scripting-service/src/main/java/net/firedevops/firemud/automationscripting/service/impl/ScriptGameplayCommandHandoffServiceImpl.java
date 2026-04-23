@@ -105,7 +105,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
-        .setTargetEntityId(workItem.getEntityId())
+        .setTargetEntityId(command.targetEntityId())
         .setCommand(command.commandText())
         .setRequiresSoloTick(command.requiresSoloTick())
         .build();
@@ -169,6 +169,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
   private static void requireCommand(EmittedCommand command) {
     if (command == null || command.commandText() == null || command.commandText().isBlank()) {
       throw new IllegalArgumentException("command_text is required");
+    }
+    if (command.targetEntityId() == null || command.targetEntityId().isBlank()) {
+      throw new IllegalArgumentException("target_entity_id is required");
     }
     if (command.ordinal() < 0) {
       throw new IllegalArgumentException("command ordinal must be non-negative");

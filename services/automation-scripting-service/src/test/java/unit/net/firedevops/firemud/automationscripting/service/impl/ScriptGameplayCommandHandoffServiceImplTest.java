@@ -57,7 +57,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(
             workItem(),
-            new ScriptGameplayCommandHandoffService.EmittedCommand("say hello", false, 34L, 0));
+            new ScriptGameplayCommandHandoffService.EmittedCommand(
+                "say hello", "target-entity-1", false, 34L, 0));
 
     assertThat(result.accepted()).isTrue();
     assertThat(result.outcome()).isEqualTo("ENQUEUED");
@@ -67,6 +68,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(requestCaptor.getValue().getAutomationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(requestCaptor.getValue().getAutomationWorkItemId()).isEqualTo("99");
     assertThat(requestCaptor.getValue().getCommand()).isEqualTo("say hello");
+    assertThat(requestCaptor.getValue().getTargetEntityId()).isEqualTo("target-entity-1");
     assertThat(requestCaptor.getValue().getDueTickId()).isEqualTo(34L);
     assertThat(requestCaptor.getValue().getPluginId()).isEqualTo("plugin-1");
     assertThat(requestCaptor.getValue().getPluginVersionId()).isEqualTo("plugin-v1");
@@ -104,7 +106,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(
             workItem(),
-            new ScriptGameplayCommandHandoffService.EmittedCommand("say hello", false, 34L, 0));
+            new ScriptGameplayCommandHandoffService.EmittedCommand(
+                "say hello", "entity-1", false, 34L, 0));
 
     assertThat(result.accepted()).isFalse();
     assertThat(result.errorCode()).isEqualTo("STALE_TIMELINE");
@@ -150,7 +153,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(
             workItem(),
-            new ScriptGameplayCommandHandoffService.EmittedCommand("say hello", false, 34L, 0));
+            new ScriptGameplayCommandHandoffService.EmittedCommand(
+                "say hello", "entity-1", false, 34L, 0));
 
     assertThat(result.accepted()).isFalse();
     assertThat(result.outcome()).isEqualTo("rollback_epoch_advanced");

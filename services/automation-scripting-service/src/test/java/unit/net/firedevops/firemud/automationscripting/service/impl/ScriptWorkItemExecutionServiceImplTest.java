@@ -88,10 +88,139 @@ class ScriptWorkItemExecutionServiceImplTest {
         ArgumentCaptor.forClass(ScriptGameplayCommandHandoffService.EmittedCommand.class);
     verify(handoffService).handoff(Mockito.eq(item), commandCaptor.capture());
     assertThat(commandCaptor.getValue().commandText()).isEqualTo("say LOOK from entity-1");
+    assertThat(commandCaptor.getValue().targetEntityId()).isEqualTo("entity-1");
     assertThat(item.getStatus()).isEqualTo("HANDED_OFF");
     assertThat(audit.getFinalStage()).isEqualTo("TICK_HANDOFF");
     assertThat(audit.getFinalOutcome()).isEqualTo("success");
     assertThat(audit.getFinalReason()).isEqualTo("commands_handed_off");
+  }
+
+  @Test
+  void supportsCommandSpecificTargetEntityTemplates() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptOutputProperties outputProperties = new ScriptOutputProperties();
+    ScriptWorkItem item = workItem();
+    item.setPayloadJson("{\"commandName\":\"LOOK\",\"target\":\"entity-2\"}");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition(
+        """
+        {
+          "eventHandlers": {
+            "onCommand": {
+              "emitCommands": [
+                {
+                  "targetEntityId": "target-{{payload.target}}",
+                  "commandText": "say {{payload.commandName}} for {{entityId}}"
+                }
+              ]
+            }
+          }
+        }
+        """);
+    when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              item.setStatus("HANDED_OFF");
+              return new ScriptGameplayCommandHandoffService.HandoffResult(
+                  true, "ENQUEUED", "auto-1", "");
+            });
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            outputProperties,
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result =
+        service.processPendingWorkItems(10);
+
+    assertThat(result.completedCount()).isEqualTo(1);
+    ArgumentCaptor<ScriptGameplayCommandHandoffService.EmittedCommand> commandCaptor =
+        ArgumentCaptor.forClass(ScriptGameplayCommandHandoffService.EmittedCommand.class);
+    verify(handoffService).handoff(Mockito.eq(item), commandCaptor.capture());
+    assertThat(commandCaptor.getValue().commandText()).isEqualTo("say LOOK for entity-1");
+    assertThat(commandCaptor.getValue().targetEntityId()).isEqualTo("target-entity-2");
+    assertThat(audit.getFinalOutcome()).isEqualTo("success");
+  }
+
+  @Test
+  void deadLettersWhenPerTargetCommandLimitIsExceeded() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptOutputProperties outputProperties = new ScriptOutputProperties();
+    outputProperties.setMaxCommandsPerRun(10);
+    outputProperties.setMaxCommandsPerEntityPerTrigger(1);
+    ScriptWorkItem item = workItem();
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition(
+        """
+        {
+          "emitCommands": [
+            {
+              "targetEntityId": "entity-2",
+              "commandText": "say first"
+            },
+            {
+              "targetEntityId": "entity-2",
+              "commandText": "say second"
+            }
+          ]
+        }
+        """);
+    when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            outputProperties,
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result =
+        service.processPendingWorkItems(10);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    Mockito.verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(item.getCancelReason()).isEqualTo("per_entity_command_limit_exceeded");
+    assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
+    assertThat(audit.getFinalOutcome()).isEqualTo("per_entity_command_limit_exceeded");
+    assertThat(audit.getFinalReason()).isEqualTo("per_entity_command_limit_exceeded");
   }
 
   @Test

@@ -51,7 +51,7 @@ When this document and the DSL reference appear to overlap, use the DSL referenc
 
 The current runtime now includes a first durable work-item executor instead of stopping at ingress-only outbox materialization. Automation claims `PENDING_EVALUATION` rows, enforces per-script quota before execution, loads the persisted script definition, evaluates a current-boundary command-emission format, and hands emitted commands to Game Session through `EnqueueAutomationCommandIfAbsent`.
 
-That current-boundary execution format is intentionally narrow: script definitions may expose `emitCommands` at the top level or under `eventHandlers.<eventType>.emitCommands`, and each emitted command may currently carry `commandText`, `requiresSoloTick`, and optional `dueTickId`. Template substitution is limited to durable work-item metadata and flat primitive payload fields such as `{{payload.commandName}}`. Richer graph execution and broader DSL semantics remain target-state work above this first production evaluator path.
+That current-boundary execution format is intentionally narrow: script definitions may expose `emitCommands` at the top level or under `eventHandlers.<eventType>.emitCommands`, and each emitted command may currently carry `commandText`, optional `targetEntityId`, `requiresSoloTick`, and optional `dueTickId`. If `targetEntityId` is omitted, the command targets the triggering work item's entity. Template substitution is limited to durable work-item metadata and flat primitive payload fields such as `{{payload.commandName}}`. Richer graph execution and broader DSL semantics remain target-state work above this first production evaluator path.
 
 ## Work Item Outbox Contract (Normative)
 

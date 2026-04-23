@@ -128,9 +128,17 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return false;
     }
 
-    if (commands.size() > outputProperties.getMaxCommandsPerRun()
-        || commands.size() > outputProperties.getMaxCommandsPerEntityPerTrigger()) {
+    if (commands.size() > outputProperties.getMaxCommandsPerRun()) {
       deadLetter(workItem, STAGE_DSL_EVAL, "command_count_exceeded", "command_count_exceeded", now);
+      return false;
+    }
+    if (exceedsPerEntityCommandLimit(commands)) {
+      deadLetter(
+          workItem,
+          STAGE_DSL_EVAL,
+          "per_entity_command_limit_exceeded",
+          "per_entity_command_limit_exceeded",
+          now);
       return false;
     }
 
@@ -186,6 +194,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       commands.add(
           new ScriptGameplayCommandHandoffService.EmittedCommand(
               commandText,
+              targetEntityId(node, variables, workItem),
               node.path("requiresSoloTick").asBoolean(false),
               Math.max(0L, node.path("dueTickId").asLong(0L)),
               ordinal++));
@@ -242,6 +251,28 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return node.asText();
     }
     return node.path("commandText").asText("");
+  }
+
+  private static String targetEntityId(
+      JsonNode node, Map<String, String> variables, ScriptWorkItem workItem) {
+    String targetEntityId =
+        render(node.path("targetEntityId").asText(workItem.getEntityId()), variables);
+    if (targetEntityId.isBlank()) {
+      throw new IllegalArgumentException("target_entity_id_blank");
+    }
+    return targetEntityId;
+  }
+
+  private boolean exceedsPerEntityCommandLimit(
+      List<ScriptGameplayCommandHandoffService.EmittedCommand> commands) {
+    Map<String, Integer> counts = new LinkedHashMap<>();
+    for (ScriptGameplayCommandHandoffService.EmittedCommand command : commands) {
+      int count = counts.merge(command.targetEntityId(), 1, Integer::sum);
+      if (count > outputProperties.getMaxCommandsPerEntityPerTrigger()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static String render(String template, Map<String, String> variables) {
