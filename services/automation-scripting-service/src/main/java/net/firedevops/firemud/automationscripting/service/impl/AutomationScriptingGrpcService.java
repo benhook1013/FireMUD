@@ -433,6 +433,16 @@ public class AutomationScriptingGrpcService
       scriptVersionService.notifyUpdate(
           request.getTenantId(), request.getScriptPatchVersion(), request.getAffectedScriptsList());
       response.setSuccess(true);
+    } catch (IllegalArgumentException ex) {
+      response
+          .setSuccess(false)
+          .setError(
+              GrpcAppErrors.error(
+                  meterRegistry,
+                  logger,
+                  "NotifyScriptVersionUpdate",
+                  "INVALID_ARGUMENT",
+                  ex.getMessage()));
     } catch (AdminAuthorizationException ex) {
       response.setSuccess(false).setError(authorizationError("NotifyScriptVersionUpdate", ex));
     }

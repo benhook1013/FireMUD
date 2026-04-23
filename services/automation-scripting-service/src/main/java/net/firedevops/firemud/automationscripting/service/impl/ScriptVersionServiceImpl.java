@@ -7,6 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
+import net.firedevops.firemud.automationscripting.service.ScriptScheduleDefinitionService;
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
 import net.firedevops.firemud.common.LoggingUtil;
 import org.slf4j.Logger;
@@ -22,6 +23,7 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
   private static final Logger logger = LoggingUtil.getLogger(ScriptVersionServiceImpl.class);
 
   private final ScriptDefinitionRepository repository;
+  private final ScriptScheduleDefinitionService scheduleDefinitionService;
   private final Map<Long, Map<String, String>> registry = new ConcurrentHashMap<>();
 
   @Override
@@ -38,8 +40,13 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
       logger.info("No scripts provided for patch {}", scriptPatchVersion);
       return;
     }
-    List<ScriptDefinition> defs = repository.findByTenantIdAndNameIn(tenantKey, affectedScripts);
+    List<ScriptDefinition> defs =
+        repository.findByTenantIdAndScriptVersionAndNameIn(
+            tenantKey, scriptPatchVersion, affectedScripts);
+    scheduleDefinitionService.refreshPatchSchedules(
+        tenantId, scriptPatchVersion, defs, affectedScripts);
     Map<String, String> map = registry.computeIfAbsent(tenantKey, id -> new ConcurrentHashMap<>());
+    affectedScripts.forEach(map::remove);
     for (ScriptDefinition def : defs) {
       map.put(def.getName(), def.getDefinition());
     }

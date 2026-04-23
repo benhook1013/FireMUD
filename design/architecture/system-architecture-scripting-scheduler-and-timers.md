@@ -2,6 +2,10 @@
 
 This document defines the runtime scheduler, timer, and reload lifecycle for scripting and automation. It complements [Scripting DSL Reference & Event Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md), which remains the canonical owner for DSL semantics, trigger identity, event fan-out, and determinism rules.
 
+## Implementation Notes
+
+The current Automation & Scripting implementation now persists a first durable patch-scoped schedule-definition catalog in PostgreSQL (`script_schedule_definitions`) when `NotifyScriptVersionUpdate` reloads a script patch. That catalog stores stable `scheduleDefinitionId`, event type, cadence/unit, priority tag, and normalized schedule metadata hash per script patch, and it rejects duplicate `scheduleDefinitionId` values within one patch scope instead of leaving timer identity entirely implicit in script JSON. The live runtime still does not include the Game Session heartbeat consumer, instance/region timer rows, bounded catch-up execution, or plugin-timer reconciliation described below, so treat the persisted schedule catalog as current substrate rather than as completed scheduler behavior.
+
 ## Script Timers vs Tick Timers
 
 Script timers are layered on top of the core tick model and always express cadence in terms of the authoritative game tick timeline, not raw wall-clock seconds:

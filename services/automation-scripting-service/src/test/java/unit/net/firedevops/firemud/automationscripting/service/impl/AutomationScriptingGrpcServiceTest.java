@@ -19,6 +19,8 @@ import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestRequest
 import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateRequest;
+import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateResponse;
 import net.firedevops.firemud.automationscripting.v1.PingRequest;
 import net.firedevops.firemud.automationscripting.v1.PingResponse;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
@@ -305,5 +307,47 @@ class AutomationScriptingGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals(true, ref.get().getQueued());
     assertEquals(false, ref.get().getRunning());
+  }
+
+  @Test
+  void notifyScriptVersionUpdateReturnsAppErrorForInvalidScheduleMetadata() {
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    Mockito.doThrow(new IllegalArgumentException("schedule_interval_ticks_required"))
+        .when(versionService)
+        .notifyUpdate("1", "patch-1", List.of("guard-script"));
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            versionService,
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry());
+    AtomicReference<NotifyScriptVersionUpdateResponse> ref = new AtomicReference<>();
+
+    service.notifyScriptVersionUpdate(
+        NotifyScriptVersionUpdateRequest.newBuilder()
+            .setTenantId("1")
+            .setScriptPatchVersion("patch-1")
+            .addAffectedScripts("guard-script")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(NotifyScriptVersionUpdateResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(false, ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
   }
 }
