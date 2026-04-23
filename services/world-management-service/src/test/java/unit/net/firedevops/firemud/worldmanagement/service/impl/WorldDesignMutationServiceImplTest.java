@@ -17,6 +17,7 @@ import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationRequestDto;
 import net.firedevops.firemud.worldmanagement.entity.Region;
 import net.firedevops.firemud.worldmanagement.entity.Room;
+import net.firedevops.firemud.worldmanagement.entity.RoomExit;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignAggregateEpoch;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignRevisionLedger;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignScopeEpoch;
@@ -432,6 +433,87 @@ class WorldDesignMutationServiceImplTest {
     verify(worldEntitySpawnBindingRepository, never()).deleteAll(any());
   }
 
+  @Test
+  void scopedRoomMutationRejectsRoomOutsideDeclaredZoneSubtree() {
+    Zone zone = zone(13L, 99L);
+    when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 13L)).thenReturn(Optional.of(zone));
+    when(roomRepository.save(any(Room.class)))
+        .thenAnswer(
+            invocation -> {
+              Room room = invocation.getArgument(0);
+              room.setId(88L);
+              return room;
+            });
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-room", "revision-room", "UPSERT", "ROOM", ""))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.applyMutation(roomCreateRequestWithScope("ZONE_SUBTREE", "12")));
+
+    assertEquals("OUT_OF_SYNC: room mutation is outside the declared scope", ex.getMessage());
+    verify(ledgerRepository, never()).save(any(WorldDesignRevisionLedger.class));
+  }
+
+  @Test
+  void scopedRoomMutationAllowsRoomInsideDeclaredRegionSubtree() {
+    Zone zone = zone(13L, 99L);
+    when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 13L)).thenReturn(Optional.of(zone));
+    when(roomRepository.save(any(Room.class)))
+        .thenAnswer(
+            invocation -> {
+              Room room = invocation.getArgument(0);
+              room.setId(88L);
+              return room;
+            });
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-room", "revision-room", "UPSERT", "ROOM", ""))
+        .thenReturn(Optional.empty());
+    when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
+            1L, 7L, "ROOM", 88L))
+        .thenReturn(Optional.empty());
+
+    var result = service.applyMutation(roomCreateRequestWithScope("REGION_SUBTREE", "99"));
+
+    assertEquals("APPLIED", result.result());
+    assertEquals(1L, result.draftScopeRevisionEpoch());
+  }
+
+  @Test
+  void scopedRoomExitRejectsExitCrossingOutsideDeclaredZoneSubtree() {
+    Zone zone = zone(12L, 99L);
+    Zone otherZone = zone(13L, 99L);
+    Room fromRoom = room(21L, zone);
+    Room toRoom = room(22L, otherZone);
+    when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 21L))
+        .thenReturn(Optional.of(fromRoom));
+    when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 22L))
+        .thenReturn(Optional.of(toRoom));
+    when(roomExitRepository.save(any(RoomExit.class)))
+        .thenAnswer(
+            invocation -> {
+              RoomExit exit = invocation.getArgument(0);
+              exit.setId(31L);
+              return exit;
+            });
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-exit", "revision-exit", "UPSERT", "ROOM_EXIT", ""))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.applyMutation(roomExitCreateRequestWithScope("ZONE_SUBTREE", "12")));
+
+    assertEquals("OUT_OF_SYNC: room exit mutation is outside the declared scope", ex.getMessage());
+    verify(ledgerRepository, never()).save(any(WorldDesignRevisionLedger.class));
+  }
+
   private WorldDesignMutationRequestDto regionCreateRequest() {
     return regionCreateRequestWithExpectedEpoch(0L);
   }
@@ -551,6 +633,53 @@ class WorldDesignMutationServiceImplTest {
         null,
         null,
         null,
+        null,
+        null);
+  }
+
+  private WorldDesignMutationRequestDto roomCreateRequestWithScope(
+      String scopeType, String scopeId) {
+    return new WorldDesignMutationRequestDto(
+        1L,
+        7L,
+        "commit-room",
+        "revision-room",
+        "UPSERT",
+        "ROOM",
+        "",
+        0L,
+        scopeType,
+        scopeId,
+        0L,
+        "REPLACE_SCOPE",
+        null,
+        null,
+        new WorldDesignMutationRequestDto.RoomMutationDto(
+            "North Gate", "A gate room", "13", null, null),
+        null,
+        null,
+        null);
+  }
+
+  private WorldDesignMutationRequestDto roomExitCreateRequestWithScope(
+      String scopeType, String scopeId) {
+    return new WorldDesignMutationRequestDto(
+        1L,
+        7L,
+        "commit-exit",
+        "revision-exit",
+        "UPSERT",
+        "ROOM_EXIT",
+        "",
+        0L,
+        scopeType,
+        scopeId,
+        0L,
+        "REPLACE_SCOPE",
+        null,
+        null,
+        null,
+        new WorldDesignMutationRequestDto.RoomExitMutationDto("21", "22", "north", 1),
         null,
         null);
   }
