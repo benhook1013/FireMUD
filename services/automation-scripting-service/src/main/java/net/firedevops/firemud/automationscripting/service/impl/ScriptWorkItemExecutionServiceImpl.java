@@ -15,12 +15,16 @@ import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
+import net.firedevops.firemud.automationscripting.service.AutomationQueueWorkItemPointer;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunCapacityService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptTenantBudgetService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
@@ -31,6 +35,8 @@ import tools.jackson.databind.ObjectMapper;
     value = "EI_EXPOSE_REP2",
     justification = "Injected collaborators are retained internally by Spring services.")
 public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecutionService {
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(ScriptWorkItemExecutionServiceImpl.class);
   private static final String STATUS_HANDED_OFF = "HANDED_OFF";
   private static final String STATUS_CANCELED = "CANCELED";
   private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
@@ -52,6 +58,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ScriptDryRunCapacityService dryRunCapacityService;
   private final ObjectMapper objectMapper;
   private final MeterRegistry meterRegistry;
+  private final AutomationQueueService automationQueueService;
 
   public ScriptWorkItemExecutionServiceImpl(
       ScriptWorkItemService workItemService,
@@ -75,10 +82,39 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         tenantBudgetService,
         dryRunCapacityService,
         objectMapper,
-        new SimpleMeterRegistry());
+        new SimpleMeterRegistry(),
+        null);
   }
 
   @org.springframework.beans.factory.annotation.Autowired
+  public ScriptWorkItemExecutionServiceImpl(
+      AutomationQueueService automationQueueService,
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        meterRegistry,
+        automationQueueService);
+  }
+
   public ScriptWorkItemExecutionServiceImpl(
       ScriptWorkItemService workItemService,
       ScriptDefinitionRepository scriptDefinitionRepository,
@@ -91,6 +127,34 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptDryRunCapacityService dryRunCapacityService,
       ObjectMapper objectMapper,
       MeterRegistry meterRegistry) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        meterRegistry,
+        null);
+  }
+
+  public ScriptWorkItemExecutionServiceImpl(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry,
+      AutomationQueueService automationQueueService) {
     this.workItemService = workItemService;
     this.scriptDefinitionRepository = scriptDefinitionRepository;
     this.handoffService = handoffService;
@@ -102,12 +166,13 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.dryRunCapacityService = dryRunCapacityService;
     this.objectMapper = objectMapper;
     this.meterRegistry = meterRegistry;
+    this.automationQueueService = automationQueueService;
   }
 
   @Override
   @Transactional
   public ExecutionBatchResult processPendingWorkItems(int maxItems) {
-    List<ScriptWorkItem> claimed = workItemService.claimPendingForEvaluation(maxItems);
+    List<ScriptWorkItem> claimed = claimWorkItems(maxItems);
     int completedCount = 0;
     int failedCount = 0;
     for (ScriptWorkItem workItem : claimed) {
@@ -118,6 +183,37 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       }
     }
     return new ExecutionBatchResult(claimed.size(), completedCount, failedCount);
+  }
+
+  private List<ScriptWorkItem> claimWorkItems(int maxItems) {
+    if (automationQueueService == null) {
+      return workItemService.claimPendingForEvaluation(maxItems);
+    }
+    List<AutomationQueueWorkItemPointer> pointers;
+    try {
+      pointers =
+          automationQueueService.drainIndexedWorkItemPointers(Math.max(1, maxItems * 2), maxItems);
+    } catch (RuntimeException ex) {
+      LOGGER.warn("Automation queue pointer discovery failed; falling back to durable scan", ex);
+      meterRegistry.counter("script_outbox_queue_pointer_discovery_failed_total").increment();
+      return workItemService.claimPendingForEvaluation(maxItems);
+    }
+    List<ScriptWorkItem> queueClaimed =
+        workItemService.claimPendingForEvaluation(
+            pointers.stream().map(AutomationQueueWorkItemPointer::outboxWorkItemId).toList(),
+            maxItems);
+    if (queueClaimed.size() >= maxItems) {
+      return queueClaimed;
+    }
+    List<ScriptWorkItem> fallbackClaimed =
+        workItemService.claimPendingForEvaluation(maxItems - queueClaimed.size());
+    if (fallbackClaimed.isEmpty()) {
+      return queueClaimed;
+    }
+    List<ScriptWorkItem> combined = new ArrayList<>(queueClaimed.size() + fallbackClaimed.size());
+    combined.addAll(queueClaimed);
+    combined.addAll(fallbackClaimed);
+    return List.copyOf(combined);
   }
 
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {

@@ -184,6 +184,35 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void claimsPendingWorkItemsByQueuePointerIds() {
+    ScriptWorkItem item = workItem("patch-1", "PENDING_EVALUATION", Instant.EPOCH);
+    item.setId(99L);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+            List.of(99L, 100L), "PENDING_EVALUATION", PageRequest.of(0, 10)))
+        .thenReturn(List.of(item));
+    when(workItemRepository.saveAll(List.of(item))).thenReturn(List.of(item));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class));
+
+    List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(List.of(99L, 100L), 10);
+
+    assertThat(claimed).containsExactly(item);
+    assertThat(item.getStatus()).isEqualTo("EVALUATING");
+    verify(workItemRepository).saveAll(List.of(item));
+  }
+
+  @Test
   void cleansTerminalOutboxRowsUsingConfiguredRetentionWindows() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);

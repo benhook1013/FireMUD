@@ -151,6 +151,31 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
 
   @Override
   @Transactional
+  public List<ScriptWorkItem> claimPendingForEvaluation(List<Long> workItemIds, int maxItems) {
+    if (maxItems <= 0) {
+      throw new IllegalArgumentException("max_items must be positive");
+    }
+    if (workItemIds == null || workItemIds.isEmpty()) {
+      return List.of();
+    }
+    Instant now = Instant.now();
+    List<ScriptWorkItem> items =
+        workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+            workItemIds.stream().distinct().toList(),
+            STATUS_PENDING_EVALUATION,
+            PageRequest.of(0, maxItems));
+    items.forEach(
+        item -> {
+          item.setStatus(STATUS_EVALUATING);
+          item.setUpdatedAt(now);
+        });
+    List<ScriptWorkItem> saved = List.copyOf(workItemRepository.saveAll(items));
+    saved.forEach(rolloutProjectionService::refreshForWorkItem);
+    return saved;
+  }
+
+  @Override
+  @Transactional
   public TerminalCleanupResult cleanupTerminalWorkItems() {
     Instant now = Instant.now();
     long handedOffDeleted =

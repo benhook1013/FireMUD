@@ -83,6 +83,9 @@ public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, 
 
   List<ScriptWorkItem> findByStatusOrderByCreatedAtAscIdAsc(String status, Pageable pageable);
 
+  List<ScriptWorkItem> findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+      Collection<Long> ids, String status, Pageable pageable);
+
   List<ScriptWorkItem> findByStatusInOrderByCreatedAtAscIdAsc(
       Collection<String> statuses, Pageable pageable);
 

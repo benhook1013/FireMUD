@@ -15,6 +15,8 @@ import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
+import net.firedevops.firemud.automationscripting.service.AutomationQueueWorkItemPointer;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
@@ -27,6 +29,58 @@ import org.mockito.Mockito;
 import tools.jackson.databind.ObjectMapper;
 
 class ScriptWorkItemExecutionServiceImplTest {
+  @Test
+  void claimsQueueIndexedWorkItemsBeforeFallingBackToDurableScan() {
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptWorkItem indexed = workItem();
+    indexed.setId(99L);
+    ScriptWorkItem fallback = workItem();
+    fallback.setId(100L);
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[]}");
+    when(automationQueueService.drainIndexedWorkItemPointers(20, 10))
+        .thenReturn(
+            List.of(
+                new AutomationQueueWorkItemPointer(1, 99L, "instance-1", "patch-1", "event-1")));
+    when(workItemService.claimPendingForEvaluation(List.of(99L), 10)).thenReturn(List.of(indexed));
+    when(workItemService.claimPendingForEvaluation(9)).thenReturn(List.of(fallback));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(auditRepository.findByWorkItemId(Mockito.anyLong()))
+        .thenReturn(Optional.of(new ScriptEventAudit()));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper(),
+            new SimpleMeterRegistry(),
+            automationQueueService);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result =
+        service.processPendingWorkItems(10);
+
+    assertThat(result.claimedCount()).isEqualTo(2);
+    assertThat(result.completedCount()).isEqualTo(2);
+    verify(workItemService).claimPendingForEvaluation(List.of(99L), 10);
+    verify(workItemService).claimPendingForEvaluation(9);
+  }
+
   @Test
   void processesClaimedWorkItemAndHandsOffRenderedCommands() {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);

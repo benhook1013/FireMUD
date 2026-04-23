@@ -21,6 +21,19 @@ public interface AutomationQueueService {
       String tenantId, String gameInstanceId, String entityId);
 
   /**
+   * Retrieve and clear queued work-item pointers from a bounded set of queue keys.
+   *
+   * <p>This is a discovery aid only: callers must still claim the durable outbox rows before
+   * executing work.
+   *
+   * @return deduplicated queue envelopes in queue-key/FIFO order
+   */
+  default List<AutomationQueueWorkItemPointer> drainIndexedWorkItemPointers(
+      int maxQueues, int maxPointers) {
+    return List.of();
+  }
+
+  /**
    * Rebuild the Redis queue projection for a bounded set of pending durable work items.
    *
    * @param maxItems max number of durable rows to inspect

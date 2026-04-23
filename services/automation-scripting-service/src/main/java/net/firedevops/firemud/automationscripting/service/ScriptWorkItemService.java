@@ -13,6 +13,8 @@ public interface ScriptWorkItemService {
 
   List<ScriptWorkItem> claimPendingForEvaluation(int maxItems);
 
+  List<ScriptWorkItem> claimPendingForEvaluation(List<Long> workItemIds, int maxItems);
+
   TerminalCleanupResult cleanupTerminalWorkItems();
 
   Optional<PatchStatusSummary> getPatchStatus(String tenantId, String scriptPatchVersion);

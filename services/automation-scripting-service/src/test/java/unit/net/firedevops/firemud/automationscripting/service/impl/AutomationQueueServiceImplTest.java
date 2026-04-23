@@ -92,6 +92,33 @@ class AutomationQueueServiceImplTest {
   }
 
   @Test
+  void drainIndexedWorkItemPointersScansQueueKeysAndDeletesDrainedProjections() {
+    when(redisTemplate.keys("automation:queue:*"))
+        .thenReturn(
+            Set.of(
+                "automation:queue:{tenant:tenant-1:instance:instance-1}:entity-2",
+                "automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1"));
+    when(listOps.range("automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1", 0, -1))
+        .thenReturn(
+            List.of(
+                "{\"schemaVersion\":1,\"outboxWorkItemId\":41,\"gameInstanceId\":\"instance-1\",\"scriptPatchVersion\":\"patch-1\",\"scriptEventId\":\"event-1\"}",
+                "{\"schemaVersion\":1,\"outboxWorkItemId\":41,\"gameInstanceId\":\"instance-1\",\"scriptPatchVersion\":\"patch-1\",\"scriptEventId\":\"event-1\"}"));
+    when(listOps.range("automation:queue:{tenant:tenant-1:instance:instance-1}:entity-2", 0, -1))
+        .thenReturn(
+            List.of(
+                "{\"schemaVersion\":1,\"outboxWorkItemId\":42,\"gameInstanceId\":\"instance-1\",\"scriptPatchVersion\":\"patch-2\",\"scriptEventId\":\"event-2\"}"));
+
+    List<AutomationQueueWorkItemPointer> drained = service.drainIndexedWorkItemPointers(10, 10);
+
+    assertThat(drained)
+        .containsExactly(
+            new AutomationQueueWorkItemPointer(1, 41L, "instance-1", "patch-1", "event-1"),
+            new AutomationQueueWorkItemPointer(1, 42L, "instance-1", "patch-2", "event-2"));
+    verify(redisTemplate).delete("automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1");
+    verify(redisTemplate).delete("automation:queue:{tenant:tenant-1:instance:instance-1}:entity-2");
+  }
+
+  @Test
   void rebuildPendingWorkItemIndexRepublishesOnlyMissingPointers() {
     ScriptWorkItem missing = workItem(41L, "entity-1");
     ScriptWorkItem existing = workItem(42L, "entity-2");

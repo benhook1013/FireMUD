@@ -101,6 +101,40 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
   }
 
   @Override
+  @Timed(value = "automation.queue.drain_indexed")
+  public List<AutomationQueueWorkItemPointer> drainIndexedWorkItemPointers(
+      int maxQueues, int maxPointers) {
+    if (maxQueues <= 0) {
+      throw new IllegalArgumentException("max_queues must be positive");
+    }
+    if (maxPointers <= 0) {
+      throw new IllegalArgumentException("max_pointers must be positive");
+    }
+    Set<String> queueKeys = redisTemplate.keys("automation:queue:*");
+    if (queueKeys == null || queueKeys.isEmpty()) {
+      return List.of();
+    }
+    LinkedHashMap<Long, AutomationQueueWorkItemPointer> deduped = new LinkedHashMap<>();
+    for (String queueKey : queueKeys.stream().sorted().limit(maxQueues).toList()) {
+      List<Object> raw = listOps.range(queueKey, 0, -1);
+      redisTemplate.delete(queueKey);
+      if (raw == null) {
+        continue;
+      }
+      for (Object entry : raw) {
+        AutomationQueueWorkItemPointer pointer = deserialize(entry.toString());
+        deduped.putIfAbsent(pointer.outboxWorkItemId(), pointer);
+        if (deduped.size() >= maxPointers) {
+          drainCounter.increment(deduped.size());
+          return List.copyOf(deduped.values());
+        }
+      }
+    }
+    drainCounter.increment(deduped.size());
+    return List.copyOf(deduped.values());
+  }
+
+  @Override
   @Timed(value = "automation.queue.rebuild")
   public int rebuildPendingWorkItemIndex(int maxItems) {
     if (maxItems <= 0) {
