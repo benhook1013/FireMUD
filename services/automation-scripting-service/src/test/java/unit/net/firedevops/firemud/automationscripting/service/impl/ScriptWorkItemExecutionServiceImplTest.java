@@ -423,6 +423,7 @@ class ScriptWorkItemExecutionServiceImplTest {
                 .tag("outcome", "tenant_budget_exceeded")
                 .tag("dryRun", "false")
                 .tag("priorityTag", "high")
+                .tag("sourceService", "game-session-service")
                 .counter())
         .isNotNull();
   }
@@ -512,6 +513,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setEventSchemaVersion("v1");
     item.setScriptPatchVersion("patch-1");
     item.setScriptEventId("event-1");
+    item.setSourceService("game-session-service");
     item.setPayloadJson("{\"commandName\":\"LOOK\"}");
     item.setStatus("EVALUATING");
     item.setCreatedAt(Instant.EPOCH);

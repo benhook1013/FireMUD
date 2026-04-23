@@ -385,8 +385,14 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
             "dryRun",
             Boolean.toString(workItem.isDryRun()),
             "priorityTag",
-            normalizePriorityTag(workItem.getPriorityTag()))
+            normalizePriorityTag(workItem.getPriorityTag()),
+            "sourceService",
+            normalizeSourceService(workItem.getSourceService()))
         .increment();
+  }
+
+  private static String normalizeSourceService(String value) {
+    return value == null || value.isBlank() ? "unknown" : value;
   }
 
   private static String normalizePriorityTag(String value) {
