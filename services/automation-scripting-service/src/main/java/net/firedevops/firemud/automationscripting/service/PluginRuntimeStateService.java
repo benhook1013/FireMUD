@@ -12,6 +12,8 @@ public interface PluginRuntimeStateService {
 
   boolean drain(PluginStateCommand command);
 
+  PolicyReconciliationResult reconcileActivePluginPolicy(int maxItems);
+
   record ActivationCommand(
       String tenantId,
       String gameInstanceId,
@@ -31,6 +33,8 @@ public interface PluginRuntimeStateService {
 
   record ActivationResult(
       String previousPluginVersionId, String activePluginVersionId, String controlPlaneRequestId) {}
+
+  record PolicyReconciliationResult(int inspectedCount, int disabledCount) {}
 
   record PluginRuntimeStatus(
       String activePluginVersionId,

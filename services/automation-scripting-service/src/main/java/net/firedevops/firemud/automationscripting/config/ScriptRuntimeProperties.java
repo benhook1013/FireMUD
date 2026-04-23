@@ -10,11 +10,33 @@ public class ScriptRuntimeProperties {
   @Min(1)
   private long pinProjectionStaleThresholdMs = 5000;
 
+  @Min(1)
+  private long pluginPolicyReconcileIntervalSeconds = 60;
+
+  @Min(1)
+  private int pluginPolicyReconcileBatchSize = 100;
+
   public long getPinProjectionStaleThresholdMs() {
     return pinProjectionStaleThresholdMs;
   }
 
   public void setPinProjectionStaleThresholdMs(long pinProjectionStaleThresholdMs) {
     this.pinProjectionStaleThresholdMs = pinProjectionStaleThresholdMs;
+  }
+
+  public long getPluginPolicyReconcileIntervalSeconds() {
+    return pluginPolicyReconcileIntervalSeconds;
+  }
+
+  public void setPluginPolicyReconcileIntervalSeconds(long pluginPolicyReconcileIntervalSeconds) {
+    this.pluginPolicyReconcileIntervalSeconds = pluginPolicyReconcileIntervalSeconds;
+  }
+
+  public int getPluginPolicyReconcileBatchSize() {
+    return pluginPolicyReconcileBatchSize;
+  }
+
+  public void setPluginPolicyReconcileBatchSize(int pluginPolicyReconcileBatchSize) {
+    this.pluginPolicyReconcileBatchSize = pluginPolicyReconcileBatchSize;
   }
 }

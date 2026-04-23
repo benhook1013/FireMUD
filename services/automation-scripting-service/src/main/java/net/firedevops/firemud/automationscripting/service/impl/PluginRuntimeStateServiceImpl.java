@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
@@ -12,6 +13,7 @@ import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
     justification = "Injected dependencies are internal Spring collaborators")
 public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService {
   private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";
+  private static final String ACTOR_POLICY_RECONCILER = "automation-scripting-policy-reconciler";
 
   private final PluginRuntimeStateRepository repository;
   private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
@@ -167,6 +170,59 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
   public boolean drain(PluginStateCommand command) {
     transition(command, PluginState.PLUGIN_STATE_DRAINING, "operator_drain");
     return true;
+  }
+
+  @Override
+  @Transactional
+  public PolicyReconciliationResult reconcileActivePluginPolicy(int maxItems) {
+    int limit = Math.max(1, maxItems);
+    List<PluginRuntimeState> activeStates =
+        repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+            PluginState.PLUGIN_STATE_ENABLED.name(), "", PageRequest.of(0, limit));
+    Instant now = Instant.now();
+    int disabledCount = 0;
+    for (PluginRuntimeState state : activeStates) {
+      Optional<String> disableReason = disableReasonForCurrentPolicy(state);
+      if (disableReason.isPresent()) {
+        disableForPolicy(state, disableReason.get(), now);
+        disabledCount++;
+      }
+    }
+    return new PolicyReconciliationResult(activeStates.size(), disabledCount);
+  }
+
+  private Optional<String> disableReasonForCurrentPolicy(PluginRuntimeState state) {
+    var publication =
+        gameDesignControlPlaneClient.getPublishedPluginVersion(
+            state.getTenantId(), state.getPluginId(), normalize(state.getActivePluginVersionId()));
+    if (publication.hasError() && !publication.getError().getCode().isBlank()) {
+      return Optional.of("signer_policy_unavailable");
+    }
+    if (publication.getPluginVersion().getPublicationState()
+        != VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED) {
+      return Optional.of("plugin_version_not_published");
+    }
+    if (publication.getPluginVersion().getSignerKeyId().isBlank()) {
+      return Optional.of("signer_policy_unavailable");
+    }
+    if (publication.getPluginVersion().getSignerRevoked()) {
+      return Optional.of("signer_revoked");
+    }
+    return switch (publication.getPluginVersion().getComponentPolicyDecision()) {
+      case PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED -> Optional.empty();
+      case PLUGIN_COMPONENT_POLICY_DECISION_BLOCKED ->
+          Optional.of("plugin_component_policy_blocked");
+      default -> Optional.of("component_policy_unavailable");
+    };
+  }
+
+  private void disableForPolicy(PluginRuntimeState state, String reason, Instant now) {
+    state.setPluginState(PluginState.PLUGIN_STATE_DISABLED.name());
+    state.setStatusReason(reason);
+    state.setControlPlaneRequestId("policy-reconcile-" + now.toEpochMilli());
+    state.setActorPrincipal(ACTOR_POLICY_RECONCILER);
+    state.setLastChangedAt(now);
+    repository.save(state);
   }
 
   private void transition(

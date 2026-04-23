@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
@@ -380,5 +381,94 @@ class PluginRuntimeStateServiceImplTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "PLUGIN_ABILITY_SCHEMA_MISMATCH: plugin ability schema digest does not match runtime version");
+  }
+
+  @Test
+  void reconciliationDisablesActivePluginWhenSignerIsRevoked() {
+    PluginRuntimeState active = activePluginState();
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    when(repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+            Mockito.eq(PluginState.PLUGIN_STATE_ENABLED.name()), Mockito.eq(""), Mockito.any()))
+        .thenReturn(List.of(active));
+    when(repository.save(Mockito.any(PluginRuntimeState.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            publishedPluginVersion(
+                PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED, true));
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository, gameDesignClient, Mockito.mock(GameSessionControlPlaneClient.class));
+
+    PluginRuntimeStateService.PolicyReconciliationResult result =
+        service.reconcileActivePluginPolicy(10);
+
+    assertThat(result.inspectedCount()).isEqualTo(1);
+    assertThat(result.disabledCount()).isEqualTo(1);
+    assertThat(active.getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_DISABLED.name());
+    assertThat(active.getStatusReason()).isEqualTo("signer_revoked");
+    assertThat(active.getControlPlaneRequestId()).startsWith("policy-reconcile-");
+    assertThat(active.getActorPrincipal()).isEqualTo("automation-scripting-policy-reconciler");
+    Mockito.verify(repository).save(active);
+  }
+
+  @Test
+  void reconciliationLeavesAllowedActivePluginEnabled() {
+    PluginRuntimeState active = activePluginState();
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    when(repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+            Mockito.eq(PluginState.PLUGIN_STATE_ENABLED.name()), Mockito.eq(""), Mockito.any()))
+        .thenReturn(List.of(active));
+    when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            publishedPluginVersion(
+                PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED, false));
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository, gameDesignClient, Mockito.mock(GameSessionControlPlaneClient.class));
+
+    PluginRuntimeStateService.PolicyReconciliationResult result =
+        service.reconcileActivePluginPolicy(10);
+
+    assertThat(result.inspectedCount()).isEqualTo(1);
+    assertThat(result.disabledCount()).isZero();
+    assertThat(active.getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_ENABLED.name());
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+  }
+
+  private static PluginRuntimeState activePluginState() {
+    PluginRuntimeState active = new PluginRuntimeState();
+    active.setTenantId("1");
+    active.setGameInstanceId("game-1");
+    active.setPluginId("plugin-1");
+    active.setActivePluginVersionId("plugin-v1");
+    active.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
+    active.setStatusReason("activation");
+    active.setLastChangedAt(java.time.Instant.EPOCH);
+    return active;
+  }
+
+  private static GetPublishedPluginVersionResponse publishedPluginVersion(
+      PluginComponentPolicyDecision componentPolicyDecision, boolean signerRevoked) {
+    return GetPublishedPluginVersionResponse.newBuilder()
+        .setPluginVersion(
+            PublishedPluginVersion.newBuilder()
+                .setTenantId("1")
+                .setPluginId("plugin-1")
+                .setPluginVersionId("plugin-v1")
+                .setBaseVersionId(7L)
+                .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
+                .setAbilitySchemaDigest("ability-1")
+                .setBundleDigest("bundle-1")
+                .setManifestSchemaVersion(1)
+                .setSignerKeyId("signer-1")
+                .setSignerRevoked(signerRevoked)
+                .setComponentPolicyDecision(componentPolicyDecision)
+                .build())
+        .build();
   }
 }
