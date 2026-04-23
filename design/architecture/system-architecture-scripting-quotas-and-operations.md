@@ -70,6 +70,7 @@ Dry-run and test execution paths exposed by the Automation & Scripting Service s
 - They execute handlers through the same engine with the same CPU/iteration and memory budgets.
 - They record `sandbox_error` and `infrastructure_error` outcomes in `script_event_audit` so failure modes are observable.
 - By default they do **not** consume per-script quotas or per-tenant budgets enforced by `ScriptQuotaService`; instead, they are restricted to privileged principals (for example, designers and operators) and should be further protected by separate rate limits or ACLs at the API gateway or Logging & Admin layer.
+- Current Automation execution honors that split by skipping live `ScriptQuotaService` acquisition for dry-run `script_work_items`; dry-run capacity must be controlled by the dedicated test/dry-run limiters rather than by consuming live gameplay automation quota.
   - Dry-run/test executions must not increment live-traffic error counters. Sandbox failures observed during tests are emitted via dry-run/test-only metric families (for example `automation_script_test_sandbox_failures_total`) so production SLO dashboards do not conflate privileged tooling with live automation reliability.
 - Dry-run/test traffic must not be allowed to consume the same last-resort execution capacity reserved for live automation:
   - Implementations should use separate executor pools or explicit worker reservations for `isDryRun=true`.

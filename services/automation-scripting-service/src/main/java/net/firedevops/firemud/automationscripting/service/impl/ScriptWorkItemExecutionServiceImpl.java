@@ -82,7 +82,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
     Instant now = Instant.now();
-    if (!quotaService.tryAcquire(workItem.getTenantId(), workItem.getScriptId())) {
+    if (!workItem.isDryRun()
+        && !quotaService.tryAcquire(workItem.getTenantId(), workItem.getScriptId())) {
       deadLetter(workItem, STAGE_DSL_EVAL, "quota_denied", "script_quota_denied", now);
       return false;
     }

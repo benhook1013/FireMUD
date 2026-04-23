@@ -136,6 +136,62 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(audit.getFinalOutcome()).isEqualTo("definition_missing");
   }
 
+  @Test
+  void dryRunDoesNotAcquireLiveScriptQuotaOrHandoffCommands() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptQuotaService quotaService = Mockito.mock(ScriptQuotaService.class);
+    ScriptOutputProperties outputProperties = new ScriptOutputProperties();
+    ScriptWorkItem item = workItem();
+    item.setDryRun(true);
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition(
+        """
+        {
+          "emitCommands": [
+            {
+              "commandText": "say dry run"
+            }
+          ]
+        }
+        """);
+    when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            quotaService,
+            outputProperties,
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result =
+        service.processPendingWorkItems(10);
+
+    assertThat(result.completedCount()).isEqualTo(1);
+    Mockito.verify(quotaService, Mockito.never())
+        .tryAcquire(Mockito.anyString(), Mockito.anyString());
+    Mockito.verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
+    assertThat(item.getStatus()).isEqualTo("HANDED_OFF");
+    assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
+    assertThat(audit.getFinalOutcome()).isEqualTo("dry_run_completed");
+    assertThat(audit.getFinalReason()).isEqualTo("dry_run_no_handoff");
+  }
+
   private static ScriptWorkItem workItem() {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setId(99L);
