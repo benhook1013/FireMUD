@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
@@ -67,7 +68,11 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
             });
     ScriptPatchInstanceRolloutProjectionServiceImpl service =
         new ScriptPatchInstanceRolloutProjectionServiceImpl(
-            repository, eventRepository, workItemRepository, pinProjectionService);
+            repository,
+            eventRepository,
+            workItemRepository,
+            pinProjectionService,
+            new ScriptRuntimeProperties());
 
     Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> summary =
         service.getProjection("1", "game-1", "patch-1");

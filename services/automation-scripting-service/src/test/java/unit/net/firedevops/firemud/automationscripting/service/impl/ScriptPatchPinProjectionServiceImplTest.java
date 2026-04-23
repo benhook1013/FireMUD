@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.time.Instant;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
+import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProjectionRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
@@ -43,7 +44,8 @@ class ScriptPatchPinProjectionServiceImplTest {
         new ScriptPatchPinProjectionServiceImpl(
             repository,
             gameSessionControlPlaneClient,
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            runtimeProperties());
 
     ScriptPatchPinProjectionService.PinConvergenceLookup lookup =
         service.getPinConvergence("1", "game-1");
@@ -87,7 +89,8 @@ class ScriptPatchPinProjectionServiceImplTest {
         new ScriptPatchPinProjectionServiceImpl(
             repository,
             gameSessionControlPlaneClient,
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            runtimeProperties());
 
     ScriptPatchPinProjectionService.PinConvergenceLookup lookup =
         service.getPinConvergence("1", "game-1");
@@ -97,5 +100,9 @@ class ScriptPatchPinProjectionServiceImplTest {
     assertThat(lookup.summary().get().observedPinnedScriptPatchVersion()).isEqualTo("patch-4");
     assertThat(lookup.summary().get().lastObservedControlPlaneRequestId()).isEqualTo("req-4");
     assertThat(lookup.summary().get().projectionStale()).isTrue();
+  }
+
+  private static ScriptRuntimeProperties runtimeProperties() {
+    return new ScriptRuntimeProperties();
   }
 }

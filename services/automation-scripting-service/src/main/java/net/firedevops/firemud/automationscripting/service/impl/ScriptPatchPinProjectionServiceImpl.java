@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
+import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProjectionRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
@@ -19,19 +20,20 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are internal Spring collaborators")
 public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjectionService {
-  private static final long PIN_PROJECTION_STALE_THRESHOLD_MS = 5_000L;
-
   private final ScriptPatchPinProjectionRepository repository;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
+  private final ScriptRuntimeProperties runtimeProperties;
 
   public ScriptPatchPinProjectionServiceImpl(
       ScriptPatchPinProjectionRepository repository,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
-      @Lazy ScriptPatchInstanceRolloutProjectionService rolloutProjectionService) {
+      @Lazy ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptRuntimeProperties runtimeProperties) {
     this.repository = repository;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.rolloutProjectionService = rolloutProjectionService;
+    this.runtimeProperties = runtimeProperties;
   }
 
   @Override
@@ -109,7 +111,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     return repository.save(projection);
   }
 
-  private static PinConvergenceSummary toSummary(ScriptPatchPinProjection projection, Instant now) {
+  private PinConvergenceSummary toSummary(ScriptPatchPinProjection projection, Instant now) {
     long projectionAsOfMs = projection.getProjectionRefreshedAt().toEpochMilli();
     long projectionLagMs = Math.max(0L, now.toEpochMilli() - projectionAsOfMs);
     return new PinConvergenceSummary(
@@ -122,12 +124,12 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
             : projection.getObservedAt().toEpochMilli(),
         projectionAsOfMs,
         projectionLagMs,
-        projectionLagMs >= PIN_PROJECTION_STALE_THRESHOLD_MS);
+        projectionLagMs >= runtimeProperties.getPinProjectionStaleThresholdMs());
   }
 
-  private static boolean isStale(ScriptPatchPinProjection projection, Instant now) {
+  private boolean isStale(ScriptPatchPinProjection projection, Instant now) {
     return Math.max(0L, now.toEpochMilli() - projection.getProjectionRefreshedAt().toEpochMilli())
-        >= PIN_PROJECTION_STALE_THRESHOLD_MS;
+        >= runtimeProperties.getPinProjectionStaleThresholdMs();
   }
 
   private static void requireText(String value, String fieldName) {

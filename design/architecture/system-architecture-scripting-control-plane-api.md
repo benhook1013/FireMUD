@@ -329,7 +329,7 @@ Contract rules:
 
 #### `GetAutomationPinConvergence`
 
-Implementation note: the current Automation & Scripting implementation now persists a durable `script_patch_pin_projections` view keyed by `(tenantId, gameInstanceId)`. Automation refreshes that projection opportunistically from the same shared Game Session runtime-state surface already used by admission and replay checks, then serves `GetAutomationPinConvergence` from the persisted projection so freshness and temporary Game Session read failures do not force operator reads to be raw pass-through calls.
+Implementation note: the current Automation & Scripting implementation now persists a durable `script_patch_pin_projections` view keyed by `(tenantId, gameInstanceId)`. Automation refreshes that projection opportunistically from the same shared Game Session runtime-state surface already used by admission and replay checks, then serves `GetAutomationPinConvergence` from the persisted projection so freshness and temporary Game Session read failures do not force operator reads to be raw pass-through calls. Projection stale flags use the `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` runtime knob.
 
 Inputs:
 
@@ -434,7 +434,7 @@ Outputs:
 - The read model must publish and enforce explicit freshness SLOs:
   - P95 `projectionLagMs <= 5000`
   - P99 `projectionLagMs <= 30000`
-- Responses that breach the published SLO must set `isProjectionStale=true` and include a bounded stale reason code in `statusReason` (for example `projection_lag_exceeded`) so operators can distinguish stale read models from failed rollouts.
+- Responses that breach the published SLO, currently configured by `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS`, must set `isProjectionStale=true` and include a bounded stale reason code in `statusReason` (for example `projection_lag_exceeded`) so operators can distinguish stale read models from failed rollouts.
 
 ### Automation & Scripting: Plugin Lifecycle Management
 

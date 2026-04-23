@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
@@ -32,16 +33,19 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
   private final ScriptPatchInstanceRolloutEventRepository eventRepository;
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptPatchPinProjectionService pinProjectionService;
+  private final ScriptRuntimeProperties runtimeProperties;
 
   public ScriptPatchInstanceRolloutProjectionServiceImpl(
       ScriptPatchInstanceRolloutProjectionRepository repository,
       ScriptPatchInstanceRolloutEventRepository eventRepository,
       ScriptWorkItemRepository workItemRepository,
-      ScriptPatchPinProjectionService pinProjectionService) {
+      ScriptPatchPinProjectionService pinProjectionService,
+      ScriptRuntimeProperties runtimeProperties) {
     this.repository = repository;
     this.eventRepository = eventRepository;
     this.workItemRepository = workItemRepository;
     this.pinProjectionService = pinProjectionService;
+    this.runtimeProperties = runtimeProperties;
   }
 
   @Override
@@ -263,7 +267,8 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     Instant now = Instant.now();
     long projectionAsOfMs = projection.getProjectionRefreshedAt().toEpochMilli();
     long projectionLagMs = Math.max(0L, now.toEpochMilli() - projectionAsOfMs);
-    boolean projectionStale = projectionLagMs >= 5_000L;
+    boolean projectionStale =
+        projectionLagMs >= runtimeProperties.getPinProjectionStaleThresholdMs();
     return new ScriptWorkItemService.PatchInstanceRolloutSummary(
         projection.getTenantId(),
         projection.getGameInstanceId(),

@@ -62,6 +62,8 @@ script:
     max-commands-per-run: ${SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN:64}
     max-commands-per-entity-per-trigger: ${SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER:8}
     max-serialized-work-item-bytes: ${SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES:32768}
+  runtime:
+    pin-projection-stale-threshold-ms: ${SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS:5000}
   outbox:
     handed-off-retention-days: ${SCRIPT_OUTBOX_HANDED_OFF_RETENTION_DAYS:7}
     canceled-retention-days: ${SCRIPT_OUTBOX_CANCELED_RETENTION_DAYS:7}
