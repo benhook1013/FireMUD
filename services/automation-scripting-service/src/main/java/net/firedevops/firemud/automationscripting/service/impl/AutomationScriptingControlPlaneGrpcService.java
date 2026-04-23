@@ -3,10 +3,12 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
+import net.firedevops.firemud.automationscripting.v1.AutomationAdmissionMode;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingControlPlaneServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchRequest;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchResponse;
@@ -40,6 +42,8 @@ import net.firedevops.firemud.automationscripting.v1.ScriptDeadLetterEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptEventDefinition;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatusEntry;
+import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeRequest;
+import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeResponse;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionRequest;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
@@ -58,16 +62,19 @@ public final class AutomationScriptingControlPlaneGrpcService
   private final ScriptEventRegistryService eventRegistryService;
   private final ScriptWorkItemService workItemService;
   private final PluginRuntimeStateService pluginRuntimeStateService;
+  private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
 
   public AutomationScriptingControlPlaneGrpcService(
       ScriptEventRegistryService eventRegistryService,
       ScriptWorkItemService workItemService,
       PluginRuntimeStateService pluginRuntimeStateService,
+      AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService) {
     this.eventRegistryService = eventRegistryService;
     this.workItemService = workItemService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
+    this.automationAdmissionStateService = automationAdmissionStateService;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
   }
 
@@ -172,6 +179,42 @@ public final class AutomationScriptingControlPlaneGrpcService
   }
 
   @Override
+  @Timed(value = "automationGrpc.controlPlane.setAutomationAdmissionMode")
+  public void setAutomationAdmissionMode(
+      SetAutomationAdmissionModeRequest request,
+      StreamObserver<SetAutomationAdmissionModeResponse> responseObserver) {
+    SetAutomationAdmissionModeResponse.Builder response =
+        SetAutomationAdmissionModeResponse.newBuilder();
+    try {
+      requireAdminRole();
+      AutomationAdmissionStateService.AdmissionStateSummary summary =
+          automationAdmissionStateService.setMode(
+              new AutomationAdmissionStateService.SetAdmissionModeCommand(
+                  request.getTenantId(),
+                  request.getGameInstanceId(),
+                  request.getRegionId(),
+                  requireMode(request.getMode()),
+                  request.getControlPlaneRequestId(),
+                  request.getActorPrincipal(),
+                  request.getReason()));
+      response
+          .setTenantId(summary.tenantId())
+          .setGameInstanceId(summary.gameInstanceId())
+          .setRegionId(summary.regionId())
+          .setMode(toProtoMode(summary.mode()))
+          .setAdmissionEpoch(summary.admissionEpoch())
+          .setUpdatedAtMs(summary.updatedAtMs());
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
   @Timed(value = "automationGrpc.controlPlane.getAutomationDrainStatus")
   public void getAutomationDrainStatus(
       GetAutomationDrainStatusRequest request,
@@ -187,6 +230,7 @@ public final class AutomationScriptingControlPlaneGrpcService
           .setTenantId(summary.tenantId())
           .setGameInstanceId(summary.gameInstanceId())
           .setRegionId(summary.regionId())
+          .setAdmissionMode(toProtoMode(summary.admissionMode()))
           .setAdmissionEpoch(summary.admissionEpoch())
           .setActiveExecutionCount(summary.activeExecutionCount())
           .setOldestActiveExecutionStartedAtMs(summary.oldestActiveExecutionStartedAtMs())
@@ -562,6 +606,24 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setStatusReason(summary.statusReason())
         .setLastChangedAtMs(summary.lastChangedAtMs())
         .build();
+  }
+
+  private static AutomationAdmissionMode toProtoMode(String mode) {
+    return switch (mode) {
+      case "NORMAL" -> AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_NORMAL;
+      case "PAUSED_FOR_ROLLBACK" ->
+          AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK;
+      default -> AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_UNSPECIFIED;
+    };
+  }
+
+  private static String requireMode(AutomationAdmissionMode mode) {
+    return switch (mode) {
+      case AUTOMATION_ADMISSION_MODE_NORMAL -> "NORMAL";
+      case AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK -> "PAUSED_FOR_ROLLBACK";
+      case UNRECOGNIZED, AUTOMATION_ADMISSION_MODE_UNSPECIFIED ->
+          throw new IllegalArgumentException("mode is required");
+    };
   }
 
   private static ScriptDeadLetterEntry toProto(ScriptWorkItemService.DeadLetterSummary summary) {

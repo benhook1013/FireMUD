@@ -44,6 +44,8 @@ service AutomationScriptingService {
 service AutomationScriptingControlPlaneService {
   rpc GetScriptPatchStatus(GetScriptPatchStatusRequest) returns (GetScriptPatchStatusResponse);
   rpc ListScriptPatchStatuses(ListScriptPatchStatusesRequest) returns (ListScriptPatchStatusesResponse);
+  rpc SetAutomationAdmissionMode(SetAutomationAdmissionModeRequest)
+      returns (SetAutomationAdmissionModeResponse);
   rpc GetAutomationDrainStatus(GetAutomationDrainStatusRequest)
       returns (GetAutomationDrainStatusResponse);
   rpc GetAutomationPinConvergence(GetAutomationPinConvergenceRequest)
@@ -274,9 +276,16 @@ enum TriggerAdmissionOutcome {
       "TRIGGER_ADMISSION_OUTCOME_DENIED_DISABLED",
       "TRIGGER_ADMISSION_OUTCOME_DENIED_VERSION_UNAVAILABLE",
       "TRIGGER_ADMISSION_OUTCOME_DENIED_POLICY";
+  TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK = 11;
   TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR = 8;
   TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED = 9;
   TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED = 10;
+}
+
+enum AutomationAdmissionMode {
+  AUTOMATION_ADMISSION_MODE_UNSPECIFIED = 0;
+  AUTOMATION_ADMISSION_MODE_NORMAL = 1;
+  AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK = 2;
 }
 
 message TriggerScriptEventRequest {
@@ -378,16 +387,37 @@ message GetAutomationDrainStatusRequest {
   string region_id = 3;
 }
 
+message SetAutomationAdmissionModeRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  AutomationAdmissionMode mode = 4;
+  string control_plane_request_id = 5;
+  string actor_principal = 6;
+  string reason = 7;
+}
+
+message SetAutomationAdmissionModeResponse {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  AutomationAdmissionMode mode = 4;
+  int64 admission_epoch = 5;
+  int64 updated_at_ms = 6;
+  shared.v1.ErrorDetail error = 7;
+}
+
 message GetAutomationDrainStatusResponse {
   string tenant_id = 1;
   string game_instance_id = 2;
   string region_id = 3;
-  int64 admission_epoch = 4;
-  int64 active_execution_count = 5;
-  int64 oldest_active_execution_started_at_ms = 6;
-  int64 pending_cancelable_work_item_count = 7;
-  int64 observed_at_ms = 8;
-  shared.v1.ErrorDetail error = 9;
+  AutomationAdmissionMode admission_mode = 4;
+  int64 admission_epoch = 5;
+  int64 active_execution_count = 6;
+  int64 oldest_active_execution_started_at_ms = 7;
+  int64 pending_cancelable_work_item_count = 8;
+  int64 observed_at_ms = 9;
+  shared.v1.ErrorDetail error = 10;
 }
 
 message GetAutomationPinConvergenceRequest {

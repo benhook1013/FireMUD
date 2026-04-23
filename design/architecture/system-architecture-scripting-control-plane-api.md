@@ -258,7 +258,7 @@ Outputs:
 
 #### `GetAutomationDrainStatus`
 
-Implementation note: the current Automation & Scripting implementation now exposes the first drain-status read directly from durable `script_work_items` for one `(tenantId, gameInstanceId[, regionId])` scope. It reports active executions from `EVALUATING` and `HANDOFF_IN_FLIGHT`, counts cancelable pending work from `PENDING_EVALUATION`, and returns `observedAt` from the read timestamp. The broader rollback-admission substrate is not live yet, so `admissionEpoch` is currently returned as `0` rather than a true scope-local pause epoch.
+Implementation note: the current Automation & Scripting implementation now persists a scope-local `automation_admission_states` record keyed by `(tenantId, gameInstanceId, regionId)`, exposes `SetAutomationAdmissionMode`, stamps admitted `script_work_items` with the current `admissionEpoch`, and serves `GetAutomationDrainStatus` from that durable admission state plus durable work-item truth. While paused for rollback, drain counts are scoped to pre-pause work (`workItem.admissionEpoch < current admissionEpoch`) rather than all work items in the scope.
 
 Inputs:
 
@@ -270,6 +270,7 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`
 - Optional `regionId`
+- `admissionMode`
 - `admissionEpoch`
 - `activeExecutionCount`
 - `oldestActiveExecutionStartedAt` (nullable/zero when no active work exists)
@@ -279,8 +280,8 @@ Outputs:
 Contract rules:
 
 - This is a read-only operator surface for rollback/promotion drain checks; it must not mutate work-item state.
-- The current live response is scoped only to durable work-item truth already owned by Automation & Scripting. It does not yet prove that a pause transition has advanced a real rollback epoch.
-- Operators may already use `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` as the current drain-empty condition for scope-local durable work. Once scoped pause/admission-epoch control ships, the same read must upgrade in place so `admissionEpoch` reflects the authoritative rollback epoch instead of `0`.
+- The live response is backed by durable Automation-owned admission mode/epoch state plus durable work-item truth already owned by Automation & Scripting.
+- Operators may use `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` as the current drain-empty condition for the active rollback epoch in that scope.
 
 #### `GetAutomationPinConvergence`
 
@@ -500,7 +501,7 @@ Required enum values:
 
 - `TRIGGER_ADMISSION_OUTCOME_ADMITTED`
 - `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING`
-- `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK_PAUSE`
+- `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK`
 - `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE`
 - `TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE`
 - `TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED`

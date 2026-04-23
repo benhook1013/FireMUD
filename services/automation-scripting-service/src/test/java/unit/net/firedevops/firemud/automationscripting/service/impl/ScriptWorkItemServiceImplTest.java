@@ -15,6 +15,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
@@ -32,6 +33,15 @@ class ScriptWorkItemServiceImplTest {
 
   private static ScriptPatchInstanceRolloutProjectionService rolloutProjectionService() {
     return Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+  }
+
+  private static AutomationAdmissionStateService admissionStateService() {
+    AutomationAdmissionStateService service = Mockito.mock(AutomationAdmissionStateService.class);
+    when(service.getState(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            new AutomationAdmissionStateService.AdmissionStateSummary(
+                "1", "game-1", "region-1", "NORMAL", 1L, "", "", "", 100L));
+    return service;
   }
 
   @Test
@@ -56,6 +66,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
@@ -91,6 +102,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
@@ -111,6 +123,7 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(ScriptEventAuditRepository.class),
             ingressAuditRepository(),
             outboxProperties(),
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
@@ -140,6 +153,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             properties,
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
@@ -176,6 +190,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             properties,
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
@@ -200,6 +215,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
@@ -232,6 +248,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
@@ -274,6 +291,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
@@ -284,7 +302,8 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.tenantId()).isEqualTo("1");
     assertThat(summary.gameInstanceId()).isEqualTo("game-1");
     assertThat(summary.regionId()).isEqualTo("region-1");
-    assertThat(summary.admissionEpoch()).isZero();
+    assertThat(summary.admissionMode()).isEqualTo("NORMAL");
+    assertThat(summary.admissionEpoch()).isEqualTo(1L);
     assertThat(summary.activeExecutionCount()).isEqualTo(2L);
     assertThat(summary.oldestActiveExecutionStartedAtMs()).isEqualTo(120L);
     assertThat(summary.pendingCancelableWorkItemCount()).isEqualTo(1L);
@@ -304,6 +323,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
@@ -355,6 +375,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
+            admissionStateService(),
             pinProjectionService,
             rolloutProjectionService,
             Mockito.mock(PluginRuntimeStateService.class));
@@ -407,6 +428,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
+            admissionStateService(),
             pinProjectionService,
             rolloutProjectionService,
             Mockito.mock(PluginRuntimeStateService.class));
@@ -483,6 +505,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
+            admissionStateService(),
             pinProjectionService,
             rolloutProjectionService,
             Mockito.mock(PluginRuntimeStateService.class));
@@ -529,6 +552,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository(),
             outboxProperties(),
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
@@ -596,6 +620,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository,
             outboxProperties(),
+            admissionStateService(),
             pinProjectionService,
             rolloutProjectionService(),
             pluginRuntimeStateService);
@@ -670,6 +695,7 @@ class ScriptWorkItemServiceImplTest {
             auditRepository,
             ingressAuditRepository,
             outboxProperties(),
+            admissionStateService(),
             pinProjectionService,
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));

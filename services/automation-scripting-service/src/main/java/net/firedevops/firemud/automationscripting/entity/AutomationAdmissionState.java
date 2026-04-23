@@ -6,14 +6,20 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
 import java.time.Instant;
 import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "script_work_items")
-public class ScriptWorkItem {
+@Table(
+    name = "automation_admission_states",
+    uniqueConstraints =
+        @UniqueConstraint(
+            name = "uq_automation_admission_scope",
+            columnNames = {"tenant_id", "game_instance_id", "region_id"}))
+public class AutomationAdmissionState {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
@@ -27,50 +33,20 @@ public class ScriptWorkItem {
   @Column(nullable = false, length = 64)
   private String regionId;
 
-  @Column(nullable = false)
-  private Long regionEpoch;
-
   @Column(nullable = false, length = 64)
-  private String entityId;
-
-  @Column(nullable = false, length = 128)
-  private String scriptId;
-
-  @Column(nullable = false, length = 128)
-  private String eventType;
-
-  @Column(nullable = false, length = 32)
-  private String eventSchemaVersion;
-
-  @Column(nullable = false, length = 128)
-  private String scriptPatchVersion;
-
-  @Column(nullable = false, length = 128)
-  private String scriptEventId;
-
-  @Column(nullable = false)
-  private boolean dryRun;
-
-  @Column(nullable = false, length = 128)
-  private String sourceService;
-
-  @Column(nullable = false, length = 64)
-  private String triggerMode;
-
-  @Column(length = 512)
-  private String readSnapshotToken;
-
-  @Column(columnDefinition = "TEXT")
-  private String payloadJson;
+  private String mode = "NORMAL";
 
   @Column(nullable = false)
   private long admissionEpoch = 1L;
 
-  @Column(nullable = false, length = 64)
-  private String status = "PENDING_EVALUATION";
+  @Column(length = 128)
+  private String controlPlaneRequestId;
+
+  @Column(length = 128)
+  private String actorPrincipal;
 
   @Column(length = 256)
-  private String cancelReason;
+  private String reason;
 
   @Column(nullable = false)
   private Instant createdAt = Instant.now();

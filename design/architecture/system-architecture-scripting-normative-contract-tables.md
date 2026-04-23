@@ -130,7 +130,7 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 
 | Stage | Required rule |
 | --- | --- |
-| `ADMISSION` | Must record explicit backpressure outcomes during `reloadState=RELOADING` (`finalOutcome=skipped_reloading`) and `PAUSED_FOR_ROLLBACK` (`finalOutcome=skipped_rollback_pause`) rather than silent drops. |
+| `ADMISSION` | Must record explicit backpressure outcomes during `reloadState=RELOADING` (`finalOutcome=skipped_reloading`) and `PAUSED_FOR_ROLLBACK` (`finalOutcome=rollback_paused`) rather than silent drops. |
 | `DSL_EVAL` | Sandbox failures must be recorded as `finalOutcome=sandbox_error` with a specific `finalReason` (for example `cpu_budget_exceeded`, `memory_budget_exceeded`). |
 | `WORK_ITEM_PERSIST` | If durable persistence fails, the audit record must not show success. It must record a persistence failure outcome and must not claim that effects were enqueued. |
 | `TICK_HANDOFF` | `finalOutcome=success` is permitted only when Game Session has accepted commands into tick queues. “DSL evaluated successfully but handoff failed” must be a non-success handoff outcome. |
@@ -159,7 +159,7 @@ Taxonomy governance rule:
 | `readiness_success` | `DSL_EVAL` | Tenant-readiness `onLoad` completed successfully and contributed to patch readiness. No work item or tick handoff was created. |
 | `dry_run_success` | `DRY_RUN_RESULT` | Non-committing dry-run/test execution completed and returned would-be commands for inspection. |
 | `skipped_reloading` | `ADMISSION` | Explicit reload backpressure; caller may retry with same Trigger Identity if policy allows. |
-| `skipped_rollback_pause` | `ADMISSION` | Explicit rollback backpressure while control-plane rollback pause is active. |
+| `rollback_paused` | `ADMISSION` | Explicit rollback backpressure while control-plane rollback pause is active. |
 | `quota_denied` | `ADMISSION` | Script quota or concurrency/capacity denial before DSL evaluation. |
 | `tenant_budget_exceeded` | `ADMISSION` | Tenant budget exhausted. |
 | `version_unavailable` | `ADMISSION` | Unknown/failed/not-ready patch or plugin version. |
@@ -204,7 +204,7 @@ The matrix below defines what the scheduler does when a firing becomes due under
 | Normal operation | Evaluate once per due firing under budgets and quotas. | One `script_event_audit` row per due Trigger Identity with stage-aware outcomes. |
 | Quota/budget denied | Skip the firing; do not replay later. | `finalStage=ADMISSION` and an explicit deny outcome/reason. |
 | `reloadState=RELOADING` | Do not admit new timer firings; do not backfill by default. | `finalStage=ADMISSION` with `finalOutcome=skipped_reloading`. |
-| `PAUSED_FOR_ROLLBACK` | Do not admit new timer firings while rollback cleanup and repin complete. | `finalStage=ADMISSION` with `finalOutcome=skipped_rollback_pause`. |
+| `PAUSED_FOR_ROLLBACK` | Do not admit new timer firings while rollback cleanup and repin complete. | `finalStage=ADMISSION` with `finalOutcome=rollback_paused`. |
 | Leader failover / short downtime | May perform bounded catch-up for missed cadence boundaries: at most one synthetic firing per cadence boundary crossed, and never more than `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` for a resume window. Excess candidates are coalesced/dropped and never enqueued as triggers. | Catch-up firings must use `triggerMode=CATCH_UP` and deterministic `scriptEventId` derived from the due point. Truncated catch-up must emit an operator-visible metric and bounded reason code. |
 | Preserved timer across reload/rollback | Recalculate the next due point from the canonical resume formula using `resumeTickId`, `previousDueTickId`, and cadence; do not replay the paused window unless the next valid cadence boundary lands exactly on resume. | The preserved firing cadence must remain derivable from durable schedule metadata and the documented resume rule. |
 | Long downtime or sustained overload | No guarantee of eventual execution for every firing; the system converges by running future firings once capacity returns. | Missed firings must be visible as skips/drops in metrics and audit. |

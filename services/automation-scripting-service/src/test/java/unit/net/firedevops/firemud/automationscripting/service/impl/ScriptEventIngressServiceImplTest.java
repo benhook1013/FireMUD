@@ -19,6 +19,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
@@ -34,6 +35,15 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class ScriptEventIngressServiceImplTest {
+  private static AutomationAdmissionStateService admissionStateService() {
+    AutomationAdmissionStateService service = Mockito.mock(AutomationAdmissionStateService.class);
+    when(service.getState(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            new AutomationAdmissionStateService.AdmissionStateSummary(
+                "1", "game-1", "region-1", "NORMAL", 1L, "", "", "", 100L));
+    return service;
+  }
+
   @AfterEach
   void clearSessionContext() {
     SessionContext.clear();
@@ -92,6 +102,7 @@ class ScriptEventIngressServiceImplTest {
             automationQueueService,
             outputProperties(),
             gameSessionControlPlaneClient,
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
@@ -150,6 +161,7 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
             gameSessionControlPlaneClient,
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
@@ -193,6 +205,7 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
             gameSessionControlPlaneClient,
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
@@ -239,6 +252,7 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties,
             gameSessionControlPlaneClient,
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
@@ -300,6 +314,7 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
             gameSessionControlPlaneClient,
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
@@ -338,6 +353,7 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
             gameSessionControlPlaneClient,
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
@@ -381,6 +397,7 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
             gameSessionControlPlaneClient,
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
@@ -432,6 +449,7 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
             gameSessionControlPlaneClient,
+            admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
@@ -453,6 +471,73 @@ class ScriptEventIngressServiceImplTest {
     assertThat(admission.outcome())
         .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR.name());
     assertThat(admission.reason()).isEqualTo("pin_state_unavailable");
+    verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
+  }
+
+  @Test
+  void rejectsAdmissionWhenAutomationScopeIsPausedForRollback() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .build())
+                .build());
+    AutomationAdmissionStateService admissionStateService =
+        Mockito.mock(AutomationAdmissionStateService.class);
+    when(admissionStateService.getState("1", "game-1", "region-1"))
+        .thenReturn(
+            new AutomationAdmissionStateService.AdmissionStateSummary(
+                "1",
+                "game-1",
+                "region-1",
+                "PAUSED_FOR_ROLLBACK",
+                2L,
+                "req-2",
+                "admin",
+                "rollback",
+                200L));
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            Mockito.mock(ScriptEventBindingRepository.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            new BuiltInScriptEventRegistryService(),
+            Mockito.mock(AutomationQueueService.class),
+            outputProperties(),
+            gameSessionControlPlaneClient,
+            admissionStateService,
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            TriggerScriptEventRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-1")
+                .setReadSnapshotToken("snapshot-1")
+                .build());
+
+    assertThat(admission.admitted()).isFalse();
+    assertThat(admission.outcome())
+        .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK.name());
+    assertThat(admission.reason()).isEqualTo("rollback_paused");
     verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
   }
 

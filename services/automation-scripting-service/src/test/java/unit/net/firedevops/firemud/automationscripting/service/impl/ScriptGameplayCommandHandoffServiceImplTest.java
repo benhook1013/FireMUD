@@ -11,6 +11,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
@@ -21,6 +22,15 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class ScriptGameplayCommandHandoffServiceImplTest {
+  private static AutomationAdmissionStateService admissionStateService() {
+    AutomationAdmissionStateService service = Mockito.mock(AutomationAdmissionStateService.class);
+    when(service.getState("1", "7", "region-1"))
+        .thenReturn(
+            new AutomationAdmissionStateService.AdmissionStateSummary(
+                "1", "7", "region-1", "NORMAL", 1L, "", "", "", 100L));
+    return service;
+  }
+
   @Test
   void acceptedGameSessionOutcomeMarksWorkItemHandedOff() {
     GameSessionControlPlaneClient gameSessionClient =
@@ -41,6 +51,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             gameSessionClient,
             workItemRepository,
             auditRepository,
+            admissionStateService(),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     ScriptGameplayCommandHandoffService.HandoffResult result =
@@ -85,6 +96,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             gameSessionClient,
             workItemRepository,
             auditRepository,
+            admissionStateService(),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     ScriptGameplayCommandHandoffService.HandoffResult result =
@@ -103,6 +115,52 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(audit.getFinalReason()).isEqualTo("STALE_TIMELINE");
   }
 
+  @Test
+  void advancedAdmissionEpochCancelsBeforeGameSessionHandoff() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    AutomationAdmissionStateService admissionStateService =
+        Mockito.mock(AutomationAdmissionStateService.class);
+    when(admissionStateService.getState("1", "7", "region-1"))
+        .thenReturn(
+            new AutomationAdmissionStateService.AdmissionStateSummary(
+                "1",
+                "7",
+                "region-1",
+                "PAUSED_FOR_ROLLBACK",
+                2L,
+                "req-2",
+                "admin",
+                "rollback",
+                200L));
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            admissionStateService,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            workItem(),
+            new ScriptGameplayCommandHandoffService.EmittedCommand("say hello", false, 34L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome()).isEqualTo("rollback_epoch_advanced");
+    verify(gameSessionClient, Mockito.never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository).save(workItemCaptor.capture());
+    assertThat(workItemCaptor.getValue().getStatus()).isEqualTo("CANCELED");
+    assertThat(workItemCaptor.getValue().getCancelReason()).isEqualTo("rollback_epoch_advanced");
+    assertThat(audit.getFinalOutcome()).isEqualTo("canceled");
+    assertThat(audit.getFinalReason()).isEqualTo("rollback_epoch_advanced");
+  }
+
   private static ScriptWorkItem workItem() {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setId(99L);
@@ -113,6 +171,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     item.setEntityId("entity-1");
     item.setScriptId("script-1");
     item.setScriptPatchVersion("patch-1");
+    item.setAdmissionEpoch(1L);
     item.setUpdatedAt(Instant.EPOCH);
     return item;
   }

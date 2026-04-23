@@ -7,6 +7,7 @@ import net.firedevops.firemud.automationscripting.client.GameSessionControlPlane
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
@@ -22,21 +23,25 @@ public class ScriptGameplayCommandHandoffServiceImpl
     implements ScriptGameplayCommandHandoffService {
   private static final String STATUS_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
   private static final String STATUS_HANDED_OFF = "HANDED_OFF";
+  private static final String STATUS_CANCELED = "CANCELED";
   private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
 
   private final GameSessionControlPlaneClient gameSessionClient;
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository auditRepository;
+  private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
 
   public ScriptGameplayCommandHandoffServiceImpl(
       GameSessionControlPlaneClient gameSessionClient,
       ScriptWorkItemRepository workItemRepository,
       ScriptEventAuditRepository auditRepository,
+      AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService) {
     this.gameSessionClient = gameSessionClient;
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
+    this.automationAdmissionStateService = automationAdmissionStateService;
     this.rolloutProjectionService = rolloutProjectionService;
   }
 
@@ -45,6 +50,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
   public HandoffResult handoff(ScriptWorkItem workItem, EmittedCommand command) {
     requireWorkItem(workItem);
     requireCommand(command);
+    if (isEpochAdvanced(workItem)) {
+      cancelForRollbackEpochAdvance(workItem, Instant.now());
+      return new HandoffResult(false, "rollback_epoch_advanced", "", "");
+    }
     Instant now = Instant.now();
     workItem.setStatus(STATUS_HANDOFF_IN_FLIGHT);
     workItem.setUpdatedAt(now);
@@ -61,6 +70,25 @@ public class ScriptGameplayCommandHandoffServiceImpl
             response.hasError() ? response.getError().getCode() : "");
     applyOutcome(workItem, result, now);
     return result;
+  }
+
+  private boolean isEpochAdvanced(ScriptWorkItem workItem) {
+    if (workItem.getGameInstanceId() == null || workItem.getGameInstanceId().isBlank()) {
+      return false;
+    }
+    AutomationAdmissionStateService.AdmissionStateSummary state =
+        automationAdmissionStateService.getState(
+            workItem.getTenantId(), workItem.getGameInstanceId(), workItem.getRegionId());
+    return state.admissionEpoch() != workItem.getAdmissionEpoch();
+  }
+
+  private void cancelForRollbackEpochAdvance(ScriptWorkItem workItem, Instant now) {
+    workItem.setStatus(STATUS_CANCELED);
+    workItem.setCancelReason("rollback_epoch_advanced");
+    workItem.setUpdatedAt(now);
+    workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(workItem);
+    updateAudit(workItem, "HANDOFF", "canceled", "rollback_epoch_advanced", now);
   }
 
   private EnqueueAutomationCommandIfAbsentRequest toRequest(

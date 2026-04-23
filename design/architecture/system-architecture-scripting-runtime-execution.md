@@ -232,7 +232,7 @@ Component safety classification for core scripts is fixed at validation and read
 Retry behavior:
 
 - Logical failures are treated as final for a trigger.
-- Backpressure outcomes such as `skipped_reloading` and `skipped_rollback_pause` are not treated as final for low-rate external events.
+- Backpressure outcomes such as `skipped_reloading` and `rollback_paused` are not treated as final for low-rate external events.
 - Infrastructure errors may be retried by lower layers following platform-wide retry policies and idempotency contracts.
 
 When script components call other services over gRPC, they must pass a stable idempotency key derived from Trigger Identity plus tick context when applicable so downstream operations can retry without duplicating effects.

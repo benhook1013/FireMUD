@@ -13,6 +13,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
@@ -38,6 +39,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED.name();
   private static final String OUTCOME_INFRASTRUCTURE_ERROR =
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR.name();
+  private static final String OUTCOME_BACKPRESSURE_ROLLBACK =
+      TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK.name();
 
   private final ScriptEventIngressAuditRepository repository;
   private final ScriptEventBindingRepository bindingRepository;
@@ -47,6 +50,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private final AutomationQueueService automationQueueService;
   private final ScriptOutputProperties outputProperties;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
+  private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
 
@@ -59,6 +63,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       AutomationQueueService automationQueueService,
       ScriptOutputProperties outputProperties,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService) {
     this.repository = repository;
@@ -69,6 +74,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     this.automationQueueService = automationQueueService;
     this.outputProperties = outputProperties;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
+    this.automationAdmissionStateService = automationAdmissionStateService;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
     this.rolloutProjectionService = rolloutProjectionService;
   }
@@ -153,6 +159,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (pinAdmission != null) {
       return pinAdmission;
     }
+    TriggerAdmission stateAdmission = validateAdmissionState(request);
+    if (stateAdmission != null) {
+      return stateAdmission;
+    }
     return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_for_handler_resolution", 0);
   }
 
@@ -179,6 +189,19 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         .getScriptPatchVersion()
         .equals(runtime.getRuntimeState().getPinnedScriptPatchVersion())) {
       return rejected("version_unavailable");
+    }
+    return null;
+  }
+
+  private TriggerAdmission validateAdmissionState(TriggerScriptEventRequest request) {
+    if (request.getGameInstanceId().isBlank()) {
+      return null;
+    }
+    AutomationAdmissionStateService.AdmissionStateSummary state =
+        automationAdmissionStateService.getState(
+            request.getTenantId(), request.getGameInstanceId(), request.getRegionId());
+    if ("PAUSED_FOR_ROLLBACK".equals(state.mode())) {
+      return new TriggerAdmission(false, OUTCOME_BACKPRESSURE_ROLLBACK, "rollback_paused", 0);
     }
     return null;
   }
@@ -215,6 +238,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             request.getIsDryRun())) {
       return;
     }
+    AutomationAdmissionStateService.AdmissionStateSummary admissionState =
+        automationAdmissionStateService.getState(
+            request.getTenantId(), request.getGameInstanceId(), request.getRegionId());
     ScriptWorkItem item = new ScriptWorkItem();
     item.setTenantId(request.getTenantId());
     item.setGameInstanceId(normalize(request.getGameInstanceId()));
@@ -231,6 +257,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setTriggerMode(request.getTriggerMode().name());
     item.setReadSnapshotToken(normalize(request.getReadSnapshotToken()));
     item.setPayloadJson(normalize(request.getPayloadJson()));
+    item.setAdmissionEpoch(admissionState.admissionEpoch());
     ScriptWorkItem saved = workItemRepository.save(item);
     rolloutProjectionService.refreshForWorkItem(saved);
     automationQueueService.enqueueWorkItem(saved);

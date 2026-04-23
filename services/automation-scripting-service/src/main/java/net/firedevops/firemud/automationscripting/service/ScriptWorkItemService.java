@@ -63,6 +63,7 @@ public interface ScriptWorkItemService {
       String tenantId,
       String gameInstanceId,
       String regionId,
+      String admissionMode,
       long admissionEpoch,
       long activeExecutionCount,
       long oldestActiveExecutionStartedAtMs,

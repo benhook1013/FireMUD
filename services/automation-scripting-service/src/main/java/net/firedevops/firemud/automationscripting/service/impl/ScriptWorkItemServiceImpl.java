@@ -12,6 +12,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
@@ -44,6 +45,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private final ScriptEventAuditRepository auditRepository;
   private final ScriptEventIngressAuditRepository ingressAuditRepository;
   private final ScriptOutboxProperties outboxProperties;
+  private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
   private final PluginRuntimeStateService pluginRuntimeStateService;
@@ -53,6 +55,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       ScriptEventAuditRepository auditRepository,
       ScriptEventIngressAuditRepository ingressAuditRepository,
       ScriptOutboxProperties outboxProperties,
+      AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
       PluginRuntimeStateService pluginRuntimeStateService) {
@@ -60,6 +63,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     this.auditRepository = auditRepository;
     this.ingressAuditRepository = ingressAuditRepository;
     this.outboxProperties = outboxProperties;
+    this.automationAdmissionStateService = automationAdmissionStateService;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
     this.rolloutProjectionService = rolloutProjectionService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
@@ -170,29 +174,41 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     requireText(tenantId, "tenant_id");
     requireText(gameInstanceId, "game_instance_id");
     Instant now = Instant.now();
+    AutomationAdmissionStateService.AdmissionStateSummary admissionState =
+        automationAdmissionStateService.getState(tenantId, gameInstanceId, regionId);
     List<ScriptWorkItem> scopedWorkItems =
         workItemRepository.findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
             tenantId, gameInstanceId, blankToEmpty(regionId), DRAIN_RELEVANT_STATUSES);
+    List<ScriptWorkItem> countedWorkItems =
+        "PAUSED_FOR_ROLLBACK".equals(admissionState.mode())
+            ? scopedWorkItems.stream()
+                .filter(
+                    item ->
+                        item.getAdmissionEpoch() <= 0
+                            || item.getAdmissionEpoch() < admissionState.admissionEpoch())
+                .toList()
+            : scopedWorkItems;
     long activeExecutionCount =
-        scopedWorkItems.stream()
+        countedWorkItems.stream()
             .filter(item -> ACTIVE_DRAIN_STATUSES.contains(item.getStatus()))
             .count();
     long oldestActiveExecutionStartedAtMs =
-        scopedWorkItems.stream()
+        countedWorkItems.stream()
             .filter(item -> ACTIVE_DRAIN_STATUSES.contains(item.getStatus()))
             .map(ScriptWorkItem::getCreatedAt)
             .findFirst()
             .map(Instant::toEpochMilli)
             .orElse(0L);
     long pendingCancelableWorkItemCount =
-        scopedWorkItems.stream()
+        countedWorkItems.stream()
             .filter(item -> STATUS_PENDING_EVALUATION.equals(item.getStatus()))
             .count();
     return new AutomationDrainStatusSummary(
         tenantId,
         gameInstanceId,
         blankToEmpty(regionId),
-        0L,
+        admissionState.mode(),
+        admissionState.admissionEpoch(),
         activeExecutionCount,
         oldestActiveExecutionStartedAtMs,
         pendingCancelableWorkItemCount,
