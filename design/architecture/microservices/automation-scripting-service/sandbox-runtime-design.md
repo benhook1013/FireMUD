@@ -93,9 +93,9 @@ Each script run follows a consistent lifecycle:
    - If a budget check fails or a runtime guard trips (for example, too-large payload), evaluation is interrupted with a sandbox error.
 
 4. **Command staging**
-   - Successful runs emit a list of commands which are persisted as part of a durable work item (outbox) and then indexed for batching/draining by `ScriptTickService`.
+   - Successful runs emit a list of commands which are persisted as part of a durable work item (outbox) and then indexed into the rebuildable `automation:queue:*` projection for later durable execution.
    - Before persistence, the engine must enforce explicit output budgets such as `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes`; exceeding those ceilings is a non-success outcome and must not partially commit an oversized work item.
-   - Staging is subject to automation tick limits (`AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) and uses only `automation:*` Redis prefixes. The Automation & Scripting Service never writes `tick:*` keys directly; it hands off commands to Game Session over internal gRPC so Game Session can enqueue tick commands under its own tick and locking model.
+   - Handoff is subject to automation execution limits (`AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) and uses only documented `automation:*` Redis prefixes for projection and quotas. The Automation & Scripting Service never writes `tick:*` keys directly; it hands off commands to Game Session over internal gRPC so Game Session can enqueue tick commands under its own tick and locking model.
 
 5. **Outcome recording**
    - The engine records a **stage-aware outcome** for the run in `script_event_audit`:

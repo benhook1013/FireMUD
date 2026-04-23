@@ -30,10 +30,6 @@ Tick-driven automation and event handling never use Sagas; they follow the Redis
 - `npc_memory` stores persistent state for NPC behaviors.
 - Admitted script work items are persisted durably in a PostgreSQL-backed outbox keyed by Trigger Identity plus sequencing fields as needed, including the resolved binding `priorityTag` used for live tenant-budget reservation.
 - `automation:queue:{tenantInstanceTag}:<entityId>` keys in Redis buffer work-item indexes or pointers after a script runs and its work item is persisted durably. Each entry includes enough identity to locate the durable work item and must not be treated as an authoritative log of commands.
-- Internal automation tick staging uses a dedicated namespace:
-  - `automation:tick:{tenantInstanceScriptTag}:queue` – per-instance, per-script queue of work items being staged into tick-compatible commands.
-  - `automation:tick:{tenantInstanceScriptTag}:pending` – per-instance, per-script pending list of work items currently being applied.
-  - `automation:tick:{tenantInstanceScriptTag}:lock` – per-instance, per-script lock ensuring only one automation tick for a `<tenantId, gameInstanceId, scriptId>` scope runs at a time.
 - Queue activity must be surfaced through the canonical observability contract metric families rather than through an unsupported parallel metric surface.
 - Player reputation data is stored in the Social & Groups Service; this service reads those scores to drive NPC morale and aggression behavior.
 
@@ -43,7 +39,7 @@ Tick-driven automation and event handling never use Sagas; they follow the Redis
 - Events from Game Session and other domain services trigger script execution via gRPC. For each admitted trigger, the service executes the relevant sandboxed DSL handler synchronously, producing domain commands instead of mutating game state directly.
 - The sandboxed engine limits CPU time and memory for each script to prevent runaway behavior.
 - After a handler runs, the resulting script work item is persisted durably in the outbox and then indexed into `automation:queue:{tenantInstanceTag}:<entityId>` for the affected entity.
-- `ScriptTickService` drains those indexes, stages under `automation:tick:{tenantInstanceScriptTag}:*`, and hands off commands to Game Session for tick enqueue.
+- A scheduled durable executor claims persisted `PENDING_EVALUATION` work items, evaluates the current command-emission format, and hands off commands to Game Session for tick enqueue. `automation:queue:*` remains a rebuildable pointer projection rather than the driver of authoritative execution state.
 - Before persistence, explicit output budgets must cap the number of commands and serialized work-item size emitted by a single run so one admitted trigger cannot create an unbounded backlog.
 - Script ticks never hold game tick locks (`tick:{tenantRegionTag}:lock:<entityId>`); they only batch and stage automation work before handing it to Game Session, which applies commands under its own tick and locking model.
 
@@ -64,8 +60,7 @@ This behavior ensures that a script patch either becomes the new active version 
 ## Redis Roles and Prefixes
 
 - **Coordination Redis participation**
-  - Uses automation-specific coordination prefixes owned by Automation & Scripting itself, such as `automation:tick:{tenantInstanceScriptTag}:lock`, `automation:tick:{tenantInstanceScriptTag}:queue`, and `automation:tick:{tenantInstanceScriptTag}:pending`, as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples) and [Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md). Game Session remains the only owner of `tick:{tenantRegionTag}:*` gameplay coordination prefixes.
-  - Automation scripts are registered as single-hash-slot Lua scripts that operate only on `automation:tick:{tenantInstanceScriptTag}:*` keys and never mix `automation:*` and `tick:*` prefixes in a single script invocation.
+  - Uses Automation-owned cache/rate-limit prefixes such as `automation:queue:{tenantInstanceTag}:*`, `automation:quota:<tenantId>:<scriptId>`, `automation:tenant-budget:<tenantId>:tier:<tier>`, and dry-run capacity keys. Game Session remains the only owner of `tick:{tenantRegionTag}:*` gameplay coordination prefixes.
 - **Cache/Rate-Limit Redis usage**
   - Stores script quota counters and similar best-effort aggregates in Cache/Rate-Limit Redis using prefixes such as `automation:quota:<tenantId>:<scriptId>`, `automation:tenant-budget:<tenantId>:tier:<tier>`, `automation:test:capacity:<tenantId>:*`, `automation:test:capacity:cluster*`, and `automation:queue:{tenantInstanceTag}:*`.
   - Treats these keys as transient operational data; PostgreSQL remains authoritative for script definitions and long-lived automation state.
@@ -75,9 +70,6 @@ Ownership and durability expectations for Automation & Scripting prefixes:
 
 | Prefix | Redis role | Durability / reset tolerance |
 | --- | --- | --- |
-| `automation:tick:{tenantInstanceScriptTag}:lock` | Coordination | Reset-tolerant; locks are volatile coordination state and can be dropped and reacquired after a coordination reset. |
-| `automation:tick:{tenantInstanceScriptTag}:queue` | Coordination | Reset-tolerant; in-flight automation tick queues are rebuilt from PostgreSQL and fresh events. Dropping these keys may cause some automation work to be skipped within the accepted tail-loss envelope. |
-| `automation:tick:{tenantInstanceScriptTag}:pending` | Coordination | Reset-tolerant; staged automation effects are coordinated with the main tick system and are replayed or discarded according to the same idempotency rules as tick `pending` entries. |
 | `automation:queue:{tenantInstanceTag}:*` | Cache/Rate-Limit | Reset-tolerant, best-effort cache or queue of automation work-item indexes. Loss is acceptable because admitted work items are persisted durably in PostgreSQL and can be re-driven. |
 | `automation:quota:<tenantId>:<scriptId>` | Cache/Rate-Limit | Reset-tolerant, best-effort quota counters. Dropping these keys temporarily resets budgets but does not affect script correctness or long-term state. |
 | `automation:tenant-budget:<tenantId>:tier:<tier>` | Cache/Rate-Limit | Reset-tolerant, best-effort tenant budget counters for live automation execution reservations. Dropping these keys temporarily relaxes tenant fairness but does not affect durable work truth. |
@@ -99,14 +91,14 @@ This enables stage-aware outcomes in `script_event_audit`: the system can distin
 
 ## Redis Cluster Slotting Rules
 
-- Automation Lua scripts must never perform multi-key operations that span both `automation:*` and `tick:*` keys in a single invocation.
+- Automation Redis usage must never perform multi-key operations that span both `automation:*` and `tick:*` keys in a single invocation.
 - Allowed examples:
-  - A script that touches only `automation:tick:{tenantInstanceScriptTag}:queue` and `automation:tick:{tenantInstanceScriptTag}:pending` for a single `<tenantId, gameInstanceId, scriptId>`.
-  - A script that touches only `automation:queue:{tenantInstanceTag}:*` keys for a single runtime scope.
+  - A Redis operation that touches only `automation:queue:{tenantInstanceTag}:*` keys for one runtime scope.
+  - A Redis operation that touches only Automation-owned quota or dry-run-capacity keys for one documented scope.
 - Disallowed examples:
-  - A script that reads or writes both `automation:tick:{tenantInstanceScriptTag}:*` and `tick:{tenantRegionTag}:*` keys in one `EVALSHA` call.
-  - A script that mixes `automation:tick:{tenantInstanceScriptTag}:*` with `automation:tick:{otherTenantInstanceScriptTag}:*` keys.
-- Automation work is staged under `automation:tick:*` and `automation:queue:*` and then handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes.
+  - Any script or transaction that reads or writes both `automation:*` and `tick:{tenantRegionTag}:*` keys in one atomic Redis call.
+  - Any Automation-owned key family that attempts to mirror or stage authoritative gameplay queue state outside Game Session.
+- Automation work is projected under `automation:queue:*` and then handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes.
 
 Any change to automation Redis usage or Lua scripts must follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) and the slotting rules above.
 

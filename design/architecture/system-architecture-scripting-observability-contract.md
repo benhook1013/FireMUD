@@ -83,7 +83,7 @@ Stages:
 
 - `ADMISSION` – the trigger was accepted/rejected before any DSL evaluation (quotas, reload backpressure, disabled scripts, invalid version, policy enforcement).
 - `DSL_EVAL` – the DSL graph was evaluated in the sandbox (validation, loop safety, runtime guards).
-- `WORK_ITEM_PERSIST` – the resulting script work item was persisted durably (for example, into a Postgres outbox) before being indexed for automation ticks.
+- `WORK_ITEM_PERSIST` – the resulting script work item was persisted durably (for example, into a Postgres outbox) before being indexed into the rebuildable automation queue projection.
 - `TICK_HANDOFF` – the work item was handed off to Game Session and accepted into tick queues (the point at which live `finalOutcome=success` is allowed).
 - `DRY_RUN_RESULT` – a non-committing dry-run/test execution completed after DSL evaluation and returned the would-be commands to the authorized caller without persisting a work item or handing off to tick queues.
 

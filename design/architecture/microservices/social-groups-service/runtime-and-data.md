@@ -28,7 +28,7 @@ This document defines the Social & Groups Service runtime model, persistent data
 
 - **Coordination Redis**
   - Social & Groups does not own or modify Coordination Redis prefixes
-  - It does not touch `tick:*`, `timer:*`, `retry:*`, `session:*`, or automation coordination keys; gameplay coordination and automation ticks remain the responsibility of the Game Session and Automation & Scripting services as described in [Redis Architecture](../../system-architecture-redis.md)
+  - It does not touch `tick:*`, `timer:*`, `retry:*`, `session:*`, or automation coordination keys; gameplay coordination and Automation-owned scheduler/timer coordination remain the responsibility of the Game Session and Automation & Scripting services as described in [Redis Architecture](../../system-architecture-redis.md)
 - **Cache/Rate-Limit Redis**
   - Uses Cache/Rate-Limit Redis for chat history buffers and similar transient social aggregates under prefixes such as:
     - `chat:say:<tenantId>:<characterId>`

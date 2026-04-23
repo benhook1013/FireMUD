@@ -101,7 +101,7 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 ### Rebuild and Deduplication Rules
 
 - Rebuilding `automation:queue:*` from the outbox must be safe to run repeatedly and concurrently (idempotent projection).
-- `ScriptTickService` must dedupe drain/handoff by `outboxWorkItemId` (not by Redis list position) so queue resets, re-indexing, and retries do not cause double-handoff.
+- Automation's queue-drain/rebuild path and durable executor must dedupe by `outboxWorkItemId` (not by Redis list position) so queue resets, re-indexing, and retries do not cause double-handoff.
 - `CancelPendingWorkItemsForPatch` and `CancelPendingWorkItemsForPluginVersion` must be implemented as outbox state transitions (`workItemStatus=CANCELED`) so cancellation is durable even if Redis is reset. Cancellation must be reflected in `script_event_audit` stage-aware outcomes (for example `finalStage=ADMISSION` with a cancel outcome/reason for newly arriving triggers, and non-success outcomes for already persisted work that is canceled before handoff).
 
 ### Operational Constraints
@@ -205,9 +205,7 @@ The main Redis keys used by the Automation & Scripting Service are:
 
 | Key pattern | Owner / service | Purpose | Hash tag / shard scope | TTL / retention expectations |
 | --- | --- | --- | --- | --- |
-| `automation:queue:{tenantInstanceTag}:<entityId>` | Automation & Scripting | Per-instance, per-entity queue of post-DSL script work item indexes awaiting automation ticks. | Single-key queue per entity within an instance scope. | Reset-tolerant, best-effort derived index; authoritative pending work items are persisted durably in PostgreSQL (outbox). |
-| `automation:tick:{tenantInstanceScriptTag}:lock` | Automation & Scripting (`ScriptTickService`) | Per-instance, per-script automation tick lock to serialize staging for a script’s work batch. | Hash-tagged on `{tenantInstanceScriptTag}`. | Short-lived lock. |
-| `automation:tick:{tenantInstanceScriptTag}:queue` | Automation & Scripting (`ScriptTickService`) | Staging queue for batched script events before they are written into per-entity tick queues. | Hash-tagged on `{tenantInstanceScriptTag}`. | Short-lived staging. |
+| `automation:queue:{tenantInstanceTag}:<entityId>` | Automation & Scripting | Per-instance, per-entity queue of post-DSL script work item indexes awaiting durable executor pickup or rebuild inspection. | Single-key queue per entity within an instance scope. | Reset-tolerant, best-effort derived index; authoritative pending work items are persisted durably in PostgreSQL (outbox). |
 | `automation:timer:{tenantRegionTag}` | Automation & Scripting scheduler | Region-scoped index of script timers and intervals. | Hash-tagged on `{tenantRegionTag}`. | Persistent while timers are active. |
 | Scheduler leadership state | Automation & Scripting scheduler | Derived scheduler ownership aligned to the canonical runtime and region-scoped coordination model; do not assume a separate first-class `script-leader:*` prefix unless a later Redis design update explicitly introduces it. | Must follow the same slotting and reset rules as the documented scheduler coordination families. | Short-lived and reset-tolerant by design. |
 

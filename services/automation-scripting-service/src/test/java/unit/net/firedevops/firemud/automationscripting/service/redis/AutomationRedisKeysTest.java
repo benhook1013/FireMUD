@@ -13,16 +13,6 @@ class AutomationRedisKeysTest {
   }
 
   @Test
-  void tickKeysShareTenantInstanceScriptSlot() {
-    assertThat(AutomationRedisKeys.automationTickQueue("tenant-1", "instance-1", "script-1"))
-        .isEqualTo("automation:tick:{tenant:tenant-1:instance:instance-1:script:script-1}:queue");
-    assertThat(AutomationRedisKeys.automationTickPending("tenant-1", "instance-1", "script-1"))
-        .isEqualTo("automation:tick:{tenant:tenant-1:instance:instance-1:script:script-1}:pending");
-    assertThat(AutomationRedisKeys.automationTickLock("tenant-1", "instance-1", "script-1"))
-        .isEqualTo("automation:tick:{tenant:tenant-1:instance:instance-1:script:script-1}:lock");
-  }
-
-  @Test
   void quotaKeysUseCanonicalAutomationPrefix() {
     assertThat(AutomationRedisKeys.automationQuota("tenant-1", "script-1"))
         .isEqualTo("automation:quota:tenant-1:script-1");

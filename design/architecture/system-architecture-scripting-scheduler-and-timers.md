@@ -102,11 +102,11 @@ Under this model, durable script schedules, quotas, and trigger-instance de-dupl
 
 ## Scheduler Leadership & Coordination
 
-Scheduler leadership and coordination ensure that script timers and automation ticks are processed safely in a distributed environment:
+Scheduler leadership and coordination ensure that script timers and Automation-owned scheduling windows are processed safely in a distributed environment:
 
 - Leadership must remain explicit and bounded, but the canonical design does not currently require a separate first-class `script-leader:*` Redis prefix. Scheduler ownership should instead be documented through the same runtime and coordination surfaces used by the Redis and automation docs unless a later design update introduces a dedicated lease family.
 - Only the current leader for a runtime scope processes that scope’s script timers and automation queues. Implementations may lease by tenant for operational simplicity only if the leased worker still preserves per-instance isolation in its timer, queue, and reload state.
-- Automation ticks coordinate with tick heartbeat streams to ensure that:
+- Automation scheduling coordinates with tick heartbeat streams to ensure that:
   - `onInterval` triggers fire on the correct tick boundaries;
   - per-tenant and per-script quotas are respected; and
   - work is sharded in a way that keeps multi-key operations hash-tag-local.
