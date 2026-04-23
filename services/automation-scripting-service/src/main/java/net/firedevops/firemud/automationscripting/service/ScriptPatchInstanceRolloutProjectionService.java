@@ -17,6 +17,15 @@ public interface ScriptPatchInstanceRolloutProjectionService {
       long changedAfterMs,
       long changedBeforeMs);
 
+  List<ScriptWorkItemService.PatchInstanceRolloutEventSummary> listEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit);
+
   void refreshForWorkItem(ScriptWorkItem workItem);
 
   void refreshForInstance(String tenantId, String gameInstanceId);

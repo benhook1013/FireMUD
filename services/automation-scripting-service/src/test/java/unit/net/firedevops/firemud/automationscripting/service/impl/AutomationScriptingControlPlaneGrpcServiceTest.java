@@ -34,6 +34,8 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersReques
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
@@ -422,6 +424,59 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getRollouts(0).getRolloutStatus())
         .isEqualTo(
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK);
+  }
+
+  @Test
+  void listsScriptPatchInstanceRolloutEventsFromReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(
+            workItemService.listPatchInstanceRolloutEvents(
+                "1",
+                "game-1",
+                "patch-1",
+                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED,
+                10L,
+                20L,
+                50))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.PatchInstanceRolloutEventSummary(
+                    "event-1",
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED,
+                    "runtime_pin_restored_after_rollback",
+                    15L,
+                    16L)));
+    AutomationScriptingControlPlaneGrpcService service =
+        new AutomationScriptingControlPlaneGrpcService(
+            new BuiltInScriptEventRegistryService(),
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ListScriptPatchInstanceRolloutEventsResponse> ref = new AtomicReference<>();
+
+    service.listScriptPatchInstanceRolloutEvents(
+        ListScriptPatchInstanceRolloutEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setRolloutStatus(
+                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED)
+            .setChangedAfterMs(10L)
+            .setChangedBeforeMs(20L)
+            .setLimit(50)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getEventsList()).hasSize(1);
+    assertThat(ref.get().getEvents(0).getEventId()).isEqualTo("event-1");
+    assertThat(ref.get().getEvents(0).getRolloutStatus())
+        .isEqualTo(ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED);
   }
 
   @Test

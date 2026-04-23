@@ -54,6 +54,8 @@ service AutomationScriptingControlPlaneService {
       returns (GetScriptPatchInstanceRolloutStatusResponse);
   rpc ListScriptPatchInstanceRollouts(ListScriptPatchInstanceRolloutsRequest)
       returns (ListScriptPatchInstanceRolloutsResponse);
+  rpc ListScriptPatchInstanceRolloutEvents(ListScriptPatchInstanceRolloutEventsRequest)
+      returns (ListScriptPatchInstanceRolloutEventsResponse);
   rpc ListScriptDeadLetters(ListScriptDeadLettersRequest) returns (ListScriptDeadLettersResponse);
   rpc ReplayDeadLetteredWorkItems(ReplayDeadLetteredWorkItemsRequest)
       returns (ReplayDeadLetteredWorkItemsResponse);
@@ -486,6 +488,32 @@ message ScriptPatchInstanceRolloutEntry {
 
 message ListScriptPatchInstanceRolloutsResponse {
   repeated ScriptPatchInstanceRolloutEntry rollouts = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListScriptPatchInstanceRolloutEventsRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  ScriptPatchInstanceRolloutStatus rollout_status = 4;
+  int64 changed_after_ms = 5;
+  int64 changed_before_ms = 6;
+  int32 limit = 7;
+}
+
+message ScriptPatchInstanceRolloutEventEntry {
+  string event_id = 1;
+  string tenant_id = 2;
+  string game_instance_id = 3;
+  string script_patch_version = 4;
+  ScriptPatchInstanceRolloutStatus rollout_status = 5;
+  string status_reason = 6;
+  int64 observed_at_ms = 7;
+  int64 projection_as_of_ms = 8;
+}
+
+message ListScriptPatchInstanceRolloutEventsResponse {
+  repeated ScriptPatchInstanceRolloutEventEntry events = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

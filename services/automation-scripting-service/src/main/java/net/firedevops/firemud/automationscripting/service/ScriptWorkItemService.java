@@ -32,6 +32,15 @@ public interface ScriptWorkItemService {
       long changedAfterMs,
       long changedBeforeMs);
 
+  List<PatchInstanceRolloutEventSummary> listPatchInstanceRolloutEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit);
+
   List<DeadLetterSummary> listDeadLetters(
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit);
 
@@ -80,6 +89,16 @@ public interface ScriptWorkItemService {
       long projectionAsOfMs,
       long projectionLagMs,
       boolean projectionStale) {}
+
+  record PatchInstanceRolloutEventSummary(
+      String eventId,
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      String statusReason,
+      long observedAtMs,
+      long projectionAsOfMs) {}
 
   record DeadLetterSummary(
       String workItemId,

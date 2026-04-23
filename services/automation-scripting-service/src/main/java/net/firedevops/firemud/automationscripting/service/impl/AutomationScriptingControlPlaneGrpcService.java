@@ -32,6 +32,8 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersReques
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
@@ -41,6 +43,7 @@ import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItems
 import net.firedevops.firemud.automationscripting.v1.ScriptDeadLetterEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptEventDefinition;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEntry;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatusEntry;
 import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeRequest;
 import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeResponse;
@@ -355,6 +358,37 @@ public final class AutomationScriptingControlPlaneGrpcService
   }
 
   @Override
+  @Timed(value = "automationGrpc.controlPlane.listScriptPatchInstanceRolloutEvents")
+  public void listScriptPatchInstanceRolloutEvents(
+      ListScriptPatchInstanceRolloutEventsRequest request,
+      StreamObserver<ListScriptPatchInstanceRolloutEventsResponse> responseObserver) {
+    ListScriptPatchInstanceRolloutEventsResponse.Builder response =
+        ListScriptPatchInstanceRolloutEventsResponse.newBuilder();
+    try {
+      requireAdminRole();
+      workItemService
+          .listPatchInstanceRolloutEvents(
+              request.getTenantId(),
+              request.getGameInstanceId(),
+              request.getScriptPatchVersion(),
+              request.getRolloutStatus(),
+              request.getChangedAfterMs(),
+              request.getChangedBeforeMs(),
+              request.getLimit())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addEvents);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
   @Timed(value = "automationGrpc.controlPlane.listScriptDeadLetters")
   public void listScriptDeadLetters(
       ListScriptDeadLettersRequest request,
@@ -657,6 +691,20 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setProjectionAsOfMs(summary.projectionAsOfMs())
         .setProjectionLagMs(summary.projectionLagMs())
         .setIsProjectionStale(summary.projectionStale())
+        .build();
+  }
+
+  private static ScriptPatchInstanceRolloutEventEntry toProto(
+      ScriptWorkItemService.PatchInstanceRolloutEventSummary summary) {
+    return ScriptPatchInstanceRolloutEventEntry.newBuilder()
+        .setEventId(summary.eventId())
+        .setTenantId(summary.tenantId())
+        .setGameInstanceId(summary.gameInstanceId())
+        .setScriptPatchVersion(summary.scriptPatchVersion())
+        .setRolloutStatus(summary.rolloutStatus())
+        .setStatusReason(summary.statusReason())
+        .setObservedAtMs(summary.observedAtMs())
+        .setProjectionAsOfMs(summary.projectionAsOfMs())
         .build();
   }
 }

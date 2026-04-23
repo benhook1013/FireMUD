@@ -245,6 +245,25 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   @Override
+  public List<PatchInstanceRolloutEventSummary> listPatchInstanceRolloutEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit) {
+    return rolloutProjectionService.listEvents(
+        tenantId,
+        gameInstanceId,
+        scriptPatchVersion,
+        rolloutStatus,
+        changedAfterMs,
+        changedBeforeMs,
+        limit);
+  }
+
+  @Override
   @Transactional(readOnly = true)
   public List<DeadLetterSummary> listDeadLetters(
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit) {

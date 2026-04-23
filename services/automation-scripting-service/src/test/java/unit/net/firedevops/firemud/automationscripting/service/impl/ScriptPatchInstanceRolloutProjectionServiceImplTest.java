@@ -6,8 +6,10 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.repository.ScriptPatchInstanceRolloutEventRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchInstanceRolloutProjectionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
@@ -21,6 +23,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
   void marksProjectionRepinnedWhenPatchReturnsAfterRollback() {
     ScriptPatchInstanceRolloutProjectionRepository repository =
         Mockito.mock(ScriptPatchInstanceRolloutProjectionRepository.class);
+    ScriptPatchInstanceRolloutEventRepository eventRepository =
+        Mockito.mock(ScriptPatchInstanceRolloutEventRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptPatchPinProjectionService pinProjectionService =
         Mockito.mock(ScriptPatchPinProjectionService.class);
@@ -63,7 +67,7 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
             });
     ScriptPatchInstanceRolloutProjectionServiceImpl service =
         new ScriptPatchInstanceRolloutProjectionServiceImpl(
-            repository, workItemRepository, pinProjectionService);
+            repository, eventRepository, workItemRepository, pinProjectionService);
 
     Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> summary =
         service.getProjection("1", "game-1", "patch-1");
@@ -73,5 +77,14 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
         .isEqualTo(ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED);
     assertThat(summary.get().statusReason()).isEqualTo("runtime_pin_restored_after_rollback");
     assertThat(summary.get().lastChangedAtMs()).isEqualTo(200L);
+    org.mockito.ArgumentCaptor<ScriptPatchInstanceRolloutEvent> eventCaptor =
+        org.mockito.ArgumentCaptor.forClass(ScriptPatchInstanceRolloutEvent.class);
+    Mockito.verify(eventRepository).save(eventCaptor.capture());
+    assertThat(eventCaptor.getValue().getRolloutStatus())
+        .isEqualTo(
+            ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED.name());
+    assertThat(eventCaptor.getValue().getStatusReason())
+        .isEqualTo("runtime_pin_restored_after_rollback");
+    assertThat(eventCaptor.getValue().getObservedAt()).isEqualTo(Instant.ofEpochMilli(200));
   }
 }

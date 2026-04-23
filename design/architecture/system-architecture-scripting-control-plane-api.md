@@ -283,6 +283,27 @@ Contract rules:
 - The live response is backed by durable Automation-owned admission mode/epoch state plus durable work-item truth already owned by Automation & Scripting.
 - Operators may use `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` as the current drain-empty condition for the active rollback epoch in that scope.
 
+#### `ListScriptPatchInstanceRolloutEvents`
+
+Inputs:
+
+- `tenantId`
+- Optional `gameInstanceId`
+- Optional `scriptPatchVersion`
+- Optional `rolloutStatus`
+- Optional `changedAfter` / `changedBefore`
+- Optional bounded `limit`
+
+Outputs:
+
+- ordered event rows containing `eventId`, `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `rolloutStatus`, `statusReason`, `observedAt`, and `projectionAsOf`
+
+Contract rules:
+
+- This is the append-only history companion to the current-state `GetScriptPatchInstanceRolloutStatus` and `ListScriptPatchInstanceRollouts` reads.
+- Automation appends a new event only when the derived rollout status or reason changes for an instance/patch projection, so repeated freshness refreshes do not create noisy duplicate history.
+- Operators use this API to distinguish a first pin from a rollback and a later repin; current-state projection rows remain the canonical latest truth.
+
 #### `GetAutomationPinConvergence`
 
 Implementation note: the current Automation & Scripting implementation now persists a durable `script_patch_pin_projections` view keyed by `(tenantId, gameInstanceId)`. Automation refreshes that projection opportunistically from the same shared Game Session runtime-state surface already used by admission and replay checks, then serves `GetAutomationPinConvergence` from the persisted projection so freshness and temporary Game Session read failures do not force operator reads to be raw pass-through calls.
