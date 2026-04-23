@@ -1,6 +1,8 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -59,6 +61,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private final AutomationQueueService automationQueueService;
   private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptSchedulerProperties schedulerProperties;
+  private final Counter timerFiredCounter;
+  private final Counter timerTruncatedCounter;
 
   public ScriptScheduleInstanceServiceImpl(
       ScriptScheduleDefinitionRepository scheduleDefinitionRepository,
@@ -70,7 +74,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       ScriptEventAuditRepository eventAuditRepository,
       AutomationQueueService automationQueueService,
       AutomationAdmissionStateService automationAdmissionStateService,
-      ScriptSchedulerProperties schedulerProperties) {
+      ScriptSchedulerProperties schedulerProperties,
+      MeterRegistry meterRegistry) {
     this.scheduleDefinitionRepository = scheduleDefinitionRepository;
     this.scheduleInstanceRepository = scheduleInstanceRepository;
     this.pinProjectionRepository = pinProjectionRepository;
@@ -81,6 +86,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     this.automationQueueService = automationQueueService;
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.schedulerProperties = schedulerProperties;
+    this.timerFiredCounter = meterRegistry.counter("script_timer_fired_total");
+    this.timerTruncatedCounter = meterRegistry.counter("script_timer_catchup_truncated_total");
   }
 
   @Override
@@ -237,6 +244,12 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       }
     }
     int truncated = Math.max(0, candidates.size() - selectedCandidates.size());
+    if (fired > 0) {
+      timerFiredCounter.increment(fired);
+    }
+    if (truncated > 0) {
+      timerTruncatedCounter.increment(truncated);
+    }
     if (!updates.isEmpty()) {
       scheduleInstanceRepository.saveAll(updates);
     }

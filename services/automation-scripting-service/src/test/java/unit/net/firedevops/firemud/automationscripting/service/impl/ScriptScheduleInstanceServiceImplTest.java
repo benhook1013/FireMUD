@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
 import net.firedevops.firemud.automationscripting.config.ScriptSchedulerProperties;
@@ -70,7 +71,8 @@ class ScriptScheduleInstanceServiceImplTest {
             eventAuditRepository,
             automationQueueService,
             automationAdmissionStateService,
-            new ScriptSchedulerProperties());
+            new ScriptSchedulerProperties(),
+            new SimpleMeterRegistry());
   }
 
   @Test
