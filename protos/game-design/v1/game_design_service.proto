@@ -90,6 +90,7 @@ message WorldDesignMutationRevision {
     world_management.v1.RoomExitDesignMutation room_exit = 23;
     world_management.v1.GenerationRuleDesignMutation generation_rule = 24;
     world_management.v1.WorldEntitySpawnBindingDesignMutation world_entity_spawn_binding = 25;
+    world_management.v1.WorldGenerationSubtreeDesignMutation world_generation_subtree = 26;
   }
 }
 

@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import net.firedevops.firemud.gamedesign.client.WorldManagementClient;
 import net.firedevops.firemud.gamedesign.dto.AppliedWorldDesignMutationDto;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
@@ -103,6 +104,7 @@ class RevisionServiceImplTest {
                 null,
                 null,
                 null,
+                null,
                 null),
             null,
             null);
@@ -112,6 +114,32 @@ class RevisionServiceImplTest {
     assertEquals(11L, result.id());
     assertEquals(
         "WORLD_DESIGN_MUTATION_RESULT_APPLIED", result.appliedWorldDesignMutation().result());
+  }
+
+  @Test
+  void saveRevisionAllowsWorldGenerationSubtreeMutation() {
+    Game game = setupGameAndVersion();
+    when(worldManagementClient.applyWorldDesignMutation(
+            eq("1"), eq(7L), any(WorldDesignMutationRevisionDto.class)))
+        .thenReturn(
+            new AppliedWorldDesignMutationDto(
+                "WORLD_DESIGN_MUTATION_RESULT_APPLIED", "2000000000012", 1L, 1L));
+    Revision saved = new Revision();
+    saved.setId(12L);
+    saved.setTenantId(game.getTenantId());
+    saved.setVersionId(7L);
+    saved.setRevisionKind("WORLD_DESIGN_MUTATION");
+    saved.setLogicalRevisionId("rev-subtree");
+    saved.setData("{\"revisionKind\":\"WORLD_DESIGN_MUTATION\"}");
+    when(revisionRepository.save(any(Revision.class))).thenReturn(saved);
+
+    RevisionDto result =
+        service.saveRevision(worldMutationRevisionDto(generationSubtreeMutation()));
+
+    assertEquals(12L, result.id());
+    assertEquals("2000000000012", result.appliedWorldDesignMutation().aggregateId());
+    verify(worldManagementClient)
+        .applyWorldDesignMutation(eq("1"), eq(7L), any(WorldDesignMutationRevisionDto.class));
   }
 
   @Test
@@ -132,6 +160,7 @@ class RevisionServiceImplTest {
                 "",
                 new WorldDesignMutationRevisionDto.RegionMutationDto(
                     "Region", "clear", 0, 0L, "", "", 0.0d),
+                null,
                 null,
                 null,
                 null,
@@ -165,6 +194,7 @@ class RevisionServiceImplTest {
                 "",
                 new WorldDesignMutationRevisionDto.RegionMutationDto(
                     "Region", "clear", 0, 0L, "", "", 0.0d),
+                null,
                 null,
                 null,
                 null,
@@ -205,5 +235,36 @@ class RevisionServiceImplTest {
         mutation,
         null,
         null);
+  }
+
+  private WorldDesignMutationRevisionDto generationSubtreeMutation() {
+    return new WorldDesignMutationRevisionDto(
+        "rev-subtree",
+        "commit-subtree",
+        "WORLD_DESIGN_MUTATION_OPERATION_UPSERT",
+        "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_GENERATION_SUBTREE",
+        "",
+        0L,
+        "WORLD_DESIGN_SCOPE_TYPE_ZONE_SUBTREE",
+        "12",
+        0L,
+        "WORLD_DESIGN_SCOPE_MUTATION_POLICY_REPLACE_SCOPE",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        new WorldDesignMutationRevisionDto.WorldGenerationSubtreeMutationDto(
+            List.of(
+                new WorldDesignMutationRevisionDto.GenerationRuleMutationDto(
+                    "population", "dense")),
+            List.of(
+                new WorldDesignMutationRevisionDto.GeneratedRoomMutationDto(
+                    "a", "room-a", "A generated room", "12", null, null)),
+            List.of(),
+            List.of(
+                new WorldDesignMutationRevisionDto.GeneratedWorldEntitySpawnBindingMutationDto(
+                    "a", "NPC", "55", 2, 30))));
   }
 }

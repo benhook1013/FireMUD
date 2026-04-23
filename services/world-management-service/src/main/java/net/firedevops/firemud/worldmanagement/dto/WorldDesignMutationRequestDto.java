@@ -1,6 +1,5 @@
 package net.firedevops.firemud.worldmanagement.dto;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 
 public record WorldDesignMutationRequestDto(
@@ -53,14 +52,39 @@ public record WorldDesignMutationRequestDto(
       int spawnCount,
       int respawnDelaySeconds) {}
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP",
-      justification = "Mutation DTO lists are request payload snapshots")
-  public record WorldGenerationSubtreeMutationDto(
-      List<GenerationRuleMutationDto> generationRules,
-      List<GeneratedRoomMutationDto> rooms,
-      List<GeneratedRoomExitMutationDto> roomExits,
-      List<GeneratedWorldEntitySpawnBindingMutationDto> worldEntitySpawnBindings) {}
+  public static final class WorldGenerationSubtreeMutationDto {
+    private final List<GenerationRuleMutationDto> generationRules;
+    private final List<GeneratedRoomMutationDto> rooms;
+    private final List<GeneratedRoomExitMutationDto> roomExits;
+    private final List<GeneratedWorldEntitySpawnBindingMutationDto> worldEntitySpawnBindings;
+
+    public WorldGenerationSubtreeMutationDto(
+        List<GenerationRuleMutationDto> generationRules,
+        List<GeneratedRoomMutationDto> rooms,
+        List<GeneratedRoomExitMutationDto> roomExits,
+        List<GeneratedWorldEntitySpawnBindingMutationDto> worldEntitySpawnBindings) {
+      this.generationRules = immutableList(generationRules);
+      this.rooms = immutableList(rooms);
+      this.roomExits = immutableList(roomExits);
+      this.worldEntitySpawnBindings = immutableList(worldEntitySpawnBindings);
+    }
+
+    public List<GenerationRuleMutationDto> generationRules() {
+      return List.copyOf(generationRules);
+    }
+
+    public List<GeneratedRoomMutationDto> rooms() {
+      return List.copyOf(rooms);
+    }
+
+    public List<GeneratedRoomExitMutationDto> roomExits() {
+      return List.copyOf(roomExits);
+    }
+
+    public List<GeneratedWorldEntitySpawnBindingMutationDto> worldEntitySpawnBindings() {
+      return List.copyOf(worldEntitySpawnBindings);
+    }
+  }
 
   public record GeneratedRoomMutationDto(
       String clientRef,
@@ -79,4 +103,8 @@ public record WorldDesignMutationRequestDto(
       String entityTemplateId,
       int spawnCount,
       int respawnDelaySeconds) {}
+
+  private static <T> List<T> immutableList(List<T> values) {
+    return values == null ? List.of() : List.copyOf(values);
+  }
 }

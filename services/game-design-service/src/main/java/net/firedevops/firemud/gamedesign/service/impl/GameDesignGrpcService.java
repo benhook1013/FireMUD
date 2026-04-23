@@ -1441,7 +1441,55 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
                 request.getWorldEntitySpawnBinding().getEntityTemplateId(),
                 request.getWorldEntitySpawnBinding().getSpawnCount(),
                 request.getWorldEntitySpawnBinding().getRespawnDelaySeconds())
-            : null);
+            : null,
+        request.hasWorldGenerationSubtree() ? toDto(request.getWorldGenerationSubtree()) : null);
+  }
+
+  private net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+          .WorldGenerationSubtreeMutationDto
+      toDto(
+          net.firedevops.firemud.worldmanagement.v1.WorldGenerationSubtreeDesignMutation request) {
+    return new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+        .WorldGenerationSubtreeMutationDto(
+        request.getGenerationRulesList().stream()
+            .map(
+                rule ->
+                    new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                        .GenerationRuleMutationDto(rule.getName(), rule.getValue()))
+            .toList(),
+        request.getRoomsList().stream()
+            .map(
+                room ->
+                    new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                        .GeneratedRoomMutationDto(
+                        room.getClientRef(),
+                        room.getName(),
+                        room.getDescription(),
+                        room.getZoneId(),
+                        room.getNameLocalizedVariantsJson(),
+                        room.getDescriptionLocalizedVariantsJson()))
+            .toList(),
+        request.getRoomExitsList().stream()
+            .map(
+                exit ->
+                    new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                        .GeneratedRoomExitMutationDto(
+                        exit.getFromRoomRef(),
+                        exit.getToRoomRef(),
+                        exit.getDirection(),
+                        exit.getCost()))
+            .toList(),
+        request.getWorldEntitySpawnBindingsList().stream()
+            .map(
+                binding ->
+                    new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                        .GeneratedWorldEntitySpawnBindingMutationDto(
+                        binding.getRoomRef(),
+                        binding.getEntityTemplateType().name(),
+                        binding.getEntityTemplateId(),
+                        binding.getSpawnCount(),
+                        binding.getRespawnDelaySeconds()))
+            .toList());
   }
 
   private WorldDesignMutationResult toProtoWorldDesignMutationResult(String result) {

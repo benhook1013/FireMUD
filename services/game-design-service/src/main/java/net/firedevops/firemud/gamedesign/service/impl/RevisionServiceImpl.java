@@ -112,7 +112,8 @@ public class RevisionServiceImpl implements RevisionService {
         && !"WORLD_DESIGN_AGGREGATE_TYPE_ROOM".equals(aggregateType)
         && !"WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT".equals(aggregateType)
         && !"WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE".equals(aggregateType)
-        && !"WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING".equals(aggregateType)) {
+        && !"WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING".equals(aggregateType)
+        && !"WORLD_DESIGN_AGGREGATE_TYPE_WORLD_GENERATION_SUBTREE".equals(aggregateType)) {
       throw new IllegalArgumentException(
           "INVALID_ARGUMENT: unsupported worldDesignMutation.aggregateType");
     }
@@ -154,6 +155,8 @@ public class RevisionServiceImpl implements RevisionService {
           case "WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE" -> mutation.generationRule() != null;
           case "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING" ->
               mutation.worldEntitySpawnBinding() != null;
+          case "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_GENERATION_SUBTREE" ->
+              mutation.worldGenerationSubtree() != null;
           default -> false;
         };
     if (!valid) {

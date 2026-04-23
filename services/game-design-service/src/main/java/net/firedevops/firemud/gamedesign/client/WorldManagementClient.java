@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.client;
 
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
+import java.util.List;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
@@ -12,12 +13,16 @@ import net.firedevops.firemud.gamedesign.dto.AppliedWorldDesignMutationDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto;
 import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationRequest;
+import net.firedevops.firemud.worldmanagement.v1.GeneratedRoomDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.GeneratedRoomExitDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.GeneratedWorldEntitySpawnBindingDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.GenerationRuleDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldGenerationSubtreeDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.springframework.stereotype.Component;
@@ -177,7 +182,59 @@ public class WorldManagementClient
                   defaultInt(mutation.worldEntitySpawnBinding().respawnDelaySeconds()))
               .build());
     }
+    if (mutation.worldGenerationSubtree() != null) {
+      return builder.setWorldGenerationSubtree(toProto(mutation.worldGenerationSubtree()));
+    }
     return builder;
+  }
+
+  private WorldGenerationSubtreeDesignMutation toProto(
+      WorldDesignMutationRevisionDto.WorldGenerationSubtreeMutationDto mutation) {
+    WorldGenerationSubtreeDesignMutation.Builder builder =
+        WorldGenerationSubtreeDesignMutation.newBuilder();
+    for (WorldDesignMutationRevisionDto.GenerationRuleMutationDto generationRule :
+        nullToEmpty(mutation.generationRules())) {
+      builder.addGenerationRules(
+          GenerationRuleDesignMutation.newBuilder()
+              .setName(defaultString(generationRule.name()))
+              .setValue(defaultString(generationRule.value()))
+              .build());
+    }
+    for (WorldDesignMutationRevisionDto.GeneratedRoomMutationDto room :
+        nullToEmpty(mutation.rooms())) {
+      builder.addRooms(
+          GeneratedRoomDesignMutation.newBuilder()
+              .setClientRef(defaultString(room.clientRef()))
+              .setName(defaultString(room.name()))
+              .setDescription(defaultString(room.description()))
+              .setZoneId(defaultString(room.zoneId()))
+              .setNameLocalizedVariantsJson(defaultString(room.nameLocalizedVariantsJson()))
+              .setDescriptionLocalizedVariantsJson(
+                  defaultString(room.descriptionLocalizedVariantsJson()))
+              .build());
+    }
+    for (WorldDesignMutationRevisionDto.GeneratedRoomExitMutationDto roomExit :
+        nullToEmpty(mutation.roomExits())) {
+      builder.addRoomExits(
+          GeneratedRoomExitDesignMutation.newBuilder()
+              .setFromRoomRef(defaultString(roomExit.fromRoomRef()))
+              .setToRoomRef(defaultString(roomExit.toRoomRef()))
+              .setDirection(defaultString(roomExit.direction()))
+              .setCost(defaultInt(roomExit.cost()))
+              .build());
+    }
+    for (WorldDesignMutationRevisionDto.GeneratedWorldEntitySpawnBindingMutationDto spawnBinding :
+        nullToEmpty(mutation.worldEntitySpawnBindings())) {
+      builder.addWorldEntitySpawnBindings(
+          GeneratedWorldEntitySpawnBindingDesignMutation.newBuilder()
+              .setRoomRef(defaultString(spawnBinding.roomRef()))
+              .setEntityTemplateTypeValue(enumValue(spawnBinding.entityTemplateType()))
+              .setEntityTemplateId(defaultString(spawnBinding.entityTemplateId()))
+              .setSpawnCount(defaultInt(spawnBinding.spawnCount()))
+              .setRespawnDelaySeconds(defaultInt(spawnBinding.respawnDelaySeconds()))
+              .build());
+    }
+    return builder.build();
   }
 
   private int enumValue(String enumName) {
@@ -193,6 +250,7 @@ public class WorldManagementClient
       case "WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT" -> 4;
       case "WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE" -> 5;
       case "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING" -> 6;
+      case "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_GENERATION_SUBTREE" -> 7;
       case "ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM" -> 1;
       case "ENTITY_TEMPLATE_REFERENCE_TYPE_NPC" -> 2;
       case "WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE" -> 1;
@@ -218,5 +276,9 @@ public class WorldManagementClient
 
   private double defaultDouble(Double value) {
     return value == null ? 0.0d : value;
+  }
+
+  private <T> List<T> nullToEmpty(List<T> values) {
+    return values == null ? List.of() : values;
   }
 }
