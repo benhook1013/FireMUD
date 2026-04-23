@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
@@ -33,6 +34,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name();
   private static final String OUTCOME_OUTPUT_BUDGET_EXCEEDED =
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED.name();
+  private static final String OUTCOME_INFRASTRUCTURE_ERROR =
+      TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR.name();
 
   private final ScriptEventIngressAuditRepository repository;
   private final ScriptEventBindingRepository bindingRepository;
@@ -41,6 +44,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private final ScriptEventRegistryService eventRegistryService;
   private final AutomationQueueService automationQueueService;
   private final ScriptOutputProperties outputProperties;
+  private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
 
   public ScriptEventIngressServiceImpl(
       ScriptEventIngressAuditRepository repository,
@@ -49,7 +53,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       ScriptEventAuditRepository eventAuditRepository,
       ScriptEventRegistryService eventRegistryService,
       AutomationQueueService automationQueueService,
-      ScriptOutputProperties outputProperties) {
+      ScriptOutputProperties outputProperties,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient) {
     this.repository = repository;
     this.bindingRepository = bindingRepository;
     this.workItemRepository = workItemRepository;
@@ -57,6 +62,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     this.eventRegistryService = eventRegistryService;
     this.automationQueueService = automationQueueService;
     this.outputProperties = outputProperties;
+    this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
   }
 
   @Override
@@ -135,11 +141,36 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         return rejected("missing_trigger_identity");
       }
     }
+    TriggerAdmission pinAdmission = validatePinnedPatch(request);
+    if (pinAdmission != null) {
+      return pinAdmission;
+    }
     return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_for_handler_resolution", 0);
   }
 
   private TriggerAdmission rejected(String reason) {
     return new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, reason, 0);
+  }
+
+  private TriggerAdmission validatePinnedPatch(TriggerScriptEventRequest request) {
+    if (request.getGameInstanceId().isBlank()) {
+      return null;
+    }
+    var runtime =
+        gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+            request.getTenantId(), request.getGameInstanceId());
+    if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
+      return new TriggerAdmission(false, OUTCOME_INFRASTRUCTURE_ERROR, "pin_state_unavailable", 0);
+    }
+    if (!runtime.hasRuntimeState()) {
+      return new TriggerAdmission(false, OUTCOME_INFRASTRUCTURE_ERROR, "pin_state_unavailable", 0);
+    }
+    if (!request
+        .getScriptPatchVersion()
+        .equals(runtime.getRuntimeState().getPinnedScriptPatchVersion())) {
+      return rejected("version_unavailable");
+    }
+    return null;
   }
 
   private TriggerAdmission admissionWithHandlers(
