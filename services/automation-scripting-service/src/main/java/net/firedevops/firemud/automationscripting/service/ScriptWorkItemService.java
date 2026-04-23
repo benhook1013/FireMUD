@@ -9,6 +9,8 @@ import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 public interface ScriptWorkItemService {
   long cancelPendingForPatch(CancelPendingForPatchCommand command);
 
+  long cancelPendingForPluginVersion(CancelPendingForPluginVersionCommand command);
+
   List<ScriptWorkItem> claimPendingForEvaluation(int maxItems);
 
   TerminalCleanupResult cleanupTerminalWorkItems();
@@ -49,6 +51,16 @@ public interface ScriptWorkItemService {
   record CancelPendingForPatchCommand(
       String tenantId,
       String scriptPatchVersion,
+      String gameInstanceId,
+      String regionId,
+      String controlPlaneRequestId,
+      String actorPrincipal,
+      String reason) {}
+
+  record CancelPendingForPluginVersionCommand(
+      String tenantId,
+      String pluginId,
+      String pluginVersionId,
       String gameInstanceId,
       String regionId,
       String controlPlaneRequestId,

@@ -403,7 +403,7 @@ Operationally, Logging & Admin acts as the operator-facing orchestration and aud
 
 To roll back a misbehaving plugin, operators must publish a new trusted `pluginVersionId` that reintroduces the desired logic, then promote that newly published version to `activeVersionId` for the affected `<tenantId, gameInstanceId, pluginId>` via Logging & Admin. Historical `SUPERSEDED` versions remain immutable audit records and are not reactivated. The Automation & Scripting Service then resumes admitting triggers for the restored logic version while continuing to enforce quotas, budgets, and sandbox limits as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
 
-Plugin rollback/disable/revocation flows must also cancel pending outbox work for the displaced plugin version (for example via `CancelPendingWorkItemsForPluginVersion`) before or alongside queue purges, so stale plugin-version work cannot continue to hand off after control-plane changes.
+Plugin rollback/disable/revocation flows must also cancel pending outbox work for the displaced plugin version via `CancelPendingWorkItemsForPluginVersion` before or alongside queue purges, so stale plugin-version work cannot continue to hand off after control-plane changes.
 
 Rollback/disable/revocation flows must also reconcile durable plugin-owned timers:
 

@@ -304,6 +304,29 @@ Contract rules:
 - Automation appends a new event only when the derived rollout status or reason changes for an instance/patch projection, so repeated freshness refreshes do not create noisy duplicate history.
 - Operators use this API to distinguish a first pin from a rollback and a later repin; current-state projection rows remain the canonical latest truth.
 
+#### `CancelPendingWorkItemsForPluginVersion`
+
+Inputs:
+
+- `tenantId`
+- `pluginId`
+- `pluginVersionId`
+- Optional `gameInstanceId`
+- Optional `regionId`
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Outputs:
+
+- `canceledCount`
+
+Contract rules:
+
+- This is the plugin-version companion to `CancelPendingWorkItemsForPatch`.
+- It cancels only Automation-owned work items that have not started evaluation or handoff yet. Work already evaluating must converge through drain status, and work already handed to Game Session must be handled by Game Session queue purge or tick/effect remediation.
+- Cancellation updates handler audit with `finalStage=ADMISSION`, `finalOutcome=canceled`, and the bounded reason used for the operation.
+
 #### `GetAutomationPinConvergence`
 
 Implementation note: the current Automation & Scripting implementation now persists a durable `script_patch_pin_projections` view keyed by `(tenantId, gameInstanceId)`. Automation refreshes that projection opportunistically from the same shared Game Session runtime-state surface already used by admission and replay checks, then serves `GetAutomationPinConvergence` from the persisted projection so freshness and temporary Game Session read failures do not force operator reads to be raw pass-through calls.

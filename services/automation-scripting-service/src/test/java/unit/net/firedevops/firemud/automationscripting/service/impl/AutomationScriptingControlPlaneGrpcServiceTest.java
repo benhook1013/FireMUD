@@ -14,6 +14,8 @@ import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.AutomationAdmissionMode;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchRequest;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchResponse;
+import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPluginVersionRequest;
+import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPluginVersionResponse;
 import net.firedevops.firemud.automationscripting.v1.DisablePluginRequest;
 import net.firedevops.firemud.automationscripting.v1.DisablePluginResponse;
 import net.firedevops.firemud.automationscripting.v1.DrainPluginRequest;
@@ -141,6 +143,39 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         .cancelPendingForPatch(
             new ScriptWorkItemService.CancelPendingForPatchCommand(
                 "1", "patch-1", "game-1", "region-1", "", "", "rollback_epoch_advanced"));
+  }
+
+  @Test
+  void cancelsPendingWorkItemsForPluginVersion() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.cancelPendingForPluginVersion(Mockito.any())).thenReturn(2L);
+    AutomationScriptingControlPlaneGrpcService service =
+        new AutomationScriptingControlPlaneGrpcService(
+            new BuiltInScriptEventRegistryService(),
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<CancelPendingWorkItemsForPluginVersionResponse> ref = new AtomicReference<>();
+
+    service.cancelPendingWorkItemsForPluginVersion(
+        CancelPendingWorkItemsForPluginVersionRequest.newBuilder()
+            .setTenantId("1")
+            .setPluginId("plugin-1")
+            .setPluginVersionId("plugin-v1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .setReason("plugin_disabled")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getCanceledCount()).isEqualTo(2L);
+    Mockito.verify(workItemService)
+        .cancelPendingForPluginVersion(
+            new ScriptWorkItemService.CancelPendingForPluginVersionCommand(
+                "1", "plugin-1", "plugin-v1", "game-1", "region-1", "", "", "plugin_disabled"));
   }
 
   @Test

@@ -12,6 +12,8 @@ import net.firedevops.firemud.automationscripting.v1.AutomationAdmissionMode;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingControlPlaneServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchRequest;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchResponse;
+import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPluginVersionRequest;
+import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPluginVersionResponse;
 import net.firedevops.firemud.automationscripting.v1.DisablePluginRequest;
 import net.firedevops.firemud.automationscripting.v1.DisablePluginResponse;
 import net.firedevops.firemud.automationscripting.v1.DrainPluginRequest;
@@ -463,6 +465,37 @@ public final class AutomationScriptingControlPlaneGrpcService
               new ScriptWorkItemService.CancelPendingForPatchCommand(
                   request.getTenantId(),
                   request.getScriptPatchVersion(),
+                  request.getGameInstanceId(),
+                  request.getRegionId(),
+                  request.getControlPlaneRequestId(),
+                  request.getActorPrincipal(),
+                  request.getReason()));
+      response.setCanceledCount(canceled);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.cancelPendingWorkItemsForPluginVersion")
+  public void cancelPendingWorkItemsForPluginVersion(
+      CancelPendingWorkItemsForPluginVersionRequest request,
+      StreamObserver<CancelPendingWorkItemsForPluginVersionResponse> responseObserver) {
+    CancelPendingWorkItemsForPluginVersionResponse.Builder response =
+        CancelPendingWorkItemsForPluginVersionResponse.newBuilder();
+    try {
+      requireAdminRole();
+      long canceled =
+          workItemService.cancelPendingForPluginVersion(
+              new ScriptWorkItemService.CancelPendingForPluginVersionCommand(
+                  request.getTenantId(),
+                  request.getPluginId(),
+                  request.getPluginVersionId(),
                   request.getGameInstanceId(),
                   request.getRegionId(),
                   request.getControlPlaneRequestId(),

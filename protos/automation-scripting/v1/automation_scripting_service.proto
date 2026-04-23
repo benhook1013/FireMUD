@@ -63,6 +63,8 @@ service AutomationScriptingControlPlaneService {
   // Cancel pending durable work items for a patch so they are never handed off again.
   rpc CancelPendingWorkItemsForPatch(CancelPendingWorkItemsForPatchRequest)
       returns (CancelPendingWorkItemsForPatchResponse);
+  rpc CancelPendingWorkItemsForPluginVersion(CancelPendingWorkItemsForPluginVersionRequest)
+      returns (CancelPendingWorkItemsForPluginVersionResponse);
 
   rpc GetScriptEventDefinition(GetScriptEventDefinitionRequest)
       returns (GetScriptEventDefinitionResponse);
@@ -528,6 +530,22 @@ message CancelPendingWorkItemsForPatchRequest {
 }
 
 message CancelPendingWorkItemsForPatchResponse {
+  int64 canceled_count = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message CancelPendingWorkItemsForPluginVersionRequest {
+  string tenant_id = 1;
+  string plugin_id = 2;
+  string plugin_version_id = 3;
+  string game_instance_id = 4;
+  string region_id = 5;
+  string control_plane_request_id = 6;
+  string actor_principal = 7;
+  string reason = 8;
+}
+
+message CancelPendingWorkItemsForPluginVersionResponse {
   int64 canceled_count = 1;
   shared.v1.ErrorDetail error = 2;
 }

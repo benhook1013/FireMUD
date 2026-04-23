@@ -87,6 +87,50 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void cancelsPendingPluginVersionWorkAndUpdatesAuditOutcome() {
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setId(43L);
+    item.setTenantId("1");
+    item.setGameInstanceId("game-1");
+    item.setRegionId("region-1");
+    item.setPluginId("plugin-1");
+    item.setPluginVersionId("plugin-v1");
+    item.setScriptPatchVersion("patch-1");
+    item.setStatus("PENDING_EVALUATION");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(workItemRepository
+            .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInOrderByCreatedAtAscIdAsc(
+                "1", "plugin-1", "plugin-v1", List.of("PENDING_EVALUATION")))
+        .thenReturn(List.of(item));
+    when(auditRepository.findByWorkItemId(43L)).thenReturn(Optional.of(audit));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class));
+
+    long canceled =
+        service.cancelPendingForPluginVersion(
+            new ScriptWorkItemService.CancelPendingForPluginVersionCommand(
+                "1", "plugin-1", "plugin-v1", "game-1", "region-1", "req-1", "admin", ""));
+
+    assertThat(canceled).isEqualTo(1L);
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("operator_cancel");
+    assertThat(audit.getFinalOutcome()).isEqualTo("canceled");
+    assertThat(audit.getFinalReason()).isEqualTo("operator_cancel");
+    verify(workItemRepository).saveAll(List.of(item));
+    verify(auditRepository).save(audit);
+  }
+
+  @Test
   void claimsPendingItemsForEvaluationInStableOrder() {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setStatus("PENDING_EVALUATION");

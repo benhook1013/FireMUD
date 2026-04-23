@@ -74,8 +74,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   public long cancelPendingForPatch(CancelPendingForPatchCommand command) {
     requireText(command.tenantId(), "tenant_id");
     requireText(command.scriptPatchVersion(), "script_patch_version");
-    String reason = normalizeReason(command.reason());
-    Instant now = Instant.now();
     List<ScriptWorkItem> candidates =
         workItemRepository
             .findByTenantIdAndScriptPatchVersionAndStatusInOrderByCreatedAtAscIdAsc(
@@ -89,6 +87,37 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                 item ->
                     command.regionId().isBlank() || item.getRegionId().equals(command.regionId()))
             .toList();
+    return cancelCandidates(candidates, command.reason());
+  }
+
+  @Override
+  @Transactional
+  public long cancelPendingForPluginVersion(CancelPendingForPluginVersionCommand command) {
+    requireText(command.tenantId(), "tenant_id");
+    requireText(command.pluginId(), "plugin_id");
+    requireText(command.pluginVersionId(), "plugin_version_id");
+    List<ScriptWorkItem> candidates =
+        workItemRepository
+            .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInOrderByCreatedAtAscIdAsc(
+                command.tenantId(),
+                command.pluginId(),
+                command.pluginVersionId(),
+                CANCELABLE_STATUSES)
+            .stream()
+            .filter(
+                item ->
+                    command.gameInstanceId().isBlank()
+                        || item.getGameInstanceId().equals(command.gameInstanceId()))
+            .filter(
+                item ->
+                    command.regionId().isBlank() || item.getRegionId().equals(command.regionId()))
+            .toList();
+    return cancelCandidates(candidates, command.reason());
+  }
+
+  private long cancelCandidates(List<ScriptWorkItem> candidates, String rawReason) {
+    String reason = normalizeReason(rawReason);
+    Instant now = Instant.now();
     candidates.forEach(item -> cancel(item, reason, now));
     workItemRepository.saveAll(candidates);
     candidates.forEach(rolloutProjectionService::refreshForWorkItem);
