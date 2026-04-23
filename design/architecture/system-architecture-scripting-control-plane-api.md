@@ -354,7 +354,7 @@ Contract rules:
 
 #### `GetScriptPatchInstanceRolloutStatus`
 
-Implementation note: the current Automation & Scripting implementation now exposes these rollout reads from a durable local `script_patch_instance_rollout_projections` read model rather than a raw shared-runtime query. That projection is refreshed from the Automation-owned pin projection plus durable work-item transitions, sets freshness fields explicitly from the local projection timestamp, and currently emits the narrower concrete rollout vocabulary actually provable from the current substrate (`PINNED` and `ROLLED_BACK`). `REPINNED` and richer convergence history remain later event-projection work rather than already-live behavior.
+Implementation note: the current Automation & Scripting implementation now exposes these rollout reads from a durable local `script_patch_instance_rollout_projections` read model rather than a raw shared-runtime query. That projection is refreshed from the Automation-owned pin projection plus durable work-item transitions, sets freshness fields explicitly from the local projection timestamp, and currently emits the bounded rollout vocabulary provable from the current substrate (`PINNED`, `ROLLED_BACK`, and first `REPINNED` when a previously rolled-back patch becomes pinned again). Richer event-projected convergence history still remains later follow-through rather than already-live behavior.
 
 Inputs:
 

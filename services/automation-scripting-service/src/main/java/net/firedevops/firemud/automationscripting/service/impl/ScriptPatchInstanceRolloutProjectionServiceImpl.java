@@ -145,11 +145,18 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
             tenantId, gameInstanceId, scriptPatchVersion);
     Optional<ScriptPatchPinProjectionService.PinConvergenceSummary> pin =
         pinProjectionService.getPinConvergence(tenantId, gameInstanceId).summary();
-    Optional<ProjectionSnapshot> snapshot =
-        buildSnapshot(tenantId, gameInstanceId, scriptPatchVersion, workItems, pin, now);
     Optional<ScriptPatchInstanceRolloutProjection> existing =
         repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
             tenantId, gameInstanceId, scriptPatchVersion);
+    Optional<ProjectionSnapshot> snapshot =
+        buildSnapshot(
+            tenantId,
+            gameInstanceId,
+            scriptPatchVersion,
+            workItems,
+            pin,
+            existing.map(ScriptPatchInstanceRolloutProjection::getRolloutStatus),
+            now);
     if (snapshot.isEmpty()) {
       existing.ifPresent(repository::delete);
       return;
@@ -172,15 +179,24 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
       String scriptPatchVersion,
       List<ScriptWorkItem> workItems,
       Optional<ScriptPatchPinProjectionService.PinConvergenceSummary> pin,
+      Optional<String> existingRolloutStatus,
       Instant now) {
     if (pin.isPresent()) {
       ScriptPatchPinProjectionService.PinConvergenceSummary runtime = pin.get();
       if (scriptPatchVersion.equals(runtime.observedPinnedScriptPatchVersion())) {
+        ScriptPatchInstanceRolloutStatus rolloutStatus =
+            priorRollbackObserved(existingRolloutStatus)
+                ? ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED
+                : ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED;
+        String reason =
+            rolloutStatus
+                    == ScriptPatchInstanceRolloutStatus
+                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED
+                ? "runtime_pin_restored_after_rollback"
+                : "runtime_pin_matches_patch";
         return Optional.of(
             new ProjectionSnapshot(
-                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED,
-                "runtime_pin_matches_patch",
-                maxLastChangedAtMs(workItems, runtime.observedAtMs(), now)));
+                rolloutStatus, reason, maxLastChangedAtMs(workItems, runtime.observedAtMs(), now)));
       }
       if (!workItems.isEmpty()) {
         return Optional.of(
@@ -246,6 +262,20 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(fieldName + " is required");
     }
+  }
+
+  private static boolean priorRollbackObserved(Optional<String> existingRolloutStatus) {
+    return existingRolloutStatus
+        .map(
+            status ->
+                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK
+                        .name()
+                        .equals(status)
+                    || ScriptPatchInstanceRolloutStatus
+                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED
+                        .name()
+                        .equals(status))
+        .orElse(false);
   }
 
   private record ProjectionSnapshot(
