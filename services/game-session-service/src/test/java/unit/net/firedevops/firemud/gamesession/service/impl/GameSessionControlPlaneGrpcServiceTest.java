@@ -1335,6 +1335,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     status.setOwnerInstanceId("gs-1");
     status.setPaused(false);
     status.setLastCommittedTickBatchId("tb-9");
+    status.setLastCommittedTickId(14L);
     status.setUpdatedAt(Instant.parse("2026-04-20T00:00:00Z"));
     RuntimeRegionStatusRepository repository = Mockito.mock(RuntimeRegionStatusRepository.class);
     Mockito.when(repository.findByTenantIdAndGameInstanceId(1L, 7L))
@@ -1367,6 +1368,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(3L, responseRef.get().getOwnership().getRegionEpoch());
     assertEquals("fence-3", responseRef.get().getOwnership().getExecutorFence());
     assertEquals("tb-9", responseRef.get().getOwnership().getLastCommittedTickBatchId());
+    assertEquals(14L, responseRef.get().getOwnership().getLastCommittedTickId());
   }
 
   @Test

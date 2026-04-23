@@ -14,6 +14,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressRequest;
+import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressResponse;
+import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +43,7 @@ class TickServiceImplTest {
   private SessionContextService sessionContextService;
   private net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService
       durableGameplayCommandExecutionService;
+  private AutomationScriptingClient automationScriptingClient;
   private TickService service;
 
   @BeforeEach
@@ -75,6 +79,9 @@ class TickServiceImplTest {
         mock(
             net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService
                 .class);
+    automationScriptingClient = mock(AutomationScriptingClient.class);
+    when(automationScriptingClient.observeRuntimeTickProgress(any()))
+        .thenReturn(ObserveRuntimeTickProgressResponse.newBuilder().build());
     service =
         new TickServiceImpl(
             redisTemplate,
@@ -87,7 +94,8 @@ class TickServiceImplTest {
             tickBatchRepository,
             tickEffectRepository,
             sessionContextService,
-            durableGameplayCommandExecutionService);
+            durableGameplayCommandExecutionService,
+            automationScriptingClient);
     ((TickServiceImpl) service).init();
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
     instance.setTenantId(1L);
@@ -95,6 +103,16 @@ class TickServiceImplTest {
     when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of());
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(anyLong(), anyLong()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    runtimeOwnership(
+                        invocation.getArgument(0),
+                        invocation.getArgument(1),
+                        1L,
+                        "fence-a",
+                        false)));
     when(tickBatchRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(tickEffectRepository.findByTickBatchId(any())).thenReturn(List.of());
     when(tickEffectRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -444,6 +462,30 @@ class TickServiceImplTest {
                     "test-instance".equals(status.getOwnerInstanceId())
                         && status.getLastCommittedTickBatchId() != null
                         && !status.getLastCommittedTickBatchId().isBlank()));
+  }
+
+  @Test
+  void processTickAdvancesAndPublishesRuntimeTickProgress() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
+        runtimeOwnership(1L, 2L, 4L, "fence-a", false);
+    currentStatus.setLastCommittedTickId(7L);
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(currentStatus), Optional.of(currentStatus));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(8L, currentStatus.getLastCommittedTickId());
+    ArgumentCaptor<ObserveRuntimeTickProgressRequest> requestCaptor =
+        ArgumentCaptor.forClass(ObserveRuntimeTickProgressRequest.class);
+    verify(automationScriptingClient).observeRuntimeTickProgress(requestCaptor.capture());
+    ObserveRuntimeTickProgressRequest request = requestCaptor.getValue();
+    org.junit.jupiter.api.Assertions.assertEquals("1", request.getTenantId());
+    org.junit.jupiter.api.Assertions.assertEquals("2", request.getGameInstanceId());
+    org.junit.jupiter.api.Assertions.assertEquals("2", request.getRegionId());
+    org.junit.jupiter.api.Assertions.assertEquals(4L, request.getRegionEpoch());
+    org.junit.jupiter.api.Assertions.assertEquals(8L, request.getTickId());
   }
 
   private static net.firedevops.firemud.gamesession.entity.GameplayCommand gameplayCommand(

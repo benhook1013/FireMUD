@@ -1442,6 +1442,7 @@ public final class GameSessionControlPlaneGrpcService
             status.getLastCommittedTickBatchId() == null
                 ? ""
                 : status.getLastCommittedTickBatchId())
+        .setLastCommittedTickId(status.getLastCommittedTickId())
         .setUpdatedAtMs(status.getUpdatedAt() == null ? 0L : status.getUpdatedAt().toEpochMilli())
         .build();
   }

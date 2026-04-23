@@ -20,9 +20,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressRequest;
+import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressResponse;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
+import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
@@ -69,6 +72,7 @@ public class TickServiceImpl implements TickService {
   private final TickEffectRepository tickEffectRepository;
   private final SessionContextService sessionContextService;
   private final DurableGameplayCommandExecutionService durableGameplayCommandExecutionService;
+  private final AutomationScriptingClient automationScriptingClient;
 
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs;
@@ -306,6 +310,8 @@ public class TickServiceImpl implements TickService {
       boolean solo = false;
       TickBatch activeBatch = null;
       List<QueuedCommandEnvelope> activeBatchEntries = List.of();
+      boolean tickSucceeded = false;
+      RuntimeRegionStatus tickProgressToPublish = null;
       try {
         executeDurableEffects(normalizedTenantId, normalizedQueueTargetId);
         Long pending =
@@ -380,6 +386,9 @@ public class TickServiceImpl implements TickService {
           markBatchDrained(activeBatch, activeBatchEntries);
           executeDurableEffects(normalizedTenantId, normalizedQueueTargetId);
         }
+        tickProgressToPublish =
+            advanceRuntimeTickProgress(normalizedTenantId, normalizedQueueTargetId, ownership);
+        tickSucceeded = true;
         awaitReplication();
       } catch (Exception ex) {
         logger.error("Tick processing failed, rolling back", ex);
@@ -406,7 +415,61 @@ public class TickServiceImpl implements TickService {
         }
         luaTimer.record(() -> executeScriptWithRetry(unlockScript, List.of(lockKey), lockToken));
         activeTicks.decrementAndGet();
+        if (tickSucceeded) {
+          publishRuntimeTickProgress(tickProgressToPublish);
+          logger.debug(
+              "Tick completed tenantId={} gameInstanceId={}",
+              normalizedTenantId,
+              normalizedQueueTargetId);
+        }
       }
+    }
+  }
+
+  private RuntimeRegionStatus advanceRuntimeTickProgress(
+      Long tenantId, Long gameInstanceId, OwnershipSnapshot ownership) {
+    RuntimeRegionStatus status =
+        runtimeRegionStatusRepository
+            .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
+            .orElseThrow(
+                () ->
+                    new StaleOwnershipException(
+                        "Missing runtime ownership for tenantId=%d gameInstanceId=%d"
+                            .formatted(tenantId, gameInstanceId)));
+    if (status.getRegionEpoch() != ownership.regionEpoch()
+        || !status.getExecutorFence().equals(ownership.executorFence())
+        || status.isPaused()) {
+      throw new StaleOwnershipException(
+          "Cannot advance stale runtime tick progress for tenantId=%d gameInstanceId=%d"
+              .formatted(tenantId, gameInstanceId));
+    }
+    status.setLastCommittedTickId(status.getLastCommittedTickId() + 1L);
+    status.setUpdatedAt(Instant.now());
+    return runtimeRegionStatusRepository.save(status);
+  }
+
+  private void publishRuntimeTickProgress(RuntimeRegionStatus status) {
+    if (status == null) {
+      return;
+    }
+    ObserveRuntimeTickProgressResponse response =
+        automationScriptingClient.observeRuntimeTickProgress(
+            ObserveRuntimeTickProgressRequest.newBuilder()
+                .setTenantId(Long.toString(status.getTenantId()))
+                .setGameInstanceId(Long.toString(status.getGameInstanceId()))
+                .setRegionId(Long.toString(status.getGameInstanceId()))
+                .setRegionEpoch(status.getRegionEpoch())
+                .setTickId(status.getLastCommittedTickId())
+                .setObservedAtMs(status.getUpdatedAt().toEpochMilli())
+                .build());
+    if (response.hasError()) {
+      logger.warn(
+          "Automation runtime tick progress was not observed tenantId={} gameInstanceId={} tickId={} code={} message={}",
+          status.getTenantId(),
+          status.getGameInstanceId(),
+          status.getLastCommittedTickId(),
+          response.getError().getCode(),
+          response.getError().getMessage());
     }
   }
 
