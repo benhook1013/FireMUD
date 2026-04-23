@@ -939,6 +939,65 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void getGameplayCommandStatusCanResolveAutomationDispatchIdentity() {
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("auto-123");
+    command.setTenantId(1L);
+    command.setGameInstanceId(7L);
+    command.setSessionId(0L);
+    command.setCommandName("SAY");
+    command.setSanitizedCommandText("say hello");
+    command.setRequiresSoloTick(false);
+    command.setExecutionOutcome("STAGED");
+    command.setGameplayResult("PENDING");
+    command.setAcceptedAt(Instant.parse("2026-04-15T00:00:00Z"));
+    command.setLastAttemptAt(Instant.parse("2026-04-15T00:00:01Z"));
+    command.setAttemptCount(1);
+    command.setSourceType("AUTOMATION");
+    command.setAutomationDispatchId("dispatch-1");
+    command.setAutomationWorkItemId("work-1");
+    command.setRegionId("region-1");
+    command.setRegionEpoch(12L);
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    Mockito.when(
+            commandRepository
+                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                    1L, 7L, "region-1", 12L, "dispatch-1"))
+        .thenReturn(Optional.of(command));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            commandRepository,
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
+    service.getGameplayCommandStatus(
+        GetGameplayCommandStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setRegionId("region-1")
+            .setRegionEpoch(12L)
+            .setAutomationDispatchId("dispatch-1")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetGameplayCommandStatusResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("auto-123", responseRef.get().getCommand().getCommandId());
+    assertEquals("dispatch-1", responseRef.get().getCommand().getAutomationDispatchId());
+    assertEquals("work-1", responseRef.get().getCommand().getAutomationWorkItemId());
+  }
+
+  @Test
   void enqueueAutomationCommandPersistsDispatchAndStagesTickCommand() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();

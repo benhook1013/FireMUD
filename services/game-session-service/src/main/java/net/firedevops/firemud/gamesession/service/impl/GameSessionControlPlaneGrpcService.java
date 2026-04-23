@@ -234,13 +234,7 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<GetGameplayCommandStatusResponse> responseObserver) {
     try {
       requireAdminRole();
-      if (request.getCommandId().isBlank()) {
-        throw new IllegalArgumentException("command_id is required");
-      }
-      GameplayCommand command =
-          gameplayCommandRepository
-              .findByCommandId(request.getCommandId())
-              .orElseThrow(() -> new IllegalArgumentException("Gameplay command not found"));
+      GameplayCommand command = findGameplayCommandStatus(request);
       GetGameplayCommandStatusResponse response =
           GetGameplayCommandStatusResponse.newBuilder().setCommand(toStatus(command)).build();
       responseObserver.onNext(response);
@@ -268,6 +262,29 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  private GameplayCommand findGameplayCommandStatus(GetGameplayCommandStatusRequest request) {
+    if (!request.getCommandId().isBlank()) {
+      return gameplayCommandRepository
+          .findByCommandId(request.getCommandId())
+          .orElseThrow(() -> new IllegalArgumentException("Gameplay command not found"));
+    }
+    long tenantId = parseTenantId(request.getTenantId());
+    long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+    requireText(request.getRegionId(), "region_id is required");
+    if (request.getRegionEpoch() <= 0) {
+      throw new IllegalArgumentException("region_epoch must be positive");
+    }
+    requireText(request.getAutomationDispatchId(), "automation_dispatch_id is required");
+    return gameplayCommandRepository
+        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+            tenantId,
+            gameInstanceId,
+            request.getRegionId(),
+            request.getRegionEpoch(),
+            request.getAutomationDispatchId())
+        .orElseThrow(() -> new IllegalArgumentException("Gameplay command not found"));
   }
 
   @Override

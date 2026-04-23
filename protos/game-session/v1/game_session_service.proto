@@ -369,6 +369,11 @@ message ListAdmissionPointerAuditResponse {
 
 message GetGameplayCommandStatusRequest {
   string command_id = 1;
+  string tenant_id = 2;
+  string game_instance_id = 3;
+  string region_id = 4;
+  int64 region_epoch = 5;
+  string automation_dispatch_id = 6;
 }
 
 message GameplayCommandStatus {
