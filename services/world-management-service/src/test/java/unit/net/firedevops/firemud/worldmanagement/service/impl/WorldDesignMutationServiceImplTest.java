@@ -588,6 +588,68 @@ class WorldDesignMutationServiceImplTest {
     verify(generationRuleRepository, never()).save(any(GenerationRule.class));
   }
 
+  @Test
+  void replaceScopeAppliesGeneratedSubtreeInOneScopedMutation() {
+    Zone zone = zone(12L, 99L);
+    Room staleRoom = room(40L, zone);
+    Room targetRoom = room(41L, zone);
+    when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L)).thenReturn(Optional.of(zone));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L,
+                7L,
+                "commit-subtree",
+                "revision-subtree",
+                "UPSERT",
+                "WORLD_GENERATION_SUBTREE",
+                ""))
+        .thenReturn(Optional.empty());
+    when(worldEntitySpawnBindingRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of(binding(80L, staleRoom)));
+    RoomExit staleExit = new RoomExit();
+    staleExit.setId(81L);
+    staleExit.setFromRoom(staleRoom);
+    staleExit.setToRoom(targetRoom);
+    when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of(staleExit));
+    when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of(staleRoom));
+    when(generationRuleRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeIdOrderByIdAsc(
+            1L, 7L, "ZONE_SUBTREE", "12"))
+        .thenReturn(List.of(generationRule(82L, "ZONE_SUBTREE", "12", "old-density")));
+    when(generationRuleRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeIdAndName(
+            1L, 7L, "ZONE_SUBTREE", "12", "population"))
+        .thenReturn(Optional.empty());
+    when(roomRepository.save(any(Room.class)))
+        .thenAnswer(
+            invocation -> {
+              Room room = invocation.getArgument(0);
+              room.setId("room-a".equals(room.getName()) ? 90L : 91L);
+              return room;
+            });
+    when(entityManagementClient.validateEntityTemplateReference(1L, 7L, "NPC", 55L))
+        .thenReturn(true);
+    when(worldEntitySpawnBindingRepository
+            .findByTenantIdAndVersionIdAndRoomIdAndEntityTemplateTypeAndEntityTemplateId(
+                1L, 7L, 90L, "NPC", 55L))
+        .thenReturn(Optional.empty());
+    when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
+            1L, 7L, "WORLD_GENERATION_SUBTREE", 2_000_000_000_012L))
+        .thenReturn(Optional.empty());
+
+    var result = service.applyMutation(generationSubtreeRequest("REPLACE_SCOPE"));
+
+    assertEquals("APPLIED", result.result());
+    assertEquals(2_000_000_000_012L, result.aggregateId());
+    assertEquals(1L, result.draftScopeRevisionEpoch());
+    verify(worldEntitySpawnBindingRepository).deleteAll(any());
+    verify(roomExitRepository).deleteAll(any());
+    verify(roomRepository).deleteAll(any());
+    verify(generationRuleRepository).deleteAll(any());
+    verify(roomExitRepository).save(any(RoomExit.class));
+    verify(worldEntitySpawnBindingRepository).save(any(WorldEntitySpawnBinding.class));
+  }
+
   private WorldDesignMutationRequestDto regionCreateRequest() {
     return regionCreateRequestWithExpectedEpoch(0L);
   }
@@ -612,6 +674,7 @@ class WorldDesignMutationServiceImplTest {
         null,
         null,
         null,
+        null,
         null);
   }
 
@@ -631,6 +694,7 @@ class WorldDesignMutationServiceImplTest {
         "",
         new WorldDesignMutationRequestDto.RegionMutationDto(
             "North", "rain", 0, 123L, "ROOM_GRAPH", "{}", 1.0d),
+        null,
         null,
         null,
         null,
@@ -663,7 +727,8 @@ class WorldDesignMutationServiceImplTest {
         null,
         null,
         new WorldDesignMutationRequestDto.WorldEntitySpawnBindingMutationDto(
-            "12", "NPC", "55", 2, 30));
+            "12", "NPC", "55", 2, 30),
+        null);
   }
 
   private WorldDesignMutationRequestDto regionUpdateRequestWithPolicy(String scopeMutationPolicy) {
@@ -686,6 +751,7 @@ class WorldDesignMutationServiceImplTest {
         null,
         null,
         null,
+        null,
         null);
   }
 
@@ -703,6 +769,7 @@ class WorldDesignMutationServiceImplTest {
         "12",
         0L,
         scopeMutationPolicy,
+        null,
         null,
         null,
         null,
@@ -732,6 +799,7 @@ class WorldDesignMutationServiceImplTest {
             "North Gate", "A gate room", "13", null, null),
         null,
         null,
+        null,
         null);
   }
 
@@ -754,6 +822,7 @@ class WorldDesignMutationServiceImplTest {
         null,
         null,
         new WorldDesignMutationRequestDto.RoomExitMutationDto("21", "22", "north", 1),
+        null,
         null,
         null);
   }
@@ -778,7 +847,44 @@ class WorldDesignMutationServiceImplTest {
         null,
         null,
         new WorldDesignMutationRequestDto.GenerationRuleMutationDto("population", "dense"),
+        null,
         null);
+  }
+
+  private WorldDesignMutationRequestDto generationSubtreeRequest(String scopeMutationPolicy) {
+    return new WorldDesignMutationRequestDto(
+        1L,
+        7L,
+        "commit-subtree",
+        "revision-subtree",
+        "UPSERT",
+        "WORLD_GENERATION_SUBTREE",
+        "",
+        0L,
+        "ZONE_SUBTREE",
+        "12",
+        0L,
+        scopeMutationPolicy,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        new WorldDesignMutationRequestDto.WorldGenerationSubtreeMutationDto(
+            List.of(
+                new WorldDesignMutationRequestDto.GenerationRuleMutationDto("population", "dense")),
+            List.of(
+                new WorldDesignMutationRequestDto.GeneratedRoomMutationDto(
+                    "a", "room-a", "A generated room", "12", null, null),
+                new WorldDesignMutationRequestDto.GeneratedRoomMutationDto(
+                    "b", "room-b", "Another generated room", "12", null, null)),
+            List.of(
+                new WorldDesignMutationRequestDto.GeneratedRoomExitMutationDto(
+                    "a", "b", "north", 1)),
+            List.of(
+                new WorldDesignMutationRequestDto.GeneratedWorldEntitySpawnBindingMutationDto(
+                    "a", "NPC", "55", 2, 30))));
   }
 
   private GetVersionStateResponse versionState(VersionLifecycleState state) {

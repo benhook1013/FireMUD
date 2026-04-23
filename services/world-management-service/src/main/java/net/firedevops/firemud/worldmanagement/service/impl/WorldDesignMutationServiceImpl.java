@@ -1,7 +1,9 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
@@ -130,6 +132,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
       case "ROOM_EXIT" -> applyRoomExit(request);
       case "GENERATION_RULE" -> applyGenerationRule(request);
       case "WORLD_ENTITY_SPAWN_BINDING" -> applyWorldEntitySpawnBinding(request);
+      case "WORLD_GENERATION_SUBTREE" -> applyWorldGenerationSubtree(request);
       default -> throw appError("UNSUPPORTED_SCOPE", "unsupported aggregate type");
     };
   }
@@ -347,6 +350,28 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     return worldEntitySpawnBindingRepository.save(binding).getId();
   }
 
+  private Long applyWorldGenerationSubtree(WorldDesignMutationRequestDto request) {
+    if (OPERATION_DELETE.equals(request.operationType())) {
+      throw appError("UNSUPPORTED_SCOPE", "WORLD_GENERATION_SUBTREE supports only upsert");
+    }
+    var payload = request.worldGenerationSubtree();
+    if (payload == null) {
+      throw appError("INVALID_ARGUMENT", "world_generation_subtree payload is required");
+    }
+    if (!StringUtils.hasText(request.scopeType()) || !StringUtils.hasText(request.scopeId())) {
+      throw appError("INVALID_ARGUMENT", "WORLD_GENERATION_SUBTREE requires a declared scope");
+    }
+    validateGenerationRuleDeclaredScope(request);
+    if (isReplaceScopePolicy(request)) {
+      deleteExistingGeneratedRowsInScope(request);
+    }
+    applySubtreeGenerationRules(request, payload);
+    Map<String, Room> createdRooms = applySubtreeRooms(request, payload);
+    applySubtreeRoomExits(request, payload, createdRooms);
+    applySubtreeSpawnBindings(request, payload, createdRooms);
+    return syntheticScopeAggregateId(request);
+  }
+
   private void validateExpectedAggregateEpochBeforeMutation(WorldDesignMutationRequestDto request) {
     if (StringUtils.hasText(request.aggregateId())) {
       validateExpectedAggregateEpoch(request, parseId(request.aggregateId(), "aggregate_id"));
@@ -515,6 +540,190 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
               "UNSUPPORTED_SCOPE", "generation rule mutation does not support NEW_EMPTY_REGION");
       default -> throw appError("INVALID_ARGUMENT", "unsupported scope_type");
     }
+  }
+
+  private void deleteExistingGeneratedRowsInScope(WorldDesignMutationRequestDto request) {
+    String scopeType = requireText(request.scopeType(), "scope_type");
+    long scopeId = parseId(request.scopeId(), "scope_id");
+    if (SCOPE_TYPE_NEW_EMPTY_REGION.equals(scopeType)) {
+      throw appError(
+          "UNSUPPORTED_SCOPE",
+          "REPLACE_SCOPE for generated subtrees does not support NEW_EMPTY_REGION");
+    }
+    List<WorldEntitySpawnBinding> inScopeBindings =
+        worldEntitySpawnBindingRepository
+            .findByTenantIdAndVersionIdOrderByIdAsc(request.tenantId(), request.versionId())
+            .stream()
+            .filter(binding -> bindingWithinScope(binding, scopeType, scopeId))
+            .toList();
+    if (!inScopeBindings.isEmpty()) {
+      worldEntitySpawnBindingRepository.deleteAll(inScopeBindings);
+    }
+    List<RoomExit> inScopeExits =
+        roomExitRepository
+            .findByTenantIdAndVersionIdOrderByIdAsc(request.tenantId(), request.versionId())
+            .stream()
+            .filter(
+                exit ->
+                    roomWithinScope(exit.getFromRoom(), scopeType, scopeId)
+                        || roomWithinScope(exit.getToRoom(), scopeType, scopeId))
+            .toList();
+    if (!inScopeExits.isEmpty()) {
+      roomExitRepository.deleteAll(inScopeExits);
+    }
+    List<Room> inScopeRooms =
+        roomRepository
+            .findByTenantIdAndVersionIdOrderByIdAsc(request.tenantId(), request.versionId())
+            .stream()
+            .filter(room -> roomWithinScope(room, scopeType, scopeId))
+            .toList();
+    if (!inScopeRooms.isEmpty()) {
+      roomRepository.deleteAll(inScopeRooms);
+    }
+    deleteExistingGenerationRulesInScope(request, new GenerationRule());
+  }
+
+  private void applySubtreeGenerationRules(
+      WorldDesignMutationRequestDto request,
+      WorldDesignMutationRequestDto.WorldGenerationSubtreeMutationDto payload) {
+    for (WorldDesignMutationRequestDto.GenerationRuleMutationDto rulePayload :
+        nullToEmpty(payload.generationRules())) {
+      String ruleName = requireText(rulePayload.name(), "generation_rule.name");
+      GenerationRule rule =
+          generationRuleRepository
+              .findByTenantIdAndVersionIdAndScopeTypeAndScopeIdAndName(
+                  request.tenantId(),
+                  request.versionId(),
+                  request.scopeType(),
+                  request.scopeId(),
+                  ruleName)
+              .orElseGet(GenerationRule::new);
+      if (isSeedAppendOnlyPolicy(request) && rule.getId() != null) {
+        throw appError(
+            "OUT_OF_SYNC", "SEED_APPEND_ONLY cannot rewrite an existing generation rule");
+      }
+      rule.setTenantId(request.tenantId());
+      rule.setVersionId(request.versionId());
+      rule.setName(ruleName);
+      rule.setScopeType(request.scopeType());
+      rule.setScopeId(request.scopeId());
+      rule.setValue(blankToNull(rulePayload.value()));
+      generationRuleRepository.save(rule);
+    }
+  }
+
+  private Map<String, Room> applySubtreeRooms(
+      WorldDesignMutationRequestDto request,
+      WorldDesignMutationRequestDto.WorldGenerationSubtreeMutationDto payload) {
+    Map<String, Room> createdRooms = new HashMap<>();
+    for (WorldDesignMutationRequestDto.GeneratedRoomMutationDto roomPayload :
+        nullToEmpty(payload.rooms())) {
+      String clientRef = requireText(roomPayload.clientRef(), "generated_room.client_ref");
+      if (createdRooms.containsKey(clientRef)) {
+        throw appError("INVALID_ARGUMENT", "duplicate generated_room.client_ref");
+      }
+      Zone zone =
+          zoneRepository
+              .findByTenantIdAndVersionIdAndId(
+                  request.tenantId(),
+                  request.versionId(),
+                  parseId(roomPayload.zoneId(), "generated_room.zone_id"))
+              .orElseThrow(() -> appError("UNRESOLVED_REFERENCE", "generated room zone not found"));
+      Room room = new Room();
+      room.setTenantId(request.tenantId());
+      room.setVersionId(request.versionId());
+      room.setZone(zone);
+      room.setName(requireText(roomPayload.name(), "generated_room.name"));
+      room.setDescription(blankToNull(roomPayload.description()));
+      room.setNameLocalizedVariantsJson(blankToNull(roomPayload.nameLocalizedVariantsJson()));
+      room.setDescriptionLocalizedVariantsJson(
+          blankToNull(roomPayload.descriptionLocalizedVariantsJson()));
+      validateRoomWithinScope(request, room);
+      createdRooms.put(clientRef, roomRepository.save(room));
+    }
+    return createdRooms;
+  }
+
+  private void applySubtreeRoomExits(
+      WorldDesignMutationRequestDto request,
+      WorldDesignMutationRequestDto.WorldGenerationSubtreeMutationDto payload,
+      Map<String, Room> createdRooms) {
+    for (WorldDesignMutationRequestDto.GeneratedRoomExitMutationDto exitPayload :
+        nullToEmpty(payload.roomExits())) {
+      RoomExit exit = new RoomExit();
+      exit.setTenantId(request.tenantId());
+      exit.setVersionId(request.versionId());
+      exit.setDirection(requireText(exitPayload.direction(), "generated_room_exit.direction"));
+      exit.setCost(exitPayload.cost() <= 0 ? 1 : exitPayload.cost());
+      exit.setFromRoom(
+          resolveGeneratedRoomRef(createdRooms, exitPayload.fromRoomRef(), "from_room_ref"));
+      exit.setToRoom(resolveGeneratedRoomRef(createdRooms, exitPayload.toRoomRef(), "to_room_ref"));
+      validateRoomExitWithinScope(request, exit);
+      roomExitRepository.save(exit);
+    }
+  }
+
+  private void applySubtreeSpawnBindings(
+      WorldDesignMutationRequestDto request,
+      WorldDesignMutationRequestDto.WorldGenerationSubtreeMutationDto payload,
+      Map<String, Room> createdRooms) {
+    for (WorldDesignMutationRequestDto.GeneratedWorldEntitySpawnBindingMutationDto bindingPayload :
+        nullToEmpty(payload.worldEntitySpawnBindings())) {
+      Room room = resolveGeneratedRoomRef(createdRooms, bindingPayload.roomRef(), "room_ref");
+      String entityTemplateType =
+          requireText(
+              bindingPayload.entityTemplateType(), "generated_spawn_binding.entity_template_type");
+      long entityTemplateId =
+          parseId(bindingPayload.entityTemplateId(), "generated_spawn_binding.entity_template_id");
+      if (!entityManagementClient.validateEntityTemplateReference(
+          request.tenantId(), request.versionId(), entityTemplateType, entityTemplateId)) {
+        throw appError("UNRESOLVED_REFERENCE", "entity template not found");
+      }
+      WorldEntitySpawnBinding binding =
+          worldEntitySpawnBindingRepository
+              .findByTenantIdAndVersionIdAndRoomIdAndEntityTemplateTypeAndEntityTemplateId(
+                  request.tenantId(),
+                  request.versionId(),
+                  room.getId(),
+                  entityTemplateType,
+                  entityTemplateId)
+              .orElseGet(WorldEntitySpawnBinding::new);
+      if (isSeedAppendOnlyPolicy(request) && binding.getId() != null) {
+        throw appError("OUT_OF_SYNC", "SEED_APPEND_ONLY cannot rewrite an existing spawn binding");
+      }
+      binding.setTenantId(request.tenantId());
+      binding.setVersionId(request.versionId());
+      binding.setRoom(room);
+      binding.setEntityTemplateType(entityTemplateType);
+      binding.setEntityTemplateId(entityTemplateId);
+      binding.setSpawnCount(bindingPayload.spawnCount() <= 0 ? 1 : bindingPayload.spawnCount());
+      binding.setRespawnDelaySeconds(Math.max(bindingPayload.respawnDelaySeconds(), 0));
+      worldEntitySpawnBindingRepository.save(binding);
+    }
+  }
+
+  private Room resolveGeneratedRoomRef(
+      Map<String, Room> createdRooms, String roomRef, String fieldName) {
+    Room room = createdRooms.get(requireText(roomRef, "generated_" + fieldName));
+    if (room == null) {
+      throw appError("UNRESOLVED_REFERENCE", "generated room reference not found");
+    }
+    return room;
+  }
+
+  private Long syntheticScopeAggregateId(WorldDesignMutationRequestDto request) {
+    long scopeId = parseId(request.scopeId(), "scope_id");
+    if (SCOPE_TYPE_REGION_SUBTREE.equals(request.scopeType())) {
+      return 1_000_000_000_000L + scopeId;
+    }
+    if (SCOPE_TYPE_ZONE_SUBTREE.equals(request.scopeType())) {
+      return 2_000_000_000_000L + scopeId;
+    }
+    throw appError("UNSUPPORTED_SCOPE", "WORLD_GENERATION_SUBTREE requires region or zone scope");
+  }
+
+  private <T> List<T> nullToEmpty(List<T> values) {
+    return values == null ? List.of() : values;
   }
 
   private Long advanceScopeEpoch(WorldDesignMutationRequestDto request) {

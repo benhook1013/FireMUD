@@ -1,5 +1,8 @@
 package net.firedevops.firemud.worldmanagement.dto;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.List;
+
 public record WorldDesignMutationRequestDto(
     long tenantId,
     long versionId,
@@ -18,7 +21,8 @@ public record WorldDesignMutationRequestDto(
     RoomMutationDto room,
     RoomExitMutationDto roomExit,
     GenerationRuleMutationDto generationRule,
-    WorldEntitySpawnBindingMutationDto worldEntitySpawnBinding) {
+    WorldEntitySpawnBindingMutationDto worldEntitySpawnBinding,
+    WorldGenerationSubtreeMutationDto worldGenerationSubtree) {
   public record RegionMutationDto(
       String name,
       String weather,
@@ -44,6 +48,33 @@ public record WorldDesignMutationRequestDto(
 
   public record WorldEntitySpawnBindingMutationDto(
       String roomId,
+      String entityTemplateType,
+      String entityTemplateId,
+      int spawnCount,
+      int respawnDelaySeconds) {}
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Mutation DTO lists are request payload snapshots")
+  public record WorldGenerationSubtreeMutationDto(
+      List<GenerationRuleMutationDto> generationRules,
+      List<GeneratedRoomMutationDto> rooms,
+      List<GeneratedRoomExitMutationDto> roomExits,
+      List<GeneratedWorldEntitySpawnBindingMutationDto> worldEntitySpawnBindings) {}
+
+  public record GeneratedRoomMutationDto(
+      String clientRef,
+      String name,
+      String description,
+      String zoneId,
+      String nameLocalizedVariantsJson,
+      String descriptionLocalizedVariantsJson) {}
+
+  public record GeneratedRoomExitMutationDto(
+      String fromRoomRef, String toRoomRef, String direction, int cost) {}
+
+  public record GeneratedWorldEntitySpawnBindingMutationDto(
+      String roomRef,
       String entityTemplateType,
       String entityTemplateId,
       int spawnCount,
