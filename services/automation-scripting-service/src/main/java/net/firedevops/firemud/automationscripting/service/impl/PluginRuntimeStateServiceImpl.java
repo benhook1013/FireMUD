@@ -12,10 +12,13 @@ import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeEventRepository;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
+import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are internal Spring collaborators")
 public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService {
+  private static final Logger logger = LoggerFactory.getLogger(PluginRuntimeStateServiceImpl.class);
   private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";
   private static final String ACTOR_POLICY_RECONCILER = "automation-scripting-policy-reconciler";
   private static final String DEFAULT_DISABLED_REASON = "not_activated";
@@ -33,16 +37,19 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
   private final PluginRuntimeEventRepository eventRepository;
   private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
+  private final ScriptScheduleInstanceService scriptScheduleInstanceService;
 
   public PluginRuntimeStateServiceImpl(
       PluginRuntimeStateRepository repository,
       PluginRuntimeEventRepository eventRepository,
       GameDesignControlPlaneClient gameDesignControlPlaneClient,
-      GameSessionControlPlaneClient gameSessionControlPlaneClient) {
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      ScriptScheduleInstanceService scriptScheduleInstanceService) {
     this.repository = repository;
     this.eventRepository = eventRepository;
     this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
+    this.scriptScheduleInstanceService = scriptScheduleInstanceService;
   }
 
   @Override
@@ -122,6 +129,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     state.setLastPolicyCheckedAt(now);
     PluginRuntimeState saved = repository.save(state);
     appendEvent(saved, previous, controlPlaneRequestId, actorPrincipal, now);
+    reconcileSchedules(saved);
     return new ActivationResult(previous, saved.getActivePluginVersionId(), controlPlaneRequestId);
   }
 
@@ -319,6 +327,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         normalize(saved.getControlPlaneRequestId()),
         normalize(saved.getActorPrincipal()),
         now);
+    reconcileSchedules(saved);
   }
 
   private void transition(
@@ -352,6 +361,40 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         normalize(saved.getControlPlaneRequestId()),
         normalize(saved.getActorPrincipal()),
         now);
+    reconcileSchedules(saved);
+  }
+
+  private void reconcileSchedules(PluginRuntimeState state) {
+    var runtime =
+        gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+            state.getTenantId(), state.getGameInstanceId());
+    if (runtime == null) {
+      logger.warn(
+          "Skipping schedule reconciliation for tenant {} gameInstance {} plugin {} because runtime state client returned null",
+          state.getTenantId(),
+          state.getGameInstanceId(),
+          state.getPluginId());
+      return;
+    }
+    if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
+      logger.warn(
+          "Skipping schedule reconciliation for tenant {} gameInstance {} plugin {} because runtime state is unavailable: {}",
+          state.getTenantId(),
+          state.getGameInstanceId(),
+          state.getPluginId(),
+          runtime.getError().getCode());
+      return;
+    }
+    if (!runtime.hasRuntimeState()) {
+      logger.warn(
+          "Skipping schedule reconciliation for tenant {} gameInstance {} plugin {} because runtime state payload is missing",
+          state.getTenantId(),
+          state.getGameInstanceId(),
+          state.getPluginId());
+      return;
+    }
+    scriptScheduleInstanceService.reconcileObservedRuntimeState(
+        state.getTenantId(), state.getGameInstanceId(), runtime.getRuntimeState());
   }
 
   private static PluginRuntimeState newState(

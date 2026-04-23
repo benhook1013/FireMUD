@@ -102,7 +102,12 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
         (eventType, handlerNode) -> {
           ScriptScheduleDefinition extracted =
               extractSchedule(
-                  tenantId, scriptPatchVersion, definition, eventType, asObjectMap(handlerNode));
+                  tenantId,
+                  scriptPatchVersion,
+                  definition,
+                  asObjectMap(root),
+                  eventType,
+                  asObjectMap(handlerNode));
           if (extracted != null) {
             schedules.add(extracted);
           }
@@ -114,6 +119,7 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
       long tenantId,
       String scriptPatchVersion,
       ScriptDefinition scriptDefinition,
+      Map<String, Object> rootNode,
       String eventType,
       Map<String, Object> handlerNode) {
     String scheduleDefinitionId = normalizedText(handlerNode.get("scheduleDefinitionId"));
@@ -123,12 +129,14 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
 
     Cadence cadence = resolveCadence(eventType, handlerNode);
     String priorityTag = normalizePriorityTag(handlerNode.get("priorityTag"));
+    PluginOwner pluginOwner = resolvePluginOwner(rootNode, handlerNode);
     String metadataJson =
         scheduleMetadataJson(
             scheduleDefinitionId,
             eventType,
             cadence,
             priorityTag,
+            pluginOwner,
             scriptDefinition.getName(),
             scriptPatchVersion);
     Instant now = Instant.now();
@@ -136,6 +144,8 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
     schedule.setTenantId(tenantId);
     schedule.setScriptPatchVersion(scriptPatchVersion);
     schedule.setScriptId(scriptDefinition.getName());
+    schedule.setPluginId(pluginOwner.pluginId());
+    schedule.setPluginVersionId(pluginOwner.pluginVersionId());
     schedule.setEventType(eventType);
     schedule.setScheduleDefinitionId(scheduleDefinitionId);
     schedule.setScheduleKind(cadence.kind());
@@ -194,6 +204,7 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
       String eventType,
       Cadence cadence,
       String priorityTag,
+      PluginOwner pluginOwner,
       String scriptId,
       String scriptPatchVersion) {
     Map<String, Object> metadata = new LinkedHashMap<>();
@@ -205,6 +216,10 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
     metadata.put("priorityTag", priorityTag);
     metadata.put("scriptId", scriptId);
     metadata.put("scriptPatchVersion", scriptPatchVersion);
+    if (!pluginOwner.pluginId().isBlank()) {
+      metadata.put("pluginId", pluginOwner.pluginId());
+      metadata.put("pluginVersionId", pluginOwner.pluginVersionId());
+    }
     try {
       return objectMapper.writeValueAsString(metadata);
     } catch (Exception ex) {
@@ -218,6 +233,33 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
         + definition.getPluginVersionId()
         + "\u0000"
         + definition.getScheduleDefinitionId();
+  }
+
+  private static PluginOwner resolvePluginOwner(
+      Map<String, Object> rootNode, Map<String, Object> handlerNode) {
+    String pluginId =
+        firstPresent(
+            normalizedText(handlerNode.get("pluginId")),
+            normalizedText(asObjectMap(handlerNode.get("plugin")).get("pluginId")),
+            normalizedText(asObjectMap(handlerNode.get("owner")).get("pluginId")),
+            normalizedText(rootNode.get("pluginId")),
+            normalizedText(asObjectMap(rootNode.get("plugin")).get("pluginId")),
+            normalizedText(asObjectMap(rootNode.get("owner")).get("pluginId")));
+    String pluginVersionId =
+        firstPresent(
+            normalizedText(handlerNode.get("pluginVersionId")),
+            normalizedText(asObjectMap(handlerNode.get("plugin")).get("pluginVersionId")),
+            normalizedText(asObjectMap(handlerNode.get("owner")).get("pluginVersionId")),
+            normalizedText(rootNode.get("pluginVersionId")),
+            normalizedText(asObjectMap(rootNode.get("plugin")).get("pluginVersionId")),
+            normalizedText(asObjectMap(rootNode.get("owner")).get("pluginVersionId")));
+    if (pluginId.isBlank()) {
+      return new PluginOwner("", "");
+    }
+    if (pluginVersionId.isBlank()) {
+      throw new IllegalArgumentException("plugin_schedule_owner_incomplete");
+    }
+    return new PluginOwner(pluginId, pluginVersionId);
   }
 
   @SuppressWarnings("unchecked")
@@ -241,6 +283,15 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
     return value == null ? "" : value.toString().trim();
   }
 
+  private static String firstPresent(String... values) {
+    for (String value : values) {
+      if (value != null && !value.isBlank()) {
+        return value;
+      }
+    }
+    return "";
+  }
+
   private static String sha256(String value) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -251,4 +302,6 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
   }
 
   private record Cadence(String kind, String unit, long value) {}
+
+  private record PluginOwner(String pluginId, String pluginVersionId) {}
 }

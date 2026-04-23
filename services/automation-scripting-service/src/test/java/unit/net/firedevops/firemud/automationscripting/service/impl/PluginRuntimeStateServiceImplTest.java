@@ -13,6 +13,7 @@ import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeEventRepository;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
+import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
@@ -36,6 +37,8 @@ class PluginRuntimeStateServiceImplTest {
         Mockito.mock(GameDesignControlPlaneClient.class);
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
     when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
         .thenReturn(Optional.empty());
     when(repository.save(Mockito.any(PluginRuntimeState.class)))
@@ -85,7 +88,11 @@ class PluginRuntimeStateServiceImplTest {
                 .build());
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
-            repository, eventRepository, gameDesignClient, gameSessionClient);
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            scheduleInstanceService);
 
     PluginRuntimeStateService.ActivationResult result =
         service.setActiveVersion(
@@ -99,6 +106,8 @@ class PluginRuntimeStateServiceImplTest {
         ArgumentCaptor.forClass(PluginRuntimeState.class);
     Mockito.verify(repository).save(stateCaptor.capture());
     Mockito.verify(eventRepository).save(Mockito.any(PluginRuntimeEvent.class));
+    Mockito.verify(scheduleInstanceService)
+        .reconcileObservedRuntimeState(Mockito.eq("1"), Mockito.eq("game-1"), Mockito.any());
     assertThat(stateCaptor.getValue().getPluginState())
         .isEqualTo(PluginState.PLUGIN_STATE_ENABLED.name());
     assertThat(stateCaptor.getValue().getStatusReason()).isEqualTo("activation");
@@ -115,16 +124,31 @@ class PluginRuntimeStateServiceImplTest {
     existing.setStatusReason("activation");
     PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
     PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
     when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
         .thenReturn(Optional.of(existing));
     when(repository.save(Mockito.any(PluginRuntimeState.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .build())
+                .build());
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
             repository,
             eventRepository,
             Mockito.mock(GameDesignControlPlaneClient.class),
-            Mockito.mock(GameSessionControlPlaneClient.class));
+            gameSessionClient,
+            scheduleInstanceService);
 
     boolean disabled =
         service.disable(
@@ -136,6 +160,8 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(existing.getStatusReason()).isEqualTo("maintenance");
     Mockito.verify(repository).save(existing);
     Mockito.verify(eventRepository).save(Mockito.any(PluginRuntimeEvent.class));
+    Mockito.verify(scheduleInstanceService)
+        .reconcileObservedRuntimeState(Mockito.eq("1"), Mockito.eq("game-1"), Mockito.any());
   }
 
   @Test
@@ -159,7 +185,8 @@ class PluginRuntimeStateServiceImplTest {
             repository,
             Mockito.mock(PluginRuntimeEventRepository.class),
             Mockito.mock(GameDesignControlPlaneClient.class),
-            Mockito.mock(GameSessionControlPlaneClient.class));
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
 
     Optional<PluginRuntimeStateService.PluginRuntimeStatus> status =
         service.getStatus("1", "game-1", "plugin-1");
@@ -179,7 +206,8 @@ class PluginRuntimeStateServiceImplTest {
             Mockito.mock(PluginRuntimeStateRepository.class),
             Mockito.mock(PluginRuntimeEventRepository.class),
             Mockito.mock(GameDesignControlPlaneClient.class),
-            Mockito.mock(GameSessionControlPlaneClient.class));
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
 
     assertThatThrownBy(
             () ->
@@ -220,7 +248,11 @@ class PluginRuntimeStateServiceImplTest {
                 .build());
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
-            repository, eventRepository, gameDesignClient, gameSessionClient);
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            Mockito.mock(ScriptScheduleInstanceService.class));
 
     assertThatThrownBy(
             () ->
@@ -262,7 +294,11 @@ class PluginRuntimeStateServiceImplTest {
                 .build());
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
-            repository, eventRepository, gameDesignClient, gameSessionClient);
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            Mockito.mock(ScriptScheduleInstanceService.class));
 
     assertThatThrownBy(
             () ->
@@ -328,7 +364,11 @@ class PluginRuntimeStateServiceImplTest {
                 .build());
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
-            repository, eventRepository, gameDesignClient, gameSessionClient);
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            Mockito.mock(ScriptScheduleInstanceService.class));
 
     assertThatThrownBy(
             () ->
@@ -393,7 +433,11 @@ class PluginRuntimeStateServiceImplTest {
                 .build());
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
-            repository, eventRepository, gameDesignClient, gameSessionClient);
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            Mockito.mock(ScriptScheduleInstanceService.class));
 
     assertThatThrownBy(
             () ->
@@ -426,7 +470,8 @@ class PluginRuntimeStateServiceImplTest {
             repository,
             eventRepository,
             gameDesignClient,
-            Mockito.mock(GameSessionControlPlaneClient.class));
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
 
     PluginRuntimeStateService.PolicyReconciliationResult result =
         service.reconcileActivePluginPolicy(10);
@@ -460,7 +505,8 @@ class PluginRuntimeStateServiceImplTest {
             repository,
             eventRepository,
             gameDesignClient,
-            Mockito.mock(GameSessionControlPlaneClient.class));
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
 
     PluginRuntimeStateService.PolicyReconciliationResult result =
         service.reconcileActivePluginPolicy(10);
@@ -497,7 +543,8 @@ class PluginRuntimeStateServiceImplTest {
             repository,
             eventRepository,
             gameDesignClient,
-            Mockito.mock(GameSessionControlPlaneClient.class));
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
 
     PluginRuntimeStateService.PluginPolicyConvergence convergence =
         service.getPluginPolicyConvergence("1", "game-1", 10);
@@ -553,7 +600,11 @@ class PluginRuntimeStateServiceImplTest {
                 .build());
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
-            repository, eventRepository, gameDesignClient, gameSessionClient);
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            Mockito.mock(ScriptScheduleInstanceService.class));
 
     PluginRuntimeStateService.ActivationResult result =
         service.setActiveVersion(
@@ -597,7 +648,8 @@ class PluginRuntimeStateServiceImplTest {
             Mockito.mock(PluginRuntimeStateRepository.class),
             eventRepository,
             Mockito.mock(GameDesignControlPlaneClient.class),
-            Mockito.mock(GameSessionControlPlaneClient.class));
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
 
     List<PluginRuntimeStateService.PluginRuntimeEventSummary> events =
         service.listEvents(

@@ -7,13 +7,16 @@ import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.util.List;
+import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleInstance;
+import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProjectionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptScheduleDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptScheduleInstanceRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
+import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +26,7 @@ class ScriptScheduleInstanceServiceImplTest {
   private ScriptScheduleDefinitionRepository scheduleDefinitionRepository;
   private ScriptScheduleInstanceRepository scheduleInstanceRepository;
   private ScriptPatchPinProjectionRepository pinProjectionRepository;
+  private PluginRuntimeStateRepository pluginRuntimeStateRepository;
   private ScriptScheduleInstanceService service;
 
   @BeforeEach
@@ -30,9 +34,13 @@ class ScriptScheduleInstanceServiceImplTest {
     scheduleDefinitionRepository = mock(ScriptScheduleDefinitionRepository.class);
     scheduleInstanceRepository = mock(ScriptScheduleInstanceRepository.class);
     pinProjectionRepository = mock(ScriptPatchPinProjectionRepository.class);
+    pluginRuntimeStateRepository = mock(PluginRuntimeStateRepository.class);
     service =
         new ScriptScheduleInstanceServiceImpl(
-            scheduleDefinitionRepository, scheduleInstanceRepository, pinProjectionRepository);
+            scheduleDefinitionRepository,
+            scheduleInstanceRepository,
+            pinProjectionRepository,
+            pluginRuntimeStateRepository);
   }
 
   @Test
@@ -44,6 +52,8 @@ class ScriptScheduleInstanceServiceImplTest {
     when(scheduleInstanceRepository
             .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
                 "1", "game-1"))
+        .thenReturn(List.of());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
         .thenReturn(List.of());
 
     service.reconcileObservedRuntimeState(
@@ -102,6 +112,8 @@ class ScriptScheduleInstanceServiceImplTest {
             .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
                 "1", "game-1"))
         .thenReturn(List.of());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(List.of());
 
     service.reconcilePinnedPatchInstances("1", "patch-1");
 
@@ -113,6 +125,45 @@ class ScriptScheduleInstanceServiceImplTest {
         .satisfies(
             instance ->
                 assertThat(instance.getPinObservedAt()).isEqualTo(Instant.ofEpochMilli(3_000L)));
+  }
+
+  @Test
+  void reconcileObservedRuntimeStateOnlyMaterializesEnabledPluginVersionSchedules() {
+    ScriptScheduleDefinition core = millisecondsDefinition();
+    ScriptScheduleDefinition enabledPlugin = pluginDefinition("town-crier", "town-crier-v3");
+    ScriptScheduleDefinition disabledPlugin = pluginDefinition("town-crier", "town-crier-v2");
+    when(scheduleDefinitionRepository
+            .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(core, enabledPlugin, disabledPlugin));
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1"))
+        .thenReturn(List.of());
+    PluginRuntimeState runtimeState = new PluginRuntimeState();
+    runtimeState.setTenantId("1");
+    runtimeState.setGameInstanceId("game-1");
+    runtimeState.setPluginId("town-crier");
+    runtimeState.setActivePluginVersionId("town-crier-v3");
+    runtimeState.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(List.of(runtimeState));
+
+    service.reconcileObservedRuntimeState(
+        "1",
+        "game-1",
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPinnedScriptPatchVersion("patch-1")
+            .build());
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<ScriptScheduleInstance>> captor = ArgumentCaptor.forClass(List.class);
+    verify(scheduleInstanceRepository).saveAll(captor.capture());
+    assertThat(captor.getValue())
+        .extracting(ScriptScheduleInstance::getScheduleDefinitionId)
+        .containsExactlyInAnyOrder("guard.alert.expire.v1", "town-crier.market.pulse.v1");
   }
 
   private static ScriptScheduleDefinition millisecondsDefinition() {
@@ -144,6 +195,30 @@ class ScriptScheduleInstanceServiceImplTest {
     definition.setPriorityTag("high");
     definition.setScheduleMetadataJson("{\"scheduleDefinitionId\":\"guard.patrol.v1\"}");
     definition.setScheduleSemanticsHash("hash-ticks");
+    return definition;
+  }
+
+  private static ScriptScheduleDefinition pluginDefinition(
+      String pluginId, String pluginVersionId) {
+    ScriptScheduleDefinition definition = new ScriptScheduleDefinition();
+    definition.setTenantId(1L);
+    definition.setScriptPatchVersion("patch-1");
+    definition.setScriptId("plugin-town-crier");
+    definition.setPluginId(pluginId);
+    definition.setPluginVersionId(pluginVersionId);
+    definition.setEventType("onInterval");
+    definition.setScheduleDefinitionId("town-crier.market.pulse.v1");
+    definition.setScheduleKind("INTERVAL");
+    definition.setCadenceUnit("TICKS");
+    definition.setCadenceValue(12L);
+    definition.setPriorityTag("normal");
+    definition.setScheduleMetadataJson(
+        "{\"scheduleDefinitionId\":\"town-crier.market.pulse.v1\",\"pluginId\":\""
+            + pluginId
+            + "\",\"pluginVersionId\":\""
+            + pluginVersionId
+            + "\"}");
+    definition.setScheduleSemanticsHash("hash-plugin-" + pluginVersionId);
     return definition;
   }
 }

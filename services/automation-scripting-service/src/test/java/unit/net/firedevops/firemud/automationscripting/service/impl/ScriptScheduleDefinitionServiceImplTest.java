@@ -81,6 +81,53 @@ class ScriptScheduleDefinitionServiceImplTest {
               assertThat(schedule.getCadenceUnit()).isEqualTo("TICKS");
               assertThat(schedule.getCadenceValue()).isEqualTo(5L);
               assertThat(schedule.getPriorityTag()).isEqualTo("normal");
+              assertThat(schedule.getPluginId()).isEmpty();
+              assertThat(schedule.getPluginVersionId()).isEmpty();
+            });
+  }
+
+  @Test
+  void refreshPatchSchedulesPersistsPluginOwnerMetadata() {
+    ScriptDefinition script = new ScriptDefinition();
+    script.setTenantId(1L);
+    script.setName("plugin-town-crier");
+    script.setDefinition(
+        """
+        {
+          "plugin": {
+            "pluginId": "town-crier",
+            "pluginVersionId": "town-crier-v3"
+          },
+          "eventHandlers": {
+            "onInterval": {
+              "scheduleDefinitionId": "town-crier.market.pulse.v1",
+              "intervalTicks": 12
+            }
+          }
+        }
+        """);
+    when(repository
+            .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of());
+
+    service.refreshPatchSchedules("1", "patch-1", List.of(script), List.of("plugin-town-crier"));
+
+    @SuppressWarnings("unchecked")
+    var captor = org.mockito.ArgumentCaptor.forClass(List.class);
+    verify(repository).saveAll(captor.capture());
+    @SuppressWarnings("unchecked")
+    List<ScriptScheduleDefinition> saved = captor.getValue();
+    assertThat(saved)
+        .singleElement()
+        .satisfies(
+            schedule -> {
+              assertThat(schedule.getPluginId()).isEqualTo("town-crier");
+              assertThat(schedule.getPluginVersionId()).isEqualTo("town-crier-v3");
+              assertThat(schedule.getScheduleMetadataJson())
+                  .contains("\"pluginId\":\"town-crier\"");
+              assertThat(schedule.getScheduleMetadataJson())
+                  .contains("\"pluginVersionId\":\"town-crier-v3\"");
             });
   }
 

@@ -9,13 +9,16 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleInstance;
+import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProjectionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptScheduleDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptScheduleInstanceRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
+import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,14 +35,17 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private final ScriptScheduleDefinitionRepository scheduleDefinitionRepository;
   private final ScriptScheduleInstanceRepository scheduleInstanceRepository;
   private final ScriptPatchPinProjectionRepository pinProjectionRepository;
+  private final PluginRuntimeStateRepository pluginRuntimeStateRepository;
 
   public ScriptScheduleInstanceServiceImpl(
       ScriptScheduleDefinitionRepository scheduleDefinitionRepository,
       ScriptScheduleInstanceRepository scheduleInstanceRepository,
-      ScriptPatchPinProjectionRepository pinProjectionRepository) {
+      ScriptPatchPinProjectionRepository pinProjectionRepository,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository) {
     this.scheduleDefinitionRepository = scheduleDefinitionRepository;
     this.scheduleInstanceRepository = scheduleInstanceRepository;
     this.pinProjectionRepository = pinProjectionRepository;
+    this.pluginRuntimeStateRepository = pluginRuntimeStateRepository;
   }
 
   @Override
@@ -58,6 +64,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         scheduleDefinitionRepository
             .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
                 Long.parseLong(tenantId), scriptPatchVersion);
+    Map<String, String> activePluginVersions = activePluginVersions(tenantId, gameInstanceId);
     List<ScriptScheduleInstance> existing =
         scheduleInstanceRepository
             .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
@@ -80,6 +87,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     Set<String> desiredKeys = new HashSet<>();
     List<ScriptScheduleInstance> upserts = new ArrayList<>();
     for (ScriptScheduleDefinition definition : definitions) {
+      if (!shouldMaterialize(definition, activePluginVersions)) {
+        continue;
+      }
       String key =
           scopeKey(
               definition.getPluginId(),
@@ -155,6 +165,31 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         .limit(boundedLimit)
         .map(this::toSummary)
         .toList();
+  }
+
+  private Map<String, String> activePluginVersions(String tenantId, String gameInstanceId) {
+    Map<String, String> active = new HashMap<>();
+    for (PluginRuntimeState state :
+        pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)) {
+      if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
+        continue;
+      }
+      String pluginId = blankToEmpty(state.getPluginId());
+      String activePluginVersionId = blankToEmpty(state.getActivePluginVersionId());
+      if (!pluginId.isBlank() && !activePluginVersionId.isBlank()) {
+        active.put(pluginId, activePluginVersionId);
+      }
+    }
+    return active;
+  }
+
+  private static boolean shouldMaterialize(
+      ScriptScheduleDefinition definition, Map<String, String> activePluginVersions) {
+    String pluginId = blankToEmpty(definition.getPluginId());
+    if (pluginId.isBlank()) {
+      return true;
+    }
+    return blankToEmpty(definition.getPluginVersionId()).equals(activePluginVersions.get(pluginId));
   }
 
   private void populateInstance(
