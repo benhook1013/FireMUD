@@ -30,7 +30,7 @@ Current live bindings in the service are narrower than the full target-state scr
 | Variable | Purpose | Default | Class |
 | --- | --- | --- | --- |
 | `SCRIPT_QUOTA_LIMIT` | Number of events a script may process per window | `50` | Stable operator knob |
-| `SCRIPT_QUOTA_WINDOWSECONDS` | Length of the quota window in seconds | `60` | Stable operator knob |
+| `SCRIPT_QUOTA_WINDOW_SECONDS` | Length of the quota window in seconds | `60` | Stable operator knob |
 | `AUTOMATION_TICK_DURATION_MS` | Duration of a processing tick in milliseconds | `1000` | Stable operator knob |
 | `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick | `50` | Stable operator knob |
 | `AUTOMATION_TICK_BUDGET_MS` | Soft execution budget for a script tick in milliseconds | `100` | Advanced/experimental |

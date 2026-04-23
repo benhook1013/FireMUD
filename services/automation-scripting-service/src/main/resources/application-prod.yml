@@ -47,7 +47,7 @@ management:
 script:
   quota:
     limit: ${SCRIPT_QUOTA_LIMIT:50}
-    windowSeconds: ${SCRIPT_QUOTA_WINDOWSECONDS:60}
+    window-seconds: ${SCRIPT_QUOTA_WINDOW_SECONDS:60}
 automation:
   tick-duration-ms: ${AUTOMATION_TICK_DURATION_MS:1000}
   tick-max-events: ${AUTOMATION_TICK_MAX_EVENTS:50}

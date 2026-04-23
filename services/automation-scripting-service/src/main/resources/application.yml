@@ -56,8 +56,8 @@ management:
 
 script:
   quota:
-    limit: 50
-    windowSeconds: 60
+    limit: ${SCRIPT_QUOTA_LIMIT:50}
+    window-seconds: ${SCRIPT_QUOTA_WINDOW_SECONDS:60}
   output:
     max-commands-per-run: ${SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN:64}
     max-commands-per-entity-per-trigger: ${SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER:8}
