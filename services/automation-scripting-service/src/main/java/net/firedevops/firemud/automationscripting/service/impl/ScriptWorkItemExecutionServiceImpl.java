@@ -225,13 +225,15 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       if (commandText.isBlank()) {
         throw new IllegalArgumentException("command_text_blank");
       }
-      commands.add(
-          new ScriptGameplayCommandHandoffService.EmittedCommand(
-              commandText,
-              targetEntityId(node, variables, workItem),
-              node.path("requiresSoloTick").asBoolean(false),
-              Math.max(0L, node.path("dueTickId").asLong(0L)),
-              ordinal++));
+      for (String targetEntityId : targetEntityIds(node, variables, workItem)) {
+        commands.add(
+            new ScriptGameplayCommandHandoffService.EmittedCommand(
+                commandText,
+                targetEntityId,
+                node.path("requiresSoloTick").asBoolean(false),
+                Math.max(0L, node.path("dueTickId").asLong(0L)),
+                ordinal++));
+      }
     }
     return List.copyOf(commands);
   }
@@ -334,14 +336,35 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     return List.copyOf(rendered);
   }
 
-  private static String targetEntityId(
+  private static List<String> targetEntityIds(
       JsonNode node, Map<String, String> variables, ScriptWorkItem workItem) {
+    JsonNode targetEntityIdsNode = node.path("targetEntityIds");
+    if (!targetEntityIdsNode.isMissingNode() && !targetEntityIdsNode.isNull()) {
+      if (!targetEntityIdsNode.isArray()) {
+        throw new IllegalArgumentException("target_entity_ids_invalid");
+      }
+      List<String> renderedTargetIds = new ArrayList<>();
+      for (JsonNode targetNode : targetEntityIdsNode) {
+        if (!targetNode.isValueNode()) {
+          throw new IllegalArgumentException("target_entity_ids_invalid");
+        }
+        String renderedTargetId = render(targetNode.asText(""), variables).trim();
+        if (renderedTargetId.isBlank()) {
+          throw new IllegalArgumentException("target_entity_id_blank");
+        }
+        renderedTargetIds.add(renderedTargetId);
+      }
+      if (renderedTargetIds.isEmpty()) {
+        throw new IllegalArgumentException("target_entity_ids_empty");
+      }
+      return List.copyOf(renderedTargetIds);
+    }
     String targetEntityId =
         render(node.path("targetEntityId").asText(workItem.getEntityId()), variables);
     if (targetEntityId.isBlank()) {
       throw new IllegalArgumentException("target_entity_id_blank");
     }
-    return targetEntityId;
+    return List.of(targetEntityId);
   }
 
   private boolean exceedsPerEntityCommandLimit(
