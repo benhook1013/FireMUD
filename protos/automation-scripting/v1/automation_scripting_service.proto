@@ -35,6 +35,10 @@ service AutomationScriptingService {
   rpc NotifyScriptVersionUpdate(NotifyScriptVersionUpdateRequest)
       returns (NotifyScriptVersionUpdateResponse);
 
+  // Internal Game Session heartbeat/progress feed for tick-aligned script schedules.
+  rpc ObserveRuntimeTickProgress(ObserveRuntimeTickProgressRequest)
+      returns (ObserveRuntimeTickProgressResponse);
+
   // Returns the canonical design-time digest for script definitions that participate in one
   // script-patch version.
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
@@ -204,6 +208,20 @@ message NotifyScriptVersionUpdateRequest {
 
 message NotifyScriptVersionUpdateResponse {
   bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ObserveRuntimeTickProgressRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  int64 region_epoch = 4;
+  int64 tick_id = 5;
+  int64 observed_at_ms = 6;
+}
+
+message ObserveRuntimeTickProgressResponse {
+  int32 updated_schedule_count = 1;
   shared.v1.ErrorDetail error = 2;
 }
 
@@ -512,6 +530,10 @@ message ScriptScheduleInstanceEntry {
   int64 pin_observed_at_ms = 22;
   int64 materialized_at_ms = 23;
   int64 updated_at_ms = 24;
+  string runtime_region_id = 25;
+  int64 runtime_region_epoch = 26;
+  int64 last_observed_tick_id = 27;
+  int64 last_runtime_progress_observed_at_ms = 28;
 }
 
 message ListScriptScheduleInstancesResponse {

@@ -193,6 +193,49 @@ class ScriptScheduleInstanceServiceImplTest {
         .containsExactlyInAnyOrder("guard.alert.expire.v1", "town-crier.market.pulse.v1");
   }
 
+  @Test
+  void observeRuntimeTickProgressAdvancesTickSchedulesFromHeartbeat() {
+    ScriptScheduleInstance tickInstance = new ScriptScheduleInstance();
+    tickInstance.setTenantId("1");
+    tickInstance.setGameInstanceId("game-1");
+    tickInstance.setScriptPatchVersion("patch-1");
+    tickInstance.setScriptId("npc-guard");
+    tickInstance.setEventType("onInterval");
+    tickInstance.setScheduleDefinitionId("guard.patrol.v1");
+    tickInstance.setScheduleKind("INTERVAL");
+    tickInstance.setCadenceUnit("TICKS");
+    tickInstance.setCadenceValue(30L);
+    tickInstance.setMaterializationStatus("PENDING_RUNTIME_PROGRESS");
+    tickInstance.setScheduleMetadataJson("{}");
+    tickInstance.setScheduleSemanticsHash("hash-ticks");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(tickInstance));
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(
+            new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+                "1", "game-1", "region-1", 12L, 100L, 5_000L));
+
+    assertThat(result.updatedScheduleCount()).isEqualTo(1);
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<ScriptScheduleInstance>> captor = ArgumentCaptor.forClass(List.class);
+    verify(scheduleInstanceRepository).saveAll(captor.capture());
+    assertThat(captor.getValue())
+        .singleElement()
+        .satisfies(
+            instance -> {
+              assertThat(instance.getMaterializationStatus()).isEqualTo("READY");
+              assertThat(instance.getRuntimeRegionId()).isEqualTo("region-1");
+              assertThat(instance.getRuntimeRegionEpoch()).isEqualTo(12L);
+              assertThat(instance.getLastObservedTickId()).isEqualTo(100L);
+              assertThat(instance.getLastRuntimeProgressObservedAt())
+                  .isEqualTo(Instant.ofEpochMilli(5_000L));
+              assertThat(instance.getNextDueTickId()).isEqualTo(130L);
+              assertThat(instance.getNextDueAt()).isNull();
+            });
+  }
+
   private static ScriptScheduleDefinition millisecondsDefinition() {
     ScriptScheduleDefinition definition = new ScriptScheduleDefinition();
     definition.setTenantId(1L);

@@ -14,6 +14,7 @@ import net.firedevops.firemud.automationscripting.service.PingService;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
 import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
+import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
 import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestResponse;
@@ -21,6 +22,8 @@ import net.firedevops.firemud.automationscripting.v1.GetScriptStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateRequest;
 import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateResponse;
+import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressRequest;
+import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressResponse;
 import net.firedevops.firemud.automationscripting.v1.PingRequest;
 import net.firedevops.firemud.automationscripting.v1.PingResponse;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
@@ -349,5 +352,52 @@ class AutomationScriptingGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals(false, ref.get().getSuccess());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void observeRuntimeTickProgressDelegatesToScheduleInstanceService() {
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(
+            scheduleInstanceService.observeRuntimeTickProgress(
+                new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+                    "1", "game-1", "region-1", 12L, 100L, 5_000L)))
+        .thenReturn(new ScriptScheduleInstanceService.RuntimeTickProgressResult(2));
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            Mockito.mock(ScriptVersionService.class),
+            scheduleInstanceService,
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry());
+    AtomicReference<ObserveRuntimeTickProgressResponse> ref = new AtomicReference<>();
+
+    service.observeRuntimeTickProgress(
+        ObserveRuntimeTickProgressRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .setRegionEpoch(12L)
+            .setTickId(100L)
+            .setObservedAtMs(5_000L)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ObserveRuntimeTickProgressResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals(2, ref.get().getUpdatedScheduleCount());
   }
 }

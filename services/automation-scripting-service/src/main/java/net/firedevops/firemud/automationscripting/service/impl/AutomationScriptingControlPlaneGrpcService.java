@@ -962,6 +962,10 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setPinObservedAtMs(summary.pinObservedAtMs())
         .setMaterializedAtMs(summary.materializedAtMs())
         .setUpdatedAtMs(summary.updatedAtMs())
+        .setRuntimeRegionId(summary.runtimeRegionId())
+        .setRuntimeRegionEpoch(summary.runtimeRegionEpoch())
+        .setLastObservedTickId(summary.lastObservedTickId())
+        .setLastRuntimeProgressObservedAtMs(summary.lastRuntimeProgressObservedAtMs())
         .build();
   }
 

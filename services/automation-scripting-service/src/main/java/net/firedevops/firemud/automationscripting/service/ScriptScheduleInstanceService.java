@@ -9,8 +9,20 @@ public interface ScriptScheduleInstanceService {
 
   void reconcilePinnedPatchInstances(String tenantId, String scriptPatchVersion);
 
+  RuntimeTickProgressResult observeRuntimeTickProgress(RuntimeTickProgressObservation observation);
+
   List<ScheduleInstanceSummary> listInstances(
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit);
+
+  record RuntimeTickProgressObservation(
+      String tenantId,
+      String gameInstanceId,
+      String regionId,
+      long regionEpoch,
+      long tickId,
+      long observedAtMs) {}
+
+  record RuntimeTickProgressResult(int updatedScheduleCount) {}
 
   record ScheduleInstanceSummary(
       String tenantId,
@@ -36,5 +48,9 @@ public interface ScriptScheduleInstanceService {
       String lastObservedControlPlaneRequestId,
       long pinObservedAtMs,
       long materializedAtMs,
-      long updatedAtMs) {}
+      long updatedAtMs,
+      String runtimeRegionId,
+      long runtimeRegionEpoch,
+      long lastObservedTickId,
+      long lastRuntimeProgressObservedAtMs) {}
 }

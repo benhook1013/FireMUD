@@ -16,5 +16,8 @@ public interface ScriptScheduleInstanceRepository
       findByTenantIdAndGameInstanceIdAndScriptPatchVersionOrderByUpdatedAtDescScheduleDefinitionIdAsc(
           String tenantId, String gameInstanceId, String scriptPatchVersion);
 
+  List<ScriptScheduleInstance> findByTenantIdAndGameInstanceIdAndCadenceUnit(
+      String tenantId, String gameInstanceId, String cadenceUnit);
+
   void deleteByTenantIdAndGameInstanceId(String tenantId, String gameInstanceId);
 }

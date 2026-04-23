@@ -31,6 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
     justification = "Injected Spring collaborators are retained internally.")
 public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstanceService {
   private static final String UNIT_MILLISECONDS = "MILLISECONDS";
+  private static final String UNIT_TICKS = "TICKS";
   private static final String STATUS_READY = "READY";
   private static final String STATUS_PENDING_RUNTIME_PROGRESS = "PENDING_RUNTIME_PROGRESS";
 
@@ -165,6 +166,39 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   @Override
+  @Transactional
+  public RuntimeTickProgressResult observeRuntimeTickProgress(
+      RuntimeTickProgressObservation observation) {
+    requireText(observation.tenantId(), "tenant_id");
+    requireText(observation.gameInstanceId(), "game_instance_id");
+    requireText(observation.regionId(), "region_id");
+    if (observation.regionEpoch() <= 0) {
+      throw new IllegalArgumentException("region_epoch must be positive");
+    }
+    if (observation.tickId() < 0) {
+      throw new IllegalArgumentException("tick_id must be non-negative");
+    }
+    Instant observedAt =
+        observation.observedAtMs() > 0
+            ? Instant.ofEpochMilli(observation.observedAtMs())
+            : Instant.now();
+    Instant now = Instant.now();
+    List<ScriptScheduleInstance> instances =
+        scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            observation.tenantId(), observation.gameInstanceId(), UNIT_TICKS);
+    List<ScriptScheduleInstance> updates = new ArrayList<>();
+    for (ScriptScheduleInstance instance : instances) {
+      if (advanceRuntimeProgress(instance, observation, observedAt, now)) {
+        updates.add(instance);
+      }
+    }
+    if (!updates.isEmpty()) {
+      scheduleInstanceRepository.saveAll(updates);
+    }
+    return new RuntimeTickProgressResult(updates.size());
+  }
+
+  @Override
   @Transactional(readOnly = true)
   public List<ScheduleInstanceSummary> listInstances(
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit) {
@@ -277,12 +311,51 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       instance.setMaterializationStatus(STATUS_READY);
       instance.setNextDueAt(pinObservedAt.plusMillis(definition.getCadenceValue()));
       instance.setNextDueTickId(null);
+      instance.setRuntimeRegionId("");
+      instance.setRuntimeRegionEpoch(null);
+      instance.setLastObservedTickId(null);
+      instance.setLastRuntimeProgressObservedAt(null);
     } else {
       instance.setMaterializationStatus(STATUS_PENDING_RUNTIME_PROGRESS);
       instance.setNextDueAt(null);
       instance.setNextDueTickId(null);
     }
     instance.setUpdatedAt(now);
+  }
+
+  private boolean advanceRuntimeProgress(
+      ScriptScheduleInstance instance,
+      RuntimeTickProgressObservation observation,
+      Instant observedAt,
+      Instant now) {
+    boolean runtimeScopeChanged =
+        !observation.regionId().equals(blankToEmpty(instance.getRuntimeRegionId()))
+            || instance.getRuntimeRegionEpoch() == null
+            || instance.getRuntimeRegionEpoch() != observation.regionEpoch();
+    Long currentDueTick = instance.getNextDueTickId();
+    long nextDueTick =
+        runtimeScopeChanged || currentDueTick == null || currentDueTick <= observation.tickId()
+            ? observation.tickId() + Math.max(1L, instance.getCadenceValue())
+            : currentDueTick;
+    boolean changed =
+        runtimeScopeChanged
+            || !STATUS_READY.equals(instance.getMaterializationStatus())
+            || currentDueTick == null
+            || currentDueTick != nextDueTick
+            || instance.getLastObservedTickId() == null
+            || instance.getLastObservedTickId() != observation.tickId();
+    if (!changed) {
+      return false;
+    }
+    instance.setMaterializationStatus(STATUS_READY);
+    instance.setRuntimeRegionId(observation.regionId());
+    instance.setRuntimeRegionEpoch(observation.regionEpoch());
+    instance.setLastObservedTickId(observation.tickId());
+    instance.setLastRuntimeProgressObservedAt(observedAt);
+    instance.setNextDueTickId(nextDueTick);
+    instance.setNextDueAt(null);
+    instance.setUpdatedAt(now);
+    return true;
   }
 
   private ScheduleInstanceSummary toSummary(ScriptScheduleInstance instance) {
@@ -312,7 +385,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             ? 0L
             : instance.getPinObservedAt().toEpochMilli(),
         instance.getMaterializedAt().toEpochMilli(),
-        instance.getUpdatedAt().toEpochMilli());
+        instance.getUpdatedAt().toEpochMilli(),
+        blankToEmpty(instance.getRuntimeRegionId()),
+        instance.getRuntimeRegionEpoch() == null ? 0L : instance.getRuntimeRegionEpoch(),
+        instance.getLastObservedTickId() == null ? 0L : instance.getLastObservedTickId(),
+        instance.getLastRuntimeProgressObservedAt() == null
+            ? 0L
+            : instance.getLastRuntimeProgressObservedAt().toEpochMilli());
   }
 
   private static String scopeKey(

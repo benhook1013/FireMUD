@@ -89,6 +89,15 @@ public class ScriptScheduleInstance {
   @Column private Long nextDueTickId;
 
   @Column(nullable = false, length = 64)
+  private String runtimeRegionId = "";
+
+  @Column private Long runtimeRegionEpoch;
+
+  @Column private Long lastObservedTickId;
+
+  @Column private Instant lastRuntimeProgressObservedAt;
+
+  @Column(nullable = false, length = 64)
   private String observedRuntimeVersionId = "";
 
   @Column(nullable = false, length = 128)

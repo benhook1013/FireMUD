@@ -334,7 +334,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "req-9",
                     1234L,
                     1235L,
-                    1236L)));
+                    1236L,
+                    "region-1",
+                    12L,
+                    100L,
+                    7777L)));
     AutomationScriptingControlPlaneGrpcService service =
         new AutomationScriptingControlPlaneGrpcService(
             new BuiltInScriptEventRegistryService(),

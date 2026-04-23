@@ -14,6 +14,7 @@ import net.firedevops.firemud.automationscripting.service.PingService;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
 import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
+import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberRequest;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberResponse;
@@ -28,6 +29,8 @@ import net.firedevops.firemud.automationscripting.v1.ListFormationMembersRequest
 import net.firedevops.firemud.automationscripting.v1.ListFormationMembersResponse;
 import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateRequest;
 import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateResponse;
+import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressRequest;
+import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressResponse;
 import net.firedevops.firemud.automationscripting.v1.PingRequest;
 import net.firedevops.firemud.automationscripting.v1.PingResponse;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
@@ -56,11 +59,13 @@ public class AutomationScriptingGrpcService
   private final ScriptDefinitionService scriptService;
   private final ScriptDesignDigestService scriptDesignDigestService;
   private final ScriptVersionService scriptVersionService;
+  private final ScriptScheduleInstanceService scriptScheduleInstanceService;
   private final ScriptEventIngressService scriptEventIngressService;
   private final ScriptWorkItemRepository workItemRepository;
   private final NpcFormationService formationService;
   private final MeterRegistry meterRegistry;
 
+  @org.springframework.beans.factory.annotation.Autowired
   public AutomationScriptingGrpcService(
       PingService pingService,
       ScriptDefinitionService scriptService,
@@ -70,10 +75,33 @@ public class AutomationScriptingGrpcService
       ScriptWorkItemRepository workItemRepository,
       NpcFormationService formationService,
       MeterRegistry meterRegistry) {
+    this(
+        pingService,
+        scriptService,
+        scriptDesignDigestService,
+        scriptVersionService,
+        null,
+        scriptEventIngressService,
+        workItemRepository,
+        formationService,
+        meterRegistry);
+  }
+
+  public AutomationScriptingGrpcService(
+      PingService pingService,
+      ScriptDefinitionService scriptService,
+      ScriptDesignDigestService scriptDesignDigestService,
+      ScriptVersionService scriptVersionService,
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      ScriptEventIngressService scriptEventIngressService,
+      ScriptWorkItemRepository workItemRepository,
+      NpcFormationService formationService,
+      MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.scriptService = scriptService;
     this.scriptDesignDigestService = scriptDesignDigestService;
     this.scriptVersionService = scriptVersionService;
+    this.scriptScheduleInstanceService = scriptScheduleInstanceService;
     this.scriptEventIngressService = Objects.requireNonNull(scriptEventIngressService);
     this.workItemRepository = Objects.requireNonNull(workItemRepository);
     this.formationService = Objects.requireNonNull(formationService);
@@ -445,6 +473,46 @@ public class AutomationScriptingGrpcService
                   ex.getMessage()));
     } catch (AdminAuthorizationException ex) {
       response.setSuccess(false).setError(authorizationError("NotifyScriptVersionUpdate", ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.observeRuntimeTickProgress")
+  public void observeRuntimeTickProgress(
+      ObserveRuntimeTickProgressRequest request,
+      StreamObserver<ObserveRuntimeTickProgressResponse> responseObserver) {
+    ObserveRuntimeTickProgressResponse.Builder response =
+        ObserveRuntimeTickProgressResponse.newBuilder();
+    try {
+      requireInternalServiceOrAdmin();
+      if (scriptScheduleInstanceService == null) {
+        throw new IllegalStateException("script_schedule_instance_service_unavailable");
+      }
+      ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+          scriptScheduleInstanceService.observeRuntimeTickProgress(
+              new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+                  request.getTenantId(),
+                  request.getGameInstanceId(),
+                  request.getRegionId(),
+                  request.getRegionEpoch(),
+                  request.getTickId(),
+                  request.getObservedAtMs()));
+      response.setUpdatedScheduleCount(result.updatedScheduleCount());
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ObserveRuntimeTickProgress",
+              "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError("ObserveRuntimeTickProgress", ex));
+    } catch (Exception ex) {
+      response.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "ObserveRuntimeTickProgress", ex));
     }
     responseObserver.onNext(response.build());
     responseObserver.onCompleted();
