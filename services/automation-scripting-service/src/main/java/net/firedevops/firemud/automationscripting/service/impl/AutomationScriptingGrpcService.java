@@ -500,6 +500,7 @@ public class AutomationScriptingGrpcService
                   request.getTickId(),
                   request.getObservedAtMs()));
       response.setUpdatedScheduleCount(result.updatedScheduleCount());
+      response.setFiredScheduleCount(result.firedScheduleCount());
     } catch (IllegalArgumentException ex) {
       response.setError(
           GrpcAppErrors.error(

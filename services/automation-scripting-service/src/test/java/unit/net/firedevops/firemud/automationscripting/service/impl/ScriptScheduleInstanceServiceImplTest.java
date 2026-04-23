@@ -7,16 +7,22 @@ import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.util.List;
+import net.firedevops.firemud.automationscripting.config.ScriptSchedulerProperties;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleInstance;
+import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProjectionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptScheduleDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptScheduleInstanceRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
+import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
@@ -30,6 +36,10 @@ class ScriptScheduleInstanceServiceImplTest {
   private ScriptPatchPinProjectionRepository pinProjectionRepository;
   private PluginRuntimeStateRepository pluginRuntimeStateRepository;
   private ScriptEventBindingRepository bindingRepository;
+  private ScriptWorkItemRepository workItemRepository;
+  private ScriptEventAuditRepository eventAuditRepository;
+  private AutomationQueueService automationQueueService;
+  private AutomationAdmissionStateService automationAdmissionStateService;
   private ScriptScheduleInstanceService service;
 
   @BeforeEach
@@ -39,13 +49,28 @@ class ScriptScheduleInstanceServiceImplTest {
     pinProjectionRepository = mock(ScriptPatchPinProjectionRepository.class);
     pluginRuntimeStateRepository = mock(PluginRuntimeStateRepository.class);
     bindingRepository = mock(ScriptEventBindingRepository.class);
+    workItemRepository = mock(ScriptWorkItemRepository.class);
+    eventAuditRepository = mock(ScriptEventAuditRepository.class);
+    automationQueueService = mock(AutomationQueueService.class);
+    automationAdmissionStateService = mock(AutomationAdmissionStateService.class);
+    when(automationAdmissionStateService.getState("1", "game-1", "region-1"))
+        .thenReturn(
+            new AutomationAdmissionStateService.AdmissionStateSummary(
+                "1", "game-1", "region-1", "NORMAL", 4L, "", "", "", 0L));
+    when(workItemRepository.saveAndFlush(org.mockito.Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     service =
         new ScriptScheduleInstanceServiceImpl(
             scheduleDefinitionRepository,
             scheduleInstanceRepository,
             pinProjectionRepository,
             pluginRuntimeStateRepository,
-            bindingRepository);
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            automationQueueService,
+            automationAdmissionStateService,
+            new ScriptSchedulerProperties());
   }
 
   @Test
@@ -218,6 +243,7 @@ class ScriptScheduleInstanceServiceImplTest {
                 "1", "game-1", "region-1", 12L, 100L, 5_000L));
 
     assertThat(result.updatedScheduleCount()).isEqualTo(1);
+    assertThat(result.firedScheduleCount()).isZero();
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<ScriptScheduleInstance>> captor = ArgumentCaptor.forClass(List.class);
     verify(scheduleInstanceRepository).saveAll(captor.capture());
@@ -233,6 +259,65 @@ class ScriptScheduleInstanceServiceImplTest {
                   .isEqualTo(Instant.ofEpochMilli(5_000L));
               assertThat(instance.getNextDueTickId()).isEqualTo(130L);
               assertThat(instance.getNextDueAt()).isNull();
+            });
+  }
+
+  @Test
+  void observeRuntimeTickProgressEmitsDueTimerWorkItemAndAdvancesPastObservedTick() {
+    ScriptScheduleInstance tickInstance = new ScriptScheduleInstance();
+    tickInstance.setTenantId("1");
+    tickInstance.setGameInstanceId("game-1");
+    tickInstance.setScriptPatchVersion("patch-1");
+    tickInstance.setScriptId("npc-guard");
+    tickInstance.setEventType("onInterval");
+    tickInstance.setScheduleDefinitionId("guard.patrol.v1");
+    tickInstance.setScheduleKind("INTERVAL");
+    tickInstance.setCadenceUnit("TICKS");
+    tickInstance.setCadenceValue(30L);
+    tickInstance.setPriorityTag("high");
+    tickInstance.setTargetScopeType("ENTITY");
+    tickInstance.setTargetScopeId("guard-1");
+    tickInstance.setMaterializationStatus("READY");
+    tickInstance.setRuntimeRegionId("region-1");
+    tickInstance.setRuntimeRegionEpoch(12L);
+    tickInstance.setLastObservedTickId(100L);
+    tickInstance.setNextDueTickId(130L);
+    tickInstance.setScheduleMetadataJson("{}");
+    tickInstance.setScheduleSemanticsHash("hash-ticks");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(tickInstance));
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(
+            new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+                "1", "game-1", "region-1", 12L, 131L, 6_000L));
+
+    assertThat(result.updatedScheduleCount()).isEqualTo(1);
+    assertThat(result.firedScheduleCount()).isEqualTo(1);
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository).saveAndFlush(workItemCaptor.capture());
+    ScriptWorkItem workItem = workItemCaptor.getValue();
+    assertThat(workItem.getTenantId()).isEqualTo("1");
+    assertThat(workItem.getGameInstanceId()).isEqualTo("game-1");
+    assertThat(workItem.getRegionId()).isEqualTo("region-1");
+    assertThat(workItem.getRegionEpoch()).isEqualTo(12L);
+    assertThat(workItem.getEntityId()).isEqualTo("guard-1");
+    assertThat(workItem.getTriggerMode()).isEqualTo("TRIGGER_MODE_CATCH_UP");
+    assertThat(workItem.getPriorityTag()).isEqualTo("high");
+    assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
+    verify(automationQueueService).enqueueWorkItem(workItem);
+    verify(eventAuditRepository).save(org.mockito.Mockito.any());
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<ScriptScheduleInstance>> scheduleCaptor =
+        ArgumentCaptor.forClass(List.class);
+    verify(scheduleInstanceRepository).saveAll(scheduleCaptor.capture());
+    assertThat(scheduleCaptor.getValue())
+        .singleElement()
+        .satisfies(
+            instance -> {
+              assertThat(instance.getNextDueTickId()).isEqualTo(160L);
+              assertThat(instance.getLastObservedTickId()).isEqualTo(131L);
             });
   }
 

@@ -1,6 +1,9 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -9,19 +12,28 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import net.firedevops.firemud.automationscripting.config.ScriptSchedulerProperties;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleInstance;
+import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProjectionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptScheduleDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptScheduleInstanceRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
+import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,24 +46,41 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private static final String UNIT_TICKS = "TICKS";
   private static final String STATUS_READY = "READY";
   private static final String STATUS_PENDING_RUNTIME_PROGRESS = "PENDING_RUNTIME_PROGRESS";
+  private static final String DEFAULT_SCHEMA_VERSION = "v1";
+  private static final String SOURCE_SERVICE = "automation-scripting-service";
 
   private final ScriptScheduleDefinitionRepository scheduleDefinitionRepository;
   private final ScriptScheduleInstanceRepository scheduleInstanceRepository;
   private final ScriptPatchPinProjectionRepository pinProjectionRepository;
   private final PluginRuntimeStateRepository pluginRuntimeStateRepository;
   private final ScriptEventBindingRepository bindingRepository;
+  private final ScriptWorkItemRepository workItemRepository;
+  private final ScriptEventAuditRepository eventAuditRepository;
+  private final AutomationQueueService automationQueueService;
+  private final AutomationAdmissionStateService automationAdmissionStateService;
+  private final ScriptSchedulerProperties schedulerProperties;
 
   public ScriptScheduleInstanceServiceImpl(
       ScriptScheduleDefinitionRepository scheduleDefinitionRepository,
       ScriptScheduleInstanceRepository scheduleInstanceRepository,
       ScriptPatchPinProjectionRepository pinProjectionRepository,
       PluginRuntimeStateRepository pluginRuntimeStateRepository,
-      ScriptEventBindingRepository bindingRepository) {
+      ScriptEventBindingRepository bindingRepository,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository eventAuditRepository,
+      AutomationQueueService automationQueueService,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptSchedulerProperties schedulerProperties) {
     this.scheduleDefinitionRepository = scheduleDefinitionRepository;
     this.scheduleInstanceRepository = scheduleInstanceRepository;
     this.pinProjectionRepository = pinProjectionRepository;
     this.pluginRuntimeStateRepository = pluginRuntimeStateRepository;
     this.bindingRepository = bindingRepository;
+    this.workItemRepository = workItemRepository;
+    this.eventAuditRepository = eventAuditRepository;
+    this.automationQueueService = automationQueueService;
+    this.automationAdmissionStateService = automationAdmissionStateService;
+    this.schedulerProperties = schedulerProperties;
   }
 
   @Override
@@ -187,15 +216,24 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             observation.tenantId(), observation.gameInstanceId(), UNIT_TICKS);
     List<ScriptScheduleInstance> updates = new ArrayList<>();
+    int remainingFirings = schedulerProperties.getMaxCatchUpFiringsPerObservation();
+    int fired = 0;
     for (ScriptScheduleInstance instance : instances) {
-      if (advanceRuntimeProgress(instance, observation, observedAt, now)) {
+      TickAdvanceResult advance = advanceRuntimeProgress(instance, observation, observedAt, now);
+      if (advance.fireDueTick() != null && remainingFirings > 0) {
+        if (emitTimerWorkItem(instance, advance.fireDueTick(), now)) {
+          fired++;
+          remainingFirings--;
+        }
+      }
+      if (advance.changed()) {
         updates.add(instance);
       }
     }
     if (!updates.isEmpty()) {
       scheduleInstanceRepository.saveAll(updates);
     }
-    return new RuntimeTickProgressResult(updates.size());
+    return new RuntimeTickProgressResult(updates.size(), fired);
   }
 
   @Override
@@ -323,7 +361,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setUpdatedAt(now);
   }
 
-  private boolean advanceRuntimeProgress(
+  private TickAdvanceResult advanceRuntimeProgress(
       ScriptScheduleInstance instance,
       RuntimeTickProgressObservation observation,
       Instant observedAt,
@@ -333,9 +371,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             || instance.getRuntimeRegionEpoch() == null
             || instance.getRuntimeRegionEpoch() != observation.regionEpoch();
     Long currentDueTick = instance.getNextDueTickId();
+    Long fireDueTick =
+        !runtimeScopeChanged && currentDueTick != null && currentDueTick <= observation.tickId()
+            ? currentDueTick
+            : null;
     long nextDueTick =
         runtimeScopeChanged || currentDueTick == null || currentDueTick <= observation.tickId()
-            ? observation.tickId() + Math.max(1L, instance.getCadenceValue())
+            ? nextFutureDueTick(observation.tickId(), currentDueTick, instance.getCadenceValue())
             : currentDueTick;
     boolean changed =
         runtimeScopeChanged
@@ -345,7 +387,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             || instance.getLastObservedTickId() == null
             || instance.getLastObservedTickId() != observation.tickId();
     if (!changed) {
-      return false;
+      return new TickAdvanceResult(false, fireDueTick);
     }
     instance.setMaterializationStatus(STATUS_READY);
     instance.setRuntimeRegionId(observation.regionId());
@@ -355,7 +397,172 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setNextDueTickId(nextDueTick);
     instance.setNextDueAt(null);
     instance.setUpdatedAt(now);
-    return true;
+    return new TickAdvanceResult(true, fireDueTick);
+  }
+
+  private boolean emitTimerWorkItem(ScriptScheduleInstance instance, long dueTickId, Instant now) {
+    String entityId = targetEntityId(instance);
+    String scriptEventId = timerScriptEventId(instance, dueTickId);
+    if (workItemRepository
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            instance.getTenantId(),
+            instance.getGameInstanceId(),
+            blankToEmpty(instance.getRuntimeRegionId()),
+            instance.getRuntimeRegionEpoch(),
+            entityId,
+            instance.getScriptId(),
+            instance.getEventType(),
+            DEFAULT_SCHEMA_VERSION,
+            instance.getScriptPatchVersion(),
+            scriptEventId,
+            false)) {
+      return false;
+    }
+    AutomationAdmissionStateService.AdmissionStateSummary admissionState =
+        automationAdmissionStateService.getState(
+            instance.getTenantId(),
+            instance.getGameInstanceId(),
+            blankToEmpty(instance.getRuntimeRegionId()));
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setTenantId(instance.getTenantId());
+    item.setGameInstanceId(instance.getGameInstanceId());
+    item.setRegionId(blankToEmpty(instance.getRuntimeRegionId()));
+    item.setRegionEpoch(instance.getRuntimeRegionEpoch());
+    item.setEntityId(entityId);
+    item.setScriptId(instance.getScriptId());
+    item.setPluginId(blankToEmpty(instance.getPluginId()));
+    item.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
+    item.setEventType(instance.getEventType());
+    item.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
+    item.setScriptPatchVersion(instance.getScriptPatchVersion());
+    item.setScriptEventId(scriptEventId);
+    item.setDryRun(false);
+    item.setSourceService(SOURCE_SERVICE);
+    item.setTriggerMode(TriggerMode.TRIGGER_MODE_CATCH_UP.name());
+    item.setPriorityTag(instance.getPriorityTag());
+    item.setReadSnapshotToken(timerReadSnapshotToken(instance, dueTickId));
+    item.setPayloadJson(timerPayload(instance, dueTickId));
+    item.setAdmissionEpoch(admissionState.admissionEpoch());
+    item.setCreatedAt(now);
+    item.setUpdatedAt(now);
+    try {
+      ScriptWorkItem saved = workItemRepository.saveAndFlush(item);
+      automationQueueService.enqueueWorkItem(saved);
+      persistTimerAudit(instance, saved, dueTickId, now);
+      return true;
+    } catch (DataIntegrityViolationException ex) {
+      return false;
+    }
+  }
+
+  private void persistTimerAudit(
+      ScriptScheduleInstance instance, ScriptWorkItem workItem, long dueTickId, Instant now) {
+    ScriptEventAudit audit = new ScriptEventAudit();
+    audit.setTenantId(instance.getTenantId());
+    audit.setGameInstanceId(instance.getGameInstanceId());
+    audit.setRegionId(blankToEmpty(instance.getRuntimeRegionId()));
+    audit.setRegionEpoch(instance.getRuntimeRegionEpoch());
+    audit.setEntityId(workItem.getEntityId());
+    audit.setScriptId(instance.getScriptId());
+    audit.setEventType(instance.getEventType());
+    audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
+    audit.setScriptPatchVersion(instance.getScriptPatchVersion());
+    audit.setScriptEventId(workItem.getScriptEventId());
+    audit.setDryRun(false);
+    audit.setSourceService(SOURCE_SERVICE);
+    audit.setTriggerMode(TriggerMode.TRIGGER_MODE_CATCH_UP.name());
+    audit.setWorkItemId(workItem.getId());
+    audit.setFinalStage("ADMISSION");
+    audit.setFinalOutcome("work_item_persisted");
+    audit.setFinalReason("timer_due_tick_" + dueTickId);
+    audit.setCreatedAt(now);
+    audit.setUpdatedAt(now);
+    eventAuditRepository.save(audit);
+  }
+
+  private static long nextFutureDueTick(long observedTickId, Long currentDueTick, long cadence) {
+    long boundedCadence = Math.max(1L, cadence);
+    if (currentDueTick == null) {
+      return observedTickId + boundedCadence;
+    }
+    long nextDueTick = currentDueTick;
+    while (nextDueTick <= observedTickId) {
+      nextDueTick += boundedCadence;
+    }
+    return nextDueTick;
+  }
+
+  private static String targetEntityId(ScriptScheduleInstance instance) {
+    return "ENTITY".equals(instance.getTargetScopeType())
+        ? blankToEmpty(instance.getTargetScopeId())
+        : "";
+  }
+
+  private static String timerScriptEventId(ScriptScheduleInstance instance, long dueTickId) {
+    return "timer-" + shortHash(timerIdentity(instance, dueTickId));
+  }
+
+  private static String timerReadSnapshotToken(ScriptScheduleInstance instance, long dueTickId) {
+    return "automation:onInterval:"
+        + instance.getGameInstanceId()
+        + ":"
+        + instance.getRuntimeRegionEpoch()
+        + ":"
+        + dueTickId
+        + ":"
+        + shortHash(instance.getScheduleDefinitionId());
+  }
+
+  private static String timerPayload(ScriptScheduleInstance instance, long dueTickId) {
+    return "{\"scheduleDefinitionId\":\""
+        + escape(instance.getScheduleDefinitionId())
+        + "\",\"dueTickId\":"
+        + dueTickId
+        + ",\"targetScopeType\":\""
+        + escape(instance.getTargetScopeType())
+        + "\",\"targetScopeId\":\""
+        + escape(instance.getTargetScopeId())
+        + "\"}";
+  }
+
+  private static String timerIdentity(ScriptScheduleInstance instance, long dueTickId) {
+    return instance.getTenantId()
+        + "|"
+        + instance.getGameInstanceId()
+        + "|"
+        + blankToEmpty(instance.getRuntimeRegionId())
+        + "|"
+        + instance.getRuntimeRegionEpoch()
+        + "|"
+        + targetEntityId(instance)
+        + "|"
+        + instance.getScriptId()
+        + "|"
+        + instance.getEventType()
+        + "|"
+        + instance.getScriptPatchVersion()
+        + "|"
+        + instance.getScheduleDefinitionId()
+        + "|"
+        + dueTickId;
+  }
+
+  private static String shortHash(String value) {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+      StringBuilder builder = new StringBuilder(bytes.length * 2);
+      for (byte current : bytes) {
+        builder.append(String.format("%02x", current));
+      }
+      return builder.substring(0, 60);
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("SHA-256 not available", ex);
+    }
+  }
+
+  private static String escape(String value) {
+    return blankToEmpty(value).replace("\\", "\\\\").replace("\"", "\\\"");
   }
 
   private ScheduleInstanceSummary toSummary(ScriptScheduleInstance instance) {
@@ -414,6 +621,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private static String bindingKey(String scriptId, String eventType) {
     return blankToEmpty(scriptId) + "\u0000" + blankToEmpty(eventType);
   }
+
+  private record TickAdvanceResult(boolean changed, Long fireDueTick) {}
 
   private static String blankToEmpty(String value) {
     return value == null ? "" : value;
