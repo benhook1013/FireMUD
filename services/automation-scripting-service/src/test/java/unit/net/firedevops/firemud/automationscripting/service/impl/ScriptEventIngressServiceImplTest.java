@@ -25,6 +25,7 @@ import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateServ
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
@@ -59,6 +60,12 @@ class ScriptEventIngressServiceImplTest {
                     100L,
                     "req-1",
                     "admin")));
+    return service;
+  }
+
+  private static ScriptQuotaService allowingQuotaService() {
+    ScriptQuotaService service = Mockito.mock(ScriptQuotaService.class);
+    when(service.tryAcquire(Mockito.anyString(), Mockito.anyString())).thenReturn(true);
     return service;
   }
 
@@ -123,7 +130,8 @@ class ScriptEventIngressServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            enabledPluginRuntimeStateService());
+            enabledPluginRuntimeStateService(),
+            allowingQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -210,7 +218,8 @@ class ScriptEventIngressServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            pluginRuntimeStateService);
+            pluginRuntimeStateService,
+            allowingQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -237,6 +246,89 @@ class ScriptEventIngressServiceImplTest {
   }
 
   @Test
+  void quotaDeniedHandlerWritesAuditWithoutWorkItem() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository eventAuditRepository =
+        Mockito.mock(ScriptEventAuditRepository.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptQuotaService quotaService = Mockito.mock(ScriptQuotaService.class);
+    when(repository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+                "1",
+                "game-1",
+                "region-1",
+                7L,
+                "entity-1",
+                "onCommand",
+                "v1",
+                "patch-1",
+                "event-quota",
+                false))
+        .thenReturn(Optional.empty());
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
+                1L, "patch-1", "onCommand", "v1"))
+        .thenReturn(List.of(binding("script-1", "ENTITY", "entity-1")));
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .build())
+                .build());
+    when(quotaService.tryAcquire("1", "script-1")).thenReturn(false);
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            new BuiltInScriptEventRegistryService(),
+            Mockito.mock(AutomationQueueService.class),
+            outputProperties(),
+            gameSessionControlPlaneClient,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            quotaService);
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            TriggerScriptEventRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setScriptId("script-1")
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-quota")
+                .setReadSnapshotToken("snapshot-1")
+                .build());
+
+    assertThat(admission.admitted()).isTrue();
+    ArgumentCaptor<ScriptEventAudit> eventAuditCaptor =
+        ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).save(eventAuditCaptor.capture());
+    assertThat(eventAuditCaptor.getValue().getWorkItemId()).isNull();
+    assertThat(eventAuditCaptor.getValue().getFinalOutcome()).isEqualTo("quota_denied");
+    assertThat(eventAuditCaptor.getValue().getFinalReason()).isEqualTo("script_quota_denied");
+    verify(workItemRepository, never()).save(Mockito.any());
+  }
+
+  @Test
   void rejectsRuntimeTriggerWithoutSnapshotToken() {
     SessionContext.setContext(
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
@@ -257,7 +349,8 @@ class ScriptEventIngressServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -302,7 +395,8 @@ class ScriptEventIngressServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -350,7 +444,8 @@ class ScriptEventIngressServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -413,7 +508,8 @@ class ScriptEventIngressServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -453,7 +549,8 @@ class ScriptEventIngressServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService());
 
     assertThrows(
         IllegalArgumentException.class,
@@ -498,7 +595,8 @@ class ScriptEventIngressServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -550,7 +648,8 @@ class ScriptEventIngressServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -618,7 +717,8 @@ class ScriptEventIngressServiceImplTest {
             admissionStateService,
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(

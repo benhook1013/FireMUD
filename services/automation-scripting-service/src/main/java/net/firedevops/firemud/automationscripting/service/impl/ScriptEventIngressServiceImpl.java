@@ -20,6 +20,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptEventIngressServ
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
@@ -58,6 +59,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
   private final PluginRuntimeStateService pluginRuntimeStateService;
+  private final ScriptQuotaService quotaService;
 
   public ScriptEventIngressServiceImpl(
       ScriptEventIngressAuditRepository repository,
@@ -71,7 +73,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
-      PluginRuntimeStateService pluginRuntimeStateService) {
+      PluginRuntimeStateService pluginRuntimeStateService,
+      ScriptQuotaService quotaService) {
     this.repository = repository;
     this.bindingRepository = bindingRepository;
     this.workItemRepository = workItemRepository;
@@ -84,6 +87,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
     this.rolloutProjectionService = rolloutProjectionService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
+    this.quotaService = quotaService;
   }
 
   @Override
@@ -252,26 +256,34 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             .stream()
             .filter(binding -> matchesScope(binding, request))
             .toList();
-    handlers.forEach(binding -> persistWorkItem(request, schemaVersion, binding));
+    handlers.forEach(binding -> admitHandler(request, schemaVersion, binding));
     String reason = handlers.isEmpty() ? "admitted_no_handlers" : "admitted_handlers_resolved";
     return new TriggerAdmission(true, OUTCOME_ADMITTED, reason, handlers.size());
   }
 
+  private void admitHandler(
+      TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
+    if (handlerAuditExists(request, schemaVersion, binding)) {
+      return;
+    }
+    if (!request.getIsDryRun()
+        && !quotaService.tryAcquire(request.getTenantId(), binding.getScriptId())) {
+      persistHandlerAudit(
+          request,
+          schemaVersion,
+          binding,
+          null,
+          "ADMISSION",
+          "quota_denied",
+          "script_quota_denied");
+      return;
+    }
+    persistWorkItem(request, schemaVersion, binding);
+  }
+
   private void persistWorkItem(
       TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
-    if (workItemRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
-            request.getTenantId(),
-            normalize(request.getGameInstanceId()),
-            normalize(request.getRegionId()),
-            request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
-            normalize(request.getEntityId()),
-            binding.getScriptId(),
-            request.getEventType(),
-            schemaVersion,
-            request.getScriptPatchVersion(),
-            request.getScriptEventId(),
-            request.getIsDryRun())) {
+    if (workItemExists(request, schemaVersion, binding)) {
       return;
     }
     AutomationAdmissionStateService.AdmissionStateSummary admissionState =
@@ -299,29 +311,24 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     ScriptWorkItem saved = workItemRepository.save(item);
     rolloutProjectionService.refreshForWorkItem(saved);
     automationQueueService.enqueueWorkItem(saved);
-    persistHandlerAudit(request, schemaVersion, binding, saved);
+    persistHandlerAudit(
+        request,
+        schemaVersion,
+        binding,
+        saved,
+        "ADMISSION",
+        "work_item_persisted",
+        "handler_resolved");
   }
 
   private void persistHandlerAudit(
       TriggerScriptEventRequest request,
       String schemaVersion,
       ScriptEventBinding binding,
-      ScriptWorkItem workItem) {
-    if (eventAuditRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
-            request.getTenantId(),
-            normalize(request.getGameInstanceId()),
-            normalize(request.getRegionId()),
-            request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
-            normalize(request.getEntityId()),
-            binding.getScriptId(),
-            request.getEventType(),
-            schemaVersion,
-            request.getScriptPatchVersion(),
-            request.getScriptEventId(),
-            request.getIsDryRun())) {
-      return;
-    }
+      ScriptWorkItem workItem,
+      String finalStage,
+      String finalOutcome,
+      String finalReason) {
     ScriptEventAudit audit = new ScriptEventAudit();
     audit.setTenantId(request.getTenantId());
     audit.setGameInstanceId(normalize(request.getGameInstanceId()));
@@ -336,11 +343,45 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setDryRun(request.getIsDryRun());
     audit.setSourceService(resolveSourceService());
     audit.setTriggerMode(request.getTriggerMode().name());
-    audit.setWorkItemId(workItem.getId());
-    audit.setFinalStage("ADMISSION");
-    audit.setFinalOutcome("work_item_persisted");
-    audit.setFinalReason("handler_resolved");
+    audit.setWorkItemId(workItem == null ? null : workItem.getId());
+    audit.setFinalStage(finalStage);
+    audit.setFinalOutcome(finalOutcome);
+    audit.setFinalReason(finalReason);
     eventAuditRepository.save(audit);
+  }
+
+  private boolean handlerAuditExists(
+      TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
+    return eventAuditRepository
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            request.getTenantId(),
+            normalize(request.getGameInstanceId()),
+            normalize(request.getRegionId()),
+            request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
+            normalize(request.getEntityId()),
+            binding.getScriptId(),
+            request.getEventType(),
+            schemaVersion,
+            request.getScriptPatchVersion(),
+            request.getScriptEventId(),
+            request.getIsDryRun());
+  }
+
+  private boolean workItemExists(
+      TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
+    return workItemRepository
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            request.getTenantId(),
+            normalize(request.getGameInstanceId()),
+            normalize(request.getRegionId()),
+            request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
+            normalize(request.getEntityId()),
+            binding.getScriptId(),
+            request.getEventType(),
+            schemaVersion,
+            request.getScriptPatchVersion(),
+            request.getScriptEventId(),
+            request.getIsDryRun());
   }
 
   private boolean matchesScope(ScriptEventBinding binding, TriggerScriptEventRequest request) {

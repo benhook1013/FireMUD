@@ -150,6 +150,7 @@ Quota and budget policy must be applied at fixed charge points so operators can 
   - Charged once per resolved handler-scoped Trigger Identity at handler admission time.
   - Handlers admitted into a bounded `queue_until_free` backlog consume quota immediately and are not re-charged when they later start.
   - Duplicate deliveries of the same handler-scoped Trigger Identity must not consume additional quota.
+  - Current Automation ingress enforces this by acquiring `ScriptQuotaService` before durable `script_work_items` are materialized. Quota-denied handlers write handler audit rows with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=script_quota_denied`, but do not create outbox work items.
 - **Per-tenant tier budgets**
   - Charged when a handler-scoped run is reserved onto live sandbox execution capacity.
   - Event-scope ingress acceptance alone does not charge tenant runtime budget.

@@ -18,7 +18,6 @@ import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandH
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
-import net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -34,7 +33,6 @@ class ScriptWorkItemExecutionServiceImplTest {
         Mockito.mock(ScriptGameplayCommandHandoffService.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
-    ScriptQuotaService quotaService = Mockito.mock(ScriptQuotaService.class);
     ScriptOutputProperties outputProperties = new ScriptOutputProperties();
     ScriptWorkItem item = workItem();
     ScriptEventAudit audit = new ScriptEventAudit();
@@ -54,7 +52,6 @@ class ScriptWorkItemExecutionServiceImplTest {
         }
         """);
     when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
-    when(quotaService.tryAcquire("1", "script-1")).thenReturn(true);
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
@@ -75,7 +72,6 @@ class ScriptWorkItemExecutionServiceImplTest {
             workItemRepository,
             auditRepository,
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            quotaService,
             outputProperties,
             new ObjectMapper());
 
@@ -103,12 +99,10 @@ class ScriptWorkItemExecutionServiceImplTest {
         Mockito.mock(ScriptGameplayCommandHandoffService.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
-    ScriptQuotaService quotaService = Mockito.mock(ScriptQuotaService.class);
     ScriptOutputProperties outputProperties = new ScriptOutputProperties();
     ScriptWorkItem item = workItem();
     ScriptEventAudit audit = new ScriptEventAudit();
     when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
-    when(quotaService.tryAcquire("1", "script-1")).thenReturn(true);
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.empty());
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
@@ -122,7 +116,6 @@ class ScriptWorkItemExecutionServiceImplTest {
             workItemRepository,
             auditRepository,
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            quotaService,
             outputProperties,
             new ObjectMapper());
 
@@ -145,7 +138,6 @@ class ScriptWorkItemExecutionServiceImplTest {
         Mockito.mock(ScriptGameplayCommandHandoffService.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
-    ScriptQuotaService quotaService = Mockito.mock(ScriptQuotaService.class);
     ScriptOutputProperties outputProperties = new ScriptOutputProperties();
     ScriptWorkItem item = workItem();
     item.setDryRun(true);
@@ -175,7 +167,6 @@ class ScriptWorkItemExecutionServiceImplTest {
             workItemRepository,
             auditRepository,
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            quotaService,
             outputProperties,
             new ObjectMapper());
 
@@ -183,8 +174,6 @@ class ScriptWorkItemExecutionServiceImplTest {
         service.processPendingWorkItems(10);
 
     assertThat(result.completedCount()).isEqualTo(1);
-    Mockito.verify(quotaService, Mockito.never())
-        .tryAcquire(Mockito.anyString(), Mockito.anyString());
     Mockito.verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
     assertThat(item.getStatus()).isEqualTo("HANDED_OFF");
     assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");

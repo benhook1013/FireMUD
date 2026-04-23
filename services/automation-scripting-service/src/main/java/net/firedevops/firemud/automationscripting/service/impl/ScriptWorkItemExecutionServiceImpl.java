@@ -17,7 +17,6 @@ import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandH
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
-import net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
@@ -39,7 +38,6 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository auditRepository;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
-  private final ScriptQuotaService quotaService;
   private final ScriptOutputProperties outputProperties;
   private final ObjectMapper objectMapper;
 
@@ -50,7 +48,6 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptWorkItemRepository workItemRepository,
       ScriptEventAuditRepository auditRepository,
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
-      ScriptQuotaService quotaService,
       ScriptOutputProperties outputProperties,
       ObjectMapper objectMapper) {
     this.workItemService = workItemService;
@@ -59,7 +56,6 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
     this.rolloutProjectionService = rolloutProjectionService;
-    this.quotaService = quotaService;
     this.outputProperties = outputProperties;
     this.objectMapper = objectMapper;
   }
@@ -82,11 +78,6 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
     Instant now = Instant.now();
-    if (!workItem.isDryRun()
-        && !quotaService.tryAcquire(workItem.getTenantId(), workItem.getScriptId())) {
-      deadLetter(workItem, STAGE_DSL_EVAL, "quota_denied", "script_quota_denied", now);
-      return false;
-    }
     Optional<ScriptDefinition> definition =
         scriptDefinitionRepository.findByTenantIdAndScriptVersionAndName(
             parseTenantId(workItem), workItem.getScriptPatchVersion(), workItem.getScriptId());
