@@ -375,6 +375,27 @@ Contract rules:
 - The live implementation is a durable Automation-owned projection refreshed from authoritative Game Session runtime state, not a raw pass-through query.
 - If refresh from Game Session fails but Automation still has a stored observation, the API must continue returning that stored observation with freshness flags set from the projection timestamp instead of failing closed for operator visibility.
 
+#### `ListScriptScheduleInstances`
+
+Implementation note: the current Automation & Scripting implementation now exposes the first durable instance-scoped timer materialization read from `script_schedule_instances`. Those rows are refreshed from the same observed Game Session pin state used by admission and rollout reads, and they project the currently pinned patch's durable schedule definitions into one `(tenantId, gameInstanceId)` scope. Wall-clock timers already compute `nextDueAt`; tick-aligned schedules are persisted explicitly as `PENDING_RUNTIME_PROGRESS` until heartbeat-driven `nextTick` materialization lands.
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- Optional filter: `scriptPatchVersion`
+- `limit` (bounded by the service)
+
+Outputs:
+
+- Instance-scoped schedule entries containing `scriptPatchVersion`, `scriptId`, plugin owner metadata, `scheduleDefinitionId`, event type, cadence, priority tag, materialization status, due-point fields, observed runtime version id, observed pin request id, pin observation time, and row timestamps.
+
+Contract rules:
+
+- This is a read-only operator/debugging surface for the first durable scheduler substrate below Redis timer indexes.
+- The live implementation must report tick-aligned schedules honestly as not-yet-advanced when no heartbeat-derived due point exists; it must not invent synthetic tick coordinates.
+- Reconciliation across repins is keyed by stable `scheduleDefinitionId` plus plugin owner metadata, not by inferred semantic similarity.
+
 #### `ListScriptDeadLetters`
 
 Implementation note: the current Automation & Scripting API exposes this read directly from durable `script_work_items` rows with `status=DEAD_LETTERED`. It is an operator inspection surface separate from the controlled replay mutation API.

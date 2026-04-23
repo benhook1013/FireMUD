@@ -52,6 +52,8 @@ service AutomationScriptingControlPlaneService {
       returns (GetAutomationPinConvergenceResponse);
   rpc GetScriptPatchInstanceRolloutStatus(GetScriptPatchInstanceRolloutStatusRequest)
       returns (GetScriptPatchInstanceRolloutStatusResponse);
+  rpc ListScriptScheduleInstances(ListScriptScheduleInstancesRequest)
+      returns (ListScriptScheduleInstancesResponse);
   rpc ListScriptPatchInstanceRollouts(ListScriptPatchInstanceRolloutsRequest)
       returns (ListScriptPatchInstanceRolloutsResponse);
   rpc ListScriptPatchInstanceRolloutEvents(ListScriptPatchInstanceRolloutEventsRequest)
@@ -476,6 +478,41 @@ message GetScriptPatchInstanceRolloutStatusResponse {
   int64 projection_lag_ms = 8;
   bool is_projection_stale = 9;
   shared.v1.ErrorDetail error = 10;
+}
+
+message ListScriptScheduleInstancesRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  int32 limit = 4;
+}
+
+message ScriptScheduleInstanceEntry {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  string script_id = 4;
+  string plugin_id = 5;
+  string plugin_version_id = 6;
+  string event_type = 7;
+  string schedule_definition_id = 8;
+  string schedule_kind = 9;
+  int64 cadence_value = 10;
+  string cadence_unit = 11;
+  string priority_tag = 12;
+  string materialization_status = 13;
+  int64 next_due_at_ms = 14;
+  int64 next_due_tick_id = 15;
+  string observed_runtime_version_id = 16;
+  string last_observed_control_plane_request_id = 17;
+  int64 pin_observed_at_ms = 18;
+  int64 materialized_at_ms = 19;
+  int64 updated_at_ms = 20;
+}
+
+message ListScriptScheduleInstancesResponse {
+  repeated ScriptScheduleInstanceEntry schedules = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message ListScriptPatchInstanceRolloutsRequest {

@@ -10,6 +10,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjectio
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProjectionRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -45,6 +46,7 @@ class ScriptPatchPinProjectionServiceImplTest {
             repository,
             gameSessionControlPlaneClient,
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
             runtimeProperties());
 
     ScriptPatchPinProjectionService.PinConvergenceLookup lookup =
@@ -90,6 +92,7 @@ class ScriptPatchPinProjectionServiceImplTest {
             repository,
             gameSessionControlPlaneClient,
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
             runtimeProperties());
 
     ScriptPatchPinProjectionService.PinConvergenceLookup lookup =

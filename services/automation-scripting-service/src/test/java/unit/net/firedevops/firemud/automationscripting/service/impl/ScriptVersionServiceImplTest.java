@@ -6,19 +6,24 @@ import java.util.List;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleDefinitionService;
+import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class ScriptVersionServiceImplTest {
   private ScriptDefinitionRepository repository;
   private ScriptScheduleDefinitionService scheduleDefinitionService;
+  private ScriptScheduleInstanceService scheduleInstanceService;
   private ScriptVersionServiceImpl service;
 
   @BeforeEach
   void setup() {
     repository = mock(ScriptDefinitionRepository.class);
     scheduleDefinitionService = mock(ScriptScheduleDefinitionService.class);
-    service = new ScriptVersionServiceImpl(repository, scheduleDefinitionService);
+    scheduleInstanceService = mock(ScriptScheduleInstanceService.class);
+    service =
+        new ScriptVersionServiceImpl(
+            repository, scheduleDefinitionService, scheduleInstanceService);
   }
 
   @Test
@@ -37,5 +42,6 @@ class ScriptVersionServiceImplTest {
         .findByTenantIdAndScriptVersionAndNameIn(1L, "v1-script.1", List.of("npc-barkeep"));
     verify(scheduleDefinitionService)
         .refreshPatchSchedules("1", "v1-script.1", List.of(def), List.of("npc-barkeep"));
+    verify(scheduleInstanceService).reconcilePinnedPatchInstances("1", "v1-script.1");
   }
 }

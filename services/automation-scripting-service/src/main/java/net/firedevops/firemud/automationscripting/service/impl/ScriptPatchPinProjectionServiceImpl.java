@@ -9,6 +9,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjectio
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProjectionRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.springframework.context.annotation.Lazy;
@@ -23,16 +24,19 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
   private final ScriptPatchPinProjectionRepository repository;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
+  private final ScriptScheduleInstanceService scheduleInstanceService;
   private final ScriptRuntimeProperties runtimeProperties;
 
   public ScriptPatchPinProjectionServiceImpl(
       ScriptPatchPinProjectionRepository repository,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       @Lazy ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptScheduleInstanceService scheduleInstanceService,
       ScriptRuntimeProperties runtimeProperties) {
     this.repository = repository;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.rolloutProjectionService = rolloutProjectionService;
+    this.scheduleInstanceService = scheduleInstanceService;
     this.runtimeProperties = runtimeProperties;
   }
 
@@ -55,6 +59,8 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
                 gameInstanceId,
                 runtime.getRuntimeState(),
                 now);
+        scheduleInstanceService.reconcileObservedRuntimeState(
+            tenantId, gameInstanceId, runtime.getRuntimeState());
         return new PinConvergenceLookup(Optional.of(toSummary(refreshed, now)), "", "");
       }
       if (existing.isPresent()) {
@@ -89,6 +95,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
         gameInstanceId,
         runtimeState,
         Instant.now());
+    scheduleInstanceService.reconcileObservedRuntimeState(tenantId, gameInstanceId, runtimeState);
     rolloutProjectionService.refreshForInstance(tenantId, gameInstanceId);
   }
 

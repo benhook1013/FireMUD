@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleDefinitionService;
+import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
 import net.firedevops.firemud.common.LoggingUtil;
 import org.slf4j.Logger;
@@ -24,6 +25,7 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
 
   private final ScriptDefinitionRepository repository;
   private final ScriptScheduleDefinitionService scheduleDefinitionService;
+  private final ScriptScheduleInstanceService scheduleInstanceService;
   private final Map<Long, Map<String, String>> registry = new ConcurrentHashMap<>();
 
   @Override
@@ -45,6 +47,7 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
             tenantKey, scriptPatchVersion, affectedScripts);
     scheduleDefinitionService.refreshPatchSchedules(
         tenantId, scriptPatchVersion, defs, affectedScripts);
+    scheduleInstanceService.reconcilePinnedPatchInstances(tenantId, scriptPatchVersion);
     Map<String, String> map = registry.computeIfAbsent(tenantKey, id -> new ConcurrentHashMap<>());
     affectedScripts.forEach(map::remove);
     for (ScriptDefinition def : defs) {

@@ -9,6 +9,7 @@ import net.firedevops.firemud.automationscripting.service.AutomationAdmissionSta
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.AutomationAdmissionMode;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingControlPlaneServiceGrpc;
@@ -48,6 +49,8 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRoll
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesResponse;
 import net.firedevops.firemud.automationscripting.v1.PluginPolicyViolation;
 import net.firedevops.firemud.automationscripting.v1.PluginRuntimeEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsRequest;
@@ -58,6 +61,7 @@ import net.firedevops.firemud.automationscripting.v1.ScriptHandoffEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatusEntry;
+import net.firedevops.firemud.automationscripting.v1.ScriptScheduleInstanceEntry;
 import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeRequest;
 import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeResponse;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionRequest;
@@ -80,6 +84,7 @@ public final class AutomationScriptingControlPlaneGrpcService
   private final PluginRuntimeStateService pluginRuntimeStateService;
   private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
+  private final ScriptScheduleInstanceService scriptScheduleInstanceService;
   private final ScriptRuntimeProperties runtimeProperties;
 
   public AutomationScriptingControlPlaneGrpcService(
@@ -87,13 +92,15 @@ public final class AutomationScriptingControlPlaneGrpcService
       ScriptWorkItemService workItemService,
       PluginRuntimeStateService pluginRuntimeStateService,
       AutomationAdmissionStateService automationAdmissionStateService,
-      ScriptPatchPinProjectionService scriptPatchPinProjectionService) {
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptScheduleInstanceService scriptScheduleInstanceService) {
     this(
         eventRegistryService,
         workItemService,
         pluginRuntimeStateService,
         automationAdmissionStateService,
         scriptPatchPinProjectionService,
+        scriptScheduleInstanceService,
         new ScriptRuntimeProperties());
   }
 
@@ -104,12 +111,14 @@ public final class AutomationScriptingControlPlaneGrpcService
       PluginRuntimeStateService pluginRuntimeStateService,
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
       ScriptRuntimeProperties runtimeProperties) {
     this.eventRegistryService = eventRegistryService;
     this.workItemService = workItemService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
+    this.scriptScheduleInstanceService = scriptScheduleInstanceService;
     this.runtimeProperties = runtimeProperties;
   }
 
@@ -349,6 +358,34 @@ public final class AutomationScriptingControlPlaneGrpcService
                       notFound(
                           "GetScriptPatchInstanceRolloutStatus",
                           "script_patch_instance_rollout_not_found")));
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.listScriptScheduleInstances")
+  public void listScriptScheduleInstances(
+      ListScriptScheduleInstancesRequest request,
+      StreamObserver<ListScriptScheduleInstancesResponse> responseObserver) {
+    ListScriptScheduleInstancesResponse.Builder response =
+        ListScriptScheduleInstancesResponse.newBuilder();
+    try {
+      requireAdminRole();
+      scriptScheduleInstanceService
+          .listInstances(
+              request.getTenantId(),
+              request.getGameInstanceId(),
+              request.getScriptPatchVersion(),
+              request.getLimit())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addSchedules);
     } catch (IllegalArgumentException ex) {
       response.setError(
           ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
@@ -895,6 +932,32 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setStatusReason(summary.statusReason())
         .setObservedAtMs(summary.observedAtMs())
         .setProjectionAsOfMs(summary.projectionAsOfMs())
+        .build();
+  }
+
+  private static ScriptScheduleInstanceEntry toProto(
+      ScriptScheduleInstanceService.ScheduleInstanceSummary summary) {
+    return ScriptScheduleInstanceEntry.newBuilder()
+        .setTenantId(summary.tenantId())
+        .setGameInstanceId(summary.gameInstanceId())
+        .setScriptPatchVersion(summary.scriptPatchVersion())
+        .setScriptId(summary.scriptId())
+        .setPluginId(summary.pluginId())
+        .setPluginVersionId(summary.pluginVersionId())
+        .setEventType(summary.eventType())
+        .setScheduleDefinitionId(summary.scheduleDefinitionId())
+        .setScheduleKind(summary.scheduleKind())
+        .setCadenceValue(summary.cadenceValue())
+        .setCadenceUnit(summary.cadenceUnit())
+        .setPriorityTag(summary.priorityTag())
+        .setMaterializationStatus(summary.materializationStatus())
+        .setNextDueAtMs(summary.nextDueAtMs())
+        .setNextDueTickId(summary.nextDueTickId())
+        .setObservedRuntimeVersionId(summary.observedRuntimeVersionId())
+        .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
+        .setPinObservedAtMs(summary.pinObservedAtMs())
+        .setMaterializedAtMs(summary.materializedAtMs())
+        .setUpdatedAtMs(summary.updatedAtMs())
         .build();
   }
 
