@@ -317,6 +317,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     List<ScriptGameplayCommandHandoffService.EmittedCommand> commands = new ArrayList<>();
     int ordinal = 0;
     for (JsonNode node : commandsNode) {
+      if (!commandNodeEnabled(node, variables)) {
+        continue;
+      }
       String commandText = renderedCommandText(node, variables);
       if (commandText.isBlank()) {
         throw new IllegalArgumentException("command_text_blank");
@@ -332,6 +335,39 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       }
     }
     return List.copyOf(commands);
+  }
+
+  private static boolean commandNodeEnabled(JsonNode node, Map<String, String> variables) {
+    if (node.isTextual()) {
+      return true;
+    }
+    JsonNode whenNode = node.path("when");
+    if (!whenNode.isMissingNode() && !whenNode.isNull() && !conditionsMatch(whenNode, variables)) {
+      return false;
+    }
+    JsonNode unlessNode = node.path("unless");
+    return unlessNode.isMissingNode()
+        || unlessNode.isNull()
+        || !conditionsMatch(unlessNode, variables);
+  }
+
+  private static boolean conditionsMatch(JsonNode conditionsNode, Map<String, String> variables) {
+    if (!conditionsNode.isObject()) {
+      throw new IllegalArgumentException("command_condition_invalid");
+    }
+    var fields = conditionsNode.properties().iterator();
+    while (fields.hasNext()) {
+      Map.Entry<String, JsonNode> condition = fields.next();
+      if (!condition.getValue().isValueNode()) {
+        throw new IllegalArgumentException("command_condition_invalid");
+      }
+      String expected = render(condition.getValue().asText(""), variables);
+      String actual = variables.getOrDefault(condition.getKey(), "");
+      if (!actual.equals(expected)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private JsonNode selectCommandsNode(JsonNode root, String eventType) {

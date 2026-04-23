@@ -368,6 +368,85 @@ class ScriptWorkItemExecutionServiceImplTest {
   }
 
   @Test
+  void supportsConditionalCommandEmissionWithoutOrdinalGaps() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptOutputProperties outputProperties = new ScriptOutputProperties();
+    ScriptWorkItem item = workItem();
+    item.setPayloadJson("{\"shouldGreet\":true,\"muted\":false}");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition(
+        """
+        {
+          "emitCommands": [
+            {
+              "commandText": "say hello",
+              "when": {"payload.shouldGreet": "true"}
+            },
+            {
+              "commandText": "say hidden",
+              "when": {"payload.shouldGreet": "false"}
+            },
+            {
+              "commandText": "say audible",
+              "unless": {"payload.muted": "true"}
+            }
+          ]
+        }
+        """);
+    when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenAnswer(
+            invocation ->
+                new ScriptGameplayCommandHandoffService.HandoffResult(
+                    true,
+                    "ENQUEUED",
+                    "auto-"
+                        + invocation
+                            .<ScriptGameplayCommandHandoffService.EmittedCommand>getArgument(1)
+                            .ordinal(),
+                    ""));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            outputProperties,
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result =
+        service.processPendingWorkItems(10);
+
+    assertThat(result.completedCount()).isEqualTo(1);
+    ArgumentCaptor<ScriptGameplayCommandHandoffService.EmittedCommand> commandCaptor =
+        ArgumentCaptor.forClass(ScriptGameplayCommandHandoffService.EmittedCommand.class);
+    verify(handoffService, Mockito.times(2)).handoff(Mockito.eq(item), commandCaptor.capture());
+    assertThat(commandCaptor.getAllValues())
+        .extracting(ScriptGameplayCommandHandoffService.EmittedCommand::commandText)
+        .containsExactly("say hello", "say audible");
+    assertThat(commandCaptor.getAllValues())
+        .extracting(ScriptGameplayCommandHandoffService.EmittedCommand::ordinal)
+        .containsExactly(0, 1);
+    assertThat(audit.getFinalOutcome()).isEqualTo("success");
+  }
+
+  @Test
   void deadLettersWhenStructuredCommandArgumentRendersBlank() {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     ScriptDefinitionRepository definitionRepository =
