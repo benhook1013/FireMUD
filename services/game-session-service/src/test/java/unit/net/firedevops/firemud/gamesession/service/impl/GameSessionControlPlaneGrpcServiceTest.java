@@ -48,6 +48,10 @@ import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
+import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionRequest;
+import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionResponse;
+import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchRequest;
+import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchResponse;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
@@ -981,6 +985,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("work-1", staged.getAutomationWorkItemId());
     assertEquals("script-1", staged.getScriptId());
     assertEquals("patch-1", staged.getScriptPatchVersion());
+    assertEquals("plugin-1", staged.getPluginId());
+    assertEquals("plugin-v1", staged.getPluginVersionId());
     assertEquals("entity-1", staged.getTargetEntityId());
     assertEquals("region-1", staged.getRegionId());
     assertEquals(12L, staged.getRegionEpoch());
@@ -1032,6 +1038,99 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.verify(commandRepository, Mockito.times(2)).save(commandCaptor.capture());
     GameplayCommand staged = commandCaptor.getAllValues().get(1);
     assertEquals(null, staged.getDueTickId());
+  }
+
+  @Test
+  void purgeQueuedTickCommandsForScriptPatchDelegatesToTickService() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    TickService tickService = Mockito.mock(TickService.class);
+    Mockito.when(
+            tickService.purgeQueuedAutomationCommandsForScriptPatch(
+                1L, 7L, "region-1", "patch-1", "rollback"))
+        .thenReturn(3L);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            gameInstanceRepository,
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<PurgeQueuedTickCommandsForScriptPatchResponse> responseRef =
+        new AtomicReference<>();
+    service.purgeQueuedTickCommandsForScriptPatch(
+        PurgeQueuedTickCommandsForScriptPatchRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setRegionId("region-1")
+            .setScriptPatchVersion("patch-1")
+            .setControlPlaneRequestId("req-1")
+            .setActorPrincipal("admin")
+            .setReason("rollback")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(PurgeQueuedTickCommandsForScriptPatchResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(3L, responseRef.get().getPurgedCount());
+  }
+
+  @Test
+  void purgeQueuedTickCommandsForPluginVersionDelegatesToTickService() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    TickService tickService = Mockito.mock(TickService.class);
+    Mockito.when(
+            tickService.purgeQueuedAutomationCommandsForPluginVersion(
+                1L, 7L, "region-1", "plugin-1", "plugin-v1", "rollback"))
+        .thenReturn(2L);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            gameInstanceRepository,
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<PurgeQueuedTickCommandsForPluginVersionResponse> responseRef =
+        new AtomicReference<>();
+    service.purgeQueuedTickCommandsForPluginVersion(
+        PurgeQueuedTickCommandsForPluginVersionRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setRegionId("region-1")
+            .setPluginId("plugin-1")
+            .setPluginVersionId("plugin-v1")
+            .setControlPlaneRequestId("req-1")
+            .setActorPrincipal("admin")
+            .setReason("rollback")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(PurgeQueuedTickCommandsForPluginVersionResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(2L, responseRef.get().getPurgedCount());
   }
 
   @Test
@@ -1328,6 +1427,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         .setAutomationWorkItemId("work-1")
         .setScriptId("script-1")
         .setScriptPatchVersion("patch-1")
+        .setPluginId("plugin-1")
+        .setPluginVersionId("plugin-v1")
         .setTargetEntityId("entity-1")
         .setCommand("say hello")
         .build();

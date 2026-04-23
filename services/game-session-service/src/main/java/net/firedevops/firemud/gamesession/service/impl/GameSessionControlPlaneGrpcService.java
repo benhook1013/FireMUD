@@ -56,6 +56,10 @@ import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.PreparedVersionUpgrade;
+import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionRequest;
+import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionResponse;
+import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchRequest;
+import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchResponse;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionRequest;
@@ -1073,6 +1077,8 @@ public final class GameSessionControlPlaneGrpcService
     command.setAutomationWorkItemId(request.getAutomationWorkItemId());
     command.setScriptId(request.getScriptId());
     command.setScriptPatchVersion(request.getScriptPatchVersion());
+    command.setPluginId(normalizeBlank(request.getPluginId()));
+    command.setPluginVersionId(normalizeBlank(request.getPluginVersionId()));
     command.setTargetEntityId(request.getTargetEntityId());
     command.setRegionId(request.getRegionId());
     command.setRegionEpoch(request.getRegionEpoch());
@@ -1252,6 +1258,115 @@ public final class GameSessionControlPlaneGrpcService
   private static final class CutoverPreparationValidationException extends RuntimeException {
     private CutoverPreparationValidationException(String message) {
       super(message);
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.purgeQueuedTickCommandsForScriptPatch")
+  public void purgeQueuedTickCommandsForScriptPatch(
+      PurgeQueuedTickCommandsForScriptPatchRequest request,
+      StreamObserver<PurgeQueuedTickCommandsForScriptPatchResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      requireText(request.getScriptPatchVersion(), "script_patch_version is required");
+      requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
+      requireText(request.getActorPrincipal(), "actor_principal is required");
+      requireInstanceOwner(tenantId, gameInstanceId);
+      long purged =
+          tickService.purgeQueuedAutomationCommandsForScriptPatch(
+              tenantId,
+              gameInstanceId,
+              normalizeBlank(request.getRegionId()),
+              request.getScriptPatchVersion(),
+              request.getReason());
+      PurgeQueuedTickCommandsForScriptPatchResponse response =
+          PurgeQueuedTickCommandsForScriptPatchResponse.newBuilder().setPurgedCount(purged).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      PurgeQueuedTickCommandsForScriptPatchResponse response =
+          PurgeQueuedTickCommandsForScriptPatchResponse.newBuilder()
+              .setError(authorizationError("PurgeQueuedTickCommandsForScriptPatch", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      PurgeQueuedTickCommandsForScriptPatchResponse response =
+          PurgeQueuedTickCommandsForScriptPatchResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("PurgeQueuedTickCommandsForScriptPatch failed", ex);
+      PurgeQueuedTickCommandsForScriptPatchResponse response =
+          PurgeQueuedTickCommandsForScriptPatchResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.purgeQueuedTickCommandsForPluginVersion")
+  public void purgeQueuedTickCommandsForPluginVersion(
+      PurgeQueuedTickCommandsForPluginVersionRequest request,
+      StreamObserver<PurgeQueuedTickCommandsForPluginVersionResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      requireText(request.getPluginId(), "plugin_id is required");
+      requireText(request.getPluginVersionId(), "plugin_version_id is required");
+      requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
+      requireText(request.getActorPrincipal(), "actor_principal is required");
+      requireInstanceOwner(tenantId, gameInstanceId);
+      long purged =
+          tickService.purgeQueuedAutomationCommandsForPluginVersion(
+              tenantId,
+              gameInstanceId,
+              normalizeBlank(request.getRegionId()),
+              request.getPluginId(),
+              request.getPluginVersionId(),
+              request.getReason());
+      PurgeQueuedTickCommandsForPluginVersionResponse response =
+          PurgeQueuedTickCommandsForPluginVersionResponse.newBuilder()
+              .setPurgedCount(purged)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      PurgeQueuedTickCommandsForPluginVersionResponse response =
+          PurgeQueuedTickCommandsForPluginVersionResponse.newBuilder()
+              .setError(authorizationError("PurgeQueuedTickCommandsForPluginVersion", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      PurgeQueuedTickCommandsForPluginVersionResponse response =
+          PurgeQueuedTickCommandsForPluginVersionResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("PurgeQueuedTickCommandsForPluginVersion failed", ex);
+      PurgeQueuedTickCommandsForPluginVersionResponse response =
+          PurgeQueuedTickCommandsForPluginVersionResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  private void requireInstanceOwner(long tenantId, long gameInstanceId) {
+    GameInstance instance = getInstanceOrThrow(gameInstanceId);
+    if (instance.getTenantId() != tenantId) {
+      throw new IllegalArgumentException("tenant_id does not own game_instance_id");
     }
   }
 

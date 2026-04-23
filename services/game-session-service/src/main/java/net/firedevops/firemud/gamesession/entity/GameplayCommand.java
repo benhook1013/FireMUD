@@ -96,6 +96,12 @@ public class GameplayCommand {
   @Column(name = "script_patch_version", length = 128)
   private String scriptPatchVersion;
 
+  @Column(name = "plugin_id", length = 128)
+  private String pluginId;
+
+  @Column(name = "plugin_version_id", length = 128)
+  private String pluginVersionId;
+
   @Column(name = "target_entity_id", length = 64)
   private String targetEntityId;
 

@@ -56,6 +56,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class TickServiceImpl implements TickService {
   private static final Logger logger = LoggingUtil.getLogger(TickServiceImpl.class);
+  private static final String PURGED_FAILURE_CODE = "ROLLBACK_PURGED";
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
@@ -205,6 +206,71 @@ public class TickServiceImpl implements TickService {
           normalizedQueueTargetId,
           commandId);
     }
+  }
+
+  @Override
+  public long purgeQueuedAutomationCommandsForScriptPatch(
+      Long tenantId,
+      Long gameInstanceId,
+      String regionId,
+      String scriptPatchVersion,
+      String reason) {
+    requirePositive(tenantId, "tenant_id");
+    requirePositive(gameInstanceId, "game_instance_id");
+    requireText(scriptPatchVersion, "script_patch_version");
+    List<GameplayCommand> commands =
+        gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
+            tenantId, gameInstanceId, normalize(regionId), scriptPatchVersion);
+    return purgeQueuedCommands(tenantId, gameInstanceId, commands, reason);
+  }
+
+  @Override
+  public long purgeQueuedAutomationCommandsForPluginVersion(
+      Long tenantId,
+      Long gameInstanceId,
+      String regionId,
+      String pluginId,
+      String pluginVersionId,
+      String reason) {
+    requirePositive(tenantId, "tenant_id");
+    requirePositive(gameInstanceId, "game_instance_id");
+    requireText(pluginId, "plugin_id");
+    requireText(pluginVersionId, "plugin_version_id");
+    List<GameplayCommand> commands =
+        gameplayCommandRepository.findQueuedAutomationCommandsForPluginVersion(
+            tenantId, gameInstanceId, normalize(regionId), pluginId, pluginVersionId);
+    return purgeQueuedCommands(tenantId, gameInstanceId, commands, reason);
+  }
+
+  private long purgeQueuedCommands(
+      Long tenantId, Long gameInstanceId, List<GameplayCommand> commands, String reason) {
+    if (commands.isEmpty()) {
+      return 0L;
+    }
+    String key = queueKey(tenantId, gameInstanceId);
+    Instant now = Instant.now();
+    for (GameplayCommand command : commands) {
+      redisTemplate
+          .opsForList()
+          .remove(
+              key,
+              0,
+              queuePayload(
+                  command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText()));
+      command.setExecutionOutcome("PURGED");
+      command.setGameplayResult("NOT_APPLIED");
+      command.setCompletedAt(now);
+      command.setLastAttemptAt(now);
+      command.setFailureCode(PURGED_FAILURE_CODE);
+      command.setFailureMessage(truncate(reason, 500));
+    }
+    gameplayCommandRepository.saveAll(commands);
+    logger.info(
+        "Purged {} queued automation commands tenantId={} gameInstanceId={}",
+        commands.size(),
+        tenantId,
+        gameInstanceId);
+    return commands.size();
   }
 
   @Override
@@ -761,6 +827,22 @@ public class TickServiceImpl implements TickService {
       return value;
     }
     return value.substring(0, maxLength);
+  }
+
+  private void requirePositive(Long value, String fieldName) {
+    if (value == null || value <= 0) {
+      throw new IllegalArgumentException(fieldName + " must be positive");
+    }
+  }
+
+  private void requireText(String value, String fieldName) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException(fieldName + " is required");
+    }
+  }
+
+  private String normalize(String value) {
+    return value == null ? "" : value;
   }
 
   private String failureCode(Exception ex) {

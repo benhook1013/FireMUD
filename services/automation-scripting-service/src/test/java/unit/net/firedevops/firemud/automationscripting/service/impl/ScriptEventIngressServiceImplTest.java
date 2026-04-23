@@ -115,6 +115,8 @@ class ScriptEventIngressServiceImplTest {
                 .setRegionEpoch(7)
                 .setEntityId("entity-1")
                 .setScriptId("script-1")
+                .setPluginId("plugin-1")
+                .setPluginVersionId("plugin-v1")
                 .setEventType("onCommand")
                 .setScriptPatchVersion("patch-1")
                 .setScriptEventId("event-1")
@@ -134,6 +136,8 @@ class ScriptEventIngressServiceImplTest {
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(workItemRepository).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getValue().getScriptId()).isEqualTo("script-1");
+    assertThat(workItemCaptor.getValue().getPluginId()).isEqualTo("plugin-1");
+    assertThat(workItemCaptor.getValue().getPluginVersionId()).isEqualTo("plugin-v1");
     assertThat(workItemCaptor.getValue().getStatus()).isEqualTo("PENDING_EVALUATION");
     ArgumentCaptor<ScriptEventAudit> eventAuditCaptor =
         ArgumentCaptor.forClass(ScriptEventAudit.class);

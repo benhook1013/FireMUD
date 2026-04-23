@@ -629,6 +629,8 @@ message EnqueueAutomationCommandIfAbsentRequest {
   string target_entity_id = 10;
   string command = 11;
   bool requires_solo_tick = 12;
+  string plugin_id = 13;
+  string plugin_version_id = 14;
 }
 
 message EnqueueAutomationCommandIfAbsentResponse {

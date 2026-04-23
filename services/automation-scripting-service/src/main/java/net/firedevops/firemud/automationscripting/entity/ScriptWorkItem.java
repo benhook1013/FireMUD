@@ -36,6 +36,12 @@ public class ScriptWorkItem {
   @Column(nullable = false, length = 128)
   private String scriptId;
 
+  @Column(length = 128)
+  private String pluginId;
+
+  @Column(length = 128)
+  private String pluginVersionId;
+
   @Column(nullable = false, length = 128)
   private String eventType;
 

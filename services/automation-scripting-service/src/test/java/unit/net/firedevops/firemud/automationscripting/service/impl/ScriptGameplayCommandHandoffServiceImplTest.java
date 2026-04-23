@@ -68,6 +68,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(requestCaptor.getValue().getAutomationWorkItemId()).isEqualTo("99");
     assertThat(requestCaptor.getValue().getCommand()).isEqualTo("say hello");
     assertThat(requestCaptor.getValue().getDueTickId()).isEqualTo(34L);
+    assertThat(requestCaptor.getValue().getPluginId()).isEqualTo("plugin-1");
+    assertThat(requestCaptor.getValue().getPluginVersionId()).isEqualTo("plugin-v1");
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(workItemRepository, Mockito.times(2)).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getAllValues().get(1).getStatus()).isEqualTo("HANDED_OFF");
@@ -170,6 +172,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     item.setRegionEpoch(12L);
     item.setEntityId("entity-1");
     item.setScriptId("script-1");
+    item.setPluginId("plugin-1");
+    item.setPluginVersionId("plugin-v1");
     item.setScriptPatchVersion("patch-1");
     item.setAdmissionEpoch(1L);
     item.setUpdatedAt(Instant.EPOCH);

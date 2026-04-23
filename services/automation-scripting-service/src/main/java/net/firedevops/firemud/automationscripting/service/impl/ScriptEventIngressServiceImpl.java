@@ -248,6 +248,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L);
     item.setEntityId(normalize(request.getEntityId()));
     item.setScriptId(binding.getScriptId());
+    item.setPluginId(normalize(request.getPluginId()));
+    item.setPluginVersionId(normalize(request.getPluginVersionId()));
     item.setEventType(request.getEventType());
     item.setEventSchemaVersion(schemaVersion);
     item.setScriptPatchVersion(request.getScriptPatchVersion());

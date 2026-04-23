@@ -117,6 +117,53 @@ class TickServiceImplTest {
   }
 
   @Test
+  void purgeQueuedAutomationCommandsForScriptPatchRemovesRedisPayloadAndMarksTerminal() {
+    var command = gameplayCommand("cmd-1");
+    command.setTenantId(1L);
+    command.setGameInstanceId(2L);
+    command.setSourceType("AUTOMATION");
+    command.setScriptPatchVersion("patch-1");
+    command.setCommandText("say hello");
+    command.setRequiresSoloTick(false);
+    when(gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
+            1L, 2L, "region-1", "patch-1"))
+        .thenReturn(List.of(command));
+
+    long purged =
+        service.purgeQueuedAutomationCommandsForScriptPatch(
+            1L, 2L, "region-1", "patch-1", "rollback");
+
+    org.junit.jupiter.api.Assertions.assertEquals(1L, purged);
+    verify(listOps).remove("gamesession:tick:queue:1:2", 0, "N|cmd-1|say hello");
+    org.junit.jupiter.api.Assertions.assertEquals("PURGED", command.getExecutionOutcome());
+    org.junit.jupiter.api.Assertions.assertEquals("NOT_APPLIED", command.getGameplayResult());
+    org.junit.jupiter.api.Assertions.assertEquals("ROLLBACK_PURGED", command.getFailureCode());
+    org.junit.jupiter.api.Assertions.assertEquals("rollback", command.getFailureMessage());
+    org.junit.jupiter.api.Assertions.assertNotNull(command.getCompletedAt());
+    verify(gameplayCommandRepository).saveAll(List.of(command));
+  }
+
+  @Test
+  void purgeQueuedAutomationCommandsForPluginVersionUsesPluginProvenance() {
+    var command = gameplayCommand("cmd-2");
+    command.setCommandText("emote waves");
+    command.setPluginId("plugin-1");
+    command.setPluginVersionId("plugin-v1");
+    when(gameplayCommandRepository.findQueuedAutomationCommandsForPluginVersion(
+            1L, 2L, "", "plugin-1", "plugin-v1"))
+        .thenReturn(List.of(command));
+
+    long purged =
+        service.purgeQueuedAutomationCommandsForPluginVersion(
+            1L, 2L, "", "plugin-1", "plugin-v1", "plugin rollback");
+
+    org.junit.jupiter.api.Assertions.assertEquals(1L, purged);
+    verify(listOps).remove("gamesession:tick:queue:1:2", 0, "N|cmd-2|emote waves");
+    org.junit.jupiter.api.Assertions.assertEquals("PURGED", command.getExecutionOutcome());
+    org.junit.jupiter.api.Assertions.assertEquals("plugin rollback", command.getFailureMessage());
+  }
+
+  @Test
   void processTickUsesGameplayNamespacedLockAndPendingKeys() {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
@@ -403,6 +450,7 @@ class TickServiceImplTest {
       String commandId) {
     var command = new net.firedevops.firemud.gamesession.entity.GameplayCommand();
     command.setCommandId(commandId);
+    command.setCommandText("look");
     command.setAttemptCount(1);
     command.setExecutionOutcome("STAGED");
     command.setGameplayResult("PENDING");

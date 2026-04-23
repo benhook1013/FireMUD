@@ -103,6 +103,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setAutomationWorkItemId(workItem.getId().toString())
         .setScriptId(workItem.getScriptId())
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
+        .setPluginId(normalize(workItem.getPluginId()))
+        .setPluginVersionId(normalize(workItem.getPluginVersionId()))
         .setTargetEntityId(workItem.getEntityId())
         .setCommand(command.commandText())
         .setRequiresSoloTick(command.requiresSoloTick())
@@ -152,6 +154,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
 
   private static String dispatchId(ScriptWorkItem workItem, int ordinal) {
     return "workItem:" + workItem.getId() + "#" + ordinal;
+  }
+
+  private static String normalize(String value) {
+    return value == null ? "" : value;
   }
 
   private static void requireWorkItem(ScriptWorkItem workItem) {

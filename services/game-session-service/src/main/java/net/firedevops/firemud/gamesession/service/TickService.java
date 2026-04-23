@@ -34,6 +34,23 @@ public interface TickService {
   /** Allow ticks to resume normally for a single game instance. */
   void resumeTicksForGameInstance(Long gameInstanceId, String reason);
 
+  /** Remove not-yet-staged automation commands for a script patch from the tick queue. */
+  long purgeQueuedAutomationCommandsForScriptPatch(
+      Long tenantId,
+      Long gameInstanceId,
+      String regionId,
+      String scriptPatchVersion,
+      String reason);
+
+  /** Remove not-yet-staged automation commands for a plugin version from the tick queue. */
+  long purgeQueuedAutomationCommandsForPluginVersion(
+      Long tenantId,
+      Long gameInstanceId,
+      String regionId,
+      String pluginId,
+      String pluginVersionId,
+      String reason);
+
   /** Whether ticks are currently paused. */
   net.firedevops.firemud.gamesession.v1.TickStatus getTickStatus();
 }

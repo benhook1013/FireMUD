@@ -12,7 +12,8 @@
 - `LOOK`, `SAY`, `WHISPER`, `TELL`, `INVENTORY`, `INV HERE`, `GET`, `DROP`, `CONTAINER`, `PUT`, `TAKE`, `EQUIPMENT`, `WEAR`, and `REMOVE` are implemented through the current gameplay slices, including nearby room-ground container inspection and transfer.
 - Item command invocation/failure metrics are emitted through `gamesession.command.item.*` with command type and error tags.
 - Redis-backed session context, command queuing, tick-oriented coordination, feature flags, gRPC surfaces, and WebSocket handling exist in the service.
-- Game Session owns the idempotent automation-command admission boundary through `EnqueueAutomationCommandIfAbsent`, with Automation dispatch/work-item correlation persisted on the gameplay command ledger before tick staging.
+- Game Session owns the idempotent automation-command admission boundary through `EnqueueAutomationCommandIfAbsent`, with Automation dispatch/work-item correlation plus script-patch and plugin-version provenance persisted on the gameplay command ledger before tick staging.
+- Game Session now implements rollback queue purge controls for script-patch and plugin-version scopes by removing matching not-yet-drained Redis queue entries and terminal-marking durable gameplay commands as purged.
 - Game Session now exposes a canonical control-plane runtime-state read for `(tenantId, gameInstanceId)` including current runtime version, launch descriptor, version/release identifiers, and script-patch pin metadata including the persisted pin `controlPlaneRequestId`, plus a direct `GetGameSessionPinConvergence` read for rollback/promotion orchestration.
 - Reconnection/session-takeover concepts are partially implemented at the current slice level.
 - The `02.14` runtime-identity/logging baseline is live here, and the highest-value gameplay command paths already enrich logs with `tenantId`, `gameInstanceId`, and `characterId` when that context is known.
