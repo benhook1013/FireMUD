@@ -300,6 +300,38 @@ class TickServiceImplTest {
   }
 
   @Test
+  void processTickPersistsSelectedWorkManifestOnBatch() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("S|cmd-1|say \"hello\"");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("S|cmd-1|say \"hello\""));
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-1")));
+
+    service.processTick(1L, 2L);
+
+    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.TickBatch> batchCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.TickBatch.class);
+    verify(tickBatchRepository, org.mockito.Mockito.atLeastOnce()).save(batchCaptor.capture());
+    net.firedevops.firemud.gamesession.entity.TickBatch stagedBatch =
+        batchCaptor.getAllValues().stream()
+            .filter(batch -> batch.getSelectedWorkManifestJson() != null)
+            .findFirst()
+            .orElseThrow();
+    org.junit.jupiter.api.Assertions.assertEquals(1, stagedBatch.getExpectedEffectCount());
+    org.junit.jupiter.api.Assertions.assertNotNull(stagedBatch.getSelectedWorkManifestDigest());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"effectKey\":\"command:cmd-1\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"requiresSoloTick\":true"));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"commandDigest\""));
+    org.junit.jupiter.api.Assertions.assertFalse(
+        stagedBatch.getSelectedWorkManifestJson().contains("say \"hello\""));
+  }
+
+  @Test
   @SuppressWarnings("unchecked")
   void processTickPersistsDeterministicEffectIdentity() {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))

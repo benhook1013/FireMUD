@@ -547,6 +547,10 @@ public class TickServiceImpl implements TickService {
     batch.setStatus("STAGED");
     batch.setRequiresSoloTick(requiresSoloTick);
     batch.setCommandCount(entries.size());
+    batch.setExpectedEffectCount(entries.size());
+    String selectedWorkManifest = selectedWorkManifest(entries);
+    batch.setSelectedWorkManifestJson(selectedWorkManifest);
+    batch.setSelectedWorkManifestDigest(shortHash(selectedWorkManifest));
     batch.setStagedAt(now);
     TickBatch savedBatch = tickBatchRepository.save(batch);
     persistEffects(savedBatch, gameInstanceId, now, entries);
@@ -921,6 +925,60 @@ public class TickServiceImpl implements TickService {
 
   private String effectId(String tickBatchId, String effectKey) {
     return "tfx-" + shortHash(tickBatchId + "|" + effectKey);
+  }
+
+  private String selectedWorkManifest(List<QueuedCommandEnvelope> entries) {
+    StringBuilder builder = new StringBuilder();
+    builder.append("{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"items\":[");
+    for (int index = 0; index < entries.size(); index++) {
+      if (index > 0) {
+        builder.append(',');
+      }
+      QueuedCommandEnvelope entry = entries.get(index);
+      builder
+          .append("{\"sourceKind\":\"GAMEPLAY_COMMAND\",\"sourceOrdinal\":")
+          .append(index)
+          .append(",\"effectKey\":\"")
+          .append(jsonEscape(effectKey(entry, index)))
+          .append("\",\"commandId\":");
+      if (entry.commandId() == null || entry.commandId().isBlank()) {
+        builder.append("null");
+      } else {
+        builder.append('"').append(jsonEscape(entry.commandId())).append('"');
+      }
+      builder
+          .append(",\"requiresSoloTick\":")
+          .append(entry.requiresSoloTick())
+          .append(",\"commandDigest\":\"")
+          .append(shortHash(entry.command()))
+          .append("\"}");
+    }
+    builder.append("]}");
+    return builder.toString();
+  }
+
+  private String jsonEscape(String value) {
+    StringBuilder builder = new StringBuilder(value.length());
+    for (int index = 0; index < value.length(); index++) {
+      char current = value.charAt(index);
+      switch (current) {
+        case '"' -> builder.append("\\\"");
+        case '\\' -> builder.append("\\\\");
+        case '\b' -> builder.append("\\b");
+        case '\f' -> builder.append("\\f");
+        case '\n' -> builder.append("\\n");
+        case '\r' -> builder.append("\\r");
+        case '\t' -> builder.append("\\t");
+        default -> {
+          if (current < 0x20) {
+            builder.append(String.format("\\u%04x", (int) current));
+          } else {
+            builder.append(current);
+          }
+        }
+      }
+    }
+    return builder.toString();
   }
 
   private String shortHash(String value) {

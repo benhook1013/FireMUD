@@ -137,7 +137,7 @@ For cross-service invariants, see [Scripting Contracts](../../system-architectur
 Game Session now has a real current-boundary durable gameplay execution seam instead of stopping at queue staging:
 
 - accepted gameplay commands persist a durable command ledger row with both a human-safe sanitized text projection and the canonical raw command payload used for later execution;
-- the tick runtime stages Redis queue work into durable `tick_batch` / `tick_effect` rows before drain commit;
+- the tick runtime stages Redis queue work into durable `tick_batch` / `tick_effect` rows before drain commit, including the current-boundary selected-work manifest, expected effect count, and manifest digest on the batch row;
 - after drain commit, Game Session resumes from any durable `DRAINED` effects for that queue boundary and executes the supported command families from the ledger itself rather than assuming Redis drain already implies terminal gameplay work;
 - drained effects re-check the durable runtime owner row before application. If the batch fence is stale, unapplied drained effects are marked `ABANDONED`, their durable commands are requeued for a fresh fenced batch, and the old executor does not invoke the effect handler.
 

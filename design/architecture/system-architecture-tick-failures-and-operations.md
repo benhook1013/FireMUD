@@ -13,7 +13,7 @@ This document describes the full target-state recovery and operator model. The c
 - the live durable ownership row is currently `{tenantId, gameInstanceId}`-scoped;
 - the live owner/status API is `GetRuntimeOwnershipStatus`, not yet a full region-scoped status surface;
 - the live fence token is opaque and compare-and-match based;
-- the live `tick_batch` / `tick_effect` ledger is real, but the full selected-work manifest, region-scoped replay controller breadth, and cross-region result-return semantics described below remain target-state follow-through.
+- the live `tick_batch` / `tick_effect` ledger is real and now carries the current gameplay-command selected-work manifest on `tick_batch`, but timer/retry/remote-follow-up source-claim manifests, region-scoped replay controller breadth, and cross-region result-return semantics described below remain target-state follow-through.
 
 ## What This Covers
 
