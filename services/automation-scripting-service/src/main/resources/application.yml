@@ -58,6 +58,10 @@ script:
   quota:
     limit: ${SCRIPT_QUOTA_LIMIT:50}
     window-seconds: ${SCRIPT_QUOTA_WINDOW_SECONDS:60}
+  tenant-budget:
+    high-runs-per-minute: ${SCRIPT_TENANT_BUDGET_HIGH_RUNS_PER_MINUTE:120}
+    normal-runs-per-minute: ${SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE:60}
+    background-runs-per-minute: ${SCRIPT_TENANT_BUDGET_BACKGROUND_RUNS_PER_MINUTE:30}
   test:
     max-runs-per-minute: ${SCRIPT_TEST_MAX_RUNS_PER_MINUTE:60}
     max-runs-per-minute-per-principal: ${SCRIPT_TEST_MAX_RUNS_PER_MINUTE_PER_PRINCIPAL:30}

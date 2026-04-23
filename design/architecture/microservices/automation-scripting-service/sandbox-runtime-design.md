@@ -241,7 +241,7 @@ Sandbox behavior is shaped by a combination of in-code defaults and environment 
 - `AUTOMATION_TICK_BUDGET_MS` – provides a soft execution budget for script work performed inside a single automation tick; it informs the per-run budget tokens allocated to sandboxed evaluations.
 - `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` / `SCRIPT_EVENT_AUDIT_MAX_ROWS` – control how long sandbox outcomes (for example, `sandbox_error` with `cpu_budget_exceeded` or `memory_budget_exceeded`) remain queryable in `script_event_audit`.
 
-Per-script and per-tenant quotas (for example, `SCRIPT_QUOTA_LIMIT` and `SCRIPT_QUOTA_WINDOWSECONDS`) are documented in the service configuration and operations docs and in `design/architecture/system-architecture-scripting-quotas-and-operations.md`; they work in tandem with the sandbox budgets to determine whether a run is admitted and how much CPU and memory it can consume.
+Per-script and per-tenant quotas (for example, `SCRIPT_QUOTA_LIMIT`, `SCRIPT_QUOTA_WINDOW_SECONDS`, and `SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE`) are documented in the service configuration and operations docs and in `design/architecture/system-architecture-scripting-quotas-and-operations.md`; they work in tandem with the sandbox budgets to determine whether a run is admitted and how much CPU and memory it can consume.
 
 Additional resource-related environment variables may be introduced over time. New knobs should be documented first in the Automation & Scripting Service configuration doc and, where they materially affect sandbox semantics, referenced from this section so operators and implementers can correlate configuration changes with the behavior described above.
 

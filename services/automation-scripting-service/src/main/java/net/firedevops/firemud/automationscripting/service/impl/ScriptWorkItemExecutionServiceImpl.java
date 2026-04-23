@@ -17,6 +17,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandH
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
+import net.firedevops.firemud.automationscripting.service.quota.ScriptTenantBudgetService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
@@ -28,9 +29,12 @@ import tools.jackson.databind.ObjectMapper;
     justification = "Injected collaborators are retained internally by Spring services.")
 public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecutionService {
   private static final String STATUS_HANDED_OFF = "HANDED_OFF";
+  private static final String STATUS_CANCELED = "CANCELED";
   private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
+  private static final String STAGE_ADMISSION = "ADMISSION";
   private static final String STAGE_DSL_EVAL = "DSL_EVAL";
   private static final String STAGE_TICK_HANDOFF = "TICK_HANDOFF";
+  private static final String DEFAULT_PRIORITY_TIER = "normal";
 
   private final ScriptWorkItemService workItemService;
   private final ScriptDefinitionRepository scriptDefinitionRepository;
@@ -39,6 +43,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ScriptEventAuditRepository auditRepository;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
   private final ScriptOutputProperties outputProperties;
+  private final ScriptTenantBudgetService tenantBudgetService;
   private final ObjectMapper objectMapper;
 
   public ScriptWorkItemExecutionServiceImpl(
@@ -49,6 +54,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptEventAuditRepository auditRepository,
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
       ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
       ObjectMapper objectMapper) {
     this.workItemService = workItemService;
     this.scriptDefinitionRepository = scriptDefinitionRepository;
@@ -57,6 +63,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.auditRepository = auditRepository;
     this.rolloutProjectionService = rolloutProjectionService;
     this.outputProperties = outputProperties;
+    this.tenantBudgetService = tenantBudgetService;
     this.objectMapper = objectMapper;
   }
 
@@ -78,6 +85,12 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
     Instant now = Instant.now();
+    if (!workItem.isDryRun()
+        && !tenantBudgetService.tryReserve(workItem.getTenantId(), DEFAULT_PRIORITY_TIER)) {
+      cancel(workItem, STAGE_ADMISSION, "tenant_budget_exceeded", "tenant_budget_exceeded", now);
+      return false;
+    }
+
     Optional<ScriptDefinition> definition =
         scriptDefinitionRepository.findByTenantIdAndScriptVersionAndName(
             parseTenantId(workItem), workItem.getScriptPatchVersion(), workItem.getScriptId());
@@ -216,6 +229,16 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private void deadLetter(
       ScriptWorkItem workItem, String stage, String outcome, String reason, Instant now) {
     workItem.setStatus(STATUS_DEAD_LETTERED);
+    workItem.setCancelReason(reason);
+    workItem.setUpdatedAt(now);
+    workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(workItem);
+    updateAudit(workItem.getId(), stage, outcome, reason, now);
+  }
+
+  private void cancel(
+      ScriptWorkItem workItem, String stage, String outcome, String reason, Instant now) {
+    workItem.setStatus(STATUS_CANCELED);
     workItem.setCancelReason(reason);
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);

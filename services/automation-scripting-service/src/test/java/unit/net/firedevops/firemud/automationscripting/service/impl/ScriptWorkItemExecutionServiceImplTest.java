@@ -18,6 +18,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandH
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
+import net.firedevops.firemud.automationscripting.service.quota.ScriptTenantBudgetService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -73,6 +74,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             auditRepository,
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             outputProperties,
+            allowingTenantBudgetService(),
             new ObjectMapper());
 
     ScriptWorkItemExecutionService.ExecutionBatchResult result =
@@ -117,6 +119,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             auditRepository,
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             outputProperties,
+            allowingTenantBudgetService(),
             new ObjectMapper());
 
     ScriptWorkItemExecutionService.ExecutionBatchResult result =
@@ -168,6 +171,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             auditRepository,
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             outputProperties,
+            denyingTenantBudgetService(),
             new ObjectMapper());
 
     ScriptWorkItemExecutionService.ExecutionBatchResult result =
@@ -179,6 +183,106 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
     assertThat(audit.getFinalOutcome()).isEqualTo("dry_run_completed");
     assertThat(audit.getFinalReason()).isEqualTo("dry_run_no_handoff");
+  }
+
+  @Test
+  void dryRunDoesNotReserveLiveTenantBudget() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptOutputProperties outputProperties = new ScriptOutputProperties();
+    ScriptTenantBudgetService tenantBudgetService = Mockito.mock(ScriptTenantBudgetService.class);
+    ScriptWorkItem item = workItem();
+    item.setDryRun(true);
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"say dry\"}]}");
+    when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            outputProperties,
+            tenantBudgetService,
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result =
+        service.processPendingWorkItems(10);
+
+    assertThat(result.completedCount()).isEqualTo(1);
+    Mockito.verify(tenantBudgetService, Mockito.never()).tryReserve(Mockito.any(), Mockito.any());
+    Mockito.verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
+    assertThat(item.getStatus()).isEqualTo("HANDED_OFF");
+    assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
+    assertThat(audit.getFinalOutcome()).isEqualTo("dry_run_completed");
+    assertThat(audit.getFinalReason()).isEqualTo("dry_run_no_handoff");
+  }
+
+  @Test
+  void tenantBudgetDenialCancelsBeforeDefinitionEvaluation() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptOutputProperties outputProperties = new ScriptOutputProperties();
+    ScriptWorkItem item = workItem();
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            outputProperties,
+            denyingTenantBudgetService(),
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result =
+        service.processPendingWorkItems(10);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    Mockito.verify(definitionRepository, Mockito.never())
+        .findByTenantIdAndScriptVersionAndName(Mockito.anyLong(), Mockito.any(), Mockito.any());
+    Mockito.verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("tenant_budget_exceeded");
+    assertThat(audit.getFinalStage()).isEqualTo("ADMISSION");
+    assertThat(audit.getFinalOutcome()).isEqualTo("tenant_budget_exceeded");
+    assertThat(audit.getFinalReason()).isEqualTo("tenant_budget_exceeded");
+  }
+
+  private static ScriptTenantBudgetService allowingTenantBudgetService() {
+    ScriptTenantBudgetService service = Mockito.mock(ScriptTenantBudgetService.class);
+    when(service.tryReserve(Mockito.any(), Mockito.any())).thenReturn(true);
+    return service;
+  }
+
+  private static ScriptTenantBudgetService denyingTenantBudgetService() {
+    ScriptTenantBudgetService service = Mockito.mock(ScriptTenantBudgetService.class);
+    when(service.tryReserve(Mockito.any(), Mockito.any())).thenReturn(false);
+    return service;
   }
 
   private static ScriptWorkItem workItem() {

@@ -32,6 +32,13 @@ public final class AutomationRedisKeys {
         + requirePart("scriptId", scriptId);
   }
 
+  public static String automationTenantBudget(String tenantId, String priorityTier) {
+    return "automation:tenant-budget:"
+        + requirePart("tenantId", tenantId)
+        + ":tier:"
+        + requirePart("priorityTier", priorityTier);
+  }
+
   public static String automationDryRunTenantQuota(String tenantId, String scriptId) {
     return "automation:test:quota:"
         + requirePart("tenantId", tenantId)

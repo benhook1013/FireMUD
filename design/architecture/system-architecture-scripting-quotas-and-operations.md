@@ -155,6 +155,7 @@ Quota and budget policy must be applied at fixed charge points so operators can 
   - Charged when a handler-scoped run is reserved onto live sandbox execution capacity.
   - Event-scope ingress acceptance alone does not charge tenant runtime budget.
   - Mixed fan-out therefore consumes tenant runtime budget only for handlers that actually leave admission and reserve execution capacity.
+  - Current Automation execution enforces this with `ScriptTenantBudgetService` before live durable work items evaluate script definitions. Budget-denied work items are terminally canceled with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded`, and `finalReason=tenant_budget_exceeded`.
 - **Cluster-wide execution ceilings**
   - Applied at the same execution-reservation point as tenant runtime budgets.
   - Admission rejections due purely to cluster exhaustion must remain `ADMISSION` outcomes and must not burn sandbox CPU/memory budget.
@@ -183,7 +184,7 @@ Budgets operate at three main levels:
   - Concurrency and queue policies cap how many runs may be active or buffered at a time.
 
 - **Per-tenant**:
-  - Budgets per tenant and priority tier are tracked via metrics such as `automation_script_tenant_budget_seconds{tenantId, tier}`.
+  - Budgets per tenant and priority tier are tracked through the live reservation counters `automation:tenant-budget:<tenantId>:tier:<tier>` and metrics such as `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}`.
   - When a tenant exhausts its budget for a tier, lower-priority work for that tenant is skipped (`automation_script_skips_total{reason="tenant_budget_exceeded"}`) while other tenants continue to make progress.
 
 - **Cluster-wide**:
@@ -198,10 +199,10 @@ The table below summarizes the major quota and budget types that apply to script
 
 | Type | Scope | Governing settings / sources | Primary metrics |
 | --- | --- | --- | --- |
-| **Per-script quota** | Per script (`tenantId`, `scriptId`) | `SCRIPT_QUOTA_LIMIT`, `SCRIPT_QUOTA_WINDOWSECONDS`, evaluated by `ScriptQuotaService` before a run starts. | Quota-allow/deny and drop metrics for individual scripts; see the Automation & Scripting Service README for exact meter names and labels. |
+| **Per-script quota** | Per script (`tenantId`, `scriptId`) | `SCRIPT_QUOTA_LIMIT`, `SCRIPT_QUOTA_WINDOW_SECONDS`, evaluated by `ScriptQuotaService` before a run starts. | Quota-allow/deny and drop metrics for individual scripts; see the Automation & Scripting Service README for exact meter names and labels. |
 | **Per-script cadence & concurrency** | Per script | `intervalTicks`, `concurrencyPolicy` (`drop_new` / `queue_until_free`), `maxConcurrent`. Stored in script metadata and used by the scheduler when deciding which triggers to admit. | Queue delay and drop metrics plus stage-aware audit fields (`finalStage`, `finalOutcome`, `finalReason`) such as `finalStage=ADMISSION` with `finalOutcome=quota_denied`. |
 | **Per-script priority** | Per script | `priorityTag` (`high`, `normal`, `background`) and per-tier enqueue budgets (for example, `high=8/min`, `normal=4/min`, `background=2/min`). | Tiered trigger/skip metrics that show how often high/normal/background work is admitted or throttled. |
-| **Per-tenant tier budgets** | Per tenant and priority tier | Tenant-scoped automation budgets per tier, tracked as aggregates such as `automation_script_tenant_budget_seconds{tenantId, tier}`. | Budget consumption and skip metrics per tenant/tier, plus matching audit entries with `finalStage=ADMISSION` and `finalOutcome=tenant_budget_exceeded`. |
+| **Per-tenant tier budgets** | Per tenant and priority tier | `SCRIPT_TENANT_BUDGET_HIGH_RUNS_PER_MINUTE`, `SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE`, and `SCRIPT_TENANT_BUDGET_BACKGROUND_RUNS_PER_MINUTE`, evaluated by `ScriptTenantBudgetService` when live work reserves execution capacity. | Budget allow/deny metrics per tenant/tier, plus matching audit entries with `finalStage=ADMISSION` and `finalOutcome=tenant_budget_exceeded`. |
 | **Cluster-wide safety limits** | Entire Automation & Scripting cluster | Global ceilings on automation work, including `AUTOMATION_TICK_MAX_EVENTS` and cluster-level CPU/time budgets. | Cluster-level throughput and drop metrics that indicate when global ceilings are hit. |
 
 Per-trigger output is also part of the quota model even when the run itself was admitted successfully:
@@ -296,7 +297,7 @@ For scripting and automation, these metrics follow shared naming and labeling co
 - `automation_script_sandbox_failures_total{tenantId, scriptId, pluginId, reason}` – sandbox-level failures such as `reason="cpu_budget_exceeded"` or `reason="memory_budget_exceeded"`.
 - `automation_script_errors_total{tenantId, scriptId, pluginId, reason}` – higher-level error classification, including downstream failures.
 - `automation_script_output_budget_exceeded_total{tenantId, scriptId, pluginId, reason}` – counts runs rejected because emitted work exceeded bounded output ceilings such as `command_count_exceeded` or `work_item_size_exceeded`.
-- `automation_script_tenant_budget_seconds{tenantId, tier}` – per-tenant, per-priority-tier budget consumption.
+- `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}` – per-tenant, per-priority-tier live execution reservation decisions.
 - `automation_script_runtime_seconds{tenantId, scriptId, pluginId, eventType}` – distribution of sandbox runtime per script/plugin and event type.
 - `automation_plugin_policy_violations_total{tenantId, pluginId, pluginVersionId, componentId, reason}` – counts plugin triggers rejected due to component policy; each violation should correspond to a `script_event_audit` entry with `finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` indicating the blocked component/policy decision.
 - `automation_script_timer_catchup_truncated_total{tenantId, scriptId, eventType, reason}` – counts timer catch-up firings intentionally truncated by resume-window limits.

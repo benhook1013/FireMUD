@@ -36,7 +36,7 @@ All other controls (for example, per-tenant heuristics, noisy-tenant detection s
   - Coordination Redis must not host large, eviction-driven caches under any profile. Even in development and hobby/self-hosted profiles, caches and rate limits are pointed at the separate Cache/Rate-Limit deployment so eviction and OOM behavior cannot silently affect coordination keys. The only supported exceptions are explicitly ephemeral test stacks that opt out of tail-loss and role-separation guarantees; see `system-architecture-redis-usage-and-profiles.md` for environment profiles and mappings.
 - No soft coordination logs on Cache/Rate-Limit Redis:
   - Tick ordering, tick idempotency, and any correctness or fairness invariants for gameplay **must not** depend on cache or rate-limit keys. Cache/Rate-Limit Redis may only influence latency and load, never “what happened” or “in which order” from the tick engine’s perspective.
-  - Automation and scripting structures on Cache/Rate-Limit Redis (for example `automation:queue:*`, `automation:quota:*`) are explicitly documented as best-effort buffers and counters; they cannot act as authoritative logs or effect ledgers. Durable automation schedules and quotas live in PostgreSQL; cache entries merely accelerate lookups and quota checks.
+  - Automation and scripting structures on Cache/Rate-Limit Redis (for example `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`) are explicitly documented as best-effort buffers and counters; they cannot act as authoritative logs or effect ledgers. Durable automation schedules and quotas live in PostgreSQL; cache entries merely accelerate lookups and quota checks.
   - If a new feature appears to need a durable or authoritative log for tick- or session-driven workflows, that log belongs in PostgreSQL (for example as a ledger or follow-up table) or, in rare cases, on Coordination Redis with explicit reset/tail-loss rules—not on Cache/Rate-Limit Redis.
 
 ### Forbidden Patterns (Cache/Rate-Limit Redis)
@@ -50,7 +50,7 @@ To keep Cache/Rate-Limit Redis clearly separate from coordination concerns:
   - Cache presence (for example, an `inventory:*` or `view:*` hit) may affect latency, but may not change “what happens” or “in which order” from the tick engine’s perspective.
   - Handlers must compute the same logical effects regardless of whether relevant cache entries are present; caches may only short-circuit lookups, not drive different code paths with different outcomes.
 - Cache keys must not be used as soft coordination logs:
-  - `automation:queue:*`, `automation:quota:*`, `chat:*`, and similar prefixes remain best-effort buffers and counters; they cannot become the only record of “which effects were applied” or “which commands ran”.
+  - `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, `chat:*`, and similar prefixes remain best-effort buffers and counters; they cannot become the only record of “which effects were applied” or “which commands ran”.
   - If evolution of a feature starts to require durable sequencing, migrate that responsibility into a ledger table or explicit coordination structure and update this catalog accordingly.
 
 ## Candidate Cacheable Object Types

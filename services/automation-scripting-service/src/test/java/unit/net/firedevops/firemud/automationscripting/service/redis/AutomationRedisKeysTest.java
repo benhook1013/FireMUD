@@ -29,6 +29,12 @@ class AutomationRedisKeysTest {
   }
 
   @Test
+  void tenantBudgetKeysUseCanonicalAutomationPrefix() {
+    assertThat(AutomationRedisKeys.automationTenantBudget("tenant-1", "normal"))
+        .isEqualTo("automation:tenant-budget:tenant-1:tier:normal");
+  }
+
+  @Test
   void blankPartsAreRejected() {
     assertThatThrownBy(() -> AutomationRedisKeys.automationQueue("tenant-1", "", "entity-1"))
         .isInstanceOf(IllegalArgumentException.class)
