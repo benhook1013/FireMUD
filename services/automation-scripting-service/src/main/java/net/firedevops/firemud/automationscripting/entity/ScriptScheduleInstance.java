@@ -23,6 +23,8 @@ import lombok.Data;
             "game_instance_id",
             "plugin_id",
             "plugin_version_id",
+            "target_scope_type",
+            "target_scope_id",
             "schedule_definition_id"
           })
     })
@@ -66,6 +68,18 @@ public class ScriptScheduleInstance {
 
   @Column(nullable = false, length = 32)
   private String priorityTag = "normal";
+
+  @Column(nullable = false, length = 32)
+  private String targetScopeType = "";
+
+  @Column(nullable = false, length = 128)
+  private String targetScopeId = "";
+
+  @Column(nullable = false)
+  private int bindingPriority;
+
+  @Column(nullable = false)
+  private boolean requiresExclusiveEvent;
 
   @Column(nullable = false, length = 64)
   private String materializationStatus;

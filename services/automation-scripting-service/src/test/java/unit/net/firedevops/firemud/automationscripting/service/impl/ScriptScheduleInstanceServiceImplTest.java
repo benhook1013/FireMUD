@@ -8,10 +8,12 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.util.List;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleInstance;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProjectionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptScheduleDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptScheduleInstanceRepository;
@@ -27,6 +29,7 @@ class ScriptScheduleInstanceServiceImplTest {
   private ScriptScheduleInstanceRepository scheduleInstanceRepository;
   private ScriptPatchPinProjectionRepository pinProjectionRepository;
   private PluginRuntimeStateRepository pluginRuntimeStateRepository;
+  private ScriptEventBindingRepository bindingRepository;
   private ScriptScheduleInstanceService service;
 
   @BeforeEach
@@ -35,12 +38,14 @@ class ScriptScheduleInstanceServiceImplTest {
     scheduleInstanceRepository = mock(ScriptScheduleInstanceRepository.class);
     pinProjectionRepository = mock(ScriptPatchPinProjectionRepository.class);
     pluginRuntimeStateRepository = mock(PluginRuntimeStateRepository.class);
+    bindingRepository = mock(ScriptEventBindingRepository.class);
     service =
         new ScriptScheduleInstanceServiceImpl(
             scheduleDefinitionRepository,
             scheduleInstanceRepository,
             pinProjectionRepository,
-            pluginRuntimeStateRepository);
+            pluginRuntimeStateRepository,
+            bindingRepository);
   }
 
   @Test
@@ -55,6 +60,13 @@ class ScriptScheduleInstanceServiceImplTest {
         .thenReturn(List.of());
     when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
         .thenReturn(List.of());
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(
+            List.of(
+                binding("npc-guard", "onTimerExpire", "ENTITY", "guard-1", 10, false),
+                binding("npc-guard", "onInterval", "ENTITY", "guard-1", 20, true)));
 
     service.reconcileObservedRuntimeState(
         "1",
@@ -82,6 +94,9 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(6_000L));
               assertThat(instance.getObservedRuntimeVersionId()).isEqualTo("runtime-v2");
               assertThat(instance.getLastObservedControlPlaneRequestId()).isEqualTo("req-1");
+              assertThat(instance.getTargetScopeType()).isEqualTo("ENTITY");
+              assertThat(instance.getTargetScopeId()).isEqualTo("guard-1");
+              assertThat(instance.getBindingPriority()).isEqualTo(10);
             });
     assertThat(saved)
         .filteredOn(instance -> instance.getScheduleDefinitionId().equals("guard.patrol.v1"))
@@ -91,6 +106,7 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(instance.getMaterializationStatus()).isEqualTo("PENDING_RUNTIME_PROGRESS");
               assertThat(instance.getNextDueAt()).isNull();
               assertThat(instance.getNextDueTickId()).isNull();
+              assertThat(instance.isRequiresExclusiveEvent()).isTrue();
             });
   }
 
@@ -114,6 +130,10 @@ class ScriptScheduleInstanceServiceImplTest {
         .thenReturn(List.of());
     when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
         .thenReturn(List.of());
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(binding("npc-guard", "onTimerExpire", "ENTITY", "guard-1", 10, false)));
 
     service.reconcilePinnedPatchInstances("1", "patch-1");
 
@@ -148,6 +168,13 @@ class ScriptScheduleInstanceServiceImplTest {
     runtimeState.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
     when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
         .thenReturn(List.of(runtimeState));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(
+            List.of(
+                binding("npc-guard", "onTimerExpire", "ENTITY", "guard-1", 10, false),
+                binding("plugin-town-crier", "onInterval", "GLOBAL", "", 5, false)));
 
     service.reconcileObservedRuntimeState(
         "1",
@@ -220,5 +247,26 @@ class ScriptScheduleInstanceServiceImplTest {
             + "\"}");
     definition.setScheduleSemanticsHash("hash-plugin-" + pluginVersionId);
     return definition;
+  }
+
+  private static ScriptEventBinding binding(
+      String scriptId,
+      String eventType,
+      String targetScopeType,
+      String targetScopeId,
+      int priority,
+      boolean requiresExclusiveEvent) {
+    ScriptEventBinding binding = new ScriptEventBinding();
+    binding.setTenantId(1L);
+    binding.setScriptPatchVersion("patch-1");
+    binding.setScriptId(scriptId);
+    binding.setEventType(eventType);
+    binding.setEventSchemaVersion("v1");
+    binding.setTargetScopeType(targetScopeType);
+    binding.setTargetScopeId(targetScopeId);
+    binding.setPriority(priority);
+    binding.setRequiresExclusiveEvent(requiresExclusiveEvent);
+    binding.setEnabled(true);
+    return binding;
   }
 }

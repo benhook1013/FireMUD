@@ -10,10 +10,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleInstance;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProjectionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptScheduleDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptScheduleInstanceRepository;
@@ -36,16 +38,19 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private final ScriptScheduleInstanceRepository scheduleInstanceRepository;
   private final ScriptPatchPinProjectionRepository pinProjectionRepository;
   private final PluginRuntimeStateRepository pluginRuntimeStateRepository;
+  private final ScriptEventBindingRepository bindingRepository;
 
   public ScriptScheduleInstanceServiceImpl(
       ScriptScheduleDefinitionRepository scheduleDefinitionRepository,
       ScriptScheduleInstanceRepository scheduleInstanceRepository,
       ScriptPatchPinProjectionRepository pinProjectionRepository,
-      PluginRuntimeStateRepository pluginRuntimeStateRepository) {
+      PluginRuntimeStateRepository pluginRuntimeStateRepository,
+      ScriptEventBindingRepository bindingRepository) {
     this.scheduleDefinitionRepository = scheduleDefinitionRepository;
     this.scheduleInstanceRepository = scheduleInstanceRepository;
     this.pinProjectionRepository = pinProjectionRepository;
     this.pluginRuntimeStateRepository = pluginRuntimeStateRepository;
+    this.bindingRepository = bindingRepository;
   }
 
   @Override
@@ -64,6 +69,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         scheduleDefinitionRepository
             .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
                 Long.parseLong(tenantId), scriptPatchVersion);
+    Map<String, List<ScriptEventBinding>> bindingsByScriptEvent =
+        bindingsByScriptEvent(Long.parseLong(tenantId), scriptPatchVersion);
     Map<String, String> activePluginVersions = activePluginVersions(tenantId, gameInstanceId);
     List<ScriptScheduleInstance> existing =
         scheduleInstanceRepository
@@ -75,7 +82,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           scopeKey(
               instance.getPluginId(),
               instance.getPluginVersionId(),
-              instance.getScheduleDefinitionId()),
+              instance.getScheduleDefinitionId(),
+              instance.getTargetScopeType(),
+              instance.getTargetScopeId()),
           instance);
     }
 
@@ -90,17 +99,28 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       if (!shouldMaterialize(definition, activePluginVersions)) {
         continue;
       }
-      String key =
-          scopeKey(
-              definition.getPluginId(),
-              definition.getPluginVersionId(),
-              definition.getScheduleDefinitionId());
-      desiredKeys.add(key);
-      ScriptScheduleInstance instance =
-          existingByKey.getOrDefault(key, new ScriptScheduleInstance());
-      populateInstance(
-          instance, tenantId, gameInstanceId, definition, runtimeState, pinObservedAt, now);
-      upserts.add(instance);
+      for (ScriptEventBinding binding : matchingBindings(bindingsByScriptEvent, definition)) {
+        String key =
+            scopeKey(
+                definition.getPluginId(),
+                definition.getPluginVersionId(),
+                definition.getScheduleDefinitionId(),
+                binding.getTargetScopeType(),
+                binding.getTargetScopeId());
+        desiredKeys.add(key);
+        ScriptScheduleInstance instance =
+            existingByKey.getOrDefault(key, new ScriptScheduleInstance());
+        populateInstance(
+            instance,
+            tenantId,
+            gameInstanceId,
+            definition,
+            binding,
+            runtimeState,
+            pinObservedAt,
+            now);
+        upserts.add(instance);
+      }
     }
 
     List<ScriptScheduleInstance> deletes =
@@ -111,7 +131,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                         scopeKey(
                             instance.getPluginId(),
                             instance.getPluginVersionId(),
-                            instance.getScheduleDefinitionId())))
+                            instance.getScheduleDefinitionId(),
+                            instance.getTargetScopeType(),
+                            instance.getTargetScopeId())))
             .toList();
     if (!deletes.isEmpty()) {
       scheduleInstanceRepository.deleteAll(deletes);
@@ -192,11 +214,37 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     return blankToEmpty(definition.getPluginVersionId()).equals(activePluginVersions.get(pluginId));
   }
 
+  private Map<String, List<ScriptEventBinding>> bindingsByScriptEvent(
+      long tenantId, String scriptPatchVersion) {
+    Map<String, List<ScriptEventBinding>> bindings = new HashMap<>();
+    for (ScriptEventBinding binding :
+        bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                tenantId, scriptPatchVersion)) {
+      if (!binding.isEnabled()) {
+        continue;
+      }
+      bindings
+          .computeIfAbsent(
+              bindingKey(binding.getScriptId(), binding.getEventType()), key -> new ArrayList<>())
+          .add(binding);
+    }
+    return bindings;
+  }
+
+  private static List<ScriptEventBinding> matchingBindings(
+      Map<String, List<ScriptEventBinding>> bindingsByScriptEvent,
+      ScriptScheduleDefinition definition) {
+    return bindingsByScriptEvent.getOrDefault(
+        bindingKey(definition.getScriptId(), definition.getEventType()), List.of());
+  }
+
   private void populateInstance(
       ScriptScheduleInstance instance,
       String tenantId,
       String gameInstanceId,
       ScriptScheduleDefinition definition,
+      ScriptEventBinding binding,
       GameInstanceRuntimeState runtimeState,
       Instant pinObservedAt,
       Instant now) {
@@ -212,6 +260,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setCadenceValue(definition.getCadenceValue());
     instance.setCadenceUnit(definition.getCadenceUnit());
     instance.setPriorityTag(definition.getPriorityTag());
+    instance.setTargetScopeType(blankToEmpty(binding.getTargetScopeType()));
+    instance.setTargetScopeId(blankToEmpty(binding.getTargetScopeId()));
+    instance.setBindingPriority(binding.getPriority());
+    instance.setRequiresExclusiveEvent(binding.isRequiresExclusiveEvent());
     instance.setObservedRuntimeVersionId(blankToEmpty(runtimeState.getRuntimeVersionId()));
     instance.setLastObservedControlPlaneRequestId(
         blankToEmpty(runtimeState.getScriptPatchPinnedControlPlaneRequestId()));
@@ -247,6 +299,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         instance.getCadenceValue(),
         instance.getCadenceUnit(),
         instance.getPriorityTag(),
+        instance.getTargetScopeType(),
+        instance.getTargetScopeId(),
+        instance.getBindingPriority(),
+        instance.isRequiresExclusiveEvent(),
         instance.getMaterializationStatus(),
         instance.getNextDueAt() == null ? 0L : instance.getNextDueAt().toEpochMilli(),
         instance.getNextDueTickId() == null ? 0L : instance.getNextDueTickId(),
@@ -260,12 +316,24 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   private static String scopeKey(
-      String pluginId, String pluginVersionId, String scheduleDefinitionId) {
+      String pluginId,
+      String pluginVersionId,
+      String scheduleDefinitionId,
+      String targetScopeType,
+      String targetScopeId) {
     return blankToEmpty(pluginId)
         + "\u0000"
         + blankToEmpty(pluginVersionId)
         + "\u0000"
+        + blankToEmpty(targetScopeType)
+        + "\u0000"
+        + blankToEmpty(targetScopeId)
+        + "\u0000"
         + scheduleDefinitionId;
+  }
+
+  private static String bindingKey(String scriptId, String eventType) {
+    return blankToEmpty(scriptId) + "\u0000" + blankToEmpty(eventType);
   }
 
   private static String blankToEmpty(String value) {

@@ -323,6 +323,10 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     5000L,
                     "MILLISECONDS",
                     "normal",
+                    "ENTITY",
+                    "guard-1",
+                    10,
+                    false,
                     "READY",
                     5555L,
                     0L,
@@ -354,6 +358,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getSchedulesList()).hasSize(1);
     assertThat(ref.get().getSchedules(0).getScheduleDefinitionId())
         .isEqualTo("guard.alert.expire.v1");
+    assertThat(ref.get().getSchedules(0).getTargetScopeType()).isEqualTo("ENTITY");
+    assertThat(ref.get().getSchedules(0).getTargetScopeId()).isEqualTo("guard-1");
     assertThat(ref.get().getSchedules(0).getMaterializationStatus()).isEqualTo("READY");
     assertThat(ref.get().getSchedules(0).getNextDueAtMs()).isEqualTo(5555L);
   }

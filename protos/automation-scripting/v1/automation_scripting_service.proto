@@ -500,14 +500,18 @@ message ScriptScheduleInstanceEntry {
   int64 cadence_value = 10;
   string cadence_unit = 11;
   string priority_tag = 12;
-  string materialization_status = 13;
-  int64 next_due_at_ms = 14;
-  int64 next_due_tick_id = 15;
-  string observed_runtime_version_id = 16;
-  string last_observed_control_plane_request_id = 17;
-  int64 pin_observed_at_ms = 18;
-  int64 materialized_at_ms = 19;
-  int64 updated_at_ms = 20;
+  string target_scope_type = 13;
+  string target_scope_id = 14;
+  int32 binding_priority = 15;
+  bool requires_exclusive_event = 16;
+  string materialization_status = 17;
+  int64 next_due_at_ms = 18;
+  int64 next_due_tick_id = 19;
+  string observed_runtime_version_id = 20;
+  string last_observed_control_plane_request_id = 21;
+  int64 pin_observed_at_ms = 22;
+  int64 materialized_at_ms = 23;
+  int64 updated_at_ms = 24;
 }
 
 message ListScriptScheduleInstancesResponse {
