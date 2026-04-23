@@ -402,6 +402,9 @@ message GetAutomationPinConvergenceResponse {
   string last_observed_control_plane_request_id = 4;
   int64 observed_at_ms = 5;
   shared.v1.ErrorDetail error = 6;
+  int64 projection_as_of_ms = 7;
+  int64 projection_lag_ms = 8;
+  bool is_projection_stale = 9;
 }
 
 enum ScriptPatchInstanceRolloutStatus {

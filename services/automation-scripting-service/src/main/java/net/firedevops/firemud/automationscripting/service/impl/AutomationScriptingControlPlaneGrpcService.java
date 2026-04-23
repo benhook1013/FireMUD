@@ -3,9 +3,9 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
-import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingControlPlaneServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchRequest;
@@ -44,7 +44,6 @@ import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionReque
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
-import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
@@ -59,17 +58,17 @@ public final class AutomationScriptingControlPlaneGrpcService
   private final ScriptEventRegistryService eventRegistryService;
   private final ScriptWorkItemService workItemService;
   private final PluginRuntimeStateService pluginRuntimeStateService;
-  private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
+  private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
 
   public AutomationScriptingControlPlaneGrpcService(
       ScriptEventRegistryService eventRegistryService,
       ScriptWorkItemService workItemService,
       PluginRuntimeStateService pluginRuntimeStateService,
-      GameSessionControlPlaneClient gameSessionControlPlaneClient) {
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService) {
     this.eventRegistryService = eventRegistryService;
     this.workItemService = workItemService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
-    this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
+    this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
   }
 
   @Override
@@ -212,26 +211,33 @@ public final class AutomationScriptingControlPlaneGrpcService
         GetAutomationPinConvergenceResponse.newBuilder();
     try {
       requireAdminRole();
-      GetGameInstanceRuntimeStateResponse runtime =
-          gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+      ScriptPatchPinProjectionService.PinConvergenceLookup lookup =
+          scriptPatchPinProjectionService.getPinConvergence(
               request.getTenantId(), request.getGameInstanceId());
-      if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
-        response.setError(runtime.getError());
-      } else if (!runtime.hasRuntimeState()) {
-        response.setError(
-            notFound("GetAutomationPinConvergence", "game_instance_runtime_state_not_found"));
-      } else {
+      if (lookup.summary().isPresent()) {
+        ScriptPatchPinProjectionService.PinConvergenceSummary summary = lookup.summary().get();
         response
-            .setTenantId(runtime.getRuntimeState().getTenantId())
-            .setGameInstanceId(runtime.getRuntimeState().getGameInstanceId())
-            .setObservedPinnedScriptPatchVersion(
-                runtime.getRuntimeState().getPinnedScriptPatchVersion())
-            .setLastObservedControlPlaneRequestId(
-                runtime.getRuntimeState().getScriptPatchPinnedControlPlaneRequestId())
-            .setObservedAtMs(runtime.getRuntimeState().getScriptPatchPinnedAtMs());
+            .setTenantId(summary.tenantId())
+            .setGameInstanceId(summary.gameInstanceId())
+            .setObservedPinnedScriptPatchVersion(summary.observedPinnedScriptPatchVersion())
+            .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
+            .setObservedAtMs(summary.observedAtMs())
+            .setProjectionAsOfMs(summary.projectionAsOfMs())
+            .setProjectionLagMs(summary.projectionLagMs())
+            .setIsProjectionStale(summary.projectionStale());
+      } else if (!lookup.errorCode().isBlank()) {
+        response.setError(
+            ErrorDetail.newBuilder()
+                .setCode(lookup.errorCode())
+                .setMessage(lookup.errorMessage()));
+      } else {
+        response.setError(notFound("GetAutomationPinConvergence", "pin_projection_not_found"));
       }
     } catch (AdminAuthorizationException ex) {
       response.setError(authorizationError(ex));
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
     }
     responseObserver.onNext(response.build());
     responseObserver.onCompleted();

@@ -16,6 +16,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepos
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -45,6 +46,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private final AutomationQueueService automationQueueService;
   private final ScriptOutputProperties outputProperties;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
+  private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
 
   public ScriptEventIngressServiceImpl(
       ScriptEventIngressAuditRepository repository,
@@ -54,7 +56,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       ScriptEventRegistryService eventRegistryService,
       AutomationQueueService automationQueueService,
       ScriptOutputProperties outputProperties,
-      GameSessionControlPlaneClient gameSessionControlPlaneClient) {
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService) {
     this.repository = repository;
     this.bindingRepository = bindingRepository;
     this.workItemRepository = workItemRepository;
@@ -63,6 +66,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     this.automationQueueService = automationQueueService;
     this.outputProperties = outputProperties;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
+    this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
   }
 
   @Override
@@ -165,6 +169,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (!runtime.hasRuntimeState()) {
       return new TriggerAdmission(false, OUTCOME_INFRASTRUCTURE_ERROR, "pin_state_unavailable", 0);
     }
+    scriptPatchPinProjectionService.observeRuntimeState(
+        request.getTenantId(), request.getGameInstanceId(), runtime.getRuntimeState());
     if (!request
         .getScriptPatchVersion()
         .equals(runtime.getRuntimeState().getPinnedScriptPatchVersion())) {

@@ -284,7 +284,7 @@ Contract rules:
 
 #### `GetAutomationPinConvergence`
 
-Implementation note: the current Automation & Scripting implementation now exposes the first pin-convergence read by delegating to the shared Game Session runtime-state surface that current rollout/replay decisions already depend on. Because Game Session now persists pin `controlPlaneRequestId` in the canonical runtime-state record, this live read can already surface the real observed request id even before Automation owns its own replayable pin projection.
+Implementation note: the current Automation & Scripting implementation now persists a durable `script_patch_pin_projections` view keyed by `(tenantId, gameInstanceId)`. Automation refreshes that projection opportunistically from the same shared Game Session runtime-state surface already used by admission and replay checks, then serves `GetAutomationPinConvergence` from the persisted projection so freshness and temporary Game Session read failures do not force operator reads to be raw pass-through calls.
 
 Inputs:
 
@@ -297,11 +297,15 @@ Outputs:
 - `observedPinnedScriptPatchVersion`
 - `lastObservedControlPlaneRequestId`
 - `observedAt`
+- `projectionAsOfMs`
+- `projectionLagMs`
+- `isProjectionStale`
 
 Contract rules:
 
 - This is a read-only operator surface for the latest pin observation currently visible to Automation-side admission and replay logic.
-- The live implementation is a direct shared-runtime read, not yet a distinct Automation projection. Once Automation owns a replayable pin projection, this same read should continue returning the same request id semantics while decoupling freshness and failure handling from the raw shared runtime-state query.
+- The live implementation is a durable Automation-owned projection refreshed from authoritative Game Session runtime state, not a raw pass-through query.
+- If refresh from Game Session fails but Automation still has a stored observation, the API must continue returning that stored observation with freshness flags set from the projection timestamp instead of failing closed for operator visibility.
 
 #### `ListScriptDeadLetters`
 

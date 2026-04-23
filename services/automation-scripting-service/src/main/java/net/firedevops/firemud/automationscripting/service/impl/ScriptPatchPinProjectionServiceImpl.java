@@ -1,0 +1,135 @@
+package net.firedevops.firemud.automationscripting.service.impl;
+
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Instant;
+import java.util.Optional;
+import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
+import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
+import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProjectionRepository;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected dependencies are internal Spring collaborators")
+public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjectionService {
+  private static final long PIN_PROJECTION_STALE_THRESHOLD_MS = 5_000L;
+
+  private final ScriptPatchPinProjectionRepository repository;
+  private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
+
+  public ScriptPatchPinProjectionServiceImpl(
+      ScriptPatchPinProjectionRepository repository,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient) {
+    this.repository = repository;
+    this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
+  }
+
+  @Override
+  @Transactional
+  public PinConvergenceLookup getPinConvergence(String tenantId, String gameInstanceId) {
+    requireText(tenantId, "tenant_id");
+    requireText(gameInstanceId, "game_instance_id");
+    Instant now = Instant.now();
+    Optional<ScriptPatchPinProjection> existing =
+        repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+    if (existing.isEmpty() || isStale(existing.get(), now)) {
+      GetGameInstanceRuntimeStateResponse runtime =
+          gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, gameInstanceId);
+      if (runtime.hasRuntimeState()) {
+        ScriptPatchPinProjection refreshed =
+            saveObservation(
+                existing.orElseGet(ScriptPatchPinProjection::new),
+                tenantId,
+                gameInstanceId,
+                runtime.getRuntimeState(),
+                now);
+        return new PinConvergenceLookup(
+            Optional.of(toSummary(refreshed, now)), "", "");
+      }
+      if (existing.isPresent()) {
+        return new PinConvergenceLookup(
+            Optional.of(toSummary(existing.get(), now)), "", "");
+      }
+      if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
+        return new PinConvergenceLookup(
+            Optional.empty(), runtime.getError().getCode(), runtime.getError().getMessage());
+      }
+      return new PinConvergenceLookup(
+          Optional.empty(),
+          "NOT_FOUND",
+          "GetAutomationPinConvergence failed: pin_projection_not_found");
+    }
+    return new PinConvergenceLookup(
+        Optional.of(toSummary(existing.get(), now)), "", "");
+  }
+
+  @Override
+  @Transactional
+  public void observeRuntimeState(
+      String tenantId, String gameInstanceId, GameInstanceRuntimeState runtimeState) {
+    requireText(tenantId, "tenant_id");
+    requireText(gameInstanceId, "game_instance_id");
+    if (runtimeState == null) {
+      return;
+    }
+    Optional<ScriptPatchPinProjection> existing =
+        repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+    saveObservation(
+        existing.orElseGet(ScriptPatchPinProjection::new),
+        tenantId,
+        gameInstanceId,
+        runtimeState,
+        Instant.now());
+  }
+
+  private ScriptPatchPinProjection saveObservation(
+      ScriptPatchPinProjection projection,
+      String tenantId,
+      String gameInstanceId,
+      GameInstanceRuntimeState runtimeState,
+      Instant now) {
+    projection.setTenantId(tenantId);
+    projection.setGameInstanceId(gameInstanceId);
+    projection.setObservedPinnedScriptPatchVersion(runtimeState.getPinnedScriptPatchVersion());
+    projection.setLastObservedControlPlaneRequestId(
+        runtimeState.getScriptPatchPinnedControlPlaneRequestId());
+    projection.setObservedAt(
+        runtimeState.getScriptPatchPinnedAtMs() > 0
+            ? Instant.ofEpochMilli(runtimeState.getScriptPatchPinnedAtMs())
+            : now);
+    projection.setProjectionRefreshedAt(now);
+    return repository.save(projection);
+  }
+
+  private static PinConvergenceSummary toSummary(ScriptPatchPinProjection projection, Instant now) {
+    long projectionAsOfMs = projection.getProjectionRefreshedAt().toEpochMilli();
+    long projectionLagMs = Math.max(0L, now.toEpochMilli() - projectionAsOfMs);
+    return new PinConvergenceSummary(
+        projection.getTenantId(),
+        projection.getGameInstanceId(),
+        projection.getObservedPinnedScriptPatchVersion(),
+        projection.getLastObservedControlPlaneRequestId(),
+        projection.getObservedAt().equals(Instant.EPOCH)
+            ? 0L
+            : projection.getObservedAt().toEpochMilli(),
+        projectionAsOfMs,
+        projectionLagMs,
+        projectionLagMs >= PIN_PROJECTION_STALE_THRESHOLD_MS);
+  }
+
+  private static boolean isStale(ScriptPatchPinProjection projection, Instant now) {
+    return Math.max(0L, now.toEpochMilli() - projection.getProjectionRefreshedAt().toEpochMilli())
+        >= PIN_PROJECTION_STALE_THRESHOLD_MS;
+  }
+
+  private static void requireText(String value, String fieldName) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException(fieldName + " is required");
+    }
+  }
+}
