@@ -57,6 +57,17 @@ public final class AutomationRedisKeys {
         + requirePart("principalKey", principalKey);
   }
 
+  public static String automationDryRunCapacityCounter(String tenantId) {
+    return "automation:test:capacity:" + requirePart("tenantId", tenantId) + ":tenant";
+  }
+
+  public static String automationDryRunCapacityLease(String tenantId, String workItemId) {
+    return "automation:test:capacity:"
+        + requirePart("tenantId", tenantId)
+        + ":lease:"
+        + requirePart("workItemId", workItemId);
+  }
+
   private static String automationTickKey(
       String tenantId, String gameInstanceId, String scriptId, String suffix) {
     return "automation:tick:{"

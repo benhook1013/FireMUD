@@ -69,13 +69,14 @@ Dry-run and test execution paths exposed by the Automation & Scripting Service s
 
 - They execute handlers through the same engine with the same CPU/iteration and memory budgets.
 - They record `sandbox_error` and `infrastructure_error` outcomes in `script_event_audit` so failure modes are observable.
-- By default they do **not** consume per-script quotas or per-tenant budgets enforced by `ScriptQuotaService`; instead, they are restricted to privileged principals (for example, designers and operators) and should be further protected by separate rate limits or ACLs at the API gateway or Logging & Admin layer.
-- Current Automation execution honors that split by skipping live `ScriptQuotaService` acquisition for dry-run `script_work_items`; dry-run capacity must be controlled by the dedicated test/dry-run limiters rather than by consuming live gameplay automation quota.
+- By default they do **not** consume per-script quotas or per-tenant budgets enforced by live runtime budget services; instead, they are restricted to privileged principals (for example, designers and operators) and should be further protected by separate rate limits or ACLs at the API gateway or Logging & Admin layer.
+- Current Automation execution honors that split by skipping live `ScriptQuotaService` and tenant-budget acquisition for dry-run `script_work_items`; dry-run capacity is controlled by the dedicated test/dry-run limiters rather than by consuming live gameplay automation quota.
   - Dry-run/test executions must not increment live-traffic error counters. Sandbox failures observed during tests are emitted via dry-run/test-only metric families (for example `automation_script_test_sandbox_failures_total`) so production SLO dashboards do not conflate privileged tooling with live automation reliability.
 - Dry-run/test traffic must not be allowed to consume the same last-resort execution capacity reserved for live automation:
   - Implementations should use separate executor pools or explicit worker reservations for `isDryRun=true`.
   - When the cluster is under pressure, live traffic must be admitted ahead of dry-run/test traffic even if dry-run quotas have not been exceeded.
   - Queue limits and concurrency ceilings for dry-run/test work must be enforced independently from live execution queues.
+  - Current Automation execution reserves tenant-local dry-run capacity through `ScriptDryRunCapacityService` before evaluating dry-run work items. Capacity-denied dry-runs are terminally canceled with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=dry_run_capacity_exhausted`.
 
 ---
 
@@ -351,7 +352,7 @@ Dry-run and test executions share the same sandbox engine and guards as live tra
   - Reject missing principal identity for endpoints configured with per-principal enforcement.
 - Dry-run activity is surfaced via dedicated metrics (for example, `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, `automation_script_test_sandbox_failures_total`) so operators can distinguish test traffic from live automation.
 - Logging & Admin and Game Design tools are responsible for exposing dry-run entry points only to privileged users and for applying complementary API gateway limits; test endpoints must not be wired into game traffic or public-facing flows.
-- When a dry-run request exceeds `SCRIPT_TEST_MAX_RUNS_PER_MINUTE` or `SCRIPT_TEST_MAX_CONCURRENCY` ceilings, the Automation & Scripting Service rejects it with `finalOutcome=quota_denied` and `finalReason=dry_run_budget_exceeded` in `script_event_audit`, and increments `automation_script_test_runs_total` with a label (for example, `result="denied_quota"`) so operators can see overuse of test facilities.
+- When a dry-run request exceeds `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`, Automation rejects it at event scope with `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` / `dry_run_budget_exceeded` before handler resolution. When a materialized dry-run exceeds `SCRIPT_TEST_MAX_CONCURRENCY`, Automation cancels it before evaluation with `finalOutcome=quota_denied` and `finalReason=dry_run_capacity_exhausted` in `script_event_audit`. Both paths increment dry-run/test metrics so operators can see overuse of test facilities.
 - Current Automation ingress enforces the per-minute tenant and principal dry-run ceilings before handler resolution. Requests over those limits return event-scope admission outcome `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` with `admissionReason=dry_run_budget_exceeded` and do not create handler work.
 
 ### Outcome-to-Metric Mapping

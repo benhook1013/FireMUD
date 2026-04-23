@@ -17,6 +17,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandH
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
+import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunCapacityService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptTenantBudgetService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +45,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
   private final ScriptOutputProperties outputProperties;
   private final ScriptTenantBudgetService tenantBudgetService;
+  private final ScriptDryRunCapacityService dryRunCapacityService;
   private final ObjectMapper objectMapper;
 
   public ScriptWorkItemExecutionServiceImpl(
@@ -55,6 +57,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
       ScriptOutputProperties outputProperties,
       ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
       ObjectMapper objectMapper) {
     this.workItemService = workItemService;
     this.scriptDefinitionRepository = scriptDefinitionRepository;
@@ -64,6 +67,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.rolloutProjectionService = rolloutProjectionService;
     this.outputProperties = outputProperties;
     this.tenantBudgetService = tenantBudgetService;
+    this.dryRunCapacityService = dryRunCapacityService;
     this.objectMapper = objectMapper;
   }
 
@@ -90,7 +94,24 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       cancel(workItem, STAGE_ADMISSION, "tenant_budget_exceeded", "tenant_budget_exceeded", now);
       return false;
     }
+    if (workItem.isDryRun()) {
+      Optional<ScriptDryRunCapacityService.Reservation> reservation =
+          dryRunCapacityService.tryReserve(workItem.getTenantId(), requireWorkItemId(workItem));
+      if (reservation.isEmpty()) {
+        cancel(workItem, STAGE_ADMISSION, "quota_denied", "dry_run_capacity_exhausted", now);
+        return false;
+      }
+      try {
+        return evaluateClaimedWorkItem(workItem, now);
+      } finally {
+        dryRunCapacityService.release(reservation.get());
+      }
+    }
 
+    return evaluateClaimedWorkItem(workItem, now);
+  }
+
+  private boolean evaluateClaimedWorkItem(ScriptWorkItem workItem, Instant now) {
     Optional<ScriptDefinition> definition =
         scriptDefinitionRepository.findByTenantIdAndScriptVersionAndName(
             parseTenantId(workItem), workItem.getScriptPatchVersion(), workItem.getScriptId());
@@ -133,6 +154,13 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     markTerminalSuccess(
         workItem, STAGE_TICK_HANDOFF, "success", "commands_handed_off", Instant.now());
     return true;
+  }
+
+  private static long requireWorkItemId(ScriptWorkItem workItem) {
+    if (workItem.getId() == null) {
+      throw new IllegalArgumentException("work_item_id is required for dry-run capacity");
+    }
+    return workItem.getId();
   }
 
   private List<ScriptGameplayCommandHandoffService.EmittedCommand> parseCommands(

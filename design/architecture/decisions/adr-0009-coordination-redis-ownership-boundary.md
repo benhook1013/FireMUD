@@ -18,7 +18,7 @@ Coordination Redis ownership is explicit and narrow:
 - Account Service owns authentication allowlist/session-auth prefixes (`session:auth:*`) and their lifecycle semantics.
 - Automation & Scripting Service owns automation coordination and cache families with an explicit split:
   - Coordination Redis: `automation:tick:*` keyspace and scripts for automation scheduling/execution that participate in tick timelines.
-  - Cache/Rate-Limit Redis: `automation:queue:*`, `automation:quota:*`, and `automation:tenant-budget:*` best-effort buffers/counters.
+  - Cache/Rate-Limit Redis: `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, and `automation:test:capacity:*` best-effort buffers/counters.
 - Non-owner services may participate only through approved shared helpers and documented prefixes/contracts.
 
 Owner-managed bridge contracts are the only approved exception to “write only your own keys”:

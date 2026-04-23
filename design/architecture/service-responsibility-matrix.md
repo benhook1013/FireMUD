@@ -107,7 +107,7 @@ Route-review example:
 - **Authoritative owner: Coordination Redis auth keyspace (`session:auth:*`)** – Account Service owns JWT allowlist and revocation watermark semantics, including lifecycle, revocation, and scope contracts consumed by downstream services.
 - **Redis-backed automation ownership split** – Automation & Scripting Service owns:
   - Coordination Redis `automation:tick:*` keyspace and Lua scripts that drive automation ticks.
-  - Cache/Rate-Limit Redis `automation:queue:*`, `automation:quota:*`, and `automation:tenant-budget:*` best-effort queues/counters.
+  - Cache/Rate-Limit Redis `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, and `automation:test:capacity:*` best-effort queues/counters.
   Game Session and other services interact with automation via gRPC APIs, not by writing `automation:*` keys directly.
 - **Cache/Rate-Limit Redis usage (caches, quotas, rate limiting)** – World Management Service, TCP Proxy Service, Spring Cloud Gateway, Entity Management Service, Automation & Scripting Service, and Social & Groups Service all use shared cache and rate‑limit helpers backed by Redis (for example, `cache:*` and `ratelimit:*` prefixes). World Management is authoritative for invalidation semantics of `room:*` and `world-dynamic:*` world caches; the schema, TTL policies, and correctness guarantees for these prefixes are defined in the shared cache/rate-limit library and in the Redis Cache & Rate Limiting design.
 

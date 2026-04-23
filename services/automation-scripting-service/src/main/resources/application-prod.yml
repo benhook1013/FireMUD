@@ -55,6 +55,7 @@ script:
   test:
     max-runs-per-minute: ${SCRIPT_TEST_MAX_RUNS_PER_MINUTE:60}
     max-runs-per-minute-per-principal: ${SCRIPT_TEST_MAX_RUNS_PER_MINUTE_PER_PRINCIPAL:30}
+    max-concurrency: ${SCRIPT_TEST_MAX_CONCURRENCY:10}
 automation:
   tick-duration-ms: ${AUTOMATION_TICK_DURATION_MS:1000}
   tick-max-events: ${AUTOMATION_TICK_MAX_EVENTS:50}

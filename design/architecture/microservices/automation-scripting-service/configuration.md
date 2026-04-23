@@ -22,7 +22,7 @@ For day-to-day operations, environment variables fall into three broad categorie
 
 Current live bindings in the service are narrower than the full target-state scripting design:
 
-- the live runtime binds live per-script quota, live tenant-budget, dry-run quota, output-budget, pin-projection freshness, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
+- the live runtime binds live per-script quota, live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
 - signer-policy freshness, separate dead-letter alert thresholds, and any split dead-letter cleanup cadence remain target-state follow-through in the `10.3` / `10.5` scripting slices and are not current live service bindings.
 
 ## Service-Specific Variables
@@ -63,6 +63,7 @@ These knobs are the authoritative defaults referenced by the scripting architect
 
 - publish-time validation and runtime enforcement share `SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN`, `SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER`, and `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` as the canonical output-budget ceilings;
 - live per-script quota is charged at handler admission with `SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOW_SECONDS`, while live tenant budget is reserved at durable work-item execution with `SCRIPT_TENANT_BUDGET_HIGH_RUNS_PER_MINUTE`, `SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE`, and `SCRIPT_TENANT_BUDGET_BACKGROUND_RUNS_PER_MINUTE`;
+- dry-run/test traffic uses `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`, `SCRIPT_TEST_MAX_RUNS_PER_MINUTE_PER_PRINCIPAL`, and `SCRIPT_TEST_MAX_CONCURRENCY` rather than consuming live per-script quota or tenant runtime budget;
 - pin and rollout convergence reads use `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` to set `isProjectionStale` / `projectionStale` rather than relying on hardcoded local thresholds;
 - outbox cleanup and diagnosis for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` rows must follow the documented retention knobs above rather than ad hoc cleanup windows; and
 - queue rebuild cadence and scan bounds for the derived `automation:queue:*` projection must follow `SCRIPT_OUTBOX_QUEUE_REBUILD_INTERVAL_SECONDS` and `SCRIPT_OUTBOX_QUEUE_REBUILD_BATCH_SIZE` rather than unbounded best-effort loops; and

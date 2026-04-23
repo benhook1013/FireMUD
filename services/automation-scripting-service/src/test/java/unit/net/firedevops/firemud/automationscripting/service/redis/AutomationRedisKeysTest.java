@@ -35,6 +35,14 @@ class AutomationRedisKeysTest {
   }
 
   @Test
+  void dryRunCapacityKeysUseCanonicalAutomationPrefix() {
+    assertThat(AutomationRedisKeys.automationDryRunCapacityCounter("tenant-1"))
+        .isEqualTo("automation:test:capacity:tenant-1:tenant");
+    assertThat(AutomationRedisKeys.automationDryRunCapacityLease("tenant-1", "99"))
+        .isEqualTo("automation:test:capacity:tenant-1:lease:99");
+  }
+
+  @Test
   void blankPartsAreRejected() {
     assertThatThrownBy(() -> AutomationRedisKeys.automationQueue("tenant-1", "", "entity-1"))
         .isInstanceOf(IllegalArgumentException.class)

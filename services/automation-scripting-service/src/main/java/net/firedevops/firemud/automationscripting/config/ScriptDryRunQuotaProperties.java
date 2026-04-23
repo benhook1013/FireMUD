@@ -13,6 +13,9 @@ public class ScriptDryRunQuotaProperties {
   @Min(1)
   private long maxRunsPerMinutePerPrincipal = 30;
 
+  @Min(1)
+  private long maxConcurrency = 10;
+
   public long getMaxRunsPerMinute() {
     return maxRunsPerMinute;
   }
@@ -27,5 +30,13 @@ public class ScriptDryRunQuotaProperties {
 
   public void setMaxRunsPerMinutePerPrincipal(long maxRunsPerMinutePerPrincipal) {
     this.maxRunsPerMinutePerPrincipal = maxRunsPerMinutePerPrincipal;
+  }
+
+  public long getMaxConcurrency() {
+    return maxConcurrency;
+  }
+
+  public void setMaxConcurrency(long maxConcurrency) {
+    this.maxConcurrency = maxConcurrency;
   }
 }

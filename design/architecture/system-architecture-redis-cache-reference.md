@@ -67,7 +67,7 @@ Cache/Rate-Limit Redis hosts prefixes that are not part of the coordination log 
 | `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Cache | Versioned (Class A) | Reset-tolerant | World Management correctness-critical room snapshot cache. |
 | `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Cache | TTL-only (Class B) | Reset-tolerant | Legacy reconnect-adjacent rendered-room snapshot helper. This prefix is not authoritative for fresh `LOOK`, is not part of the canonical target-state read model, and remains implementation debt pending fuller cleanup. |
 | `chat:say:<tenantId>:<characterId>`, `chat:tell:<tenantId>:<conversationId>`, `chat:guild:<tenantId>:<guildId>`, `chat:city:<tenantId>:<cityId>`, `chat:account:<tenantId>:<accountId>` | Cache | TTL-only (Class B) | Reset-tolerant | Social & Groups short-lived chat history buffers. |
-| `automation:queue:{tenantInstanceTag}:*`, `automation:quota:<tenantId>:*`, `automation:tenant-budget:<tenantId>:tier:<tier>` | Cache / Rate-Limit | TTL-only (Class B) | Reset-tolerant | Automation & Scripting queued work items, per-script quota counters, and per-tenant live execution budget counters. Durable triggers/effect tables in PostgreSQL, not Redis, guarantee eventual execution and quota correctness. |
+| `automation:queue:{tenantInstanceTag}:*`, `automation:quota:<tenantId>:*`, `automation:tenant-budget:<tenantId>:tier:<tier>`, `automation:test:capacity:<tenantId>:*` | Cache / Rate-Limit | TTL-only (Class B) | Reset-tolerant | Automation & Scripting queued work items, per-script quota counters, per-tenant live execution budget counters, and dry-run/test capacity leases. Durable triggers/effect tables in PostgreSQL, not Redis, guarantee eventual execution and quota correctness. |
 | `ratelimit:<tenantId>:<bucket>:<timeWindow>` (and optional `:<shard>`) | Cache / Rate-Limit | TTL-only (Class B) | Reset-tolerant | Spring Cloud Gateway rate-limit buckets and optional sharded buckets. Reset-induced fairness shifts are acceptable because gateway logic, not Redis persistence, remains authoritative. |
 
 CI and code review checks are expected to:
@@ -101,7 +101,7 @@ CI and code review checks are expected to:
 - `world-dynamic:*` / `room:*` - hit/miss counters plus key-count gauges where available.
 - `view:room-look:*` - hit/miss counters to watch for pathological miss rates.
 - `chat:*` - hit/miss counters plus chat-type gauges where helpful.
-- `automation:queue:*` / `automation:quota:*` / `automation:tenant-budget:*` - queue and quota counters or equivalent service metrics that make best-effort loss and rebuild visible.
+- `automation:queue:*` / `automation:quota:*` / `automation:tenant-budget:*` / `automation:test:capacity:*` - queue and quota counters or equivalent service metrics that make best-effort loss and rebuild visible.
 - Prefix tags should stay consistent across services so dashboards can reason about cache behavior by aggregate family rather than by one-off metric names.
 
 ### Future Work / TODO

@@ -134,7 +134,7 @@ Automation workloads split into two broad classes, with different expectations a
 - **Best-effort, non-critical automation**
   - Examples: analytics-style background work, non-critical notifications, opportunistic refreshes that can be dropped or reordered without visible gameplay impact.
   - Redis role: **Cache/Rate-Limit Redis**.
-  - Prefixes: `automation:queue:{tenantInstanceTag}:*`, `automation:quota:<tenantId>:*`, `automation:tenant-budget:<tenantId>:tier:<tier>` and similar TTL-only queues and counters documented in the Redis Cache & Rate Limiting design.
+  - Prefixes: `automation:queue:{tenantInstanceTag}:*`, `automation:quota:<tenantId>:*`, `automation:tenant-budget:<tenantId>:tier:<tier>`, `automation:test:capacity:<tenantId>:*` and similar TTL-only queues and counters documented in the Redis Cache & Rate Limiting design.
   - Guarantees:
     - Treated as **TTL-only, reset-tolerant** hints: items may be dropped, duplicated, or processed late.
     - Correctness (for example, “was this workflow triggered at least once?”) must come from durable trigger tables and idempotent domain logic, not from the queue contents.
