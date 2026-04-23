@@ -25,6 +25,7 @@ import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateServ
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunQuotaService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
@@ -66,6 +67,13 @@ class ScriptEventIngressServiceImplTest {
   private static ScriptQuotaService allowingQuotaService() {
     ScriptQuotaService service = Mockito.mock(ScriptQuotaService.class);
     when(service.tryAcquire(Mockito.anyString(), Mockito.anyString())).thenReturn(true);
+    return service;
+  }
+
+  private static ScriptDryRunQuotaService allowingDryRunQuotaService() {
+    ScriptDryRunQuotaService service = Mockito.mock(ScriptDryRunQuotaService.class);
+    when(service.tryAcquire(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(true);
     return service;
   }
 
@@ -131,7 +139,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             enabledPluginRuntimeStateService(),
-            allowingQuotaService());
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -219,7 +228,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             pluginRuntimeStateService,
-            allowingQuotaService());
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -301,7 +311,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class),
-            quotaService);
+            quotaService,
+            allowingDryRunQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -329,6 +340,83 @@ class ScriptEventIngressServiceImplTest {
   }
 
   @Test
+  void dryRunBudgetDenialStopsBeforeHandlerResolution() {
+    SessionContext.setContext(
+        "operator-1", List.of("platformAdmin"), Map.of(), true, "game-session-service", "gs-1");
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptDryRunQuotaService dryRunQuotaService = Mockito.mock(ScriptDryRunQuotaService.class);
+    when(repository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+                "1",
+                "game-1",
+                "region-1",
+                7L,
+                "entity-1",
+                "onCommand",
+                "v1",
+                "patch-1",
+                "event-dry-run-denied",
+                true))
+        .thenReturn(Optional.empty());
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .build())
+                .build());
+    when(dryRunQuotaService.tryAcquire("1", "script-1", "account:operator-1")).thenReturn(false);
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            bindingRepository,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            new BuiltInScriptEventRegistryService(),
+            Mockito.mock(AutomationQueueService.class),
+            outputProperties(),
+            gameSessionControlPlaneClient,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService(),
+            dryRunQuotaService);
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            TriggerScriptEventRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setScriptId("script-1")
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-dry-run-denied")
+                .setReadSnapshotToken("snapshot-1")
+                .setIsDryRun(true)
+                .build());
+
+    assertThat(admission.admitted()).isFalse();
+    assertThat(admission.outcome())
+        .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED.name());
+    assertThat(admission.reason()).isEqualTo("dry_run_budget_exceeded");
+    verify(bindingRepository, never())
+        .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
+            Mockito.anyLong(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+  }
+
+  @Test
   void rejectsRuntimeTriggerWithoutSnapshotToken() {
     SessionContext.setContext(
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
@@ -350,7 +438,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class),
-            allowingQuotaService());
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -396,7 +485,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class),
-            allowingQuotaService());
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -445,7 +535,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class),
-            allowingQuotaService());
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -509,7 +600,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class),
-            allowingQuotaService());
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -550,7 +642,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class),
-            allowingQuotaService());
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
 
     assertThrows(
         IllegalArgumentException.class,
@@ -596,7 +689,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class),
-            allowingQuotaService());
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -649,7 +743,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class),
-            allowingQuotaService());
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -718,7 +813,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             Mockito.mock(PluginRuntimeStateService.class),
-            allowingQuotaService());
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(

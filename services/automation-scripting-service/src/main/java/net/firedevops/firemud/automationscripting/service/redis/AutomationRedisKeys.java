@@ -32,6 +32,24 @@ public final class AutomationRedisKeys {
         + requirePart("scriptId", scriptId);
   }
 
+  public static String automationDryRunTenantQuota(String tenantId, String scriptId) {
+    return "automation:test:quota:"
+        + requirePart("tenantId", tenantId)
+        + ":script:"
+        + requirePart("scriptId", scriptId)
+        + ":tenant";
+  }
+
+  public static String automationDryRunPrincipalQuota(
+      String tenantId, String scriptId, String principalKey) {
+    return "automation:test:quota:"
+        + requirePart("tenantId", tenantId)
+        + ":script:"
+        + requirePart("scriptId", scriptId)
+        + ":principal:"
+        + requirePart("principalKey", principalKey);
+  }
+
   private static String automationTickKey(
       String tenantId, String gameInstanceId, String scriptId, String suffix) {
     return "automation:tick:{"

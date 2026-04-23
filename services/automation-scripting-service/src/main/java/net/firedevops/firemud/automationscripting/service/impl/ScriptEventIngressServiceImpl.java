@@ -20,6 +20,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptEventIngressServ
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunQuotaService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
@@ -46,6 +47,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE.name();
   private static final String OUTCOME_PIN_STATE_UNAVAILABLE =
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE.name();
+  private static final String OUTCOME_QUOTA_DENIED =
+      TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED.name();
 
   private final ScriptEventIngressAuditRepository repository;
   private final ScriptEventBindingRepository bindingRepository;
@@ -60,6 +63,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
   private final PluginRuntimeStateService pluginRuntimeStateService;
   private final ScriptQuotaService quotaService;
+  private final ScriptDryRunQuotaService dryRunQuotaService;
 
   public ScriptEventIngressServiceImpl(
       ScriptEventIngressAuditRepository repository,
@@ -74,7 +78,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
       PluginRuntimeStateService pluginRuntimeStateService,
-      ScriptQuotaService quotaService) {
+      ScriptQuotaService quotaService,
+      ScriptDryRunQuotaService dryRunQuotaService) {
     this.repository = repository;
     this.bindingRepository = bindingRepository;
     this.workItemRepository = workItemRepository;
@@ -88,6 +93,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     this.rolloutProjectionService = rolloutProjectionService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
     this.quotaService = quotaService;
+    this.dryRunQuotaService = dryRunQuotaService;
   }
 
   @Override
@@ -174,6 +180,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (pluginAdmission != null) {
       return pluginAdmission;
     }
+    TriggerAdmission dryRunAdmission = validateDryRunBudget(request);
+    if (dryRunAdmission != null) {
+      return dryRunAdmission;
+    }
     TriggerAdmission stateAdmission = validateAdmissionState(request);
     if (stateAdmission != null) {
       return stateAdmission;
@@ -242,6 +252,21 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             request.getTenantId(), request.getGameInstanceId(), request.getRegionId());
     if ("PAUSED_FOR_ROLLBACK".equals(state.mode())) {
       return new TriggerAdmission(false, OUTCOME_BACKPRESSURE_ROLLBACK, "rollback_paused", 0);
+    }
+    return null;
+  }
+
+  private TriggerAdmission validateDryRunBudget(TriggerScriptEventRequest request) {
+    if (!request.getIsDryRun()) {
+      return null;
+    }
+    String principalKey = dryRunPrincipalKey();
+    if (principalKey.isBlank()) {
+      return new TriggerAdmission(false, OUTCOME_QUOTA_DENIED, "dry_run_principal_missing", 0);
+    }
+    if (!dryRunQuotaService.tryAcquire(
+        request.getTenantId(), request.getScriptId(), principalKey)) {
+      return new TriggerAdmission(false, OUTCOME_QUOTA_DENIED, "dry_run_budget_exceeded", 0);
     }
     return null;
   }
@@ -429,6 +454,21 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       return SessionContext.hasGlobalPrivilegedRole() ? "operator" : "unknown";
     }
     return source;
+  }
+
+  private static String dryRunPrincipalKey() {
+    String accountId = SessionContext.getAccountId();
+    if (accountId != null && !accountId.isBlank()) {
+      return "account:" + accountId;
+    }
+    String serviceName = SessionContext.getServiceName();
+    if (serviceName != null && !serviceName.isBlank()) {
+      String serviceInstanceId = normalize(SessionContext.getServiceInstanceId());
+      return serviceInstanceId.isBlank()
+          ? "service:" + serviceName
+          : "service:" + serviceName + ":" + serviceInstanceId;
+    }
+    return SessionContext.hasGlobalPrivilegedRole() ? "operator" : "";
   }
 
   private static String requiredText(String value, String fieldName) {
