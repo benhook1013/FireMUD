@@ -3,12 +3,17 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
@@ -39,6 +44,9 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
   private Counter enqueueCounter;
   private Counter drainCounter;
   private Counter rebuildCounter;
+  private Counter inspectionCounter;
+  private AtomicLong orphanedEntriesGauge = new AtomicLong();
+  private AtomicLong oldestEntryAgeSecondsGauge = new AtomicLong();
 
   @PostConstruct
   void init() {
@@ -46,6 +54,14 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
     this.enqueueCounter = meterRegistry.counter("automation_queue_enqueued_total");
     this.drainCounter = meterRegistry.counter("automation_queue_drained_total");
     this.rebuildCounter = meterRegistry.counter("automation_queue_rebuilt_total");
+    this.inspectionCounter = meterRegistry.counter("automation_queue_health_inspections_total");
+    Gauge.builder("automation_queue_orphaned_entries_total", orphanedEntriesGauge, AtomicLong::get)
+        .register(meterRegistry);
+    Gauge.builder(
+            "automation_queue_oldest_entry_age_seconds",
+            oldestEntryAgeSecondsGauge,
+            AtomicLong::get)
+        .register(meterRegistry);
   }
 
   @Override
@@ -103,6 +119,60 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
       rebuildCounter.increment(published);
     }
     return published;
+  }
+
+  @Override
+  @Timed(value = "automation.queue.inspect")
+  public QueueHealthSnapshot inspectProjectionHealth(int maxQueues, long staleAfterSeconds) {
+    if (maxQueues <= 0) {
+      throw new IllegalArgumentException("max_queues must be positive");
+    }
+    if (staleAfterSeconds <= 0) {
+      throw new IllegalArgumentException("stale_after_seconds must be positive");
+    }
+    Set<String> queueKeys = redisTemplate.keys("automation:queue:*");
+    if (queueKeys == null || queueKeys.isEmpty()) {
+      orphanedEntriesGauge.set(0L);
+      oldestEntryAgeSecondsGauge.set(0L);
+      inspectionCounter.increment();
+      return new QueueHealthSnapshot(0, 0, 0L);
+    }
+    List<String> limitedKeys = queueKeys.stream().sorted().limit(maxQueues).toList();
+    LinkedHashMap<Long, AutomationQueueWorkItemPointer> pointers = new LinkedHashMap<>();
+    for (String queueKey : limitedKeys) {
+      List<Object> raw = listOps.range(queueKey, 0, -1);
+      if (raw == null) {
+        continue;
+      }
+      raw.stream()
+          .map(Object::toString)
+          .map(this::deserialize)
+          .forEach(pointer -> pointers.putIfAbsent(pointer.outboxWorkItemId(), pointer));
+    }
+    Map<Long, ScriptWorkItem> itemsById =
+        workItemRepository.findAllById(pointers.keySet()).stream()
+            .collect(java.util.stream.Collectors.toMap(ScriptWorkItem::getId, item -> item));
+    Instant now = Instant.now();
+    long orphanedEntries = 0L;
+    long oldestEntryAgeSeconds = 0L;
+    for (AutomationQueueWorkItemPointer pointer : pointers.values()) {
+      ScriptWorkItem item = itemsById.get(pointer.outboxWorkItemId());
+      if (item == null) {
+        orphanedEntries++;
+        continue;
+      }
+      long ageSeconds =
+          Math.max(0L, java.time.Duration.between(item.getCreatedAt(), now).getSeconds());
+      oldestEntryAgeSeconds = Math.max(oldestEntryAgeSeconds, ageSeconds);
+      if (!INDEXABLE_STATUSES.contains(item.getStatus()) || ageSeconds > staleAfterSeconds) {
+        orphanedEntries++;
+      }
+    }
+    orphanedEntriesGauge.set(orphanedEntries);
+    oldestEntryAgeSecondsGauge.set(oldestEntryAgeSeconds);
+    inspectionCounter.increment();
+    return new QueueHealthSnapshot(
+        limitedKeys.size(), Math.toIntExact(orphanedEntries), oldestEntryAgeSeconds);
   }
 
   private String serialize(AutomationQueueWorkItemPointer pointer) {

@@ -27,4 +27,11 @@ public interface AutomationQueueService {
    * @return number of queue pointers published
    */
   int rebuildPendingWorkItemIndex(int maxItems);
+
+  default QueueHealthSnapshot inspectProjectionHealth(int maxQueues, long staleAfterSeconds) {
+    return new QueueHealthSnapshot(0, 0, 0L);
+  }
+
+  record QueueHealthSnapshot(
+      int inspectedQueues, int orphanedEntries, long oldestEntryAgeSeconds) {}
 }

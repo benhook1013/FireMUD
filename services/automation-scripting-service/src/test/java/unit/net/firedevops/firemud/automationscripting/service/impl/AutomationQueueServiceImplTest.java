@@ -1,11 +1,14 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
@@ -104,11 +107,52 @@ class AutomationQueueServiceImplTest {
 
     int rebuilt = service.rebuildPendingWorkItemIndex(10);
 
-    org.assertj.core.api.Assertions.assertThat(rebuilt).isEqualTo(1);
+    assertThat(rebuilt).isEqualTo(1);
     verify(listOps)
         .rightPush(
             "automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1",
             "{\"schemaVersion\":1,\"outboxWorkItemId\":41,\"gameInstanceId\":\"instance-1\",\"scriptPatchVersion\":\"patch-1\",\"scriptEventId\":\"event-41\"}");
+  }
+
+  @Test
+  void inspectProjectionHealthCountsStaleAndMissingPointers() {
+    ScriptWorkItem fresh = workItem(41L, "entity-1");
+    fresh.setCreatedAt(Instant.now().minusSeconds(30));
+    fresh.setStatus("PENDING_EVALUATION");
+    ScriptWorkItem stale = workItem(42L, "entity-2");
+    stale.setCreatedAt(Instant.now().minusSeconds(600));
+    stale.setStatus("EVALUATING");
+    when(redisTemplate.keys("automation:queue:*"))
+        .thenReturn(
+            Set.of(
+                "automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1",
+                "automation:queue:{tenant:tenant-1:instance:instance-1}:entity-2"));
+    when(listOps.range("automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1", 0, -1))
+        .thenReturn(
+            List.of(
+                "{\"schemaVersion\":1,\"outboxWorkItemId\":41,\"gameInstanceId\":\"instance-1\",\"scriptPatchVersion\":\"patch-1\",\"scriptEventId\":\"event-41\"}",
+                "{\"schemaVersion\":1,\"outboxWorkItemId\":99,\"gameInstanceId\":\"instance-1\",\"scriptPatchVersion\":\"patch-1\",\"scriptEventId\":\"event-99\"}"));
+    when(listOps.range("automation:queue:{tenant:tenant-1:instance:instance-1}:entity-2", 0, -1))
+        .thenReturn(
+            List.of(
+                "{\"schemaVersion\":1,\"outboxWorkItemId\":42,\"gameInstanceId\":\"instance-1\",\"scriptPatchVersion\":\"patch-1\",\"scriptEventId\":\"event-42\"}"));
+    when(workItemRepository.findAllById(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(List.of(fresh, stale));
+
+    AutomationQueueService.QueueHealthSnapshot snapshot = service.inspectProjectionHealth(10, 300);
+
+    assertThat(snapshot.inspectedQueues()).isEqualTo(2);
+    assertThat(snapshot.orphanedEntries()).isEqualTo(2);
+    assertThat(snapshot.oldestEntryAgeSeconds()).isGreaterThanOrEqualTo(600);
+  }
+
+  @Test
+  void inspectProjectionHealthResetsMetricsWhenNoQueuesExist() {
+    when(redisTemplate.keys("automation:queue:*")).thenReturn(Set.of());
+
+    AutomationQueueService.QueueHealthSnapshot snapshot = service.inspectProjectionHealth(10, 300);
+
+    assertThat(snapshot).isEqualTo(new AutomationQueueService.QueueHealthSnapshot(0, 0, 0L));
   }
 
   private static ScriptWorkItem workItem(long id, String entityId) {
@@ -119,6 +163,8 @@ class AutomationQueueServiceImplTest {
     workItem.setEntityId(entityId);
     workItem.setScriptPatchVersion("patch-1");
     workItem.setScriptEventId("event-" + id);
+    workItem.setCreatedAt(Instant.EPOCH);
+    workItem.setStatus("PENDING_EVALUATION");
     return workItem;
   }
 }
