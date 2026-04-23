@@ -135,6 +135,7 @@ public interface ScriptWorkItemService {
       String automationDispatchId,
       String gameSessionCommandId,
       String targetEntityId,
+      String emittedCommandText,
       String handoffOutcome,
       String handoffReason,
       long observedAtMs) {}

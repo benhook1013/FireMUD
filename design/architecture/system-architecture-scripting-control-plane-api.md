@@ -318,14 +318,14 @@ Inputs:
 
 Outputs:
 
-- ordered event rows containing `eventId`, `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `scriptId`, optional plugin identity, `workItemId`, `commandOrdinal`, `automationDispatchId`, optional `gameSessionCommandId`, `targetEntityId`, `handoffOutcome`, `handoffReason`, and `observedAt`
+- ordered event rows containing `eventId`, `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `scriptId`, optional plugin identity, `workItemId`, `commandOrdinal`, `automationDispatchId`, optional `gameSessionCommandId`, `targetEntityId`, rendered `emittedCommandText`, `handoffOutcome`, `handoffReason`, and `observedAt`
 
 Contract rules:
 
 - This is the per-command observability companion to work-item-level audit and dead-letter reads. Multi-command work items must not collapse handoff chronology into one row.
 - Automation must persist one durable handoff event per attempted emitted command, including pre-handoff rollback fencing and Game Session acceptance/rejection outcomes.
 - `automationDispatchId` is the canonical low-cardinality correlation key between Automation handoff history and the Game Session gameplay-command ledger; metrics still must not label by it.
-- Operators use this read to answer which emitted command ordinal reached Game Session, which target entity it addressed, and whether the failure happened before handoff, at Game Session admission, or after later gameplay-side execution disposition.
+- Operators use this read to answer which emitted command ordinal reached Game Session, which rendered command text and target entity it addressed, and whether the failure happened before handoff, at Game Session admission, or after later gameplay-side execution disposition.
 
 #### `CancelPendingWorkItemsForPluginVersion`
 

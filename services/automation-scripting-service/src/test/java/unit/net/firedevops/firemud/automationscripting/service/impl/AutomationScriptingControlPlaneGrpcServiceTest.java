@@ -540,6 +540,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "workItem:99#0",
                     "command-1",
                     "target-1",
+                    "LOOK AT old chest",
                     "enqueued",
                     "game_session_accepted",
                     15L)));
@@ -569,6 +570,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEventsList()).hasSize(1);
     assertThat(ref.get().getEvents(0).getAutomationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(ref.get().getEvents(0).getGameSessionCommandId()).isEqualTo("command-1");
+    assertThat(ref.get().getEvents(0).getEmittedCommandText()).isEqualTo("LOOK AT old chest");
     assertThat(ref.get().getEvents(0).getHandoffOutcome()).isEqualTo("enqueued");
   }
 

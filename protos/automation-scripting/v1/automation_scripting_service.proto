@@ -554,9 +554,10 @@ message ScriptHandoffEventEntry {
   string automation_dispatch_id = 10;
   string game_session_command_id = 11;
   string target_entity_id = 12;
-  string handoff_outcome = 13;
-  string handoff_reason = 14;
-  int64 observed_at_ms = 15;
+  string emitted_command_text = 13;
+  string handoff_outcome = 14;
+  string handoff_reason = 15;
+  int64 observed_at_ms = 16;
 }
 
 message ListScriptHandoffEventsResponse {

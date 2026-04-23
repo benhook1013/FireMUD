@@ -221,7 +221,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     List<ScriptGameplayCommandHandoffService.EmittedCommand> commands = new ArrayList<>();
     int ordinal = 0;
     for (JsonNode node : commandsNode) {
-      String commandText = render(commandText(node), variables);
+      String commandText = renderedCommandText(node, variables);
       if (commandText.isBlank()) {
         throw new IllegalArgumentException("command_text_blank");
       }
@@ -285,6 +285,53 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return node.asText();
     }
     return node.path("commandText").asText("");
+  }
+
+  private static String renderedCommandText(JsonNode node, Map<String, String> variables) {
+    if (node.isTextual() || node.hasNonNull("commandText")) {
+      return render(commandText(node), variables);
+    }
+    if (!node.has("commandAlias")) {
+      return "";
+    }
+    String commandAlias = render(node.path("commandAlias").asText(""), variables).trim();
+    if (commandAlias.isBlank()) {
+      throw new IllegalArgumentException("command_alias_blank");
+    }
+    List<String> arguments = renderedArguments(node.path("arguments"), variables);
+    if (arguments.isEmpty()) {
+      return commandAlias;
+    }
+    return commandAlias + " " + String.join(" ", arguments);
+  }
+
+  private static List<String> renderedArguments(
+      JsonNode argumentsNode, Map<String, String> variables) {
+    if (argumentsNode == null || argumentsNode.isMissingNode() || argumentsNode.isNull()) {
+      return List.of();
+    }
+    if (argumentsNode.isTextual()) {
+      String rendered = render(argumentsNode.asText(), variables).trim();
+      if (rendered.isBlank()) {
+        return List.of();
+      }
+      return List.of(rendered);
+    }
+    if (!argumentsNode.isArray()) {
+      throw new IllegalArgumentException("command_arguments_invalid");
+    }
+    List<String> rendered = new ArrayList<>();
+    for (JsonNode argumentNode : argumentsNode) {
+      if (!argumentNode.isValueNode()) {
+        throw new IllegalArgumentException("command_argument_invalid");
+      }
+      String value = render(argumentNode.asText(""), variables).trim();
+      if (value.isBlank()) {
+        throw new IllegalArgumentException("command_argument_blank");
+      }
+      rendered.add(value);
+    }
+    return List.copyOf(rendered);
   }
 
   private static String targetEntityId(

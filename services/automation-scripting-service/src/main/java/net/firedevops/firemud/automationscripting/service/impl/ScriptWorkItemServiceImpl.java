@@ -452,6 +452,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         event.getAutomationDispatchId(),
         blankToEmpty(event.getGameSessionCommandId()),
         event.getTargetEntityId(),
+        event.getEmittedCommandText(),
         event.getHandoffOutcome(),
         event.getHandoffReason(),
         event.getObservedAt().toEpochMilli());

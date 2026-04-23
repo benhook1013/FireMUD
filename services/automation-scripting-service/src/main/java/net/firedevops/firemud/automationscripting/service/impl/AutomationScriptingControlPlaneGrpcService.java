@@ -913,6 +913,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setAutomationDispatchId(summary.automationDispatchId())
         .setGameSessionCommandId(summary.gameSessionCommandId())
         .setTargetEntityId(summary.targetEntityId())
+        .setEmittedCommandText(summary.emittedCommandText())
         .setHandoffOutcome(summary.handoffOutcome())
         .setHandoffReason(summary.handoffReason())
         .setObservedAtMs(summary.observedAtMs())

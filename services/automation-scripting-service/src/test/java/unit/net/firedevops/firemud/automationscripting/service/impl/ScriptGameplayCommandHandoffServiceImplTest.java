@@ -88,6 +88,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     verify(handoffEventRepository).save(handoffCaptor.capture());
     assertThat(handoffCaptor.getValue().getAutomationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(handoffCaptor.getValue().getGameSessionCommandId()).isEqualTo("auto-1");
+    assertThat(handoffCaptor.getValue().getEmittedCommandText()).isEqualTo("say hello");
     assertThat(handoffCaptor.getValue().getHandoffOutcome()).isEqualTo("enqueued");
   }
 
@@ -135,6 +136,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
         ArgumentCaptor.forClass(ScriptHandoffEvent.class);
     verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getEmittedCommandText()).isEqualTo("say hello");
     assertThat(handoffCaptor.getValue().getHandoffOutcome()).isEqualTo("rejected");
     assertThat(handoffCaptor.getValue().getHandoffReason()).isEqualTo("STALE_TIMELINE");
   }
@@ -190,6 +192,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
         ArgumentCaptor.forClass(ScriptHandoffEvent.class);
     verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getEmittedCommandText()).isEqualTo("say hello");
     assertThat(handoffCaptor.getValue().getHandoffOutcome()).isEqualTo("rollback_epoch_advanced");
   }
 

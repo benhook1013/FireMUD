@@ -645,6 +645,7 @@ class ScriptWorkItemServiceImplTest {
     event.setAutomationDispatchId("workItem:99#0");
     event.setGameSessionCommandId("command-1");
     event.setTargetEntityId("target-1");
+    event.setEmittedCommandText("LOOK AT old chest");
     event.setHandoffOutcome("enqueued");
     event.setHandoffReason("game_session_accepted");
     event.setObservedAt(Instant.ofEpochMilli(300L));
@@ -676,6 +677,7 @@ class ScriptWorkItemServiceImplTest {
     assertThat(events).hasSize(1);
     assertThat(events.get(0).automationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(events.get(0).gameSessionCommandId()).isEqualTo("command-1");
+    assertThat(events.get(0).emittedCommandText()).isEqualTo("LOOK AT old chest");
     assertThat(events.get(0).handoffOutcome()).isEqualTo("enqueued");
   }
 
