@@ -19,12 +19,15 @@ public class PluginPolicyReconciliationJob {
 
   private final PluginRuntimeStateService pluginRuntimeStateService;
   private final ScriptRuntimeProperties runtimeProperties;
+  private final ScheduledJobReadinessGuard readinessGuard;
 
   public PluginPolicyReconciliationJob(
       PluginRuntimeStateService pluginRuntimeStateService,
-      ScriptRuntimeProperties runtimeProperties) {
+      ScriptRuntimeProperties runtimeProperties,
+      ScheduledJobReadinessGuard readinessGuard) {
     this.pluginRuntimeStateService = pluginRuntimeStateService;
     this.runtimeProperties = runtimeProperties;
+    this.readinessGuard = readinessGuard;
   }
 
   @Timed(value = "pluginPolicy.reconcile")
@@ -32,6 +35,9 @@ public class PluginPolicyReconciliationJob {
       fixedDelayString = "${script.runtime.plugin-policy-reconcile-interval-seconds:60}",
       timeUnit = TimeUnit.SECONDS)
   public void reconcileActivePluginPolicy() {
+    if (!readinessGuard.canRun()) {
+      return;
+    }
     PluginRuntimeStateService.PolicyReconciliationResult result =
         pluginRuntimeStateService.reconcileActivePluginPolicy(
             runtimeProperties.getPluginPolicyReconcileBatchSize());

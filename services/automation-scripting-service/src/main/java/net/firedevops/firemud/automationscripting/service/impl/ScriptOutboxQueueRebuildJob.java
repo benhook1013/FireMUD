@@ -19,11 +19,15 @@ public class ScriptOutboxQueueRebuildJob {
 
   private final AutomationQueueService automationQueueService;
   private final ScriptOutboxProperties outboxProperties;
+  private final ScheduledJobReadinessGuard readinessGuard;
 
   public ScriptOutboxQueueRebuildJob(
-      AutomationQueueService automationQueueService, ScriptOutboxProperties outboxProperties) {
+      AutomationQueueService automationQueueService,
+      ScriptOutboxProperties outboxProperties,
+      ScheduledJobReadinessGuard readinessGuard) {
     this.automationQueueService = automationQueueService;
     this.outboxProperties = outboxProperties;
+    this.readinessGuard = readinessGuard;
   }
 
   @Timed(value = "scriptOutbox.queueRebuild")
@@ -31,6 +35,9 @@ public class ScriptOutboxQueueRebuildJob {
       fixedDelayString = "${script.outbox.queue-rebuild-interval-seconds:60}",
       timeUnit = TimeUnit.SECONDS)
   public void rebuildQueueProjection() {
+    if (!readinessGuard.canRun()) {
+      return;
+    }
     int rebuilt =
         automationQueueService.rebuildPendingWorkItemIndex(
             outboxProperties.getQueueRebuildBatchSize());

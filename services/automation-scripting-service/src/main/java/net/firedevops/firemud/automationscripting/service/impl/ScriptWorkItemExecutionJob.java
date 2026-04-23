@@ -19,11 +19,15 @@ public class ScriptWorkItemExecutionJob {
 
   private final ScriptWorkItemExecutionService executionService;
   private final ScriptOutboxProperties outboxProperties;
+  private final ScheduledJobReadinessGuard readinessGuard;
 
   public ScriptWorkItemExecutionJob(
-      ScriptWorkItemExecutionService executionService, ScriptOutboxProperties outboxProperties) {
+      ScriptWorkItemExecutionService executionService,
+      ScriptOutboxProperties outboxProperties,
+      ScheduledJobReadinessGuard readinessGuard) {
     this.executionService = executionService;
     this.outboxProperties = outboxProperties;
+    this.readinessGuard = readinessGuard;
   }
 
   @Timed(value = "scriptOutbox.execution")
@@ -31,6 +35,9 @@ public class ScriptWorkItemExecutionJob {
       fixedDelayString = "${script.outbox.execution-interval-seconds:5}",
       timeUnit = TimeUnit.SECONDS)
   public void processPendingWorkItems() {
+    if (!readinessGuard.canRun()) {
+      return;
+    }
     ScriptWorkItemExecutionService.ExecutionBatchResult result =
         executionService.processPendingWorkItems(outboxProperties.getExecutionBatchSize());
     if (result.claimedCount() > 0) {

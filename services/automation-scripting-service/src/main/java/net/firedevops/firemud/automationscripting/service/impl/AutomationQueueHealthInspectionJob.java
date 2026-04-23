@@ -18,6 +18,7 @@ public class AutomationQueueHealthInspectionJob {
       LoggerFactory.getLogger(AutomationQueueHealthInspectionJob.class);
 
   private final AutomationQueueService automationQueueService;
+  private final ScheduledJobReadinessGuard readinessGuard;
 
   @org.springframework.beans.factory.annotation.Value("${script.outbox.queue-health-max-queues:50}")
   private int maxQueues;
@@ -26,8 +27,10 @@ public class AutomationQueueHealthInspectionJob {
       "${script.outbox.queue-health-stale-after-seconds:300}")
   private long staleAfterSeconds;
 
-  public AutomationQueueHealthInspectionJob(AutomationQueueService automationQueueService) {
+  public AutomationQueueHealthInspectionJob(
+      AutomationQueueService automationQueueService, ScheduledJobReadinessGuard readinessGuard) {
     this.automationQueueService = automationQueueService;
+    this.readinessGuard = readinessGuard;
   }
 
   @Timed(value = "scriptOutbox.queueHealthInspection")
@@ -35,6 +38,9 @@ public class AutomationQueueHealthInspectionJob {
       fixedDelayString = "${script.outbox.queue-health-interval-seconds:60}",
       timeUnit = TimeUnit.SECONDS)
   public void inspectQueueProjectionHealth() {
+    if (!readinessGuard.canRun()) {
+      return;
+    }
     AutomationQueueService.QueueHealthSnapshot snapshot =
         automationQueueService.inspectProjectionHealth(maxQueues, staleAfterSeconds);
     if (snapshot.orphanedEntries() > 0) {
