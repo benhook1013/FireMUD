@@ -3,6 +3,8 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
+import java.time.Instant;
+import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
@@ -72,6 +74,7 @@ public final class AutomationScriptingControlPlaneGrpcService
   private final PluginRuntimeStateService pluginRuntimeStateService;
   private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
+  private final ScriptRuntimeProperties runtimeProperties;
 
   public AutomationScriptingControlPlaneGrpcService(
       ScriptEventRegistryService eventRegistryService,
@@ -79,11 +82,29 @@ public final class AutomationScriptingControlPlaneGrpcService
       PluginRuntimeStateService pluginRuntimeStateService,
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService) {
+    this(
+        eventRegistryService,
+        workItemService,
+        pluginRuntimeStateService,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        new ScriptRuntimeProperties());
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public AutomationScriptingControlPlaneGrpcService(
+      ScriptEventRegistryService eventRegistryService,
+      ScriptWorkItemService workItemService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptRuntimeProperties runtimeProperties) {
     this.eventRegistryService = eventRegistryService;
     this.workItemService = workItemService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
+    this.runtimeProperties = runtimeProperties;
   }
 
   @Override
@@ -533,7 +554,9 @@ public final class AutomationScriptingControlPlaneGrpcService
                       .setStatusReason(status.statusReason())
                       .setLastChangedAtMs(status.lastChangedAtMs())
                       .setControlPlaneRequestId(status.controlPlaneRequestId())
-                      .setActorPrincipal(status.actorPrincipal()),
+                      .setActorPrincipal(status.actorPrincipal())
+                      .setLastPolicyCheckedAtMs(status.lastPolicyCheckedAtMs())
+                      .setPolicyCheckStale(isPolicyCheckStale(status.lastPolicyCheckedAtMs())),
               () ->
                   response.setError(notFound("GetPluginStatus", "plugin_runtime_state_not_found")));
     } catch (IllegalArgumentException ex) {
@@ -675,6 +698,11 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setReason(violation.reason())
         .setLastChangedAtMs(violation.lastChangedAtMs())
         .build();
+  }
+
+  private boolean isPolicyCheckStale(long lastPolicyCheckedAtMs) {
+    long ageMs = Instant.now().toEpochMilli() - lastPolicyCheckedAtMs;
+    return ageMs > runtimeProperties.getPluginPolicyStaleThresholdSeconds() * 1_000L;
   }
 
   private static ErrorDetail authorizationError(AdminAuthorizationException ex) {

@@ -630,6 +630,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getLastChangedAtMs()).isEqualTo(55L);
     assertThat(ref.get().getControlPlaneRequestId()).isEqualTo("req-1");
     assertThat(ref.get().getActorPrincipal()).isEqualTo("operator-1");
+    assertThat(ref.get().getLastPolicyCheckedAtMs()).isPositive();
+    assertThat(ref.get().getPolicyCheckStale()).isFalse();
   }
 
   @Test

@@ -580,7 +580,9 @@ message GetPluginStatusResponse {
   int64 last_changed_at_ms = 5;
   string control_plane_request_id = 6;
   string actor_principal = 7;
-  shared.v1.ErrorDetail error = 8;
+  int64 last_policy_checked_at_ms = 8;
+  bool policy_check_stale = 9;
+  shared.v1.ErrorDetail error = 10;
 }
 
 message GetPluginPolicyConvergenceRequest {
