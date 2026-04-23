@@ -362,7 +362,7 @@ class AutomationScriptingGrpcServiceTest {
             scheduleInstanceService.observeRuntimeTickProgress(
                 new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
                     "1", "game-1", "region-1", 12L, 100L, 5_000L)))
-        .thenReturn(new ScriptScheduleInstanceService.RuntimeTickProgressResult(2, 1));
+        .thenReturn(new ScriptScheduleInstanceService.RuntimeTickProgressResult(2, 1, 3));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             Mockito.mock(PingService.class),
@@ -400,5 +400,6 @@ class AutomationScriptingGrpcServiceTest {
 
     assertEquals(2, ref.get().getUpdatedScheduleCount());
     assertEquals(1, ref.get().getFiredScheduleCount());
+    assertEquals(3, ref.get().getTruncatedFiringCount());
   }
 }

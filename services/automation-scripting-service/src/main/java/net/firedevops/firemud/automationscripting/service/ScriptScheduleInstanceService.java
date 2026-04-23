@@ -22,7 +22,8 @@ public interface ScriptScheduleInstanceService {
       long tickId,
       long observedAtMs) {}
 
-  record RuntimeTickProgressResult(int updatedScheduleCount, int firedScheduleCount) {}
+  record RuntimeTickProgressResult(
+      int updatedScheduleCount, int firedScheduleCount, int truncatedFiringCount) {}
 
   record ScheduleInstanceSummary(
       String tenantId,

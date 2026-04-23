@@ -216,24 +216,31 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             observation.tenantId(), observation.gameInstanceId(), UNIT_TICKS);
     List<ScriptScheduleInstance> updates = new ArrayList<>();
-    int remainingFirings = schedulerProperties.getMaxCatchUpFiringsPerObservation();
+    int maxFirings = schedulerProperties.getMaxCatchUpFiringsPerObservation();
+    List<TimerFiringCandidate> candidates = new ArrayList<>();
     int fired = 0;
     for (ScriptScheduleInstance instance : instances) {
-      TickAdvanceResult advance = advanceRuntimeProgress(instance, observation, observedAt, now);
-      if (advance.fireDueTick() != null && remainingFirings > 0) {
-        if (emitTimerWorkItem(instance, advance.fireDueTick(), now)) {
-          fired++;
-          remainingFirings--;
-        }
-      }
+      TickAdvanceResult advance =
+          advanceRuntimeProgress(instance, observation, observedAt, now, maxFirings + 1);
+      candidates.addAll(
+          advance.fireDueTicks().stream()
+              .map(dueTick -> new TimerFiringCandidate(instance, dueTick))
+              .toList());
       if (advance.changed()) {
         updates.add(instance);
       }
     }
+    List<TimerFiringCandidate> selectedCandidates = roundRobinCandidates(candidates, maxFirings);
+    for (TimerFiringCandidate candidate : selectedCandidates) {
+      if (emitTimerWorkItem(candidate.instance(), candidate.dueTickId(), now)) {
+        fired++;
+      }
+    }
+    int truncated = Math.max(0, candidates.size() - selectedCandidates.size());
     if (!updates.isEmpty()) {
       scheduleInstanceRepository.saveAll(updates);
     }
-    return new RuntimeTickProgressResult(updates.size(), fired);
+    return new RuntimeTickProgressResult(updates.size(), fired, truncated);
   }
 
   @Override
@@ -365,16 +372,21 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       ScriptScheduleInstance instance,
       RuntimeTickProgressObservation observation,
       Instant observedAt,
-      Instant now) {
+      Instant now,
+      int perScheduleCandidateLimit) {
     boolean runtimeScopeChanged =
         !observation.regionId().equals(blankToEmpty(instance.getRuntimeRegionId()))
             || instance.getRuntimeRegionEpoch() == null
             || instance.getRuntimeRegionEpoch() != observation.regionEpoch();
     Long currentDueTick = instance.getNextDueTickId();
-    Long fireDueTick =
+    List<Long> fireDueTicks =
         !runtimeScopeChanged && currentDueTick != null && currentDueTick <= observation.tickId()
-            ? currentDueTick
-            : null;
+            ? dueTicks(
+                currentDueTick,
+                observation.tickId(),
+                instance.getCadenceValue(),
+                perScheduleCandidateLimit)
+            : List.of();
     long nextDueTick =
         runtimeScopeChanged || currentDueTick == null || currentDueTick <= observation.tickId()
             ? nextFutureDueTick(observation.tickId(), currentDueTick, instance.getCadenceValue())
@@ -387,7 +399,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             || instance.getLastObservedTickId() == null
             || instance.getLastObservedTickId() != observation.tickId();
     if (!changed) {
-      return new TickAdvanceResult(false, fireDueTick);
+      return new TickAdvanceResult(false, fireDueTicks);
     }
     instance.setMaterializationStatus(STATUS_READY);
     instance.setRuntimeRegionId(observation.regionId());
@@ -397,7 +409,68 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setNextDueTickId(nextDueTick);
     instance.setNextDueAt(null);
     instance.setUpdatedAt(now);
-    return new TickAdvanceResult(true, fireDueTick);
+    return new TickAdvanceResult(true, fireDueTicks);
+  }
+
+  private List<TimerFiringCandidate> roundRobinCandidates(
+      List<TimerFiringCandidate> candidates, int maxFirings) {
+    if (candidates.isEmpty() || maxFirings <= 0) {
+      return List.of();
+    }
+    Map<String, List<TimerFiringCandidate>> bySchedule = new java.util.LinkedHashMap<>();
+    candidates.stream()
+        .sorted(timerCandidateComparator())
+        .forEach(
+            candidate ->
+                bySchedule
+                    .computeIfAbsent(
+                        scheduleKey(candidate.instance()), ignored -> new ArrayList<>())
+                    .add(candidate));
+    List<TimerFiringCandidate> selected = new ArrayList<>();
+    int pass = 0;
+    while (selected.size() < maxFirings) {
+      boolean added = false;
+      for (List<TimerFiringCandidate> scheduleCandidates : bySchedule.values()) {
+        if (pass < scheduleCandidates.size()) {
+          selected.add(scheduleCandidates.get(pass));
+          added = true;
+          if (selected.size() >= maxFirings) {
+            return List.copyOf(selected);
+          }
+        }
+      }
+      if (!added) {
+        break;
+      }
+      pass++;
+    }
+    return List.copyOf(selected);
+  }
+
+  private Comparator<TimerFiringCandidate> timerCandidateComparator() {
+    return Comparator.comparingLong(TimerFiringCandidate::dueTickId)
+        .thenComparingInt(candidate -> priorityRank(candidate.instance().getPriorityTag()))
+        .thenComparing(candidate -> scheduleKey(candidate.instance()));
+  }
+
+  private static int priorityRank(String priorityTag) {
+    return switch (blankToEmpty(priorityTag)) {
+      case "high" -> 0;
+      case "normal" -> 1;
+      default -> 2;
+    };
+  }
+
+  private static List<Long> dueTicks(
+      long firstDueTick, long observedTickId, long cadence, int candidateLimit) {
+    long boundedCadence = Math.max(1L, cadence);
+    List<Long> dueTicks = new ArrayList<>();
+    long dueTick = firstDueTick;
+    while (dueTick <= observedTickId && dueTicks.size() < candidateLimit) {
+      dueTicks.add(dueTick);
+      dueTick += boundedCadence;
+    }
+    return List.copyOf(dueTicks);
   }
 
   private boolean emitTimerWorkItem(ScriptScheduleInstance instance, long dueTickId, Instant now) {
@@ -547,6 +620,18 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         + dueTickId;
   }
 
+  private static String scheduleKey(ScriptScheduleInstance instance) {
+    return blankToEmpty(instance.getPluginId())
+        + "|"
+        + blankToEmpty(instance.getPluginVersionId())
+        + "|"
+        + blankToEmpty(instance.getTargetScopeType())
+        + "|"
+        + blankToEmpty(instance.getTargetScopeId())
+        + "|"
+        + blankToEmpty(instance.getScheduleDefinitionId());
+  }
+
   private static String shortHash(String value) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -622,7 +707,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     return blankToEmpty(scriptId) + "\u0000" + blankToEmpty(eventType);
   }
 
-  private record TickAdvanceResult(boolean changed, Long fireDueTick) {}
+  private record TickAdvanceResult(boolean changed, List<Long> fireDueTicks) {}
+
+  private record TimerFiringCandidate(ScriptScheduleInstance instance, long dueTickId) {}
 
   private static String blankToEmpty(String value) {
     return value == null ? "" : value;

@@ -224,6 +224,7 @@ message ObserveRuntimeTickProgressResponse {
   int32 updated_schedule_count = 1;
   shared.v1.ErrorDetail error = 2;
   int32 fired_schedule_count = 3;
+  int32 truncated_firing_count = 4;
 }
 
 message GetDraftDesignDigestRequest {

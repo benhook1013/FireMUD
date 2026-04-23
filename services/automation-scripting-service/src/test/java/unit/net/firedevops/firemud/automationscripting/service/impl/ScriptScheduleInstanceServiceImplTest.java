@@ -244,6 +244,7 @@ class ScriptScheduleInstanceServiceImplTest {
 
     assertThat(result.updatedScheduleCount()).isEqualTo(1);
     assertThat(result.firedScheduleCount()).isZero();
+    assertThat(result.truncatedFiringCount()).isZero();
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<ScriptScheduleInstance>> captor = ArgumentCaptor.forClass(List.class);
     verify(scheduleInstanceRepository).saveAll(captor.capture());
@@ -295,6 +296,7 @@ class ScriptScheduleInstanceServiceImplTest {
 
     assertThat(result.updatedScheduleCount()).isEqualTo(1);
     assertThat(result.firedScheduleCount()).isEqualTo(1);
+    assertThat(result.truncatedFiringCount()).isZero();
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(workItemRepository).saveAndFlush(workItemCaptor.capture());
     ScriptWorkItem workItem = workItemCaptor.getValue();
