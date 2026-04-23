@@ -1,6 +1,8 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -49,6 +51,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ScriptTenantBudgetService tenantBudgetService;
   private final ScriptDryRunCapacityService dryRunCapacityService;
   private final ObjectMapper objectMapper;
+  private final MeterRegistry meterRegistry;
 
   public ScriptWorkItemExecutionServiceImpl(
       ScriptWorkItemService workItemService,
@@ -61,6 +64,33 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptTenantBudgetService tenantBudgetService,
       ScriptDryRunCapacityService dryRunCapacityService,
       ObjectMapper objectMapper) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        new SimpleMeterRegistry());
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public ScriptWorkItemExecutionServiceImpl(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry) {
     this.workItemService = workItemService;
     this.scriptDefinitionRepository = scriptDefinitionRepository;
     this.handoffService = handoffService;
@@ -71,6 +101,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.tenantBudgetService = tenantBudgetService;
     this.dryRunCapacityService = dryRunCapacityService;
     this.objectMapper = objectMapper;
+    this.meterRegistry = meterRegistry;
   }
 
   @Override
@@ -296,6 +327,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
     updateAudit(workItem.getId(), stage, outcome, reason, now);
+    recordOutcome(workItem, stage, outcome);
   }
 
   private void cancel(
@@ -306,6 +338,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
     updateAudit(workItem.getId(), stage, outcome, reason, now);
+    recordOutcome(workItem, stage, outcome);
   }
 
   private void markTerminalSuccess(
@@ -316,6 +349,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
     updateAudit(workItem.getId(), stage, outcome, reason, now);
+    recordOutcome(workItem, stage, outcome);
   }
 
   private void updateAudit(
@@ -338,6 +372,21 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     } catch (NumberFormatException ex) {
       throw new IllegalArgumentException("tenant_id must be numeric for script definition lookup");
     }
+  }
+
+  private void recordOutcome(ScriptWorkItem workItem, String stage, String outcome) {
+    meterRegistry
+        .counter(
+            "automation_script_work_item_outcomes_total",
+            "stage",
+            stage,
+            "outcome",
+            outcome,
+            "dryRun",
+            Boolean.toString(workItem.isDryRun()),
+            "priorityTag",
+            normalizePriorityTag(workItem.getPriorityTag()))
+        .increment();
   }
 
   private static String normalizePriorityTag(String value) {

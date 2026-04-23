@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -379,6 +380,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptOutputProperties outputProperties = new ScriptOutputProperties();
     ScriptTenantBudgetService tenantBudgetService = Mockito.mock(ScriptTenantBudgetService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     ScriptWorkItem item = workItem();
     item.setPriorityTag("high");
     ScriptEventAudit audit = new ScriptEventAudit();
@@ -398,7 +400,8 @@ class ScriptWorkItemExecutionServiceImplTest {
             outputProperties,
             tenantBudgetService,
             allowingDryRunCapacityService(),
-            new ObjectMapper());
+            new ObjectMapper(),
+            meterRegistry);
 
     ScriptWorkItemExecutionService.ExecutionBatchResult result =
         service.processPendingWorkItems(10);
@@ -413,6 +416,15 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(audit.getFinalStage()).isEqualTo("ADMISSION");
     assertThat(audit.getFinalOutcome()).isEqualTo("tenant_budget_exceeded");
     assertThat(audit.getFinalReason()).isEqualTo("tenant_budget_exceeded");
+    assertThat(
+            meterRegistry
+                .find("automation_script_work_item_outcomes_total")
+                .tag("stage", "ADMISSION")
+                .tag("outcome", "tenant_budget_exceeded")
+                .tag("dryRun", "false")
+                .tag("priorityTag", "high")
+                .counter())
+        .isNotNull();
   }
 
   @Test
