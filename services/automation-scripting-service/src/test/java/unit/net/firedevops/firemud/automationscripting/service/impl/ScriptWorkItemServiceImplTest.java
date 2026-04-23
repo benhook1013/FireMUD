@@ -11,9 +11,11 @@ import java.util.Optional;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
+import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptHandoffEventRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
@@ -65,6 +67,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
@@ -110,6 +113,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
@@ -145,6 +149,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
@@ -166,6 +171,7 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(ScriptEventAuditRepository.class),
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
@@ -196,6 +202,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             properties,
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
@@ -233,6 +240,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             properties,
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
@@ -258,6 +266,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
@@ -291,6 +300,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
@@ -334,6 +344,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
@@ -366,6 +377,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
@@ -418,6 +430,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             pinProjectionService,
@@ -471,6 +484,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             pinProjectionService,
@@ -548,6 +562,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             pinProjectionService,
@@ -595,6 +610,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
@@ -608,6 +624,59 @@ class ScriptWorkItemServiceImplTest {
     assertThat(deadLetters.get(0).workItemId()).isEqualTo("99");
     assertThat(deadLetters.get(0).reason()).isEqualTo("STALE_TIMELINE");
     assertThat(deadLetters.get(0).updatedAtMs()).isEqualTo(300L);
+  }
+
+  @Test
+  void listsHandoffEventsWithBoundedFilters() {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptHandoffEvent event = new ScriptHandoffEvent();
+    event.setEventId("event-1");
+    event.setTenantId("1");
+    event.setGameInstanceId("game-1");
+    event.setScriptPatchVersion("patch-1");
+    event.setScriptId("script-1");
+    event.setPluginId("plugin-1");
+    event.setPluginVersionId("plugin-v1");
+    event.setWorkItemId(99L);
+    event.setCommandOrdinal(0);
+    event.setAutomationDispatchId("workItem:99#0");
+    event.setGameSessionCommandId("command-1");
+    event.setTargetEntityId("target-1");
+    event.setHandoffOutcome("enqueued");
+    event.setHandoffReason("game_session_accepted");
+    event.setObservedAt(Instant.ofEpochMilli(300L));
+    when(handoffEventRepository.findEvents(
+            Mockito.eq("1"),
+            Mockito.eq("game-1"),
+            Mockito.eq("patch-1"),
+            Mockito.eq(99L),
+            Mockito.eq("enqueued"),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(List.of(event));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            handoffEventRepository,
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class));
+
+    List<ScriptWorkItemService.HandoffEventSummary> events =
+        service.listHandoffEvents("1", "game-1", "patch-1", "99", "enqueued", 10L, 20L, 25);
+
+    assertThat(events).hasSize(1);
+    assertThat(events.get(0).automationDispatchId()).isEqualTo("workItem:99#0");
+    assertThat(events.get(0).gameSessionCommandId()).isEqualTo("command-1");
+    assertThat(events.get(0).handoffOutcome()).isEqualTo("enqueued");
   }
 
   @Test
@@ -663,6 +732,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository,
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             pinProjectionService,
@@ -738,6 +808,7 @@ class ScriptWorkItemServiceImplTest {
             workItemRepository,
             auditRepository,
             ingressAuditRepository,
+            Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),
             pinProjectionService,

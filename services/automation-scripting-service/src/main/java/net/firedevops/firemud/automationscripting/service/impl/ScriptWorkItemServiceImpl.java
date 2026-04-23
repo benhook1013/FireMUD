@@ -8,9 +8,11 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
+import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptHandoffEventRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
@@ -44,6 +46,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository auditRepository;
   private final ScriptEventIngressAuditRepository ingressAuditRepository;
+  private final ScriptHandoffEventRepository handoffEventRepository;
   private final ScriptOutboxProperties outboxProperties;
   private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
@@ -54,6 +57,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       ScriptWorkItemRepository workItemRepository,
       ScriptEventAuditRepository auditRepository,
       ScriptEventIngressAuditRepository ingressAuditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
       ScriptOutboxProperties outboxProperties,
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
@@ -62,6 +66,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
     this.ingressAuditRepository = ingressAuditRepository;
+    this.handoffEventRepository = handoffEventRepository;
     this.outboxProperties = outboxProperties;
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
@@ -294,6 +299,34 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
 
   @Override
   @Transactional(readOnly = true)
+  public List<HandoffEventSummary> listHandoffEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String workItemId,
+      String handoffOutcome,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit) {
+    requireText(tenantId, "tenant_id");
+    int boundedLimit = limit <= 0 ? 100 : Math.min(limit, 500);
+    return handoffEventRepository
+        .findEvents(
+            tenantId,
+            blankToEmpty(gameInstanceId),
+            blankToEmpty(scriptPatchVersion),
+            parseOptionalWorkItemId(workItemId),
+            blankToEmpty(handoffOutcome),
+            changedAfterMs <= 0 ? null : Instant.ofEpochMilli(changedAfterMs),
+            changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs),
+            PageRequest.of(0, boundedLimit))
+        .stream()
+        .map(ScriptWorkItemServiceImpl::toHandoffSummary)
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   public List<DeadLetterSummary> listDeadLetters(
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit) {
     requireText(tenantId, "tenant_id");
@@ -403,6 +436,25 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         item.getCancelReason() == null ? "" : item.getCancelReason(),
         item.getCreatedAt().toEpochMilli(),
         item.getUpdatedAt().toEpochMilli());
+  }
+
+  private static HandoffEventSummary toHandoffSummary(ScriptHandoffEvent event) {
+    return new HandoffEventSummary(
+        event.getEventId(),
+        event.getTenantId(),
+        event.getGameInstanceId(),
+        event.getScriptPatchVersion(),
+        event.getScriptId(),
+        blankToEmpty(event.getPluginId()),
+        blankToEmpty(event.getPluginVersionId()),
+        Long.toString(event.getWorkItemId()),
+        event.getCommandOrdinal(),
+        event.getAutomationDispatchId(),
+        blankToEmpty(event.getGameSessionCommandId()),
+        event.getTargetEntityId(),
+        event.getHandoffOutcome(),
+        event.getHandoffReason(),
+        event.getObservedAt().toEpochMilli());
   }
 
   private List<ScriptWorkItem> selectReplayCandidates(
@@ -540,6 +592,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     } catch (NumberFormatException ex) {
       throw new IllegalArgumentException("work_item_id must be numeric");
     }
+  }
+
+  private static Long parseOptionalWorkItemId(String workItemId) {
+    String normalized = blankToEmpty(workItemId);
+    return normalized.isBlank() ? null : parseWorkItemId(normalized);
   }
 
   private static String blankToEmpty(String value) {

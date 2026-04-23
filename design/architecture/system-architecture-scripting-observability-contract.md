@@ -7,7 +7,9 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 ## Correlation Rules (High Cardinality)
 
 - `scriptEventId` is for `script_event_audit`, logs, and traces.
+- `automationDispatchId` is for per-command handoff history, logs, and cross-service correlation with Game Session command admission, not for Prometheus labels.
 - `scriptEventId` must not be used as a Prometheus metric label (or any other high-cardinality metric dimension).
+- `automationDispatchId` must not be used as a Prometheus metric label (or any other high-cardinality metric dimension).
 - Metrics may include lower-cardinality identifiers such as `tenantId`, `scriptId`, `pluginId`, `pluginVersionId`, and `eventType` as documented below.
 
 ## Ingress Audit vs Handler Audit
@@ -16,8 +18,10 @@ Event-scope ingress decisions and handler-scoped execution outcomes are separate
 
 - Event-scope ingress audit/logging records pre-resolution decisions for the incoming event, such as auth failure, reload backpressure, rollback pause, pin-state unavailability, or version unavailability. These records are keyed by the event-scope identity in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields` and must not invent a synthetic `scriptId`.
 - `script_event_audit` records handler-scoped, scheduler/timer-scoped, tenant-readiness `onLoad`, and dry-run/test executions after a concrete script or plugin handler identity exists.
+- per-command handoff history is a separate durable surface keyed by `automationDispatchId` and `workItemId` so one handler audit row can still correlate to multiple emitted gameplay commands.
 - A successful event-scope ingress record means the event was accepted for handler resolution. It is not a summary of every handler outcome.
 - If ingress is accepted and resolves three handlers, tooling should expect one event-scope ingress record and up to three handler-scoped `script_event_audit` records, one per resolved Trigger Identity.
+- If one resolved handler emits three gameplay commands, tooling should expect one handler-scoped `script_event_audit` row plus three durable handoff-event rows under `ListScriptHandoffEvents`.
 
 ## `script_event_audit` (Required Fields)
 

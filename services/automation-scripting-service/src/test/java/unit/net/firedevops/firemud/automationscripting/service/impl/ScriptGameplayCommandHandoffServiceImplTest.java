@@ -8,8 +8,10 @@ import java.time.Instant;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
+import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptHandoffEventRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
@@ -44,6 +46,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
     ScriptEventAudit audit = new ScriptEventAudit();
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     ScriptGameplayCommandHandoffService service =
@@ -51,6 +55,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             gameSessionClient,
             workItemRepository,
             auditRepository,
+            handoffEventRepository,
             admissionStateService(),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
@@ -78,6 +83,12 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(audit.getFinalStage()).isEqualTo("HANDOFF");
     assertThat(audit.getFinalOutcome()).isEqualTo("enqueued");
     assertThat(audit.getFinalReason()).isEqualTo("game_session_accepted");
+    ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
+        ArgumentCaptor.forClass(ScriptHandoffEvent.class);
+    verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getAutomationDispatchId()).isEqualTo("workItem:99#0");
+    assertThat(handoffCaptor.getValue().getGameSessionCommandId()).isEqualTo("auto-1");
+    assertThat(handoffCaptor.getValue().getHandoffOutcome()).isEqualTo("enqueued");
   }
 
   @Test
@@ -93,6 +104,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
     ScriptEventAudit audit = new ScriptEventAudit();
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     ScriptGameplayCommandHandoffService service =
@@ -100,6 +113,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             gameSessionClient,
             workItemRepository,
             auditRepository,
+            handoffEventRepository,
             admissionStateService(),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
@@ -118,6 +132,11 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(audit.getFinalStage()).isEqualTo("HANDOFF");
     assertThat(audit.getFinalOutcome()).isEqualTo("handoff_failed");
     assertThat(audit.getFinalReason()).isEqualTo("STALE_TIMELINE");
+    ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
+        ArgumentCaptor.forClass(ScriptHandoffEvent.class);
+    verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getHandoffOutcome()).isEqualTo("rejected");
+    assertThat(handoffCaptor.getValue().getHandoffReason()).isEqualTo("STALE_TIMELINE");
   }
 
   @Test
@@ -126,6 +145,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
     ScriptEventAudit audit = new ScriptEventAudit();
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     AutomationAdmissionStateService admissionStateService =
@@ -147,6 +168,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             gameSessionClient,
             workItemRepository,
             auditRepository,
+            handoffEventRepository,
             admissionStateService,
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
@@ -165,6 +187,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(workItemCaptor.getValue().getCancelReason()).isEqualTo("rollback_epoch_advanced");
     assertThat(audit.getFinalOutcome()).isEqualTo("canceled");
     assertThat(audit.getFinalReason()).isEqualTo("rollback_epoch_advanced");
+    ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
+        ArgumentCaptor.forClass(ScriptHandoffEvent.class);
+    verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getHandoffOutcome()).isEqualTo("rollback_epoch_advanced");
   }
 
   private static ScriptWorkItem workItem() {

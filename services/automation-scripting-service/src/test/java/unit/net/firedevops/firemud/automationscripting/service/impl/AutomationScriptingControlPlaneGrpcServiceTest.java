@@ -38,6 +38,8 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersReques
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptHandoffEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptHandoffEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsRequest;
@@ -514,6 +516,60 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvents(0).getEventId()).isEqualTo("event-1");
     assertThat(ref.get().getEvents(0).getRolloutStatus())
         .isEqualTo(ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED);
+  }
+
+  @Test
+  void listsScriptHandoffEventsFromReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(
+            workItemService.listHandoffEvents(
+                "1", "game-1", "patch-1", "99", "enqueued", 10L, 20L, 50))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.HandoffEventSummary(
+                    "event-1",
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    "script-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    "99",
+                    0,
+                    "workItem:99#0",
+                    "command-1",
+                    "target-1",
+                    "enqueued",
+                    "game_session_accepted",
+                    15L)));
+    AutomationScriptingControlPlaneGrpcService service =
+        new AutomationScriptingControlPlaneGrpcService(
+            new BuiltInScriptEventRegistryService(),
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ListScriptHandoffEventsResponse> ref = new AtomicReference<>();
+
+    service.listScriptHandoffEvents(
+        ListScriptHandoffEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setWorkItemId("99")
+            .setHandoffOutcome("enqueued")
+            .setChangedAfterMs(10L)
+            .setChangedBeforeMs(20L)
+            .setLimit(50)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getEventsList()).hasSize(1);
+    assertThat(ref.get().getEvents(0).getAutomationDispatchId()).isEqualTo("workItem:99#0");
+    assertThat(ref.get().getEvents(0).getGameSessionCommandId()).isEqualTo("command-1");
+    assertThat(ref.get().getEvents(0).getHandoffOutcome()).isEqualTo("enqueued");
   }
 
   @Test

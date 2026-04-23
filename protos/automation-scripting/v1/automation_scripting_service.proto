@@ -56,6 +56,8 @@ service AutomationScriptingControlPlaneService {
       returns (ListScriptPatchInstanceRolloutsResponse);
   rpc ListScriptPatchInstanceRolloutEvents(ListScriptPatchInstanceRolloutEventsRequest)
       returns (ListScriptPatchInstanceRolloutEventsResponse);
+  rpc ListScriptHandoffEvents(ListScriptHandoffEventsRequest)
+      returns (ListScriptHandoffEventsResponse);
   rpc ListScriptDeadLetters(ListScriptDeadLettersRequest) returns (ListScriptDeadLettersResponse);
   rpc ReplayDeadLetteredWorkItems(ReplayDeadLetteredWorkItemsRequest)
       returns (ReplayDeadLetteredWorkItemsResponse);
@@ -525,6 +527,40 @@ message ScriptPatchInstanceRolloutEventEntry {
 
 message ListScriptPatchInstanceRolloutEventsResponse {
   repeated ScriptPatchInstanceRolloutEventEntry events = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListScriptHandoffEventsRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  string work_item_id = 4;
+  string handoff_outcome = 5;
+  int64 changed_after_ms = 6;
+  int64 changed_before_ms = 7;
+  int32 limit = 8;
+}
+
+message ScriptHandoffEventEntry {
+  string event_id = 1;
+  string tenant_id = 2;
+  string game_instance_id = 3;
+  string script_patch_version = 4;
+  string script_id = 5;
+  string plugin_id = 6;
+  string plugin_version_id = 7;
+  string work_item_id = 8;
+  int32 command_ordinal = 9;
+  string automation_dispatch_id = 10;
+  string game_session_command_id = 11;
+  string target_entity_id = 12;
+  string handoff_outcome = 13;
+  string handoff_reason = 14;
+  int64 observed_at_ms = 15;
+}
+
+message ListScriptHandoffEventsResponse {
+  repeated ScriptHandoffEventEntry events = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

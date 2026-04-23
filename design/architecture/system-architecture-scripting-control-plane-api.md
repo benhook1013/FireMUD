@@ -304,6 +304,29 @@ Contract rules:
 - Automation appends a new event only when the derived rollout status or reason changes for an instance/patch projection, so repeated freshness refreshes do not create noisy duplicate history.
 - Operators use this API to distinguish a first pin from a rollback and a later repin; current-state projection rows remain the canonical latest truth.
 
+#### `ListScriptHandoffEvents`
+
+Inputs:
+
+- `tenantId`
+- Optional `gameInstanceId`
+- Optional `scriptPatchVersion`
+- Optional `workItemId`
+- Optional `handoffOutcome`
+- Optional `changedAfter` / `changedBefore`
+- Optional bounded `limit`
+
+Outputs:
+
+- ordered event rows containing `eventId`, `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `scriptId`, optional plugin identity, `workItemId`, `commandOrdinal`, `automationDispatchId`, optional `gameSessionCommandId`, `targetEntityId`, `handoffOutcome`, `handoffReason`, and `observedAt`
+
+Contract rules:
+
+- This is the per-command observability companion to work-item-level audit and dead-letter reads. Multi-command work items must not collapse handoff chronology into one row.
+- Automation must persist one durable handoff event per attempted emitted command, including pre-handoff rollback fencing and Game Session acceptance/rejection outcomes.
+- `automationDispatchId` is the canonical low-cardinality correlation key between Automation handoff history and the Game Session gameplay-command ledger; metrics still must not label by it.
+- Operators use this read to answer which emitted command ordinal reached Game Session, which target entity it addressed, and whether the failure happened before handoff, at Game Session admission, or after later gameplay-side execution disposition.
+
 #### `CancelPendingWorkItemsForPluginVersion`
 
 Inputs:

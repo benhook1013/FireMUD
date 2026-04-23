@@ -40,6 +40,8 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersReques
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptHandoffEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptHandoffEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsRequest;
@@ -52,6 +54,7 @@ import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItems
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsResponse;
 import net.firedevops.firemud.automationscripting.v1.ScriptDeadLetterEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptEventDefinition;
+import net.firedevops.firemud.automationscripting.v1.ScriptHandoffEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatusEntry;
@@ -401,6 +404,37 @@ public final class AutomationScriptingControlPlaneGrpcService
               request.getGameInstanceId(),
               request.getScriptPatchVersion(),
               request.getRolloutStatus(),
+              request.getChangedAfterMs(),
+              request.getChangedBeforeMs(),
+              request.getLimit())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addEvents);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.listScriptHandoffEvents")
+  public void listScriptHandoffEvents(
+      ListScriptHandoffEventsRequest request,
+      StreamObserver<ListScriptHandoffEventsResponse> responseObserver) {
+    ListScriptHandoffEventsResponse.Builder response = ListScriptHandoffEventsResponse.newBuilder();
+    try {
+      requireAdminRole();
+      workItemService
+          .listHandoffEvents(
+              request.getTenantId(),
+              request.getGameInstanceId(),
+              request.getScriptPatchVersion(),
+              request.getWorkItemId(),
+              request.getHandoffOutcome(),
               request.getChangedAfterMs(),
               request.getChangedBeforeMs(),
               request.getLimit())
@@ -861,6 +895,27 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setStatusReason(summary.statusReason())
         .setObservedAtMs(summary.observedAtMs())
         .setProjectionAsOfMs(summary.projectionAsOfMs())
+        .build();
+  }
+
+  private static ScriptHandoffEventEntry toProto(
+      ScriptWorkItemService.HandoffEventSummary summary) {
+    return ScriptHandoffEventEntry.newBuilder()
+        .setEventId(summary.eventId())
+        .setTenantId(summary.tenantId())
+        .setGameInstanceId(summary.gameInstanceId())
+        .setScriptPatchVersion(summary.scriptPatchVersion())
+        .setScriptId(summary.scriptId())
+        .setPluginId(summary.pluginId())
+        .setPluginVersionId(summary.pluginVersionId())
+        .setWorkItemId(summary.workItemId())
+        .setCommandOrdinal(summary.commandOrdinal())
+        .setAutomationDispatchId(summary.automationDispatchId())
+        .setGameSessionCommandId(summary.gameSessionCommandId())
+        .setTargetEntityId(summary.targetEntityId())
+        .setHandoffOutcome(summary.handoffOutcome())
+        .setHandoffReason(summary.handoffReason())
+        .setObservedAtMs(summary.observedAtMs())
         .build();
   }
 }

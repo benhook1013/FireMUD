@@ -43,6 +43,16 @@ public interface ScriptWorkItemService {
       long changedBeforeMs,
       int limit);
 
+  List<HandoffEventSummary> listHandoffEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String workItemId,
+      String handoffOutcome,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit);
+
   List<DeadLetterSummary> listDeadLetters(
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit);
 
@@ -111,6 +121,23 @@ public interface ScriptWorkItemService {
       String statusReason,
       long observedAtMs,
       long projectionAsOfMs) {}
+
+  record HandoffEventSummary(
+      String eventId,
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String scriptId,
+      String pluginId,
+      String pluginVersionId,
+      String workItemId,
+      int commandOrdinal,
+      String automationDispatchId,
+      String gameSessionCommandId,
+      String targetEntityId,
+      String handoffOutcome,
+      String handoffReason,
+      long observedAtMs) {}
 
   record DeadLetterSummary(
       String workItemId,
