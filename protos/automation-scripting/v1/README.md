@@ -30,6 +30,7 @@ RPC expectations:
 - `GetScriptEventDefinition` / `ListScriptEventDefinitions` – canonical event-registry reads now include `payloadSchemaRef` alongside schema version and producer/identity rules, so callers can discover the authoritative payload contract instead of inferring it from prose only.
 - Plugin control-plane mutating RPCs (`SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`) are idempotent with respect to `controlPlaneRequestId`.
 - `GetPluginStatus` now includes `lastPolicyCheckedAtMs` and `policyCheckStale` so operator tooling can see whether enabled-plugin signer/component-policy evidence is fresh enough for runtime admission.
+- `ListPluginRuntimeEvents` exposes append-only instance-scoped plugin activation/drain/disable/policy-reconcile history so tooling does not have to infer lifecycle transitions from the latest runtime row.
 - `GetPluginPolicyConvergence` reports enabled plugin runtime states whose current Game Design publication, signer, or component-policy metadata would now fail closed, giving operators a direct read before or after scheduled plugin-policy reconciliation disables affected plugins.
 - Event ingress RPCs (for example, `TriggerScriptEvent`) – **idempotent with respect to `scriptEventId`**:
   - Re-sending the same request with the same Trigger Identity must not cause the DSL body to run twice.
@@ -51,7 +52,7 @@ The proto files in this directory define several RPCs consumed by domain service
 - **Runtime control-plane APIs**
   - `AutomationScriptingControlPlaneService` exposes script patch lifecycle APIs (`GetScriptPatchStatus`, `ListScriptPatchStatuses`), rollback drain visibility (`GetAutomationDrainStatus`), first pin-convergence visibility (`GetAutomationPinConvergence`), per-instance rollout reads and history (`GetScriptPatchInstanceRolloutStatus`, `ListScriptPatchInstanceRollouts`, `ListScriptPatchInstanceRolloutEvents`), and rollback-support hooks (`CancelPendingWorkItemsForPatch`, `CancelPendingWorkItemsForPluginVersion`) as specified in `design/architecture/system-architecture-scripting-control-plane-api.md`.
   - It exposes script event-registry reads (`GetScriptEventDefinition`, `ListScriptEventDefinitions`) so design-time and operator tooling can consume the same canonical event definitions used by ingress admission.
-  - It also exposes plugin lifecycle APIs (`GetPluginStatus`, `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`) for operator orchestration via Logging & Admin.
+  - It also exposes plugin lifecycle APIs (`GetPluginStatus`, `ListPluginRuntimeEvents`, `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`) for operator orchestration via Logging & Admin.
 - **Design-time APIs**
   - `UpdateScript` – uploads or replaces a script definition and its event bindings for later use as part of the Game Design → Automation & Scripting publish Saga.
   - `ScriptEventBinding.priorityTag` accepts the bounded tenant-budget tiers `high`, `normal`, and `background`; omitted values default to `normal`, and persisted handler work uses this tag when reserving live tenant execution budget.

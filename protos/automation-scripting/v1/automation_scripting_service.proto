@@ -73,6 +73,8 @@ service AutomationScriptingControlPlaneService {
 
   // Plugin lifecycle/control-plane APIs.
   rpc GetPluginStatus(GetPluginStatusRequest) returns (GetPluginStatusResponse);
+  rpc ListPluginRuntimeEvents(ListPluginRuntimeEventsRequest)
+      returns (ListPluginRuntimeEventsResponse);
   rpc GetPluginPolicyConvergence(GetPluginPolicyConvergenceRequest)
       returns (GetPluginPolicyConvergenceResponse);
   rpc SetPluginActiveVersion(SetPluginActiveVersionRequest)
@@ -583,6 +585,36 @@ message GetPluginStatusResponse {
   int64 last_policy_checked_at_ms = 8;
   bool policy_check_stale = 9;
   shared.v1.ErrorDetail error = 10;
+}
+
+message ListPluginRuntimeEventsRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string plugin_id = 3;
+  PluginState plugin_state = 4;
+  string active_plugin_version_id = 5;
+  int64 changed_after_ms = 6;
+  int64 changed_before_ms = 7;
+  int32 limit = 8;
+}
+
+message PluginRuntimeEventEntry {
+  string event_id = 1;
+  string tenant_id = 2;
+  string game_instance_id = 3;
+  string plugin_id = 4;
+  string previous_plugin_version_id = 5;
+  string active_plugin_version_id = 6;
+  PluginState plugin_state = 7;
+  string status_reason = 8;
+  string control_plane_request_id = 9;
+  string actor_principal = 10;
+  int64 observed_at_ms = 11;
+}
+
+message ListPluginRuntimeEventsResponse {
+  repeated PluginRuntimeEventEntry events = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message GetPluginPolicyConvergenceRequest {

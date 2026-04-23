@@ -17,6 +17,16 @@ public interface PluginRuntimeStateService {
   PluginPolicyConvergence getPluginPolicyConvergence(
       String tenantId, String gameInstanceId, int maxResults);
 
+  java.util.List<PluginRuntimeEventSummary> listEvents(
+      String tenantId,
+      String gameInstanceId,
+      String pluginId,
+      PluginState pluginState,
+      String activePluginVersionId,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit);
+
   record ActivationCommand(
       String tenantId,
       String gameInstanceId,
@@ -56,6 +66,19 @@ public interface PluginRuntimeStateService {
       String activePluginVersionId,
       String reason,
       long lastChangedAtMs) {}
+
+  record PluginRuntimeEventSummary(
+      String eventId,
+      String tenantId,
+      String gameInstanceId,
+      String pluginId,
+      String previousPluginVersionId,
+      String activePluginVersionId,
+      PluginState pluginState,
+      String statusReason,
+      String controlPlaneRequestId,
+      String actorPrincipal,
+      long observedAtMs) {}
 
   record PluginRuntimeStatus(
       String activePluginVersionId,

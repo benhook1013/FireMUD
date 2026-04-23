@@ -34,6 +34,8 @@ import net.firedevops.firemud.automationscripting.v1.GetScriptPatchInstanceRollo
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchInstanceRolloutStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.ListPluginRuntimeEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListPluginRuntimeEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsRequest;
@@ -45,6 +47,7 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRoll
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
 import net.firedevops.firemud.automationscripting.v1.PluginPolicyViolation;
+import net.firedevops.firemud.automationscripting.v1.PluginRuntimeEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsRequest;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsResponse;
 import net.firedevops.firemud.automationscripting.v1.ScriptDeadLetterEntry;
@@ -570,6 +573,37 @@ public final class AutomationScriptingControlPlaneGrpcService
   }
 
   @Override
+  @Timed(value = "automationGrpc.controlPlane.listPluginRuntimeEvents")
+  public void listPluginRuntimeEvents(
+      ListPluginRuntimeEventsRequest request,
+      StreamObserver<ListPluginRuntimeEventsResponse> responseObserver) {
+    ListPluginRuntimeEventsResponse.Builder response = ListPluginRuntimeEventsResponse.newBuilder();
+    try {
+      requireAdminRole();
+      pluginRuntimeStateService
+          .listEvents(
+              request.getTenantId(),
+              request.getGameInstanceId(),
+              request.getPluginId(),
+              request.getPluginState(),
+              request.getActivePluginVersionId(),
+              request.getChangedAfterMs(),
+              request.getChangedBeforeMs(),
+              request.getLimit())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addEvents);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
   @Timed(value = "automationGrpc.controlPlane.getPluginPolicyConvergence")
   public void getPluginPolicyConvergence(
       GetPluginPolicyConvergenceRequest request,
@@ -697,6 +731,23 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setActivePluginVersionId(violation.activePluginVersionId())
         .setReason(violation.reason())
         .setLastChangedAtMs(violation.lastChangedAtMs())
+        .build();
+  }
+
+  private static PluginRuntimeEventEntry toProto(
+      PluginRuntimeStateService.PluginRuntimeEventSummary summary) {
+    return PluginRuntimeEventEntry.newBuilder()
+        .setEventId(summary.eventId())
+        .setTenantId(summary.tenantId())
+        .setGameInstanceId(summary.gameInstanceId())
+        .setPluginId(summary.pluginId())
+        .setPreviousPluginVersionId(summary.previousPluginVersionId())
+        .setActivePluginVersionId(summary.activePluginVersionId())
+        .setPluginState(summary.pluginState())
+        .setStatusReason(summary.statusReason())
+        .setControlPlaneRequestId(summary.controlPlaneRequestId())
+        .setActorPrincipal(summary.actorPrincipal())
+        .setObservedAtMs(summary.observedAtMs())
         .build();
   }
 

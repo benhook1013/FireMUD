@@ -124,6 +124,7 @@ Operator consumption rule:
 
 - Use this event family for runtime activation state only.
 - Tooling that needs the full picture must join `PluginVersionStatusChanged` with instance-scoped runtime events/read APIs rather than overloading runtime events to explain design-time publication history.
+- Automation's operator read model must persist an append-only instance-scoped history for this family so `ListPluginRuntimeEvents` can expose real transition chronology without inferring it from the latest registry row.
 
 ## `SignerPolicyVersionObserved` (Automation & Scripting -> Event Bus)
 

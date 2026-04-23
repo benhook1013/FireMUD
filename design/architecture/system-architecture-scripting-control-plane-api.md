@@ -465,6 +465,33 @@ Boundary rule:
 
 - This API reports runtime state for one `(tenantId, gameInstanceId, pluginId)` only. It must not be overloaded to synthesize design-time publication status or signer-verification history from Game Design.
 
+#### `ListPluginRuntimeEvents`
+
+Purpose: provide append-only runtime lifecycle history for one tenant's plugin activations, drains, disables, and policy-reconcile fail-closed transitions so tooling does not reconstruct operator history from the latest registry row.
+
+Request fields:
+
+- `tenantId`
+- optional `gameInstanceId`
+- optional `pluginId`
+- optional `pluginState`
+- optional `activePluginVersionId`
+- optional `changedAfterMs`
+- optional `changedBeforeMs`
+- optional `limit`
+
+Response fields:
+
+- repeated `events[]` with `eventId`, `tenantId`, `gameInstanceId`, `pluginId`, `previousPluginVersionId`, `activePluginVersionId`, `pluginState`, `statusReason`, `controlPlaneRequestId`, `actor`, and `observedAtMs`
+- `error`
+
+Contract rules:
+
+- This is append-only runtime lifecycle history, not a projection of design-time publication events.
+- `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`, and scheduled policy reconciliation must append one event only when they materially change runtime plugin state or the active version.
+- Idempotent no-op retries against an already-applied target must not append duplicate events or advance the latest-row `lastChangedAt`.
+- Operators that need the current runtime truth still use `GetPluginStatus`; operators that need transition history use this read rather than inferring chronology from row timestamps.
+
 #### `GetPluginPolicyConvergence`
 
 Purpose: provide an operator-visible signer/component-policy convergence read for enabled plugin runtime states so scheduled reconciliation is not an invisible background process.
