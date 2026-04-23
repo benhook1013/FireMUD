@@ -14,6 +14,7 @@ import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
+import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.PublishedPluginVersion;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
@@ -49,6 +50,9 @@ class PluginRuntimeStateServiceImplTest {
                         .setAbilitySchemaDigest("ability-1")
                         .setBundleDigest("bundle-1")
                         .setManifestSchemaVersion(1)
+                        .setSignerKeyId("signer-1")
+                        .setComponentPolicyDecision(
+                            PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
                         .build())
                 .build());
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
@@ -174,6 +178,85 @@ class PluginRuntimeStateServiceImplTest {
   }
 
   @Test
+  void rejectsActivationWhenSignerIsRevoked() {
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            GetPublishedPluginVersionResponse.newBuilder()
+                .setPluginVersion(
+                    PublishedPluginVersion.newBuilder()
+                        .setTenantId("1")
+                        .setPluginId("plugin-1")
+                        .setPluginVersionId("plugin-v1")
+                        .setBaseVersionId(7L)
+                        .setPublicationState(
+                            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setAbilitySchemaDigest("ability-1")
+                        .setBundleDigest("bundle-1")
+                        .setManifestSchemaVersion(1)
+                        .setSignerKeyId("signer-1")
+                        .setSignerRevoked(true)
+                        .setComponentPolicyDecision(
+                            PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
+                        .build())
+                .build());
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(repository, gameDesignClient, gameSessionClient);
+
+    assertThatThrownBy(
+            () ->
+                service.setActiveVersion(
+                    new PluginRuntimeStateService.ActivationCommand(
+                        "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("PLUGIN_SIGNER_REVOKED: plugin signer is revoked for activation");
+    Mockito.verifyNoInteractions(gameSessionClient);
+  }
+
+  @Test
+  void rejectsActivationWhenComponentPolicyBlocksPlugin() {
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            GetPublishedPluginVersionResponse.newBuilder()
+                .setPluginVersion(
+                    PublishedPluginVersion.newBuilder()
+                        .setTenantId("1")
+                        .setPluginId("plugin-1")
+                        .setPluginVersionId("plugin-v1")
+                        .setBaseVersionId(7L)
+                        .setPublicationState(
+                            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setAbilitySchemaDigest("ability-1")
+                        .setBundleDigest("bundle-1")
+                        .setManifestSchemaVersion(1)
+                        .setSignerKeyId("signer-1")
+                        .setComponentPolicyDecision(
+                            PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_BLOCKED)
+                        .build())
+                .build());
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(repository, gameDesignClient, gameSessionClient);
+
+    assertThatThrownBy(
+            () ->
+                service.setActiveVersion(
+                    new PluginRuntimeStateService.ActivationCommand(
+                        "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("PLUGIN_COMPONENT_POLICY_BLOCKED: plugin component policy blocks activation");
+    Mockito.verifyNoInteractions(gameSessionClient);
+  }
+
+  @Test
   void rejectsActivationWhenBaseVersionDoesNotMatchRuntime() {
     PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
     GameDesignControlPlaneClient gameDesignClient =
@@ -194,6 +277,9 @@ class PluginRuntimeStateServiceImplTest {
                         .setAbilitySchemaDigest("ability-1")
                         .setBundleDigest("bundle-1")
                         .setManifestSchemaVersion(1)
+                        .setSignerKeyId("signer-1")
+                        .setComponentPolicyDecision(
+                            PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
                         .build())
                 .build());
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
@@ -254,6 +340,9 @@ class PluginRuntimeStateServiceImplTest {
                         .setAbilitySchemaDigest("ability-plugin")
                         .setBundleDigest("bundle-1")
                         .setManifestSchemaVersion(1)
+                        .setSignerKeyId("signer-1")
+                        .setComponentPolicyDecision(
+                            PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
                         .build())
                 .build());
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))

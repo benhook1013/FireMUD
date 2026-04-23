@@ -244,11 +244,16 @@ public class VersionServiceImpl implements VersionService {
       int manifestSchemaVersion,
       String distributionManifestHash,
       String distributionManifestPath,
+      String signerKeyId,
+      boolean signerRevoked,
+      String componentPolicyDecision,
       String notes) {
     requireText(pluginId, "pluginId");
     requireText(pluginVersionId, "pluginVersionId");
     requireText(abilitySchemaDigest, "abilitySchemaDigest");
     requireText(bundleDigest, "bundleDigest");
+    requireText(signerKeyId, "signerKeyId");
+    requireComponentPolicyDecision(componentPolicyDecision);
     if (baseVersionId <= 0L) {
       throw new IllegalArgumentException("INVALID_ARGUMENT: baseVersionId must be positive");
     }
@@ -271,6 +276,9 @@ public class VersionServiceImpl implements VersionService {
           manifestSchemaVersion,
           distributionManifestHash,
           distributionManifestPath,
+          signerKeyId,
+          signerRevoked,
+          componentPolicyDecision,
           notes)) {
         throw new IllegalArgumentException(
             "PLUGIN_VERSION_IMMUTABLE: plugin version already exists with different metadata");
@@ -289,6 +297,9 @@ public class VersionServiceImpl implements VersionService {
     entity.setManifestSchemaVersion(manifestSchemaVersion);
     entity.setDistributionManifestHash(normalizeBlank(distributionManifestHash));
     entity.setDistributionManifestPath(normalizeBlank(distributionManifestPath));
+    entity.setSignerKeyId(signerKeyId);
+    entity.setSignerRevoked(signerRevoked);
+    entity.setComponentPolicyDecision(componentPolicyDecision);
     entity.setNotes(normalizeBlank(notes));
     entity.setLastChangedAt(LocalDateTime.now());
     return toPublishedPluginVersionDto(publishedPluginVersionRepository.save(entity));
@@ -418,6 +429,9 @@ public class VersionServiceImpl implements VersionService {
       int manifestSchemaVersion,
       String distributionManifestHash,
       String distributionManifestPath,
+      String signerKeyId,
+      boolean signerRevoked,
+      String componentPolicyDecision,
       String notes) {
     return entity.getBaseVersionId() == baseVersionId
         && entity.getPublicationState() == VersionLifecycleState.PUBLISHED
@@ -428,6 +442,9 @@ public class VersionServiceImpl implements VersionService {
             .equals(normalizeBlank(distributionManifestHash))
         && normalizeBlank(entity.getDistributionManifestPath())
             .equals(normalizeBlank(distributionManifestPath))
+        && entity.getSignerKeyId().equals(signerKeyId)
+        && entity.isSignerRevoked() == signerRevoked
+        && entity.getComponentPolicyDecision().equals(componentPolicyDecision)
         && normalizeBlank(entity.getNotes()).equals(normalizeBlank(notes));
   }
 
@@ -444,8 +461,19 @@ public class VersionServiceImpl implements VersionService {
         entity.getManifestSchemaVersion(),
         normalizeBlank(entity.getDistributionManifestHash()),
         normalizeBlank(entity.getDistributionManifestPath()),
+        entity.getSignerKeyId(),
+        entity.isSignerRevoked(),
+        entity.getComponentPolicyDecision(),
         normalizeBlank(entity.getNotes()),
         entity.getLastChangedAt());
+  }
+
+  private void requireComponentPolicyDecision(String componentPolicyDecision) {
+    requireText(componentPolicyDecision, "componentPolicyDecision");
+    if (!List.of("ALLOWED", "REPORT_ONLY", "BLOCKED").contains(componentPolicyDecision)) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: componentPolicyDecision must be ALLOWED, REPORT_ONLY, or BLOCKED");
+    }
   }
 
   private VersionStateDto toVersionStateDto(Version version) {

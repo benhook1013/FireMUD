@@ -10,6 +10,7 @@ import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateR
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
+import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -88,6 +89,24 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         != VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED) {
       throw new IllegalArgumentException(
           "PLUGIN_VERSION_NOT_PUBLISHED: plugin version is not in PUBLISHED state");
+    }
+    if (publication.getPluginVersion().getSignerKeyId().isBlank()) {
+      throw new IllegalArgumentException(
+          "PLUGIN_SIGNER_POLICY_UNAVAILABLE: plugin signer key is missing");
+    }
+    if (publication.getPluginVersion().getSignerRevoked()) {
+      throw new IllegalArgumentException(
+          "PLUGIN_SIGNER_REVOKED: plugin signer is revoked for activation");
+    }
+    if (publication.getPluginVersion().getComponentPolicyDecision()
+        == PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_BLOCKED) {
+      throw new IllegalArgumentException(
+          "PLUGIN_COMPONENT_POLICY_BLOCKED: plugin component policy blocks activation");
+    }
+    if (publication.getPluginVersion().getComponentPolicyDecision()
+        == PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_UNSPECIFIED) {
+      throw new IllegalArgumentException(
+          "PLUGIN_COMPONENT_POLICY_UNAVAILABLE: plugin component policy decision is missing");
     }
 
     var runtime =

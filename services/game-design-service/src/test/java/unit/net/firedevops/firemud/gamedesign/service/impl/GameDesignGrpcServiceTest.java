@@ -46,6 +46,7 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
+import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
@@ -227,6 +228,9 @@ class GameDesignGrpcServiceTest {
                 1,
                 "dist-hash",
                 "dist-path",
+                "signer-1",
+                false,
+                "ALLOWED",
                 "notes"))
         .thenReturn(
             new PublishedPluginVersionDto(
@@ -241,6 +245,9 @@ class GameDesignGrpcServiceTest {
                 1,
                 "dist-hash",
                 "dist-path",
+                "signer-1",
+                false,
+                "ALLOWED",
                 "notes",
                 LocalDateTime.parse("2026-04-22T12:00:00")));
 
@@ -257,6 +264,9 @@ class GameDesignGrpcServiceTest {
               .setManifestSchemaVersion(1)
               .setDistributionManifestHash("dist-hash")
               .setDistributionManifestPath("dist-path")
+              .setSignerKeyId("signer-1")
+              .setComponentPolicyDecision(
+                  PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
               .setNotes("notes")
               .build(),
           observerFor(ref));
@@ -282,6 +292,9 @@ class GameDesignGrpcServiceTest {
                 1,
                 "dist-hash",
                 "dist-path",
+                "signer-1",
+                false,
+                "ALLOWED",
                 "notes",
                 LocalDateTime.parse("2026-04-22T12:00:00")));
 
@@ -301,6 +314,10 @@ class GameDesignGrpcServiceTest {
     assertEquals("plugin-v1", ref.get().getPluginVersion().getPluginVersionId());
     assertEquals(7L, ref.get().getPluginVersion().getBaseVersionId());
     assertEquals("ability-1", ref.get().getPluginVersion().getAbilitySchemaDigest());
+    assertEquals("signer-1", ref.get().getPluginVersion().getSignerKeyId());
+    assertEquals(
+        PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED,
+        ref.get().getPluginVersion().getComponentPolicyDecision());
   }
 
   @Test

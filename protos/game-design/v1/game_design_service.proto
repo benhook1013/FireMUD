@@ -143,6 +143,9 @@ message PublishPluginVersionRequest {
   string distribution_manifest_hash = 8;
   string distribution_manifest_path = 9;
   string notes = 10;
+  string signer_key_id = 11;
+  bool signer_revoked = 12;
+  PluginComponentPolicyDecision component_policy_decision = 13;
 }
 
 message PublishPluginVersionResponse {
@@ -185,6 +188,16 @@ message PublishedPluginVersion {
   string distribution_manifest_hash = 10;
   string distribution_manifest_path = 11;
   int64 last_changed_at_ms = 12;
+  string signer_key_id = 13;
+  bool signer_revoked = 14;
+  PluginComponentPolicyDecision component_policy_decision = 15;
+}
+
+enum PluginComponentPolicyDecision {
+  PLUGIN_COMPONENT_POLICY_DECISION_UNSPECIFIED = 0;
+  PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED = 1;
+  PLUGIN_COMPONENT_POLICY_DECISION_REPORT_ONLY = 2;
+  PLUGIN_COMPONENT_POLICY_DECISION_BLOCKED = 3;
 }
 
 message ListVersionsRequest {

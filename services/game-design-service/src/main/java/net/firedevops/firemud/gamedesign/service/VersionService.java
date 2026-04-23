@@ -27,6 +27,9 @@ public interface VersionService {
       int manifestSchemaVersion,
       String distributionManifestHash,
       String distributionManifestPath,
+      String signerKeyId,
+      boolean signerRevoked,
+      String componentPolicyDecision,
       String notes);
 
   PublishedPluginVersionDto getPublishedPluginVersion(

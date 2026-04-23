@@ -60,6 +60,15 @@ public class PublishedPluginVersion {
   @Column(name = "distribution_manifest_path", length = 512)
   private String distributionManifestPath;
 
+  @Column(name = "signer_key_id", nullable = false, length = 128)
+  private String signerKeyId;
+
+  @Column(name = "signer_revoked", nullable = false)
+  private boolean signerRevoked;
+
+  @Column(name = "component_policy_decision", nullable = false, length = 32)
+  private String componentPolicyDecision;
+
   @Column(name = "notes", length = 2000)
   private String notes;
 

@@ -15,5 +15,8 @@ public record PublishedPluginVersionDto(
     Integer manifestSchemaVersion,
     String distributionManifestHash,
     String distributionManifestPath,
+    String signerKeyId,
+    boolean signerRevoked,
+    String componentPolicyDecision,
     String notes,
     LocalDateTime lastChangedAt) {}

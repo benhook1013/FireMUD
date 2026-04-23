@@ -66,6 +66,7 @@ import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
 import net.firedevops.firemud.gamedesign.v1.PingRequest;
 import net.firedevops.firemud.gamedesign.v1.PingResponse;
+import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchVersionRequest;
@@ -309,6 +310,9 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               request.getManifestSchemaVersion(),
               request.getDistributionManifestHash(),
               request.getDistributionManifestPath(),
+              request.getSignerKeyId(),
+              request.getSignerRevoked(),
+              toComponentPolicyDecision(request.getComponentPolicyDecision()),
               request.getNotes());
       builder.setPublicationId(publication.id());
     } catch (AdminAuthorizationException ex) {
@@ -811,6 +815,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         .setManifestSchemaVersion(plugin.manifestSchemaVersion())
         .setDistributionManifestHash(plugin.distributionManifestHash())
         .setDistributionManifestPath(plugin.distributionManifestPath())
+        .setSignerKeyId(plugin.signerKeyId())
+        .setSignerRevoked(plugin.signerRevoked())
+        .setComponentPolicyDecision(
+            toProtoComponentPolicyDecision(plugin.componentPolicyDecision()))
         .setLastChangedAtMs(plugin.lastChangedAt().toInstant(ZoneOffset.UTC).toEpochMilli())
         .build();
   }
@@ -823,6 +831,25 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       case ACTIVE -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE;
       case FAILED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_FAILED;
       case RETIRED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_RETIRED;
+    };
+  }
+
+  private PluginComponentPolicyDecision toProtoComponentPolicyDecision(String decision) {
+    return switch (decision) {
+      case "ALLOWED" -> PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED;
+      case "REPORT_ONLY" ->
+          PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_REPORT_ONLY;
+      case "BLOCKED" -> PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_BLOCKED;
+      default -> PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_UNSPECIFIED;
+    };
+  }
+
+  private String toComponentPolicyDecision(PluginComponentPolicyDecision decision) {
+    return switch (decision) {
+      case PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED -> "ALLOWED";
+      case PLUGIN_COMPONENT_POLICY_DECISION_REPORT_ONLY -> "REPORT_ONLY";
+      case PLUGIN_COMPONENT_POLICY_DECISION_BLOCKED -> "BLOCKED";
+      case PLUGIN_COMPONENT_POLICY_DECISION_UNSPECIFIED, UNRECOGNIZED -> "";
     };
   }
 
