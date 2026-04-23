@@ -8,5 +8,5 @@ public interface ScriptDryRunCapacityService {
 
   void release(Reservation reservation);
 
-  record Reservation(String tenantId, long workItemId, String token) {}
+  record Reservation(String tenantId, long workItemId, String tenantToken, String clusterToken) {}
 }

@@ -25,7 +25,7 @@ class ScriptDryRunCapacityServiceImplTest {
             RedisTemplate.class,
             invocation -> {
               if ("execute".equals(invocation.getMethod().getName())) {
-                return calls.incrementAndGet() == 1 ? 1L : -1L;
+                return calls.incrementAndGet() <= 2 ? 1L : -1L;
               }
               return null;
             });
@@ -43,14 +43,16 @@ class ScriptDryRunCapacityServiceImplTest {
     assertThat(first).isPresent();
     assertThat(first.get().tenantId()).isEqualTo("tenant-1");
     assertThat(first.get().workItemId()).isEqualTo(99L);
-    assertThat(first.get().token()).isNotBlank();
+    assertThat(first.get().tenantToken()).isNotBlank();
+    assertThat(first.get().clusterToken()).isNotBlank();
     assertThat(second).isEmpty();
   }
 
   @Test
   void releaseExecutesLeaseReleaseScript() {
     ScriptDryRunCapacityService.Reservation reservation =
-        new ScriptDryRunCapacityService.Reservation("tenant-1", 99L, "token-1");
+        new ScriptDryRunCapacityService.Reservation(
+            "tenant-1", 99L, "tenant-token-1", "cluster-token-1");
 
     service.release(reservation);
 
@@ -58,6 +60,11 @@ class ScriptDryRunCapacityServiceImplTest {
         .execute(
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.anyList(),
-            org.mockito.ArgumentMatchers.eq("token-1"));
+            org.mockito.ArgumentMatchers.eq("tenant-token-1"));
+    verify(redisTemplate)
+        .execute(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyList(),
+            org.mockito.ArgumentMatchers.eq("cluster-token-1"));
   }
 }

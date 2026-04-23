@@ -67,7 +67,7 @@ This behavior ensures that a script patch either becomes the new active version 
   - Uses automation-specific coordination prefixes owned by Automation & Scripting itself, such as `automation:tick:{tenantInstanceScriptTag}:lock`, `automation:tick:{tenantInstanceScriptTag}:queue`, and `automation:tick:{tenantInstanceScriptTag}:pending`, as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples) and [Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md). Game Session remains the only owner of `tick:{tenantRegionTag}:*` gameplay coordination prefixes.
   - Automation scripts are registered as single-hash-slot Lua scripts that operate only on `automation:tick:{tenantInstanceScriptTag}:*` keys and never mix `automation:*` and `tick:*` prefixes in a single script invocation.
 - **Cache/Rate-Limit Redis usage**
-  - Stores script quota counters and similar best-effort aggregates in Cache/Rate-Limit Redis using prefixes such as `automation:quota:<tenantId>:<scriptId>`, `automation:tenant-budget:<tenantId>:tier:<tier>`, `automation:test:capacity:<tenantId>:*`, and `automation:queue:{tenantInstanceTag}:*`.
+  - Stores script quota counters and similar best-effort aggregates in Cache/Rate-Limit Redis using prefixes such as `automation:quota:<tenantId>:<scriptId>`, `automation:tenant-budget:<tenantId>:tier:<tier>`, `automation:test:capacity:<tenantId>:*`, `automation:test:capacity:cluster*`, and `automation:queue:{tenantInstanceTag}:*`.
   - Treats these keys as transient operational data; PostgreSQL remains authoritative for script definitions and long-lived automation state.
   - Quota and queue-oriented prefixes are best-effort TTL-only caches unless explicitly documented as strongly validated caches with versioned payloads and stricter invalidation semantics.
 
@@ -81,7 +81,7 @@ Ownership and durability expectations for Automation & Scripting prefixes:
 | `automation:queue:{tenantInstanceTag}:*` | Cache/Rate-Limit | Reset-tolerant, best-effort cache or queue of automation work-item indexes. Loss is acceptable because admitted work items are persisted durably in PostgreSQL and can be re-driven. |
 | `automation:quota:<tenantId>:<scriptId>` | Cache/Rate-Limit | Reset-tolerant, best-effort quota counters. Dropping these keys temporarily resets budgets but does not affect script correctness or long-term state. |
 | `automation:tenant-budget:<tenantId>:tier:<tier>` | Cache/Rate-Limit | Reset-tolerant, best-effort tenant budget counters for live automation execution reservations. Dropping these keys temporarily relaxes tenant fairness but does not affect durable work truth. |
-| `automation:test:capacity:<tenantId>:tenant`, `automation:test:capacity:<tenantId>:lease:<workItemId>` | Cache/Rate-Limit | Reset-tolerant dry-run capacity counters and leases. Leases have bounded TTLs and are released on normal completion; dropping them temporarily relaxes test-capacity fairness without affecting live work. |
+| `automation:test:capacity:<tenantId>:tenant`, `automation:test:capacity:<tenantId>:lease:<workItemId>`, `automation:test:capacity:cluster*` | Cache/Rate-Limit | Reset-tolerant tenant-local and cluster-wide dry-run capacity counters and leases. Leases have bounded TTLs and are released on normal completion; dropping them temporarily relaxes test-capacity fairness without affecting live work. |
 
 Any new Automation & Scripting-specific prefixes must be added here and to the central Redis key catalogs, with a clear statement of Redis role and reset behavior.
 

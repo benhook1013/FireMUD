@@ -33,39 +33,75 @@ public class ScriptDryRunCapacityServiceImpl implements ScriptDryRunCapacityServ
   @Override
   @Timed(value = "script.dryRunCapacity.tryReserve")
   public Optional<Reservation> tryReserve(String tenantId, long workItemId) {
-    String token = UUID.randomUUID().toString();
-    boolean reserved =
+    String workItemKey = Long.toString(workItemId);
+    String clusterToken = UUID.randomUUID().toString();
+    boolean clusterReserved =
+        RedisAtomicOperations.reserveBoundedCounter(
+            redisTemplate,
+            AutomationRedisKeys.automationDryRunClusterCapacityCounter(),
+            AutomationRedisKeys.automationDryRunClusterCapacityLease(tenantId, workItemKey),
+            properties.getMaxClusterConcurrency(),
+            RESERVATION_TTL,
+            clusterToken);
+    if (!clusterReserved) {
+      recordReservation(false, tenantId, "cluster");
+      return Optional.empty();
+    }
+
+    String tenantToken = UUID.randomUUID().toString();
+    boolean tenantReserved =
         RedisAtomicOperations.reserveBoundedCounter(
             redisTemplate,
             AutomationRedisKeys.automationDryRunCapacityCounter(tenantId),
-            AutomationRedisKeys.automationDryRunCapacityLease(tenantId, Long.toString(workItemId)),
+            AutomationRedisKeys.automationDryRunCapacityLease(tenantId, workItemKey),
             properties.getMaxConcurrency(),
             RESERVATION_TTL,
-            token);
+            tenantToken);
+    if (!tenantReserved) {
+      releaseCluster(tenantId, workItemKey, clusterToken);
+      recordReservation(false, tenantId, "tenant");
+      return Optional.empty();
+    }
+    recordReservation(true, tenantId, "both");
+    return Optional.of(new Reservation(tenantId, workItemId, tenantToken, clusterToken));
+  }
+
+  @Override
+  @Timed(value = "script.dryRunCapacity.release")
+  public void release(Reservation reservation) {
+    String workItemKey = Long.toString(reservation.workItemId());
+    redisTemplate.execute(
+        RELEASE_SCRIPT,
+        List.of(
+            AutomationRedisKeys.automationDryRunCapacityCounter(reservation.tenantId()),
+            AutomationRedisKeys.automationDryRunCapacityLease(reservation.tenantId(), workItemKey)),
+        reservation.tenantToken());
+    releaseCluster(reservation.tenantId(), workItemKey, reservation.clusterToken());
+    meterRegistry
+        .counter(
+            "automation_script_test_capacity_released_total", "tenantId", reservation.tenantId())
+        .increment();
+  }
+
+  private void releaseCluster(String tenantId, String workItemKey, String clusterToken) {
+    redisTemplate.execute(
+        RELEASE_SCRIPT,
+        List.of(
+            AutomationRedisKeys.automationDryRunClusterCapacityCounter(),
+            AutomationRedisKeys.automationDryRunClusterCapacityLease(tenantId, workItemKey)),
+        clusterToken);
+  }
+
+  private void recordReservation(boolean reserved, String tenantId, String scope) {
     meterRegistry
         .counter(
             reserved
                 ? "automation_script_test_capacity_reserved_total"
                 : "automation_script_test_capacity_denied_total",
             "tenantId",
-            tenantId)
-        .increment();
-    return reserved ? Optional.of(new Reservation(tenantId, workItemId, token)) : Optional.empty();
-  }
-
-  @Override
-  @Timed(value = "script.dryRunCapacity.release")
-  public void release(Reservation reservation) {
-    redisTemplate.execute(
-        RELEASE_SCRIPT,
-        List.of(
-            AutomationRedisKeys.automationDryRunCapacityCounter(reservation.tenantId()),
-            AutomationRedisKeys.automationDryRunCapacityLease(
-                reservation.tenantId(), Long.toString(reservation.workItemId()))),
-        reservation.token());
-    meterRegistry
-        .counter(
-            "automation_script_test_capacity_released_total", "tenantId", reservation.tenantId())
+            tenantId,
+            "scope",
+            scope)
         .increment();
   }
 

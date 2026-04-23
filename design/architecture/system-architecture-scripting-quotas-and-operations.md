@@ -76,7 +76,7 @@ Dry-run and test execution paths exposed by the Automation & Scripting Service s
   - Implementations should use separate executor pools or explicit worker reservations for `isDryRun=true`.
   - When the cluster is under pressure, live traffic must be admitted ahead of dry-run/test traffic even if dry-run quotas have not been exceeded.
   - Queue limits and concurrency ceilings for dry-run/test work must be enforced independently from live execution queues.
-  - Current Automation execution reserves tenant-local dry-run capacity through `ScriptDryRunCapacityService` before evaluating dry-run work items. Capacity-denied dry-runs are terminally canceled with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=dry_run_capacity_exhausted`.
+  - Current Automation execution reserves both cluster-wide and tenant-local dry-run capacity through `ScriptDryRunCapacityService` before evaluating dry-run work items. Capacity-denied dry-runs are terminally canceled with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=dry_run_capacity_exhausted`.
 
 ---
 
@@ -343,7 +343,7 @@ Dry-run and test executions share the same sandbox engine and guards as live tra
 - By default, dry-run/test executions must not contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`); if dry-run failures are used for gating, they must be isolated (separate breaker or explicit opt-in).
 - To prevent abuse, the Automation & Scripting Service enforces additional dry-run ceilings, such as:
   - Per-tenant and per-principal maximum runs per window (for example, `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`).
-  - Maximum concurrent dry-runs per tenant or cluster-wide (for example, `SCRIPT_TEST_MAX_CONCURRENCY`).
+  - Maximum concurrent dry-runs per tenant and cluster-wide (for example, `SCRIPT_TEST_MAX_CONCURRENCY` and `SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY`).
 - Dry-run/test executions must also have isolated execution capacity:
   - Separate queues or worker reservations are required so privileged test traffic cannot starve live automation workers.
   - When shared infrastructure is saturated, dry-run/test work must be shed before live gameplay automation for the same scope/tier.
@@ -352,7 +352,7 @@ Dry-run and test executions share the same sandbox engine and guards as live tra
   - Reject missing principal identity for endpoints configured with per-principal enforcement.
 - Dry-run activity is surfaced via dedicated metrics (for example, `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, `automation_script_test_sandbox_failures_total`) so operators can distinguish test traffic from live automation.
 - Logging & Admin and Game Design tools are responsible for exposing dry-run entry points only to privileged users and for applying complementary API gateway limits; test endpoints must not be wired into game traffic or public-facing flows.
-- When a dry-run request exceeds `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`, Automation rejects it at event scope with `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` / `dry_run_budget_exceeded` before handler resolution. When a materialized dry-run exceeds `SCRIPT_TEST_MAX_CONCURRENCY`, Automation cancels it before evaluation with `finalOutcome=quota_denied` and `finalReason=dry_run_capacity_exhausted` in `script_event_audit`. Both paths increment dry-run/test metrics so operators can see overuse of test facilities.
+- When a dry-run request exceeds `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`, Automation rejects it at event scope with `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` / `dry_run_budget_exceeded` before handler resolution. When a materialized dry-run exceeds `SCRIPT_TEST_MAX_CONCURRENCY` or `SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY`, Automation cancels it before evaluation with `finalOutcome=quota_denied` and `finalReason=dry_run_capacity_exhausted` in `script_event_audit`. Both paths increment dry-run/test metrics so operators can see overuse of test facilities.
 - Current Automation ingress enforces the per-minute tenant and principal dry-run ceilings before handler resolution. Requests over those limits return event-scope admission outcome `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` with `admissionReason=dry_run_budget_exceeded` and do not create handler work.
 
 ### Outcome-to-Metric Mapping

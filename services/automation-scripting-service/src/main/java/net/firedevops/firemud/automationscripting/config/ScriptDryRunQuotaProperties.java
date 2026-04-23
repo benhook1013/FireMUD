@@ -16,6 +16,9 @@ public class ScriptDryRunQuotaProperties {
   @Min(1)
   private long maxConcurrency = 10;
 
+  @Min(1)
+  private long maxClusterConcurrency = 50;
+
   public long getMaxRunsPerMinute() {
     return maxRunsPerMinute;
   }
@@ -38,5 +41,13 @@ public class ScriptDryRunQuotaProperties {
 
   public void setMaxConcurrency(long maxConcurrency) {
     this.maxConcurrency = maxConcurrency;
+  }
+
+  public long getMaxClusterConcurrency() {
+    return maxClusterConcurrency;
+  }
+
+  public void setMaxClusterConcurrency(long maxClusterConcurrency) {
+    this.maxClusterConcurrency = maxClusterConcurrency;
   }
 }

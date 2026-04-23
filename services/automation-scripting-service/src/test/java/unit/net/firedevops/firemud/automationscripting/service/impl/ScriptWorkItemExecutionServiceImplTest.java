@@ -475,7 +475,9 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptDryRunCapacityService service = Mockito.mock(ScriptDryRunCapacityService.class);
     when(service.tryReserve(Mockito.any(), Mockito.anyLong()))
         .thenReturn(
-            Optional.of(new ScriptDryRunCapacityService.Reservation("1", 99L, "lease-token")));
+            Optional.of(
+                new ScriptDryRunCapacityService.Reservation(
+                    "1", 99L, "tenant-lease-token", "cluster-lease-token")));
     return service;
   }
 
