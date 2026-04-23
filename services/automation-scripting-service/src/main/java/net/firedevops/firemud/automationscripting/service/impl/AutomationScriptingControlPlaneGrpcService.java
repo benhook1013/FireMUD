@@ -227,9 +227,7 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setIsProjectionStale(summary.projectionStale());
       } else if (!lookup.errorCode().isBlank()) {
         response.setError(
-            ErrorDetail.newBuilder()
-                .setCode(lookup.errorCode())
-                .setMessage(lookup.errorMessage()));
+            ErrorDetail.newBuilder().setCode(lookup.errorCode()).setMessage(lookup.errorMessage()));
       } else {
         response.setError(notFound("GetAutomationPinConvergence", "pin_projection_not_found"));
       }

@@ -48,12 +48,10 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
                 gameInstanceId,
                 runtime.getRuntimeState(),
                 now);
-        return new PinConvergenceLookup(
-            Optional.of(toSummary(refreshed, now)), "", "");
+        return new PinConvergenceLookup(Optional.of(toSummary(refreshed, now)), "", "");
       }
       if (existing.isPresent()) {
-        return new PinConvergenceLookup(
-            Optional.of(toSummary(existing.get(), now)), "", "");
+        return new PinConvergenceLookup(Optional.of(toSummary(existing.get(), now)), "", "");
       }
       if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
         return new PinConvergenceLookup(
@@ -64,8 +62,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
           "NOT_FOUND",
           "GetAutomationPinConvergence failed: pin_projection_not_found");
     }
-    return new PinConvergenceLookup(
-        Optional.of(toSummary(existing.get(), now)), "", "");
+    return new PinConvergenceLookup(Optional.of(toSummary(existing.get(), now)), "", "");
   }
 
   @Override
