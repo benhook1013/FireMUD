@@ -10,29 +10,27 @@ It intentionally omits completed slices and uses the individual slice docs as th
 
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
-1. [08.1 Publish Digest Gating and Release Attestation](./08.1-task-list-publish-digest-gating-and-release-attestation-vertical-slice.md)
-   Remaining: build on the now-live canonical publish-attempt framework, participant observations, recorded-digest baselines, typed gate failures, typed missing/unsupported-attestation reads, launch/activation hard-fail consumers, exact manifest-key repair proof, and current World/Entity version-scoped digest inputs by extending the same contract to later consumers and later domain-template families.
-2. [08.2 Published Asset Manifest and Purge Lifecycle](./08.2-task-list-published-asset-manifest-and-purge-lifecycle-vertical-slice.md)
+1. [08.2 Published Asset Manifest and Purge Lifecycle](./08.2-task-list-published-asset-manifest-and-purge-lifecycle-vertical-slice.md)
    Remaining: keep the now-live artifact-state proof, frozen export-version proof, exact exported-key proof, exact-bytes repair, and tombstone/purge workflow substrate moving toward broader normalized deletion/reference-table truth and richer derived-artifact coverage.
-3. [08.3 Launch Descriptor and Activation Preflight](./08.3-task-list-launch-descriptor-and-activation-preflight-vertical-slice.md)
+2. [08.3 Launch Descriptor and Activation Preflight](./08.3-task-list-launch-descriptor-and-activation-preflight-vertical-slice.md)
    Remaining: extend the now-live launch-descriptor, approved remap-set control-plane, cutover-compatibility preflight, persisted `PrepareVersionUpgrade` record, retry-safe canonical prepared cutover execution path, asset-proof preflight, stricter World topology validation, and current Entity `S1` / `S2` compatibility fence into broader cutover/retirement consumers, exact Entity target-template validation once version-scoped entity-template tables exist, and later instance-scoped runtime world-state families.
-4. [08.5 World Design Mutation API Surface](./08.5-task-list-world-design-mutation-api-surface-vertical-slice.md)
+3. [08.5 World Design Mutation API Surface](./08.5-task-list-world-design-mutation-api-surface-vertical-slice.md)
    Remaining: continue the review-spawned canonical World Management design-time mutation surface so Game Design applies concrete region, zone, room, exit, generation, and spawn-binding revisions through typed idempotent APIs with Draft aggregate epochs, typed generation scope enums, scope mutation policies, reference validation, and publish-digest participation instead of growing opaque JSON or ad hoc editor write paths; the first real caller path, spawn-binding validation, digest participation, typed scope contracts, and first real spawn-binding subtree `REPLACE_SCOPE` / `SEED_APPEND_ONLY` enforcement are now live, but broader scope-targeted generation payloads and broader caller coverage still remain.
-5. [09.1 Realm Catalog and Admission-Pointer Routing](./09.1-task-list-realm-catalog-and-admission-pointer-routing-vertical-slice.md)
+4. [09.1 Realm Catalog and Admission-Pointer Routing](./09.1-task-list-realm-catalog-and-admission-pointer-routing-vertical-slice.md)
    Remaining: keep broader reconnect/cutover consumers on the now-live persisted Game Session admission-pointer authority now that operator-facing prepare/read/cutover/audit tooling, retry-safe cutover execution, gateway-routed operator access, and first-party stale-pointer proof are in place.
-6. [09.3 Realm-Scoped Character and Playable State Policy](./09.3-task-list-realm-scoped-character-and-playable-state-policy-vertical-slice.md)
+5. [09.3 Realm-Scoped Character and Playable State Policy](./09.3-task-list-realm-scoped-character-and-playable-state-policy-vertical-slice.md)
    Remaining: continue the now-live scope-aware roster plus inventory/equipment alignment into progression, resources, loadout, and later gameplay-state families without reintroducing tenant-wide shortcuts.
-7. [02.1.6 Global Account and Tenant Authorization Convergence](./02.1.6-task-list-global-account-and-tenant-authorization-convergence-vertical-slice.md)
+6. [02.1.6 Global Account and Tenant Authorization Convergence](./02.1.6-task-list-global-account-and-tenant-authorization-convergence-vertical-slice.md)
    Remaining: build on the now-live account-identity-first player bootstrap, canonical `tenantAdmin` shared-auth model, account-owned lifecycle enforcement, and non-public realm grant substrate by reconciling the remaining docs/runtime reads.
-8. [02.18.8 Tick Batch and Effect Ledger Hardening](./02.18.8-task-list-tick-batch-and-effect-ledger-hardening-vertical-slice.md)
+7. [02.18.8 Tick Batch and Effect Ledger Hardening](./02.18.8-task-list-tick-batch-and-effect-ledger-hardening-vertical-slice.md)
    Remaining: build on the now-live durable batch/effect substrate, stale-fence batch drain, and post-drain execution seam now serving movement plus first item/equipment/container mutations by broadening durable execution truth into later command families and domain guards.
-9. [02.18.9 Region Epoch, Fencing, and Runtime Ownership](./02.18.9-task-list-region-epoch-fencing-and-runtime-ownership-vertical-slice.md)
+8. [02.18.9 Region Epoch, Fencing, and Runtime Ownership](./02.18.9-task-list-region-epoch-fencing-and-runtime-ownership-vertical-slice.md)
    Remaining: the durable owner row, pause/resume epoch bumps, stale-fence batch rejection, stale post-drain effect requeue, last-committed-batch pointer, and bounded ownership-status query are now live at the current game-instance boundary; the next gap is carrying that model into true region ownership and later downstream/domain-specific effect families.
-10. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
+9. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
    Remaining: the first ledger-side `effectKey`, deterministic `effectId`, movement-backed replay/no-op seam, Game Session communication/activity replay guard, Social Groups communication replay guard, Entity Management item mutation response replay guard, transfer-audit `effectId` plus session correlation, and first apply/replay metrics are now live; the next gap is later domain guard consumers.
-11. [02.18.11 Migrate Live Gameplay Commands Onto the Durable Execution Path](./02.18.11-task-list-migrate-live-gameplay-commands-onto-durable-execution-path-vertical-slice.md)
+10. [02.18.11 Migrate Live Gameplay Commands Onto the Durable Execution Path](./02.18.11-task-list-migrate-live-gameplay-commands-onto-durable-execution-path-vertical-slice.md)
    Remaining: movement, `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, `REMOVE`, `SAY`, `WHISPER`, `TELL`, and `AFK` are now migrated durable command families with Game Session-owned replay guards plus the first downstream Entity Management and Social Groups replay guards; the next gap is any later state-changing command family and its owning service guard.
-12. [02.15.8 Environment Preflight and Secret-Binding Convergence](./02.15.8-task-list-environment-preflight-and-secret-binding-convergence-vertical-slice.md)
+11. [02.15.8 Environment Preflight and Secret-Binding Convergence](./02.15.8-task-list-environment-preflight-and-secret-binding-convergence-vertical-slice.md)
    Remaining: build on the now-live JWT secret-path startup, mounted JWKS serving, base Kubernetes JWT/JWKS mounts, preview-unique JWT/JWKS rendering, expected-binding manifest schema expansion, `expectedBindingsRef` report output, full required preflight policy-ID emission, executable production/hobby traffic-open backup gates, and report contract tests by tightening the first-pass expected-binding validation against real environment evidence as it becomes available.
 
 ### 2. Active architecture follow-through
