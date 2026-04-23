@@ -2,9 +2,11 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
+import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
@@ -64,6 +66,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private final PluginRuntimeStateService pluginRuntimeStateService;
   private final ScriptQuotaService quotaService;
   private final ScriptDryRunQuotaService dryRunQuotaService;
+  private final ScriptRuntimeProperties runtimeProperties;
 
   public ScriptEventIngressServiceImpl(
       ScriptEventIngressAuditRepository repository,
@@ -80,6 +83,41 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       PluginRuntimeStateService pluginRuntimeStateService,
       ScriptQuotaService quotaService,
       ScriptDryRunQuotaService dryRunQuotaService) {
+    this(
+        repository,
+        bindingRepository,
+        workItemRepository,
+        eventAuditRepository,
+        eventRegistryService,
+        automationQueueService,
+        outputProperties,
+        gameSessionControlPlaneClient,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        rolloutProjectionService,
+        pluginRuntimeStateService,
+        quotaService,
+        dryRunQuotaService,
+        new ScriptRuntimeProperties());
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public ScriptEventIngressServiceImpl(
+      ScriptEventIngressAuditRepository repository,
+      ScriptEventBindingRepository bindingRepository,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository eventAuditRepository,
+      ScriptEventRegistryService eventRegistryService,
+      AutomationQueueService automationQueueService,
+      ScriptOutputProperties outputProperties,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      ScriptQuotaService quotaService,
+      ScriptDryRunQuotaService dryRunQuotaService,
+      ScriptRuntimeProperties runtimeProperties) {
     this.repository = repository;
     this.bindingRepository = bindingRepository;
     this.workItemRepository = workItemRepository;
@@ -94,6 +132,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     this.pluginRuntimeStateService = pluginRuntimeStateService;
     this.quotaService = quotaService;
     this.dryRunQuotaService = dryRunQuotaService;
+    this.runtimeProperties = runtimeProperties;
   }
 
   @Override
@@ -240,7 +279,16 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       return new TriggerAdmission(
           false, OUTCOME_VERSION_UNAVAILABLE, "plugin_version_unavailable", 0);
     }
+    if (pluginPolicyStale(status.get())) {
+      return new TriggerAdmission(
+          false, OUTCOME_VERSION_UNAVAILABLE, "signer_policy_unavailable", 0);
+    }
     return null;
+  }
+
+  private boolean pluginPolicyStale(PluginRuntimeStateService.PluginRuntimeStatus status) {
+    long ageMs = Instant.now().toEpochMilli() - status.lastPolicyCheckedAtMs();
+    return ageMs > runtimeProperties.getPluginPolicyStaleThresholdSeconds() * 1_000L;
   }
 
   private TriggerAdmission validateAdmissionState(TriggerScriptEventRequest request) {

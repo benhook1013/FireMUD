@@ -64,5 +64,6 @@ public interface PluginRuntimeStateService {
       String statusReason,
       long lastChangedAtMs,
       String controlPlaneRequestId,
-      String actorPrincipal) {}
+      String actorPrincipal,
+      long lastPolicyCheckedAtMs) {}
 }

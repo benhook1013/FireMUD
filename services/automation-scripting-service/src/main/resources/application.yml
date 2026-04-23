@@ -75,6 +75,7 @@ script:
     pin-projection-stale-threshold-ms: ${SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS:5000}
     plugin-policy-reconcile-interval-seconds: ${SCRIPT_PLUGIN_POLICY_RECONCILE_INTERVAL_SECONDS:60}
     plugin-policy-reconcile-batch-size: ${SCRIPT_PLUGIN_POLICY_RECONCILE_BATCH_SIZE:100}
+    plugin-policy-stale-threshold-seconds: ${SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS:300}
   outbox:
     handed-off-retention-days: ${SCRIPT_OUTBOX_HANDED_OFF_RETENTION_DAYS:7}
     canceled-retention-days: ${SCRIPT_OUTBOX_CANCELED_RETENTION_DAYS:7}

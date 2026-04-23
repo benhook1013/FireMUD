@@ -605,7 +605,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "operator_activation",
                     55L,
                     "req-1",
-                    "operator-1")));
+                    "operator-1",
+                    System.currentTimeMillis())));
     AutomationScriptingControlPlaneGrpcService service =
         new AutomationScriptingControlPlaneGrpcService(
             new BuiltInScriptEventRegistryService(),

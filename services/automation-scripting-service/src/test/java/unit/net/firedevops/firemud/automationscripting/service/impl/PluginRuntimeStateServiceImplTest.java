@@ -437,7 +437,8 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(result.inspectedCount()).isEqualTo(1);
     assertThat(result.disabledCount()).isZero();
     assertThat(active.getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_ENABLED.name());
-    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+    assertThat(active.getLastPolicyCheckedAt()).isAfter(java.time.Instant.EPOCH);
+    Mockito.verify(repository).save(active);
   }
 
   @Test
@@ -482,6 +483,7 @@ class PluginRuntimeStateServiceImplTest {
     active.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
     active.setStatusReason("activation");
     active.setLastChangedAt(java.time.Instant.EPOCH);
+    active.setLastPolicyCheckedAt(java.time.Instant.EPOCH);
     return active;
   }
 

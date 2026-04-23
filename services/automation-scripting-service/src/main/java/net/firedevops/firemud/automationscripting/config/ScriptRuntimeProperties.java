@@ -16,6 +16,9 @@ public class ScriptRuntimeProperties {
   @Min(1)
   private int pluginPolicyReconcileBatchSize = 100;
 
+  @Min(1)
+  private long pluginPolicyStaleThresholdSeconds = 300;
+
   public long getPinProjectionStaleThresholdMs() {
     return pinProjectionStaleThresholdMs;
   }
@@ -38,5 +41,13 @@ public class ScriptRuntimeProperties {
 
   public void setPluginPolicyReconcileBatchSize(int pluginPolicyReconcileBatchSize) {
     this.pluginPolicyReconcileBatchSize = pluginPolicyReconcileBatchSize;
+  }
+
+  public long getPluginPolicyStaleThresholdSeconds() {
+    return pluginPolicyStaleThresholdSeconds;
+  }
+
+  public void setPluginPolicyStaleThresholdSeconds(long pluginPolicyStaleThresholdSeconds) {
+    this.pluginPolicyStaleThresholdSeconds = pluginPolicyStaleThresholdSeconds;
   }
 }

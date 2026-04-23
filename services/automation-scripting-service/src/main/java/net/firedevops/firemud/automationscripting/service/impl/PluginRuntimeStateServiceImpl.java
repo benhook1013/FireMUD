@@ -75,6 +75,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     state.setControlPlaneRequestId(normalize(command.controlPlaneRequestId()));
     state.setActorPrincipal(normalize(command.actorPrincipal()));
     state.setLastChangedAt(now);
+    state.setLastPolicyCheckedAt(now);
     PluginRuntimeState saved = repository.save(state);
     return new ActivationResult(
         previous, saved.getActivePluginVersionId(), normalize(command.controlPlaneRequestId()));
@@ -186,6 +187,9 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       if (disableReason.isPresent()) {
         disableForPolicy(state, disableReason.get(), now);
         disabledCount++;
+      } else {
+        state.setLastPolicyCheckedAt(now);
+        repository.save(state);
       }
     }
     return new PolicyReconciliationResult(activeStates.size(), disabledCount);
@@ -262,6 +266,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     state.setControlPlaneRequestId("policy-reconcile-" + now.toEpochMilli());
     state.setActorPrincipal(ACTOR_POLICY_RECONCILER);
     state.setLastChangedAt(now);
+    state.setLastPolicyCheckedAt(now);
     repository.save(state);
   }
 
@@ -307,7 +312,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         state.getStatusReason(),
         state.getLastChangedAt().toEpochMilli(),
         normalize(state.getControlPlaneRequestId()),
-        normalize(state.getActorPrincipal()));
+        normalize(state.getActorPrincipal()),
+        state.getLastPolicyCheckedAt().toEpochMilli());
   }
 
   private static String normalizeReason(String reason, String defaultReason) {
