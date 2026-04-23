@@ -22,7 +22,7 @@ For day-to-day operations, environment variables fall into three broad categorie
 
 Current live bindings in the service are narrower than the full target-state scripting design:
 
-- the live runtime binds live per-script quota, live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
+- the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
 - signer-policy convergence reads, separate dead-letter alert thresholds, and any split dead-letter cleanup cadence remain target-state follow-through in the `10.3` / `10.5` scripting slices and are not current live service bindings.
 
 ## Service-Specific Variables

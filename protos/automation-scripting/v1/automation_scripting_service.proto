@@ -141,6 +141,7 @@ message ScriptEventBinding {
   string target_scope_id = 4;
   int32 priority = 5;
   bool requires_exclusive_event = 6;
+  string priority_tag = 7;
 }
 
 message ScriptEventDefinition {

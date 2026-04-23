@@ -124,6 +124,7 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
         "targetScopeType", binding.getTargetScopeType(),
         "targetScopeId", binding.getTargetScopeId(),
         "priority", binding.getPriority(),
+        "priorityTag", binding.getPriorityTag(),
         "requiresExclusiveEvent", binding.isRequiresExclusiveEvent(),
         "enabled", binding.isEnabled());
   }

@@ -156,7 +156,7 @@ Quota and budget policy must be applied at fixed charge points so operators can 
   - Charged when a handler-scoped run is reserved onto live sandbox execution capacity.
   - Event-scope ingress acceptance alone does not charge tenant runtime budget.
   - Mixed fan-out therefore consumes tenant runtime budget only for handlers that actually leave admission and reserve execution capacity.
-  - Current Automation execution enforces this with `ScriptTenantBudgetService` before live durable work items evaluate script definitions. Budget-denied work items are terminally canceled with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded`, and `finalReason=tenant_budget_exceeded`.
+  - Current Automation execution persists the binding `priorityTag` onto durable work items and enforces the matching tier with `ScriptTenantBudgetService` before live durable work items evaluate script definitions. Budget-denied work items are terminally canceled with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded`, and `finalReason=tenant_budget_exceeded`.
 - **Cluster-wide execution ceilings**
   - Applied at the same execution-reservation point as tenant runtime budgets.
   - Admission rejections due purely to cluster exhaustion must remain `ADMISSION` outcomes and must not burn sandbox CPU/memory budget.

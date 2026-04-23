@@ -315,6 +315,7 @@ public class AutomationScriptingGrpcService
                               binding.getTargetScopeType(),
                               binding.getTargetScopeId(),
                               binding.getPriority(),
+                              binding.getPriorityTag(),
                               binding.getRequiresExclusiveEvent()))
                   .toList());
       scriptService.updateScript(dto);

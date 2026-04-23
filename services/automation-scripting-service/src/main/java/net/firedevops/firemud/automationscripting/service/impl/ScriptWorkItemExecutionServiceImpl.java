@@ -35,7 +35,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String STAGE_ADMISSION = "ADMISSION";
   private static final String STAGE_DSL_EVAL = "DSL_EVAL";
   private static final String STAGE_TICK_HANDOFF = "TICK_HANDOFF";
-  private static final String DEFAULT_PRIORITY_TIER = "normal";
+  private static final String PRIORITY_HIGH = "high";
+  private static final String PRIORITY_NORMAL = "normal";
+  private static final String PRIORITY_BACKGROUND = "background";
 
   private final ScriptWorkItemService workItemService;
   private final ScriptDefinitionRepository scriptDefinitionRepository;
@@ -90,7 +92,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
     Instant now = Instant.now();
     if (!workItem.isDryRun()
-        && !tenantBudgetService.tryReserve(workItem.getTenantId(), DEFAULT_PRIORITY_TIER)) {
+        && !tenantBudgetService.tryReserve(
+            workItem.getTenantId(), normalizePriorityTag(workItem.getPriorityTag()))) {
       cancel(workItem, STAGE_ADMISSION, "tenant_budget_exceeded", "tenant_budget_exceeded", now);
       return false;
     }
@@ -335,5 +338,16 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     } catch (NumberFormatException ex) {
       throw new IllegalArgumentException("tenant_id must be numeric for script definition lookup");
     }
+  }
+
+  private static String normalizePriorityTag(String value) {
+    if (value == null || value.isBlank()) {
+      return PRIORITY_NORMAL;
+    }
+    String normalized = value.toLowerCase(java.util.Locale.ROOT);
+    return switch (normalized) {
+      case PRIORITY_HIGH, PRIORITY_NORMAL, PRIORITY_BACKGROUND -> normalized;
+      default -> PRIORITY_NORMAL;
+    };
   }
 }

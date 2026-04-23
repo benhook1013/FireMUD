@@ -28,7 +28,7 @@ Tick-driven automation and event handling never use Sagas; they follow the Redis
 
 - `script` holds compiled component definitions and version metadata.
 - `npc_memory` stores persistent state for NPC behaviors.
-- Admitted script work items are persisted durably in a PostgreSQL-backed outbox keyed by Trigger Identity plus sequencing fields as needed.
+- Admitted script work items are persisted durably in a PostgreSQL-backed outbox keyed by Trigger Identity plus sequencing fields as needed, including the resolved binding `priorityTag` used for live tenant-budget reservation.
 - `automation:queue:{tenantInstanceTag}:<entityId>` keys in Redis buffer work-item indexes or pointers after a script runs and its work item is persisted durably. Each entry includes enough identity to locate the durable work item and must not be treated as an authoritative log of commands.
 - Internal automation tick staging uses a dedicated namespace:
   - `automation:tick:{tenantInstanceScriptTag}:queue` – per-instance, per-script queue of work items being staged into tick-compatible commands.

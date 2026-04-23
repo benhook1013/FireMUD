@@ -63,6 +63,9 @@ public class ScriptWorkItem {
   @Column(nullable = false, length = 64)
   private String triggerMode;
 
+  @Column(nullable = false, length = 32)
+  private String priorityTag = "normal";
+
   @Column(length = 512)
   private String readSnapshotToken;
 

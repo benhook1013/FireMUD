@@ -378,9 +378,12 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptOutputProperties outputProperties = new ScriptOutputProperties();
+    ScriptTenantBudgetService tenantBudgetService = Mockito.mock(ScriptTenantBudgetService.class);
     ScriptWorkItem item = workItem();
+    item.setPriorityTag("high");
     ScriptEventAudit audit = new ScriptEventAudit();
     when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
+    when(tenantBudgetService.tryReserve("1", "high")).thenReturn(false);
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -393,7 +396,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             auditRepository,
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             outputProperties,
-            denyingTenantBudgetService(),
+            tenantBudgetService,
             allowingDryRunCapacityService(),
             new ObjectMapper());
 
@@ -401,6 +404,7 @@ class ScriptWorkItemExecutionServiceImplTest {
         service.processPendingWorkItems(10);
 
     assertThat(result.failedCount()).isEqualTo(1);
+    Mockito.verify(tenantBudgetService).tryReserve("1", "high");
     Mockito.verify(definitionRepository, Mockito.never())
         .findByTenantIdAndScriptVersionAndName(Mockito.anyLong(), Mockito.any(), Mockito.any());
     Mockito.verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());

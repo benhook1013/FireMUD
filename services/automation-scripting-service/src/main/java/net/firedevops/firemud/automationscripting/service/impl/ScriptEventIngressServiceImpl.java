@@ -330,6 +330,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setDryRun(request.getIsDryRun());
     item.setSourceService(resolveSourceService());
     item.setTriggerMode(request.getTriggerMode().name());
+    item.setPriorityTag(binding.getPriorityTag());
     item.setReadSnapshotToken(normalize(request.getReadSnapshotToken()));
     item.setPayloadJson(normalize(request.getPayloadJson()));
     item.setAdmissionEpoch(admissionState.admissionEpoch());

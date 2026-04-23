@@ -114,7 +114,7 @@ class ScriptEventIngressServiceImplTest {
     when(bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
                 1L, "patch-1", "onCommand", "v1"))
-        .thenReturn(List.of(binding("script-1", "ENTITY", "entity-1")));
+        .thenReturn(List.of(binding("script-1", "ENTITY", "entity-1", "high")));
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
@@ -174,6 +174,7 @@ class ScriptEventIngressServiceImplTest {
     assertThat(workItemCaptor.getValue().getScriptId()).isEqualTo("script-1");
     assertThat(workItemCaptor.getValue().getPluginId()).isEqualTo("plugin-1");
     assertThat(workItemCaptor.getValue().getPluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(workItemCaptor.getValue().getPriorityTag()).isEqualTo("high");
     assertThat(workItemCaptor.getValue().getStatus()).isEqualTo("PENDING_EVALUATION");
     ArgumentCaptor<ScriptEventAudit> eventAuditCaptor =
         ArgumentCaptor.forClass(ScriptEventAudit.class);
@@ -838,10 +839,16 @@ class ScriptEventIngressServiceImplTest {
   }
 
   private static ScriptEventBinding binding(String scriptId, String scopeType, String scopeId) {
+    return binding(scriptId, scopeType, scopeId, "normal");
+  }
+
+  private static ScriptEventBinding binding(
+      String scriptId, String scopeType, String scopeId, String priorityTag) {
     ScriptEventBinding binding = new ScriptEventBinding();
     binding.setScriptId(scriptId);
     binding.setTargetScopeType(scopeType);
     binding.setTargetScopeId(scopeId);
+    binding.setPriorityTag(priorityTag);
     binding.setEnabled(true);
     return binding;
   }
