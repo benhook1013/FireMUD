@@ -6,9 +6,11 @@ import java.util.Optional;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProjectionRepository;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,12 +23,15 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
 
   private final ScriptPatchPinProjectionRepository repository;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
+  private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
 
   public ScriptPatchPinProjectionServiceImpl(
       ScriptPatchPinProjectionRepository repository,
-      GameSessionControlPlaneClient gameSessionControlPlaneClient) {
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      @Lazy ScriptPatchInstanceRolloutProjectionService rolloutProjectionService) {
     this.repository = repository;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
+    this.rolloutProjectionService = rolloutProjectionService;
   }
 
   @Override
@@ -82,6 +87,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
         gameInstanceId,
         runtimeState,
         Instant.now());
+    rolloutProjectionService.refreshForInstance(tenantId, gameInstanceId);
   }
 
   private ScriptPatchPinProjection saveObservation(

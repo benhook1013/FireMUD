@@ -353,7 +353,7 @@ Contract rules:
 
 #### `GetScriptPatchInstanceRolloutStatus`
 
-Implementation note: the current Automation & Scripting implementation now exposes these rollout reads from local durable substrates rather than a raw shared-runtime query. It combines the durable Automation-owned pin projection with local durable work-item evidence, sets freshness fields explicitly from the pin projection, and currently emits the narrower concrete rollout vocabulary actually provable from that substrate (`PINNED` and `ROLLED_BACK`). `REPINNED` and richer convergence history remain later event-projection work rather than already-live behavior.
+Implementation note: the current Automation & Scripting implementation now exposes these rollout reads from a durable local `script_patch_instance_rollout_projections` read model rather than a raw shared-runtime query. That projection is refreshed from the Automation-owned pin projection plus durable work-item transitions, sets freshness fields explicitly from the local projection timestamp, and currently emits the narrower concrete rollout vocabulary actually provable from the current substrate (`PINNED` and `ROLLED_BACK`). `REPINNED` and richer convergence history remain later event-projection work rather than already-live behavior.
 
 Inputs:
 
@@ -374,7 +374,7 @@ Outputs:
 Read-model ownership:
 
 - The authoritative source for rollout transitions is Game Session pin mutations and committed `ScriptPatchPinChanged` events.
-- If Automation & Scripting serves this API, it does so as a projection that is replayable from control-plane events and keyed by `(tenantId, gameInstanceId, scriptPatchVersion, controlPlaneRequestId)` for idempotent updates.
+- The current Automation & Scripting implementation persists an Automation-owned rollout projection keyed by `(tenantId, gameInstanceId, scriptPatchVersion)`. Projection refresh is driven by observed pin state plus durable work-item transitions until fuller event-replay history lands.
 
 #### `ListScriptPatchInstanceRollouts`
 

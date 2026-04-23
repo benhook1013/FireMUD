@@ -7,6 +7,7 @@ import java.util.Optional;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProjectionRepository;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
@@ -39,7 +40,10 @@ class ScriptPatchPinProjectionServiceImplTest {
                 .build());
 
     ScriptPatchPinProjectionService service =
-        new ScriptPatchPinProjectionServiceImpl(repository, gameSessionControlPlaneClient);
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            gameSessionControlPlaneClient,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     ScriptPatchPinProjectionService.PinConvergenceLookup lookup =
         service.getPinConvergence("1", "game-1");
@@ -80,7 +84,10 @@ class ScriptPatchPinProjectionServiceImplTest {
                 .build());
 
     ScriptPatchPinProjectionService service =
-        new ScriptPatchPinProjectionServiceImpl(repository, gameSessionControlPlaneClient);
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            gameSessionControlPlaneClient,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     ScriptPatchPinProjectionService.PinConvergenceLookup lookup =
         service.getPinConvergence("1", "game-1");

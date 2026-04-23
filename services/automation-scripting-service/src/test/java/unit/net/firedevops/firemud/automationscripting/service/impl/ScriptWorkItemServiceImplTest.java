@@ -16,6 +16,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
@@ -27,6 +28,10 @@ import org.springframework.data.domain.PageRequest;
 class ScriptWorkItemServiceImplTest {
   private static ScriptEventIngressAuditRepository ingressAuditRepository() {
     return Mockito.mock(ScriptEventIngressAuditRepository.class);
+  }
+
+  private static ScriptPatchInstanceRolloutProjectionService rolloutProjectionService() {
+    return Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
   }
 
   @Test
@@ -52,6 +57,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository(),
             outboxProperties(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
 
     long canceled =
@@ -86,6 +92,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository(),
             outboxProperties(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
 
     List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(10);
@@ -105,6 +112,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository(),
             outboxProperties(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
 
     assertThatThrownBy(() -> service.claimPendingForEvaluation(0))
@@ -133,6 +141,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository(),
             properties,
             Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptWorkItemService.TerminalCleanupResult result = service.cleanupTerminalWorkItems();
@@ -168,6 +177,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository(),
             properties,
             Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptWorkItemService.TerminalCleanupResult result = service.cleanupTerminalWorkItems();
@@ -191,6 +201,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository(),
             outboxProperties(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
 
     Optional<ScriptWorkItemService.PatchStatusSummary> status =
@@ -222,6 +233,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository(),
             outboxProperties(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
 
     List<ScriptWorkItemService.PatchStatusSummary> statuses =
@@ -263,6 +275,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository(),
             outboxProperties(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptWorkItemService.AutomationDrainStatusSummary summary =
@@ -292,6 +305,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository(),
             outboxProperties(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptWorkItemService.AutomationDrainStatusSummary summary =
@@ -309,6 +323,8 @@ class ScriptWorkItemServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptPatchPinProjectionService pinProjectionService =
         Mockito.mock(ScriptPatchPinProjectionService.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
     when(workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
             "1", "game-1", "patch-1"))
         .thenReturn(List.of());
@@ -320,6 +336,19 @@ class ScriptWorkItemServiceImplTest {
                         "1", "game-1", "patch-1", "req-1", 150L, 151L, 0L, false)),
                 "",
                 ""));
+    when(rolloutProjectionService.getProjection("1", "game-1", "patch-1"))
+        .thenReturn(
+            Optional.of(
+                new ScriptWorkItemService.PatchInstanceRolloutSummary(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED,
+                    "runtime_pin_matches_patch",
+                    150L,
+                    151L,
+                    0L,
+                    false)));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
@@ -327,6 +356,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository(),
             outboxProperties(),
             pinProjectionService,
+            rolloutProjectionService,
             Mockito.mock(PluginRuntimeStateService.class));
 
     Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> summary =
@@ -349,12 +379,28 @@ class ScriptWorkItemServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptPatchPinProjectionService pinProjectionService =
         Mockito.mock(ScriptPatchPinProjectionService.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
     when(workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
             "1", "game-1", "patch-1"))
         .thenReturn(List.of(canceled));
     when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(
             new ScriptPatchPinProjectionService.PinConvergenceLookup(Optional.empty(), "", ""));
+    when(rolloutProjectionService.getProjection("1", "game-1", "patch-1"))
+        .thenReturn(
+            Optional.of(
+                new ScriptWorkItemService.PatchInstanceRolloutSummary(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    ScriptPatchInstanceRolloutStatus
+                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
+                    "projection_lag_exceeded",
+                    200L,
+                    200L,
+                    5_100L,
+                    true)));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
@@ -362,6 +408,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository(),
             outboxProperties(),
             pinProjectionService,
+            rolloutProjectionService,
             Mockito.mock(PluginRuntimeStateService.class));
 
     Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> summary =
@@ -381,6 +428,8 @@ class ScriptWorkItemServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptPatchPinProjectionService pinProjectionService =
         Mockito.mock(ScriptPatchPinProjectionService.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
     ScriptWorkItem ready = workItem("patch-1", "HANDED_OFF", Instant.ofEpochMilli(250));
     ready.setTenantId("1");
     ready.setGameInstanceId("game-1");
@@ -408,6 +457,26 @@ class ScriptWorkItemServiceImplTest {
                         "1", "game-1", "patch-2", "req-2", 260L, 261L, 0L, false)),
                 "",
                 ""));
+    when(rolloutProjectionService.listProjections(
+            "1",
+            "",
+            "",
+            ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
+            0L,
+            0L))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.PatchInstanceRolloutSummary(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    ScriptPatchInstanceRolloutStatus
+                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
+                    "runtime_pin_differs_from_patch",
+                    260L,
+                    261L,
+                    0L,
+                    false)));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
@@ -415,6 +484,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository(),
             outboxProperties(),
             pinProjectionService,
+            rolloutProjectionService,
             Mockito.mock(PluginRuntimeStateService.class));
 
     List<ScriptWorkItemService.PatchInstanceRolloutSummary> summaries =
@@ -460,6 +530,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository(),
             outboxProperties(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
 
     List<ScriptWorkItemService.DeadLetterSummary> deadLetters =
@@ -526,6 +597,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository,
             outboxProperties(),
             pinProjectionService,
+            rolloutProjectionService(),
             pluginRuntimeStateService);
 
     ScriptWorkItemService.ReplayResult result =
@@ -599,6 +671,7 @@ class ScriptWorkItemServiceImplTest {
             ingressAuditRepository,
             outboxProperties(),
             pinProjectionService,
+            rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptWorkItemService.ReplayResult result =

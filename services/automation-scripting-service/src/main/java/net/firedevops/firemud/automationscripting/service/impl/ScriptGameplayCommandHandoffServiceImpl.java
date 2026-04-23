@@ -8,6 +8,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import org.springframework.stereotype.Service;
@@ -26,14 +27,17 @@ public class ScriptGameplayCommandHandoffServiceImpl
   private final GameSessionControlPlaneClient gameSessionClient;
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository auditRepository;
+  private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
 
   public ScriptGameplayCommandHandoffServiceImpl(
       GameSessionControlPlaneClient gameSessionClient,
       ScriptWorkItemRepository workItemRepository,
-      ScriptEventAuditRepository auditRepository) {
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService) {
     this.gameSessionClient = gameSessionClient;
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
+    this.rolloutProjectionService = rolloutProjectionService;
   }
 
   @Override
@@ -45,6 +49,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
     workItem.setStatus(STATUS_HANDOFF_IN_FLIGHT);
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(workItem);
 
     EnqueueAutomationCommandIfAbsentResponse response =
         gameSessionClient.enqueueAutomationCommandIfAbsent(toRequest(workItem, command));
@@ -81,6 +86,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
       workItem.setStatus(STATUS_HANDED_OFF);
       workItem.setUpdatedAt(now);
       workItemRepository.save(workItem);
+      rolloutProjectionService.refreshForWorkItem(workItem);
       updateAudit(
           workItem,
           "HANDOFF",
@@ -93,6 +99,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
     workItem.setCancelReason(result.errorCode().isBlank() ? result.outcome() : result.errorCode());
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(workItem);
     updateAudit(
         workItem,
         "HANDOFF",

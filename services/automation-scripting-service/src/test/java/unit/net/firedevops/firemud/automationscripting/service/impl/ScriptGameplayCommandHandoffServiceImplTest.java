@@ -12,6 +12,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -37,7 +38,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     ScriptGameplayCommandHandoffService service =
         new ScriptGameplayCommandHandoffServiceImpl(
-            gameSessionClient, workItemRepository, auditRepository);
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(
@@ -78,7 +82,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     ScriptGameplayCommandHandoffService service =
         new ScriptGameplayCommandHandoffServiceImpl(
-            gameSessionClient, workItemRepository, auditRepository);
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(

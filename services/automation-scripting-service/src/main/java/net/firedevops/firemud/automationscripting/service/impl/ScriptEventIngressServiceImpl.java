@@ -16,6 +16,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepos
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
@@ -47,6 +48,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private final ScriptOutputProperties outputProperties;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
+  private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
 
   public ScriptEventIngressServiceImpl(
       ScriptEventIngressAuditRepository repository,
@@ -57,7 +59,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       AutomationQueueService automationQueueService,
       ScriptOutputProperties outputProperties,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
-      ScriptPatchPinProjectionService scriptPatchPinProjectionService) {
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService) {
     this.repository = repository;
     this.bindingRepository = bindingRepository;
     this.workItemRepository = workItemRepository;
@@ -67,6 +70,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     this.outputProperties = outputProperties;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
+    this.rolloutProjectionService = rolloutProjectionService;
   }
 
   @Override
@@ -228,6 +232,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setReadSnapshotToken(normalize(request.getReadSnapshotToken()));
     item.setPayloadJson(normalize(request.getPayloadJson()));
     ScriptWorkItem saved = workItemRepository.save(item);
+    rolloutProjectionService.refreshForWorkItem(saved);
     automationQueueService.enqueueWorkItem(saved);
     persistHandlerAudit(request, schemaVersion, binding, saved);
   }

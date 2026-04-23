@@ -15,6 +15,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService;
@@ -73,6 +74,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             handoffService,
             workItemRepository,
             auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             quotaService,
             outputProperties,
             new ObjectMapper());
@@ -119,6 +121,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             handoffService,
             workItemRepository,
             auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             quotaService,
             outputProperties,
             new ObjectMapper());

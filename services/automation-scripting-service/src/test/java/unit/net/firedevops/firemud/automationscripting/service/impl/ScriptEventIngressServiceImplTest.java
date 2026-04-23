@@ -21,6 +21,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressA
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
@@ -91,7 +92,8 @@ class ScriptEventIngressServiceImplTest {
             automationQueueService,
             outputProperties(),
             gameSessionControlPlaneClient,
-            Mockito.mock(ScriptPatchPinProjectionService.class));
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -148,7 +150,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
             gameSessionControlPlaneClient,
-            Mockito.mock(ScriptPatchPinProjectionService.class));
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -190,7 +193,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
             gameSessionControlPlaneClient,
-            Mockito.mock(ScriptPatchPinProjectionService.class));
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -235,7 +239,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties,
             gameSessionControlPlaneClient,
-            Mockito.mock(ScriptPatchPinProjectionService.class));
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -295,7 +300,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
             gameSessionControlPlaneClient,
-            Mockito.mock(ScriptPatchPinProjectionService.class));
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -332,7 +338,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
             gameSessionControlPlaneClient,
-            Mockito.mock(ScriptPatchPinProjectionService.class));
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     assertThrows(
         IllegalArgumentException.class,
@@ -374,7 +381,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
             gameSessionControlPlaneClient,
-            Mockito.mock(ScriptPatchPinProjectionService.class));
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -424,7 +432,8 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
             gameSessionControlPlaneClient,
-            Mockito.mock(ScriptPatchPinProjectionService.class));
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(

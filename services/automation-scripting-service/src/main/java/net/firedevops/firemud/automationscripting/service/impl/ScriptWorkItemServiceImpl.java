@@ -4,10 +4,8 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
@@ -15,6 +13,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
@@ -40,13 +39,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       List.of(STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT);
   private static final List<String> DRAIN_RELEVANT_STATUSES =
       List.of(STATUS_PENDING_EVALUATION, STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT);
-  private static final long INSTANCE_ROLLOUT_STALE_THRESHOLD_MS = 5_000L;
 
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository auditRepository;
   private final ScriptEventIngressAuditRepository ingressAuditRepository;
   private final ScriptOutboxProperties outboxProperties;
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
+  private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
   private final PluginRuntimeStateService pluginRuntimeStateService;
 
   public ScriptWorkItemServiceImpl(
@@ -55,12 +54,14 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       ScriptEventIngressAuditRepository ingressAuditRepository,
       ScriptOutboxProperties outboxProperties,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
       PluginRuntimeStateService pluginRuntimeStateService) {
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
     this.ingressAuditRepository = ingressAuditRepository;
     this.outboxProperties = outboxProperties;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
+    this.rolloutProjectionService = rolloutProjectionService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
   }
 
@@ -86,6 +87,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             .toList();
     candidates.forEach(item -> cancel(item, reason, now));
     workItemRepository.saveAll(candidates);
+    candidates.forEach(rolloutProjectionService::refreshForWorkItem);
     return candidates.size();
   }
 
@@ -104,7 +106,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
           item.setStatus(STATUS_EVALUATING);
           item.setUpdatedAt(now);
         });
-    return List.copyOf(workItemRepository.saveAll(items));
+    List<ScriptWorkItem> saved = List.copyOf(workItemRepository.saveAll(items));
+    saved.forEach(rolloutProjectionService::refreshForWorkItem);
+    return saved;
   }
 
   @Override
@@ -202,15 +206,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     requireText(tenantId, "tenant_id");
     requireText(gameInstanceId, "game_instance_id");
     requireText(scriptPatchVersion, "script_patch_version");
-    Instant now = Instant.now();
-    return summarizeInstanceRollout(
-        tenantId,
-        gameInstanceId,
-        scriptPatchVersion,
-        workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
-            tenantId, gameInstanceId, scriptPatchVersion),
-        scriptPatchPinProjectionService.getPinConvergence(tenantId, gameInstanceId).summary(),
-        now);
+    return rolloutProjectionService.getProjection(tenantId, gameInstanceId, scriptPatchVersion);
   }
 
   @Override
@@ -223,56 +219,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       long changedAfterMs,
       long changedBeforeMs) {
     requireText(tenantId, "tenant_id");
-    Instant now = Instant.now();
-    Set<InstancePatchKey> keys = new LinkedHashSet<>();
-    workItemRepository
-        .findDistinctInstancePatchPairs(
-            tenantId, blankToEmpty(gameInstanceId), blankToEmpty(scriptPatchVersion))
-        .forEach(
-            pair ->
-                keys.add(
-                    new InstancePatchKey(pair.getGameInstanceId(), pair.getScriptPatchVersion())));
-    if (gameInstanceId != null && !gameInstanceId.isBlank()) {
-      Optional<ScriptPatchPinProjectionService.PinConvergenceSummary> pinSummary =
-          scriptPatchPinProjectionService.getPinConvergence(tenantId, gameInstanceId).summary();
-      if (pinSummary.isPresent()
-          && !pinSummary.get().observedPinnedScriptPatchVersion().isBlank()) {
-        String currentPatchVersion = pinSummary.get().observedPinnedScriptPatchVersion();
-        if (scriptPatchVersion == null
-            || scriptPatchVersion.isBlank()
-            || scriptPatchVersion.equals(currentPatchVersion)) {
-          keys.add(new InstancePatchKey(gameInstanceId, currentPatchVersion));
-        }
-      }
-    }
-    return keys.stream()
-        .map(
-            key ->
-                summarizeInstanceRollout(
-                    tenantId,
-                    key.gameInstanceId(),
-                    key.scriptPatchVersion(),
-                    workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
-                        tenantId, key.gameInstanceId(), key.scriptPatchVersion()),
-                    scriptPatchPinProjectionService
-                        .getPinConvergence(tenantId, key.gameInstanceId())
-                        .summary(),
-                    now))
-        .flatMap(Optional::stream)
-        .filter(
-            summary ->
-                rolloutStatus
-                        == ScriptPatchInstanceRolloutStatus
-                            .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED
-                    || summary.rolloutStatus() == rolloutStatus)
-        .filter(summary -> changedAfterMs <= 0 || summary.lastChangedAtMs() > changedAfterMs)
-        .filter(summary -> changedBeforeMs <= 0 || summary.lastChangedAtMs() < changedBeforeMs)
-        .sorted(
-            Comparator.comparingLong(PatchInstanceRolloutSummary::lastChangedAtMs)
-                .reversed()
-                .thenComparing(PatchInstanceRolloutSummary::gameInstanceId)
-                .thenComparing(PatchInstanceRolloutSummary::scriptPatchVersion))
-        .toList();
+    return rolloutProjectionService.listProjections(
+        tenantId,
+        gameInstanceId,
+        scriptPatchVersion,
+        rolloutStatus,
+        changedAfterMs,
+        changedBeforeMs);
   }
 
   @Override
@@ -318,6 +271,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       item.setCancelReason("");
       item.setUpdatedAt(now);
       workItemRepository.save(item);
+      rolloutProjectionService.refreshForWorkItem(item);
       markReplayQueued(item.getId(), reason, now);
       replayed++;
     }
@@ -385,62 +339,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         item.getCancelReason() == null ? "" : item.getCancelReason(),
         item.getCreatedAt().toEpochMilli(),
         item.getUpdatedAt().toEpochMilli());
-  }
-
-  private Optional<PatchInstanceRolloutSummary> summarizeInstanceRollout(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      List<ScriptWorkItem> workItems,
-      Optional<ScriptPatchPinProjectionService.PinConvergenceSummary> runtimeObservation,
-      Instant now) {
-    if (runtimeObservation.isPresent()) {
-      ScriptPatchPinProjectionService.PinConvergenceSummary runtime = runtimeObservation.get();
-      String pinnedScriptPatchVersion = runtime.observedPinnedScriptPatchVersion();
-      if (scriptPatchVersion.equals(pinnedScriptPatchVersion)) {
-        return Optional.of(
-            new PatchInstanceRolloutSummary(
-                tenantId,
-                gameInstanceId,
-                scriptPatchVersion,
-                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED,
-                "runtime_pin_matches_patch",
-                maxLastChangedAtMs(workItems, runtime.observedAtMs(), now),
-                runtime.projectionAsOfMs(),
-                runtime.projectionLagMs(),
-                runtime.projectionStale()));
-      }
-      if (!workItems.isEmpty()) {
-        return Optional.of(
-            new PatchInstanceRolloutSummary(
-                tenantId,
-                gameInstanceId,
-                scriptPatchVersion,
-                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
-                "runtime_pin_differs_from_patch",
-                maxLastChangedAtMs(workItems, runtime.observedAtMs(), now),
-                runtime.projectionAsOfMs(),
-                runtime.projectionLagMs(),
-                runtime.projectionStale()));
-      }
-      return Optional.empty();
-    }
-    if (workItems.isEmpty()) {
-      return Optional.empty();
-    }
-    long lastChangedAtMs = maxWorkItemUpdatedAtMs(workItems);
-    long projectionLagMs = Math.max(0L, now.toEpochMilli() - lastChangedAtMs);
-    return Optional.of(
-        new PatchInstanceRolloutSummary(
-            tenantId,
-            gameInstanceId,
-            scriptPatchVersion,
-            localFallbackRolloutStatus(workItems),
-            "projection_lag_exceeded",
-            lastChangedAtMs,
-            lastChangedAtMs,
-            projectionLagMs,
-            projectionLagMs >= INSTANCE_ROLLOUT_STALE_THRESHOLD_MS));
   }
 
   private List<ScriptWorkItem> selectReplayCandidates(
@@ -515,14 +413,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         .orElse(false);
   }
 
-  private static ScriptPatchInstanceRolloutStatus localFallbackRolloutStatus(
-      List<ScriptWorkItem> workItems) {
-    if (workItems.stream().allMatch(item -> STATUS_CANCELED.equals(item.getStatus()))) {
-      return ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK;
-    }
-    return ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED;
-  }
-
   private void markReplayQueued(Long workItemId, String reason, Instant now) {
     auditRepository
         .findByWorkItemId(workItemId)
@@ -591,22 +481,4 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private static String blankToEmpty(String value) {
     return value == null ? "" : value;
   }
-
-  private static long maxLastChangedAtMs(
-      List<ScriptWorkItem> workItems, long runtimeChangedAtMs, Instant fallbackNow) {
-    long workItemChangedAtMs = workItems.isEmpty() ? 0L : maxWorkItemUpdatedAtMs(workItems);
-    long effectiveRuntimeChangedAtMs =
-        runtimeChangedAtMs > 0 ? runtimeChangedAtMs : fallbackNow.toEpochMilli();
-    return Math.max(workItemChangedAtMs, effectiveRuntimeChangedAtMs);
-  }
-
-  private static long maxWorkItemUpdatedAtMs(List<ScriptWorkItem> workItems) {
-    return workItems.stream()
-        .map(ScriptWorkItem::getUpdatedAt)
-        .max(Comparator.naturalOrder())
-        .orElse(Instant.EPOCH)
-        .toEpochMilli();
-  }
-
-  private record InstancePatchKey(String gameInstanceId, String scriptPatchVersion) {}
 }

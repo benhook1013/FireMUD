@@ -14,6 +14,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService;
@@ -37,6 +38,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ScriptGameplayCommandHandoffService handoffService;
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository auditRepository;
+  private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
   private final ScriptQuotaService quotaService;
   private final ScriptOutputProperties outputProperties;
   private final ObjectMapper objectMapper;
@@ -47,6 +49,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptGameplayCommandHandoffService handoffService,
       ScriptWorkItemRepository workItemRepository,
       ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
       ScriptQuotaService quotaService,
       ScriptOutputProperties outputProperties,
       ObjectMapper objectMapper) {
@@ -55,6 +58,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.handoffService = handoffService;
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
+    this.rolloutProjectionService = rolloutProjectionService;
     this.quotaService = quotaService;
     this.outputProperties = outputProperties;
     this.objectMapper = objectMapper;
@@ -223,6 +227,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItem.setCancelReason(reason);
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(workItem);
     updateAudit(workItem.getId(), stage, outcome, reason, now);
   }
 
@@ -232,6 +237,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItem.setCancelReason(null);
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(workItem);
     updateAudit(workItem.getId(), stage, outcome, reason, now);
   }
 
