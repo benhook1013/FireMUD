@@ -266,6 +266,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     if (OPERATION_DELETE.equals(request.operationType())) {
       failIfSeedAppendOnlyDelete(request);
       GenerationRule rule = existingGenerationRule(request);
+      validateGenerationRuleScope(request, rule);
       generationRuleRepository.delete(rule);
       return rule.getId();
     }
@@ -273,14 +274,20 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     if (payload == null) {
       throw appError("INVALID_ARGUMENT", "generation_rule payload is required");
     }
-    failIfSeedAppendOnlyUpdate(request);
-    GenerationRule rule =
-        StringUtils.hasText(request.aggregateId())
-            ? existingGenerationRule(request)
-            : new GenerationRule();
+    String ruleName = requireText(payload.name(), "generation_rule.name");
+    validateGenerationRuleDeclaredScope(request);
+    GenerationRule rule = resolveGenerationRuleForMutation(request, ruleName);
+    if (isSeedAppendOnlyPolicy(request) && rule.getId() != null) {
+      throw appError("OUT_OF_SYNC", "SEED_APPEND_ONLY cannot rewrite an existing generation rule");
+    }
+    if (isReplaceScopePolicy(request)) {
+      deleteExistingGenerationRulesInScope(request, rule);
+    }
     rule.setTenantId(request.tenantId());
     rule.setVersionId(request.versionId());
-    rule.setName(requireText(payload.name(), "generation_rule.name"));
+    rule.setName(ruleName);
+    rule.setScopeType(blankToNull(request.scopeType()));
+    rule.setScopeId(blankToNull(request.scopeId()));
     rule.setValue(blankToNull(payload.value()));
     return generationRuleRepository.save(rule).getId();
   }
@@ -418,6 +425,95 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
             .toList();
     if (!inScopeBindings.isEmpty()) {
       worldEntitySpawnBindingRepository.deleteAll(inScopeBindings);
+    }
+  }
+
+  private GenerationRule resolveGenerationRuleForMutation(
+      WorldDesignMutationRequestDto request, String ruleName) {
+    if (StringUtils.hasText(request.aggregateId())) {
+      GenerationRule existing = existingGenerationRule(request);
+      validateGenerationRuleScope(request, existing);
+      return existing;
+    }
+    if (StringUtils.hasText(request.scopeType())) {
+      return generationRuleRepository
+          .findByTenantIdAndVersionIdAndScopeTypeAndScopeIdAndName(
+              request.tenantId(),
+              request.versionId(),
+              request.scopeType(),
+              request.scopeId(),
+              ruleName)
+          .map(
+              existing -> {
+                validateExpectedAggregateEpoch(request, existing.getId());
+                return existing;
+              })
+          .orElseGet(GenerationRule::new);
+    }
+    failIfSeedAppendOnlyUpdate(request);
+    return new GenerationRule();
+  }
+
+  private void deleteExistingGenerationRulesInScope(
+      WorldDesignMutationRequestDto request, GenerationRule selectedRule) {
+    String scopeType = requireText(request.scopeType(), "scope_type");
+    String scopeId = requireText(request.scopeId(), "scope_id");
+    if (SCOPE_TYPE_NEW_EMPTY_REGION.equals(scopeType)) {
+      throw appError(
+          "UNSUPPORTED_SCOPE",
+          "REPLACE_SCOPE for generation rules does not support NEW_EMPTY_REGION");
+    }
+    List<GenerationRule> inScopeRules =
+        generationRuleRepository
+            .findByTenantIdAndVersionIdAndScopeTypeAndScopeIdOrderByIdAsc(
+                request.tenantId(), request.versionId(), scopeType, scopeId)
+            .stream()
+            .filter(
+                rule -> selectedRule.getId() == null || !rule.getId().equals(selectedRule.getId()))
+            .toList();
+    if (!inScopeRules.isEmpty()) {
+      generationRuleRepository.deleteAll(inScopeRules);
+    }
+  }
+
+  private void validateGenerationRuleScope(
+      WorldDesignMutationRequestDto request, GenerationRule rule) {
+    if (!StringUtils.hasText(request.scopeType())) {
+      if (StringUtils.hasText(rule.getScopeType()) || StringUtils.hasText(rule.getScopeId())) {
+        throw appError("OUT_OF_SYNC", "generation rule requires its declared scope");
+      }
+      return;
+    }
+    if (!request.scopeType().equals(rule.getScopeType())
+        || !request.scopeId().equals(rule.getScopeId())) {
+      throw appError("OUT_OF_SYNC", "generation rule is outside the declared scope");
+    }
+    if (SCOPE_TYPE_NEW_EMPTY_REGION.equals(request.scopeType())) {
+      throw appError(
+          "UNSUPPORTED_SCOPE", "generation rule mutation does not support NEW_EMPTY_REGION");
+    }
+  }
+
+  private void validateGenerationRuleDeclaredScope(WorldDesignMutationRequestDto request) {
+    if (!StringUtils.hasText(request.scopeType())) {
+      return;
+    }
+    long scopeId = parseId(request.scopeId(), "scope_id");
+    switch (request.scopeType()) {
+      case SCOPE_TYPE_REGION_SUBTREE ->
+          regionRepository
+              .findByTenantIdAndVersionIdAndId(request.tenantId(), request.versionId(), scopeId)
+              .orElseThrow(
+                  () -> appError("UNRESOLVED_REFERENCE", "generation rule region scope not found"));
+      case SCOPE_TYPE_ZONE_SUBTREE ->
+          zoneRepository
+              .findByTenantIdAndVersionIdAndId(request.tenantId(), request.versionId(), scopeId)
+              .orElseThrow(
+                  () -> appError("UNRESOLVED_REFERENCE", "generation rule zone scope not found"));
+      case SCOPE_TYPE_NEW_EMPTY_REGION ->
+          throw appError(
+              "UNSUPPORTED_SCOPE", "generation rule mutation does not support NEW_EMPTY_REGION");
+      default -> throw appError("INVALID_ARGUMENT", "unsupported scope_type");
     }
   }
 

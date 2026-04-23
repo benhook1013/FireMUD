@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationRequestDto;
+import net.firedevops.firemud.worldmanagement.entity.GenerationRule;
 import net.firedevops.firemud.worldmanagement.entity.Region;
 import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.entity.RoomExit;
@@ -514,6 +515,79 @@ class WorldDesignMutationServiceImplTest {
     verify(ledgerRepository, never()).save(any(WorldDesignRevisionLedger.class));
   }
 
+  @Test
+  void replaceScopeClearsExistingGenerationRulesWithinDeclaredZoneScope() {
+    Zone zone = zone(12L, 99L);
+    when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L)).thenReturn(Optional.of(zone));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L,
+                7L,
+                "commit-generation",
+                "revision-generation",
+                "UPSERT",
+                "GENERATION_RULE",
+                ""))
+        .thenReturn(Optional.empty());
+    GenerationRule existing = generationRule(70L, "ZONE_SUBTREE", "12", "density");
+    when(generationRuleRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeIdOrderByIdAsc(
+            1L, 7L, "ZONE_SUBTREE", "12"))
+        .thenReturn(List.of(existing));
+    when(generationRuleRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeIdAndName(
+            1L, 7L, "ZONE_SUBTREE", "12", "population"))
+        .thenReturn(Optional.empty());
+    when(generationRuleRepository.save(any(GenerationRule.class)))
+        .thenAnswer(
+            invocation -> {
+              GenerationRule rule = invocation.getArgument(0);
+              rule.setId(71L);
+              return rule;
+            });
+    when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
+            1L, 7L, "GENERATION_RULE", 71L))
+        .thenReturn(Optional.empty());
+
+    var result =
+        service.applyMutation(
+            generationRuleRequestWithScope("ZONE_SUBTREE", "12", "REPLACE_SCOPE"));
+
+    assertEquals("APPLIED", result.result());
+    verify(generationRuleRepository)
+        .deleteAll(
+            org.mockito.ArgumentMatchers.argThat(
+                rules -> {
+                  java.util.Iterator<? extends GenerationRule> iterator = rules.iterator();
+                  return iterator.hasNext()
+                      && iterator.next().getId().equals(70L)
+                      && !iterator.hasNext();
+                }));
+  }
+
+  @Test
+  void scopedGenerationRuleRejectsMissingDeclaredScope() {
+    when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L)).thenReturn(Optional.empty());
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L,
+                7L,
+                "commit-generation",
+                "revision-generation",
+                "UPSERT",
+                "GENERATION_RULE",
+                ""))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.applyMutation(
+                    generationRuleRequestWithScope("ZONE_SUBTREE", "12", "REPLACE_SCOPE")));
+
+    assertEquals("UNRESOLVED_REFERENCE: generation rule zone scope not found", ex.getMessage());
+    verify(generationRuleRepository, never()).save(any(GenerationRule.class));
+  }
+
   private WorldDesignMutationRequestDto regionCreateRequest() {
     return regionCreateRequestWithExpectedEpoch(0L);
   }
@@ -684,6 +758,29 @@ class WorldDesignMutationServiceImplTest {
         null);
   }
 
+  private WorldDesignMutationRequestDto generationRuleRequestWithScope(
+      String scopeType, String scopeId, String scopeMutationPolicy) {
+    return new WorldDesignMutationRequestDto(
+        1L,
+        7L,
+        "commit-generation",
+        "revision-generation",
+        "UPSERT",
+        "GENERATION_RULE",
+        "",
+        0L,
+        scopeType,
+        scopeId,
+        0L,
+        scopeMutationPolicy,
+        null,
+        null,
+        null,
+        null,
+        new WorldDesignMutationRequestDto.GenerationRuleMutationDto("population", "dense"),
+        null);
+  }
+
   private GetVersionStateResponse versionState(VersionLifecycleState state) {
     return GetVersionStateResponse.newBuilder()
         .setVersionState(
@@ -723,5 +820,18 @@ class WorldDesignMutationServiceImplTest {
     binding.setEntityTemplateType("NPC");
     binding.setEntityTemplateId(55L);
     return binding;
+  }
+
+  private GenerationRule generationRule(
+      long ruleId, String scopeType, String scopeId, String name) {
+    GenerationRule rule = new GenerationRule();
+    rule.setId(ruleId);
+    rule.setTenantId(1L);
+    rule.setVersionId(7L);
+    rule.setScopeType(scopeType);
+    rule.setScopeId(scopeId);
+    rule.setName(name);
+    rule.setValue("value");
+    return rule;
   }
 }

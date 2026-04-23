@@ -32,7 +32,7 @@ Current implementation note:
 
 - The live first-slice tables are named `region`, `zone`, `room`, `room_exit`, and `generation_rule` rather than the target-state `*_template` names. They are already version-scoped by `(tenantId, versionId)` and are the concrete rows hashed by `GetDraftDesignDigest(versionId)`.
 - The current `region` digest includes generation-affecting fields `generationSeed`, `generatorType`, `generatorParams`, and `spacingMultiplier` in addition to identity and presentation fields.
-- The current `generation_rule` digest includes `name` and `value`.
+- The current `generation_rule` digest includes `name`, `scopeType`, `scopeId`, and `value`. Scoped generation-rule writes must use the same `REGION_SUBTREE` / `ZONE_SUBTREE` request scope and Draft scope-epoch guard as topology and spawn-binding generation writes.
 - Later replacement with `*_template` table names must preserve the same semantic digest boundary or bump `digestSchemaVersion` through the documented migration path.
 
 Excluded rows and fields include:

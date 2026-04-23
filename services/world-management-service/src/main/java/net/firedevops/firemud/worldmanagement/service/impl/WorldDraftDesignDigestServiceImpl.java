@@ -16,7 +16,7 @@ import tools.jackson.databind.ObjectMapper;
 
 @Service
 public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigestService {
-  private static final int DIGEST_SCHEMA_VERSION = 1;
+  private static final int DIGEST_SCHEMA_VERSION = 2;
 
   private final RegionRepository regionRepository;
   private final ZoneRepository zoneRepository;
@@ -119,6 +119,8 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
                               Map.<String, Object>of(
                                   "id", rule.getId(),
                                   "name", rule.getName(),
+                                  "scopeType", value(rule.getScopeType()),
+                                  "scopeId", value(rule.getScopeId()),
                                   "value", value(rule.getValue())))
                       .toList(),
                   "worldEntitySpawnBindings",
