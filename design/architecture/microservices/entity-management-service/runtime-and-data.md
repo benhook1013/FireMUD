@@ -54,8 +54,8 @@ Entity Management must classify its runtime persistence surface for cutover and 
 
 Initial-slice row-family inventory:
 
-- `character` rows are `S1`.
-- Player progression/currency/account-ownership rows attached to `character` and not requiring template remap are `S1`.
+- `character` rows are `S1` only within the resolved playable-state namespace. Shared-state realms use the tenant-live namespace, while isolated-state realms use the selected `gameInstanceId` namespace.
+- Player progression/currency/account-ownership rows attached to `character` and not requiring template remap are `S1` only after the caller proves the same resolved `{tenantId, gameInstanceId, playableStateScope}` target as the character row. Mutation APIs must not update progression/resource-style state by global `characterId` alone.
 - Inventory membership / containment rows for durable player-owned containers remain `S1` when every referenced item template is still valid against the target version.
 - `equipment_bindings` rows are `S2`.
 - Durable learned-ability, class/archetype, starter-loadout, or similar template-reference rows are `S2`.

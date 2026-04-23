@@ -17,10 +17,19 @@ public interface CharacterService {
       String gameInstanceId,
       PlayableStateScope playableStateScope);
 
-  CharacterDto gainExperience(Long characterId, int amount);
+  CharacterDto gainExperience(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      int amount);
 
   /** Basic update example for testing. */
-  boolean updateEntity(Long characterId);
+  boolean updateEntity(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope);
 
   /** Lists all characters visible for one resolved gameplay target. */
   Page<CharacterDto> listForGameplayScope(

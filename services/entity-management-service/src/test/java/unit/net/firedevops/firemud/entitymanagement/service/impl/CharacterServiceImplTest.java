@@ -45,10 +45,13 @@ class CharacterServiceImplTest {
     character.setHealth(10);
     character.setMana(5);
 
-    when(repo.findById(1L)).thenReturn(Optional.of(character));
+    when(repo.findByIdAndTenantIdAndPlayableStateKey(1L, 1L, "shared-live"))
+        .thenReturn(Optional.of(character));
     when(repo.save(any(Character.class))).thenAnswer(a -> a.getArgument(0));
 
-    CharacterDto dto = service.gainExperience(1L, 1000);
+    CharacterDto dto =
+        service.gainExperience(
+            1L, 1L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 1000);
     assertEquals(2, dto.level());
     assertEquals(0, dto.experience());
     assertEquals(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, dto.playableStateScope());

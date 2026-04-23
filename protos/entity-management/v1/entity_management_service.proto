@@ -49,6 +49,9 @@ message CreateCharacterResponse {
 
 message UpdateEntityRequest {
   string entity_id = 1;
+  string tenant_id = 2;
+  string game_instance_id = 3;
+  PlayableStateScope playable_state_scope = 4;
 }
 
 message UpdateEntityResponse {

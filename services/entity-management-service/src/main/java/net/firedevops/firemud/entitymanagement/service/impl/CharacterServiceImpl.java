@@ -95,8 +95,14 @@ public class CharacterServiceImpl implements CharacterService {
   @Override
   @Transactional
   @Timed(value = "character.gainExperience")
-  public CharacterDto gainExperience(Long characterId, int amount) {
-    Character character = characterRepository.findById(characterId).orElseThrow();
+  public CharacterDto gainExperience(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      int amount) {
+    Character character =
+        requireScopedCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     character.setExperience(character.getExperience() + amount);
     while (character.getExperience() >= character.getLevel() * EXP_PER_LEVEL) {
       character.setExperience(character.getExperience() - character.getLevel() * EXP_PER_LEVEL);
@@ -109,8 +115,13 @@ public class CharacterServiceImpl implements CharacterService {
   @Override
   @Transactional
   @Timed(value = "character.update")
-  public boolean updateEntity(Long characterId) {
-    Character character = characterRepository.findById(characterId).orElseThrow();
+  public boolean updateEntity(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope) {
+    Character character =
+        requireScopedCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     character.setLastLoginAt(java.time.Instant.now());
     characterRepository.save(character);
     return true;
@@ -166,5 +177,19 @@ public class CharacterServiceImpl implements CharacterService {
         dto.stamina(),
         dto.health(),
         dto.mana());
+  }
+
+  private Character requireScopedCharacter(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope) {
+    return characterRepository
+        .findByIdAndTenantIdAndPlayableStateKey(
+            characterId,
+            tenantId,
+            playableStateKeyResolver.resolve(gameInstanceId, playableStateScope))
+        .orElseThrow(
+            () -> new IllegalArgumentException("Character not found for playable state scope"));
   }
 }

@@ -585,12 +585,28 @@ public class EntityManagementGrpcService
   public void updateEntity(
       UpdateEntityRequest request, StreamObserver<UpdateEntityResponse> responseObserver) {
     try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      requireTenantAccessWhenPresent(tenantId);
       long entityId = Long.parseLong(request.getEntityId());
-      boolean result = characterService.updateEntity(entityId);
+      boolean result =
+          characterService.updateEntity(
+              tenantId,
+              entityId,
+              request.getGameInstanceId(),
+              requirePlayableStateScope(request.getPlayableStateScope()));
       UpdateEntityResponse response = UpdateEntityResponse.newBuilder().setSuccess(result).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {
+      UpdateEntityResponse response =
+          UpdateEntityResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "UpdateEntity", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
       UpdateEntityResponse response =
           UpdateEntityResponse.newBuilder()
               .setError(

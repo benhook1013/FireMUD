@@ -1025,6 +1025,66 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void updateEntityRequiresResolvedPlayableStateScope() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    Mockito.when(
+            characterService.updateEntity(
+                1L,
+                7L,
+                "44",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED))
+        .thenReturn(true);
+    EntityManagementGrpcService service =
+        newService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse> ref =
+        new AtomicReference<>();
+    service.updateEntity(
+        net.firedevops.firemud.entitymanagement.v1.UpdateEntityRequest.newBuilder()
+            .setTenantId("1")
+            .setEntityId("7")
+            .setGameInstanceId("44")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(
+              net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(true, ref.get().getSuccess());
+    verify(characterService)
+        .updateEntity(
+            1L,
+            7L,
+            "44",
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_ISOLATED);
+  }
+
+  @Test
   void queryInventoryReturnsItemsWithMetadata() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);

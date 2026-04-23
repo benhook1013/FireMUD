@@ -25,6 +25,7 @@ Character discovery/creation contract consequence:
 
 - For a resolved `{tenantId, gameInstanceId}` target, Entity Management must surface one realm-local roster plus explicit creation policy to admission/discovery callers.
 - It must not require callers to infer whether fresh creation is allowed by comparing isolated-state rows against the tenant's shared roster.
+- Character-state mutations that affect progression, resources, login/activity markers, or later loadout-style state must carry the same resolved `{tenantId, gameInstanceId, playableStateScope}` target and validate it against the stored character row before mutating. This keeps isolated-realm progression/resource updates from accidentally applying to the tenant's shared live character row.
 
 ### Responsibilities
 
