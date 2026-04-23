@@ -33,6 +33,7 @@ RPC expectations:
   - Re-sending the same request with the same Trigger Identity must not cause the DSL body to run twice.
   - For entity-scoped external gameplay/runtime events, the Trigger Identity is at least `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, eventSchemaVersion, scriptPatchVersion, scriptEventId>`.
   - For plugin triggers, Trigger Identity also includes `<pluginId, pluginVersionId>`.
+  - Plugin-trigger ingress must verify that `<pluginId, pluginVersionId>` matches Automation & Scripting's enabled runtime registry state for the target `<tenantId, gameInstanceId>` before materializing durable handler work.
   - For tick-aligned scheduler events, Trigger Identity also includes `regionEpoch`, and `scriptEventId` must be deterministic and derived from a due point (for example `dueTickId` / `dueAt`) plus the stable identity fields above.
   - The service records at most one ingress audit row per event-scope Trigger Identity, resolves matching script event bindings for that patch/event/scope, materializes durable `script_work_items`, and records one handler-scoped `script_event_audit` row per resolved handler before any commands flow into tick queues.
 

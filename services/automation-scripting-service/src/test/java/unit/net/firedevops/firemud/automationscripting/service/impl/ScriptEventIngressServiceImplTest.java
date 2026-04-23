@@ -21,9 +21,11 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressA
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
+import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -41,6 +43,22 @@ class ScriptEventIngressServiceImplTest {
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
                 "1", "game-1", "region-1", "NORMAL", 1L, "", "", "", 100L));
+    return service;
+  }
+
+  private static PluginRuntimeStateService enabledPluginRuntimeStateService() {
+    PluginRuntimeStateService service = Mockito.mock(PluginRuntimeStateService.class);
+    when(service.getStatus("1", "game-1", "plugin-1"))
+        .thenReturn(
+            Optional.of(
+                new PluginRuntimeStateService.PluginRuntimeStatus(
+                    "plugin-v1",
+                    "",
+                    PluginState.PLUGIN_STATE_ENABLED,
+                    "operator_activation",
+                    100L,
+                    "req-1",
+                    "admin")));
     return service;
   }
 
@@ -104,7 +122,8 @@ class ScriptEventIngressServiceImplTest {
             gameSessionControlPlaneClient,
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            enabledPluginRuntimeStateService());
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -148,6 +167,76 @@ class ScriptEventIngressServiceImplTest {
   }
 
   @Test
+  void rejectsPluginTriggerWhenActiveVersionDoesNotMatch() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .build())
+                .build());
+    PluginRuntimeStateService pluginRuntimeStateService =
+        Mockito.mock(PluginRuntimeStateService.class);
+    when(pluginRuntimeStateService.getStatus("1", "game-1", "plugin-1"))
+        .thenReturn(
+            Optional.of(
+                new PluginRuntimeStateService.PluginRuntimeStatus(
+                    "plugin-v2",
+                    "",
+                    PluginState.PLUGIN_STATE_ENABLED,
+                    "operator_activation",
+                    100L,
+                    "req-1",
+                    "admin")));
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            Mockito.mock(ScriptEventBindingRepository.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            new BuiltInScriptEventRegistryService(),
+            Mockito.mock(AutomationQueueService.class),
+            outputProperties(),
+            gameSessionControlPlaneClient,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            pluginRuntimeStateService);
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            TriggerScriptEventRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setScriptId("script-1")
+                .setPluginId("plugin-1")
+                .setPluginVersionId("plugin-v1")
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-plugin-mismatch")
+                .setReadSnapshotToken("snapshot-1")
+                .build());
+
+    assertThat(admission.admitted()).isFalse();
+    assertThat(admission.outcome())
+        .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE.name());
+    assertThat(admission.reason()).isEqualTo("plugin_version_unavailable");
+    verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
+  }
+
+  @Test
   void rejectsRuntimeTriggerWithoutSnapshotToken() {
     SessionContext.setContext(
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
@@ -167,7 +256,8 @@ class ScriptEventIngressServiceImplTest {
             gameSessionControlPlaneClient,
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -211,7 +301,8 @@ class ScriptEventIngressServiceImplTest {
             gameSessionControlPlaneClient,
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -258,7 +349,8 @@ class ScriptEventIngressServiceImplTest {
             gameSessionControlPlaneClient,
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -320,7 +412,8 @@ class ScriptEventIngressServiceImplTest {
             gameSessionControlPlaneClient,
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -359,7 +452,8 @@ class ScriptEventIngressServiceImplTest {
             gameSessionControlPlaneClient,
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     assertThrows(
         IllegalArgumentException.class,
@@ -403,7 +497,8 @@ class ScriptEventIngressServiceImplTest {
             gameSessionControlPlaneClient,
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -421,8 +516,7 @@ class ScriptEventIngressServiceImplTest {
 
     assertThat(admission.admitted()).isFalse();
     assertThat(admission.outcome())
-        .isEqualTo(
-            TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
+        .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE.name());
     assertThat(admission.reason()).isEqualTo("version_unavailable");
     verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
   }
@@ -455,7 +549,8 @@ class ScriptEventIngressServiceImplTest {
             gameSessionControlPlaneClient,
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
@@ -473,7 +568,7 @@ class ScriptEventIngressServiceImplTest {
 
     assertThat(admission.admitted()).isFalse();
     assertThat(admission.outcome())
-        .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR.name());
+        .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE.name());
     assertThat(admission.reason()).isEqualTo("pin_state_unavailable");
     verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
   }
@@ -522,7 +617,8 @@ class ScriptEventIngressServiceImplTest {
             gameSessionControlPlaneClient,
             admissionStateService,
             Mockito.mock(ScriptPatchPinProjectionService.class),
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class));
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(

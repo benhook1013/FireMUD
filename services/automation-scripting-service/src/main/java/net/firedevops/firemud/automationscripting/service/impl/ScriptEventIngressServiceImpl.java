@@ -15,10 +15,12 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressA
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
+import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -37,10 +39,12 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name();
   private static final String OUTCOME_OUTPUT_BUDGET_EXCEEDED =
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED.name();
-  private static final String OUTCOME_INFRASTRUCTURE_ERROR =
-      TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR.name();
   private static final String OUTCOME_BACKPRESSURE_ROLLBACK =
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK.name();
+  private static final String OUTCOME_VERSION_UNAVAILABLE =
+      TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE.name();
+  private static final String OUTCOME_PIN_STATE_UNAVAILABLE =
+      TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE.name();
 
   private final ScriptEventIngressAuditRepository repository;
   private final ScriptEventBindingRepository bindingRepository;
@@ -53,6 +57,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
+  private final PluginRuntimeStateService pluginRuntimeStateService;
 
   public ScriptEventIngressServiceImpl(
       ScriptEventIngressAuditRepository repository,
@@ -65,7 +70,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
-      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService) {
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      PluginRuntimeStateService pluginRuntimeStateService) {
     this.repository = repository;
     this.bindingRepository = bindingRepository;
     this.workItemRepository = workItemRepository;
@@ -77,6 +83,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
     this.rolloutProjectionService = rolloutProjectionService;
+    this.pluginRuntimeStateService = pluginRuntimeStateService;
   }
 
   @Override
@@ -159,6 +166,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (pinAdmission != null) {
       return pinAdmission;
     }
+    TriggerAdmission pluginAdmission = validatePluginRuntimeState(request);
+    if (pluginAdmission != null) {
+      return pluginAdmission;
+    }
     TriggerAdmission stateAdmission = validateAdmissionState(request);
     if (stateAdmission != null) {
       return stateAdmission;
@@ -178,17 +189,42 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         gameSessionControlPlaneClient.getGameInstanceRuntimeState(
             request.getTenantId(), request.getGameInstanceId());
     if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
-      return new TriggerAdmission(false, OUTCOME_INFRASTRUCTURE_ERROR, "pin_state_unavailable", 0);
+      return new TriggerAdmission(false, OUTCOME_PIN_STATE_UNAVAILABLE, "pin_state_unavailable", 0);
     }
     if (!runtime.hasRuntimeState()) {
-      return new TriggerAdmission(false, OUTCOME_INFRASTRUCTURE_ERROR, "pin_state_unavailable", 0);
+      return new TriggerAdmission(false, OUTCOME_PIN_STATE_UNAVAILABLE, "pin_state_unavailable", 0);
     }
     scriptPatchPinProjectionService.observeRuntimeState(
         request.getTenantId(), request.getGameInstanceId(), runtime.getRuntimeState());
     if (!request
         .getScriptPatchVersion()
         .equals(runtime.getRuntimeState().getPinnedScriptPatchVersion())) {
-      return rejected("version_unavailable");
+      return new TriggerAdmission(false, OUTCOME_VERSION_UNAVAILABLE, "version_unavailable", 0);
+    }
+    return null;
+  }
+
+  private TriggerAdmission validatePluginRuntimeState(TriggerScriptEventRequest request) {
+    boolean hasPluginId = !request.getPluginId().isBlank();
+    boolean hasPluginVersion = !request.getPluginVersionId().isBlank();
+    if (!hasPluginId && !hasPluginVersion) {
+      return null;
+    }
+    if (!hasPluginId || !hasPluginVersion || request.getGameInstanceId().isBlank()) {
+      return rejected("missing_plugin_identity");
+    }
+    var status =
+        pluginRuntimeStateService.getStatus(
+            request.getTenantId(), request.getGameInstanceId(), request.getPluginId());
+    if (status.isEmpty()) {
+      return new TriggerAdmission(false, OUTCOME_VERSION_UNAVAILABLE, "plugin_not_active", 0);
+    }
+    if (status.get().pluginState() != PluginState.PLUGIN_STATE_ENABLED) {
+      return new TriggerAdmission(false, OUTCOME_VERSION_UNAVAILABLE, "plugin_disabled", 0);
+    }
+    if (!status.get().activePluginVersionId().equals(request.getPluginVersionId())) {
+      return new TriggerAdmission(
+          false, OUTCOME_VERSION_UNAVAILABLE, "plugin_version_unavailable", 0);
     }
     return null;
   }
