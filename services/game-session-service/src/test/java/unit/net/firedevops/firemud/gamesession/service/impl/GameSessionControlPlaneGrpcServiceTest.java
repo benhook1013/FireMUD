@@ -951,12 +951,13 @@ class GameSessionControlPlaneGrpcServiceTest {
                 .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
                     1L, 7L, "region-1", 12L, "dispatch-1"))
         .thenReturn(Optional.empty());
+    RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 12L));
     TickService tickService = Mockito.mock(TickService.class);
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
             gameInstanceRepository,
             commandRepository,
-            Mockito.mock(RuntimeRegionStatusRepository.class),
+            runtimeRepository,
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
@@ -1010,12 +1011,13 @@ class GameSessionControlPlaneGrpcServiceTest {
                 .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
                     1L, 7L, "region-1", 12L, "dispatch-1"))
         .thenReturn(Optional.empty());
+    RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 12L));
     TickService tickService = Mockito.mock(TickService.class);
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
             gameInstanceRepository,
             commandRepository,
-            Mockito.mock(RuntimeRegionStatusRepository.class),
+            runtimeRepository,
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
@@ -1038,6 +1040,92 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.verify(commandRepository, Mockito.times(2)).save(commandCaptor.capture());
     GameplayCommand staged = commandCaptor.getAllValues().get(1);
     assertEquals(null, staged.getDueTickId());
+  }
+
+  @Test
+  void enqueueAutomationCommandRejectsStaleRuntimeEpochBeforeTickQueue() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    Mockito.when(
+            commandRepository
+                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                    1L, 7L, "region-1", 12L, "dispatch-1"))
+        .thenReturn(Optional.empty());
+    RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 13L));
+    TickService tickService = Mockito.mock(TickService.class);
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            gameInstanceRepository,
+            commandRepository,
+            runtimeRepository,
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
+    service.enqueueAutomationCommandIfAbsent(
+        automationRequest(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(EnqueueAutomationCommandIfAbsentResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(false, responseRef.get().getAccepted());
+    assertEquals("STALE_TIMELINE", responseRef.get().getAdmissionOutcome());
+    assertEquals("stale_region_epoch", responseRef.get().getError().getCode());
+    Mockito.verify(commandRepository, Mockito.never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(tickService);
+  }
+
+  @Test
+  void enqueueAutomationCommandRejectsPausedRuntimeOwnershipBeforeTickQueue() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    Mockito.when(
+            commandRepository
+                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                    1L, 7L, "region-1", 12L, "dispatch-1"))
+        .thenReturn(Optional.empty());
+    RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(true, 12L));
+    TickService tickService = Mockito.mock(TickService.class);
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            gameInstanceRepository,
+            commandRepository,
+            runtimeRepository,
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
+    service.enqueueAutomationCommandIfAbsent(
+        automationRequest(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(EnqueueAutomationCommandIfAbsentResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(false, responseRef.get().getAccepted());
+    assertEquals("RUNTIME_PAUSED", responseRef.get().getAdmissionOutcome());
+    assertEquals("runtime_paused", responseRef.get().getError().getCode());
+    Mockito.verify(commandRepository, Mockito.never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(tickService);
   }
 
   @Test
@@ -1438,6 +1526,26 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameplayCommandRepository repository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(repository.save(Mockito.any(GameplayCommand.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    return repository;
+  }
+
+  private static RuntimeRegionStatus runtimeStatus(boolean paused, long regionEpoch) {
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setTenantId(1L);
+    status.setGameInstanceId(7L);
+    status.setRegionEpoch(regionEpoch);
+    status.setExecutorFence("fence-1");
+    status.setOwnerService("game-session-service");
+    status.setOwnerInstanceId("instance-1");
+    status.setPaused(paused);
+    status.setUpdatedAt(Instant.EPOCH);
+    return status;
+  }
+
+  private static RuntimeRegionStatusRepository runtimeRepository(RuntimeRegionStatus status) {
+    RuntimeRegionStatusRepository repository = Mockito.mock(RuntimeRegionStatusRepository.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId(1L, 7L))
+        .thenReturn(Optional.of(status));
     return repository;
   }
 

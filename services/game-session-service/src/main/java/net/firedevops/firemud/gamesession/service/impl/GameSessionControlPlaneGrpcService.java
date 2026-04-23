@@ -5,6 +5,7 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
@@ -1028,6 +1029,11 @@ public final class GameSessionControlPlaneGrpcService
 
   private EnqueueAutomationCommandIfAbsentResponse enqueueNewAutomationCommand(
       EnqueueAutomationCommandIfAbsentRequest request, long tenantId, long gameInstanceId) {
+    Optional<EnqueueAutomationCommandIfAbsentResponse> rejected =
+        rejectIfAutomationOwnershipClosed(request, tenantId, gameInstanceId);
+    if (rejected.isPresent()) {
+      return rejected.get();
+    }
     GameplayCommand command = acceptedAutomationCommand(request, tenantId, gameInstanceId);
     gameplayCommandRepository.save(command);
     try {
@@ -1053,6 +1059,42 @@ public final class GameSessionControlPlaneGrpcService
           .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
           .build();
     }
+  }
+
+  private Optional<EnqueueAutomationCommandIfAbsentResponse> rejectIfAutomationOwnershipClosed(
+      EnqueueAutomationCommandIfAbsentRequest request, long tenantId, long gameInstanceId) {
+    Optional<RuntimeRegionStatus> maybeStatus =
+        runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+    if (maybeStatus.isEmpty()) {
+      return Optional.of(
+          rejectedAutomationCommand(
+              "OWNERSHIP_UNAVAILABLE",
+              "runtime_ownership_not_found",
+              "Runtime ownership not found"));
+    }
+    RuntimeRegionStatus status = maybeStatus.get();
+    if (status.getRegionEpoch() != request.getRegionEpoch()) {
+      return Optional.of(
+          rejectedAutomationCommand(
+              "STALE_TIMELINE",
+              "stale_region_epoch",
+              "region_epoch does not match current runtime ownership"));
+    }
+    if (status.isPaused()) {
+      return Optional.of(
+          rejectedAutomationCommand(
+              "RUNTIME_PAUSED", "runtime_paused", "Runtime ownership is paused"));
+    }
+    return Optional.empty();
+  }
+
+  private EnqueueAutomationCommandIfAbsentResponse rejectedAutomationCommand(
+      String admissionOutcome, String errorCode, String message) {
+    return EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+        .setAccepted(false)
+        .setAdmissionOutcome(admissionOutcome)
+        .setError(GrpcAppErrors.error(meterRegistry, errorCode, message))
+        .build();
   }
 
   private GameplayCommand acceptedAutomationCommand(
