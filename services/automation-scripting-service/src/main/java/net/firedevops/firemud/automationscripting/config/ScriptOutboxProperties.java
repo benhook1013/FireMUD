@@ -28,6 +28,12 @@ public class ScriptOutboxProperties {
   @Min(1)
   private int queueRebuildBatchSize = 200;
 
+  @Min(1)
+  private long executionIntervalSeconds = 5;
+
+  @Min(1)
+  private int executionBatchSize = 50;
+
   public int getHandedOffRetentionDays() {
     return handedOffRetentionDays;
   }
@@ -82,5 +88,21 @@ public class ScriptOutboxProperties {
 
   public void setQueueRebuildBatchSize(int queueRebuildBatchSize) {
     this.queueRebuildBatchSize = queueRebuildBatchSize;
+  }
+
+  public long getExecutionIntervalSeconds() {
+    return executionIntervalSeconds;
+  }
+
+  public void setExecutionIntervalSeconds(long executionIntervalSeconds) {
+    this.executionIntervalSeconds = executionIntervalSeconds;
+  }
+
+  public int getExecutionBatchSize() {
+    return executionBatchSize;
+  }
+
+  public void setExecutionBatchSize(int executionBatchSize) {
+    this.executionBatchSize = executionBatchSize;
   }
 }

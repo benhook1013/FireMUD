@@ -129,9 +129,6 @@ public class ScriptGameplayCommandHandoffServiceImpl
     if (command == null || command.commandText() == null || command.commandText().isBlank()) {
       throw new IllegalArgumentException("command_text is required");
     }
-    if (command.dueTickId() <= 0) {
-      throw new IllegalArgumentException("due_tick_id must be positive");
-    }
     if (command.ordinal() < 0) {
       throw new IllegalArgumentException("command ordinal must be non-negative");
     }

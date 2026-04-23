@@ -990,9 +990,6 @@ public final class GameSessionControlPlaneGrpcService
     if (request.getRegionEpoch() <= 0) {
       throw new IllegalArgumentException("region_epoch must be positive");
     }
-    if (request.getDueTickId() <= 0) {
-      throw new IllegalArgumentException("due_tick_id must be positive");
-    }
     requireText(request.getAutomationDispatchId(), "automation_dispatch_id is required");
     requireText(request.getAutomationWorkItemId(), "automation_work_item_id is required");
     requireText(request.getScriptId(), "script_id is required");
@@ -1079,7 +1076,7 @@ public final class GameSessionControlPlaneGrpcService
     command.setTargetEntityId(request.getTargetEntityId());
     command.setRegionId(request.getRegionId());
     command.setRegionEpoch(request.getRegionEpoch());
-    command.setDueTickId(request.getDueTickId());
+    command.setDueTickId(request.getDueTickId() > 0 ? request.getDueTickId() : null);
     return command;
   }
 
