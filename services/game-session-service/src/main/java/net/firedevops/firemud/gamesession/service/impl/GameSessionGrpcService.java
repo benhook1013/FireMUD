@@ -623,6 +623,7 @@ public final class GameSessionGrpcService
                       .setPointerVersion(realm.getPointerVersion())
                       .setRequiresCharacterSelection(realm.isRequiresCharacterSelection())
                       .setVisible(realm.isVisible())
+                      .setPublicProductionRealm(realm.isPublicProductionRealm())
                       .setStateScope(realm.getStateScope().name())
                       .setCharacterCreationPolicy(realm.getCharacterCreationPolicy().name())
                       .build())
@@ -807,6 +808,7 @@ public final class GameSessionGrpcService
         .setPointerVersion(realm.getPointerVersion())
         .setRequiresCharacterSelection(realm.isRequiresCharacterSelection())
         .setVisible(realm.isVisible())
+        .setPublicProductionRealm(realm.isPublicProductionRealm())
         .setStateScope(realm.getStateScope().name())
         .setCharacterCreationPolicy(realm.getCharacterCreationPolicy().name())
         .build();

@@ -348,6 +348,7 @@ public final class GameSessionControlPlaneGrpcService
               tenantId,
               gameInstanceId,
               request.getVisible(),
+              request.getPublicProductionRealm(),
               request.getRequiresCharacterSelection(),
               request.getStateScope(),
               request.getCharacterCreationPolicy(),
@@ -461,6 +462,7 @@ public final class GameSessionControlPlaneGrpcService
               tenantId,
               targetGameInstanceId,
               currentPointer.visible(),
+              currentPointer.publicProductionRealm(),
               currentPointer.requiresCharacterSelection(),
               currentPointer.stateScope(),
               currentPointer.characterCreationPolicy(),
@@ -1197,6 +1199,7 @@ public final class GameSessionControlPlaneGrpcService
             .setGameInstanceId(Long.toString(entry.gameInstanceId()))
             .setPointerVersion(entry.pointerVersion())
             .setVisible(entry.visible())
+            .setPublicProductionRealm(entry.publicProductionRealm())
             .setRequiresCharacterSelection(entry.requiresCharacterSelection())
             .setStateScope(entry.stateScope())
             .setCharacterCreationPolicy(entry.characterCreationPolicy())

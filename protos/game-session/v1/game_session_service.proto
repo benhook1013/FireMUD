@@ -196,6 +196,7 @@ message GameplayRealm {
   bool visible = 8;
   string state_scope = 9;
   string character_creation_policy = 10;
+  bool public_production_realm = 11;
 }
 
 message ListGameplayRealmsResponse {
@@ -220,6 +221,7 @@ message GameplayAdmissionPointer {
   bool visible = 9;
   string state_scope = 10;
   string character_creation_policy = 11;
+  bool public_production_realm = 12;
 }
 
 message GetAdmissionPointerResponse {
@@ -348,6 +350,7 @@ message AdmissionPointerControlPlaneEntry {
   string control_plane_request_id = 14;
   int64 occurred_at_ms = 15;
   string prepared_version_upgrade_id = 16;
+  bool public_production_realm = 17;
 }
 
 message ListAdmissionPointersRequest {}
@@ -450,6 +453,7 @@ message SetAdmissionPointerRequest {
   string control_plane_request_id = 13;
   optional int64 expected_pointer_version = 14;
   string prepared_version_upgrade_id = 15;
+  bool public_production_realm = 16;
 }
 
 message SetAdmissionPointerResponse {

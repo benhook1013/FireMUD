@@ -548,7 +548,8 @@ Realm-routing contract (required):
   - `tenantId`,
   - `realmSlug` (or equivalent stable player-facing realm selector),
   - `admissibleGameInstanceId`,
-  - `isDefaultProductionRealm`,
+  - `visible`,
+  - `publicProductionRealm`,
   - `pointerVersion` (monotonic CAS version),
   - `updatedAt`,
   - `updatedBy` / change reason for audit.
@@ -559,7 +560,7 @@ Realm-routing contract (required):
 - A pointer swap to a different `gameInstanceId` is a cutover operation, not a generic edit. It must reference one durable `prepared_version_upgrade` record, and Game Session must reject the swap unless that preparation is still `COMPATIBLE` and matches both the current source pointer target and the replacement instance's frozen launch proof (`versionId`, `launchDescriptorId`, `remapSetId`).
 - Pointer-audit history must preserve that same preparation identity. A successful cutover write records the `preparedVersionUpgradeId` on the resulting admission-pointer audit event so operators can prove which durable preparation authorized a given swap.
 - If routing state for a selected realm is unavailable or ambiguous, admission fails closed with `ADMISSION_POINTER_UNAVAILABLE` (or protocol-mapped equivalent) until reconciled.
-- One realm may be marked as the default production realm. Additional realms, including playtest forks, are valid first-class player-addressable realms when they are intentionally exposed through the authenticated discovery contract.
+- One visible realm may be marked as the public-production realm. Additional realms, including playtest forks, are valid first-class player-addressable realms when they are intentionally exposed through the authenticated discovery contract, but public-production onboarding must follow the explicit routing flag rather than inferring behavior from the `realmSlug`.
 
 ### Fork-Snapshot Boundary For Playtest Realms
 

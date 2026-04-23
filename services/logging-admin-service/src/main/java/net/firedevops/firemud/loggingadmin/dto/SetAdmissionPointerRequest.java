@@ -13,6 +13,7 @@ public record SetAdmissionPointerRequest(
     @NotNull @Positive Long tenantId,
     @NotNull @Positive Long gameInstanceId,
     boolean visible,
+    boolean publicProductionRealm,
     boolean requiresCharacterSelection,
     @NotBlank @Size(max = 50) String stateScope,
     @NotBlank @Size(max = 50) String characterCreationPolicy,

@@ -1210,12 +1210,12 @@ public class AccountServiceImpl implements AccountService {
 
   private boolean isPublicProductionRealm(
       net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {
-    return "production".equalsIgnoreCase(realm.getRealmSlug());
+    return realm.getVisible() && realm.getPublicProductionRealm();
   }
 
   private boolean isPublicProductionRealm(
       net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm) {
-    return "production".equalsIgnoreCase(realm.getRealmSlug());
+    return realm.getVisible() && realm.getPublicProductionRealm();
   }
 
   private PlayableStateScope toPlayableStateScope(

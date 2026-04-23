@@ -85,7 +85,7 @@ public final class GameplayWorldCatalog {
       return Optional.empty();
     }
     return visibleRealms.stream()
-        .filter(realm -> "production".equalsIgnoreCase(realm.getSlug()))
+        .filter(GameplayCatalogProperties.Realm::isPublicProductionRealm)
         .findFirst()
         .or(() -> Optional.of(visibleRealms.get(0)));
   }
@@ -215,6 +215,7 @@ public final class GameplayWorldCatalog {
       realm.setGameInstanceId(pointer.gameInstanceId());
       realm.setPointerVersion(pointer.pointerVersion());
       realm.setVisible(pointer.visible());
+      realm.setPublicProductionRealm(pointer.publicProductionRealm());
       realm.setRequiresCharacterSelection(pointer.requiresCharacterSelection());
       realm.setStateScope(GameplayCatalogProperties.RealmStateScope.valueOf(pointer.stateScope()));
       realm.setCharacterCreationPolicy(
@@ -249,6 +250,7 @@ public final class GameplayWorldCatalog {
     realm.setGameInstanceId(input.getGameInstanceId());
     realm.setPointerVersion(input.getPointerVersion());
     realm.setVisible(input.isVisible());
+    realm.setPublicProductionRealm(input.isPublicProductionRealm());
     realm.setRequiresCharacterSelection(input.isRequiresCharacterSelection());
     realm.setStateScope(input.getStateScope());
     realm.setCharacterCreationPolicy(input.getCharacterCreationPolicy());

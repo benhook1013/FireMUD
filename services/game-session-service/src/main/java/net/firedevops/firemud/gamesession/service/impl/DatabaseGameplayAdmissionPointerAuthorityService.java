@@ -79,6 +79,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     pointer.setGameInstanceId(mutation.gameInstanceId());
     pointer.setPointerVersion(nextPointerVersion);
     pointer.setVisible(mutation.visible());
+    pointer.setPublicProductionRealm(mutation.publicProductionRealm());
     pointer.setRequiresCharacterSelection(mutation.requiresCharacterSelection());
     pointer.setStateScope(mutation.stateScope());
     pointer.setCharacterCreationPolicy(mutation.characterCreationPolicy());
@@ -99,6 +100,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     event.setGameInstanceId(saved.getGameInstanceId());
     event.setPointerVersion(saved.getPointerVersion());
     event.setVisible(saved.isVisible());
+    event.setPublicProductionRealm(saved.isPublicProductionRealm());
     event.setRequiresCharacterSelection(saved.isRequiresCharacterSelection());
     event.setStateScope(saved.getStateScope());
     event.setCharacterCreationPolicy(saved.getCharacterCreationPolicy());
@@ -130,6 +132,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
                     event.getGameInstanceId(),
                     event.getPointerVersion(),
                     event.isVisible(),
+                    event.isPublicProductionRealm(),
                     event.isRequiresCharacterSelection(),
                     event.getStateScope(),
                     event.getCharacterCreationPolicy(),
@@ -151,6 +154,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
         pointer.getGameInstanceId(),
         pointer.getPointerVersion(),
         pointer.isVisible(),
+        pointer.isPublicProductionRealm(),
         pointer.isRequiresCharacterSelection(),
         pointer.getStateScope(),
         pointer.getCharacterCreationPolicy());
