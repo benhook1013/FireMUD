@@ -100,15 +100,20 @@ public final class PlayerOutputDeliveryService {
     List<ScreenBufferService.BufferedEntry> replayEntries =
         outputs.stream()
             .filter(PlayerOutput::screenBufferEligible)
-            .map(output -> renderReplayableOutput(output, localeTag, effectivePresentation))
-            .filter(StringUtils::hasText)
-            .map(text -> ScreenBufferService.BufferedEntry.fromText(text + "\n"))
+            .map(output -> bufferedEntry(output, localeTag, effectivePresentation))
+            .filter(entry -> StringUtils.hasText(entry.text()))
             .toList();
     if (replayEntries.isEmpty() || context.gameInstanceId() <= 0 || context.characterId() <= 0) {
       return;
     }
     screenBufferService.append(
         context.tenantId(), context.gameInstanceId(), context.characterId(), replayEntries);
+  }
+
+  private ScreenBufferService.BufferedEntry bufferedEntry(
+      PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
+    return outputProjector.toBufferedEntry(
+        output, renderReplayableOutput(output, localeTag, effectivePresentation) + "\n");
   }
 
   private String renderReplayableOutput(

@@ -309,7 +309,7 @@ The protocol should not frame these cases primarily as backend or world-state fa
 1. Game Session validates that the caller has completed `LOGIN` and `PLAY` and has a valid Redis-backed gameplay session context. If the caller is still in the login/menu stages, it returns a stage-aware `LOGIN_REQUIRED` or `PLAY_REQUIRED` error rather than a generic gameplay-auth failure.
 2. Authenticated `LOOK` commands call Game Logic's `ResolveLook`, passing `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, and `roomInstanceId`.
 3. Game Logic returns a structured `LookResult`, which Game Session renders into the `OK LOOK` text response and emits `gamesession.command.look.*` metrics/logs.
-4. Reconnecting Telnet or WebSocket clients do not receive buffered command replay. Instead, after successful `LOGIN` and `PLAY`, Game Session may replay the bounded per-player transcript/screen buffer and then emits a fresh authoritative `LOOK` so current room state wins over any stale context.
+4. Reconnecting Telnet or WebSocket clients do not receive buffered command replay. Instead, after successful `LOGIN` and `PLAY`, Game Session may replay the bounded per-player transcript/screen buffer and then emits a fresh authoritative `LOOK` so current room state wins over any stale context. New buffer entries preserve structured `PlayerOutput` replay metadata alongside rendered protocol text; first-party web clients receive typed `transcript_entry` replay events when that metadata exists, while older text-only buffer entries and classic clients continue to use transcript chunks/plain text.
 
 ### LOOK error mapping and metrics
 

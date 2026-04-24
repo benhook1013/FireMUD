@@ -328,7 +328,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                   return;
                 }
                 maybeBuffer.ifPresent(
-                    buffer -> sendReplayChunk(session, buffer.protocolText(), "screen buffer"));
+                    buffer -> sendReplayEntries(session, buffer, "screen buffer"));
                 String localeTag = resolveLocaleTag(session, sessionId);
                 PresentationProperties effectivePresentation =
                     settingsResolver.presentation(context);
@@ -356,6 +356,27 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         sendProtocolMessage(session, outputProjector.projectTranscriptChunk(session, label, text));
       } catch (IOException ex) {
         logger.warn("Failed to send reconnect {}", label, ex);
+      }
+    }
+  }
+
+  private void sendReplayEntries(
+      WebSocketSession session, ScreenBufferService.BufferedScreen buffer, String label) {
+    if (!outputProjector.isFirstPartyWeb(session)
+        || buffer.entries().stream()
+            .noneMatch(ScreenBufferService.BufferedEntry::hasStructuredOutput)) {
+      sendReplayChunk(session, buffer.protocolText(), label);
+      return;
+    }
+    for (ScreenBufferService.BufferedEntry entry : buffer.entries()) {
+      try (CombinedLoggingContext ignored = openLoggingContext(session)) {
+        try {
+          sendProtocolMessage(
+              session, outputProjector.projectTranscriptEntry(session, label, entry));
+        } catch (IOException ex) {
+          logger.warn("Failed to send reconnect {}", label, ex);
+          return;
+        }
       }
     }
   }
@@ -393,10 +414,15 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       PresentationProperties effectivePresentation) {
     return outputs.stream()
         .filter(PlayerOutput::screenBufferEligible)
-        .map(output -> renderReplayableOutput(output, localeTag, effectivePresentation))
-        .filter(StringUtils::hasText)
-        .map(text -> ScreenBufferService.BufferedEntry.fromText(text + "\n"))
+        .map(output -> bufferedEntry(output, localeTag, effectivePresentation))
+        .filter(entry -> StringUtils.hasText(entry.text()))
         .toList();
+  }
+
+  private ScreenBufferService.BufferedEntry bufferedEntry(
+      PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
+    return outputProjector.toBufferedEntry(
+        output, renderReplayableOutput(output, localeTag, effectivePresentation) + "\n");
   }
 
   private String renderReplayableOutput(

@@ -16,6 +16,7 @@
 - Game Session now implements rollback queue purge controls for script-patch and plugin-version scopes by removing matching not-yet-drained Redis queue entries and terminal-marking durable gameplay commands as purged.
 - Game Session now exposes a canonical control-plane runtime-state read for `(tenantId, gameInstanceId)` including current runtime version, launch descriptor, version/release identifiers, and script-patch pin metadata including the persisted pin `controlPlaneRequestId`, plus a direct `GetGameSessionPinConvergence` read for rollback/promotion orchestration.
 - Reconnection/session-takeover concepts are partially implemented at the current slice level.
+- Reconnect screen buffers now retain structured `PlayerOutput` replay metadata alongside classic protocol text for new entries, allowing first-party replay to preserve typed transcript entries while maintaining text replay compatibility.
 - The `02.14` runtime-identity/logging baseline is live here, and the highest-value gameplay command paths already enrich logs with `tenantId`, `gameInstanceId`, and `characterId` when that context is known.
 
 ## Current Role In The Platform

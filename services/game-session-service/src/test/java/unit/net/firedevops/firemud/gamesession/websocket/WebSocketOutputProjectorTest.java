@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
@@ -223,5 +224,51 @@ class WebSocketOutputProjectorTest {
     assertThat(json.path("eventType").asText()).isEqualTo("transcript_chunk");
     assertThat(json.path("label").asText()).isEqualTo("screen buffer");
     assertThat(json.path("text").asText()).isEqualTo("Recent combat line\n");
+  }
+
+  @Test
+  void firstPartyWebReplaysStructuredTranscriptEntriesWhenBufferedMetadataExists()
+      throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    ScreenBufferService.BufferedEntry entry =
+        projector.toBufferedEntry(
+            PlayerOutput.message(
+                "You say, \"hello\"", "communication.say.actor", Map.of("message", "hello")),
+            "You say, \"hello\"\n");
+
+    String payload = projector.projectTranscriptEntry(session, "screen buffer", entry);
+
+    JsonNode json = objectMapper.readTree(payload);
+    assertThat(json.path("eventType").asText()).isEqualTo("transcript_entry");
+    assertThat(json.path("label").asText()).isEqualTo("screen buffer");
+    assertThat(json.path("text").asText()).isEqualTo("You say, \"hello\"\n");
+    assertThat(json.path("output").path("kind").asText()).isEqualTo("MESSAGE");
+    assertThat(json.path("output").path("payloadType").asText()).isEqualTo("text_message");
+    assertThat(json.path("output").path("payload").path("messageKey").asText())
+        .isEqualTo("communication.say.actor");
+  }
+
+  @Test
+  void firstPartyWebFallsBackToTranscriptChunkForUnreadableBufferedMetadata() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    ScreenBufferService.BufferedEntry entry =
+        ScreenBufferService.BufferedEntry.fromStructuredOutput(
+            "Legacy safe text\n", "MESSAGE", "BUFFERABLE", "DEFAULT", "text_message", "{bad json");
+
+    String payload = projector.projectTranscriptEntry(session, "screen buffer", entry);
+
+    JsonNode json = objectMapper.readTree(payload);
+    assertThat(json.path("eventType").asText()).isEqualTo("transcript_chunk");
+    assertThat(json.path("text").asText()).isEqualTo("Legacy safe text\n");
   }
 }

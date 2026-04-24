@@ -75,7 +75,9 @@ These are not broad audit topics anymore; they are real future slices with known
 4. [02.1.4.1 Account Versus Character Social Scope](./02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
 5. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
 6. [02.13.10 Structured Transcript and Replay End State](./02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
+   Remaining: the hot reconnect buffer now stores structured `PlayerOutput` replay metadata alongside classic rendered protocol text for new entries and keeps text-only legacy entries readable; durable transcript history and retention classes remain future work.
 7. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
+   Remaining: build on the structured hot-buffer entry model by adding bounded durable transcript history when product retention policy becomes active.
 8. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
 9. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
 10. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
@@ -103,7 +105,7 @@ These are not major design problems, but they are not fully closed.
 6. [02.14.4 Metrics Cardinality and Label Policy Hardening](./02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
    Remaining: only opportunistic audit tail work and later policy wording cleanup.
 7. [02.14.5 Player-Experience Canary and Deadman Smoke](./02.14.5-task-list-player-experience-canary-and-deadman-smoke-vertical-slice.md)
-   Remaining: implement the prod-like observability smoke proof for player-flow canaries, independent entry-path blackbox probes, external deadman heartbeat, non-production failure injection, and retained traffic-open evidence.
+   Remaining: runtime canary/blackbox/deadman producers and failure injection are paused pending endpoint, synthetic identity, external deadman authority, and non-production paging-route decisions.
 
 ## Operator-Proof / Audit Tails
 
