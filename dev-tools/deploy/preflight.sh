@@ -321,23 +321,118 @@ if [ "${secret_check_failed:-0}" -eq 0 ]; then
   append_result "PREFLIGHT-SECRETS-001" "true" "pass" "Required player-facing Secrets are present"
 fi
 
-# PREFLIGHT-JWT-001
-if printf '%s\n' "$RENDERED" | grep -q 'FIREMUD_AUTH_JWT_SECRET:'; then
-  append_result "PREFLIGHT-JWT-001" "true" "fail" "Inline JWT secret material detected in rendered manifests"
-elif ! printf '%s\n' "$RENDERED" | grep -q 'FIREMUD_AUTH_JWT_SECRET_PATH'; then
-  append_result "PREFLIGHT-JWT-001" "true" "fail" "FIREMUD_AUTH_JWT_SECRET_PATH is not configured in rendered manifests"
-else
-  append_result "PREFLIGHT-JWT-001" "true" "pass" "JWT file-path contract is satisfied"
-fi
+JWT_JWKS_RESULTS="$(python3 - <<'PY' "$RENDERED_PATH"
+import pathlib
+import sys
+import yaml
 
-# PREFLIGHT-JWKS-001
-if rendered_has_resource ConfigMap jwt-jwks; then
-  append_result "PREFLIGHT-JWKS-001" "true" "fail" "jwt-jwks is configured as a ConfigMap in player-facing context"
-elif rendered_has_resource Secret jwt-jwks; then
-  append_result "PREFLIGHT-JWKS-001" "true" "pass" "jwt-jwks Secret contract is satisfied"
-else
-  append_result "PREFLIGHT-JWKS-001" "true" "fail" "No jwt-jwks Secret found in rendered manifests"
-fi
+path = pathlib.Path(sys.argv[1])
+documents = [
+    document
+    for document in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+
+def result(policy_id, status, message):
+    print(f"{policy_id}\ttrue\t{status}\t{message}")
+
+def metadata_name(document):
+    metadata = document.get("metadata") or {}
+    return metadata.get("name")
+
+def has_resource(kind, name):
+    return any(document.get("kind") == kind and metadata_name(document) == name for document in documents)
+
+def config_value(name):
+    for document in documents:
+        if document.get("kind") != "ConfigMap":
+            continue
+        data = document.get("data") or {}
+        if name in data:
+            return str(data[name])
+    return None
+
+def env_value(container, name):
+    for entry in container.get("env") or []:
+        if entry.get("name") == name:
+            return entry.get("value")
+    return None
+
+def primary_containers(document):
+    if document.get("kind") not in {"Deployment", "StatefulSet", "DaemonSet"}:
+        return []
+    spec = (((document.get("spec") or {}).get("template") or {}).get("spec") or {})
+    volumes = {
+        volume.get("name"): ((volume.get("secret") or {}).get("secretName"))
+        for volume in spec.get("volumes") or []
+        if isinstance(volume, dict)
+    }
+    containers = []
+    for container in spec.get("containers") or []:
+        name = container.get("name") or ""
+        if name.endswith("-service") or name == "spring-cloud-gateway":
+            containers.append((metadata_name(document), container, volumes))
+    return containers
+
+def has_secret_mount(container, volumes, secret_name, required_mount):
+    for mount in container.get("volumeMounts") or []:
+        mounted_secret = volumes.get(mount.get("name"))
+        mount_path = str(mount.get("mountPath") or "")
+        if mounted_secret == secret_name and mount_path == required_mount:
+            return True
+    return False
+
+inline_secret = False
+missing_secret_path = []
+missing_signing_mount = []
+missing_jwks_mount = []
+global_secret_path = config_value("FIREMUD_AUTH_JWT_SECRET_PATH")
+global_jwks_path = config_value("FIREMUD_AUTH_JWKS_PATH")
+for workload_name, container, volumes in [
+    item for document in documents for item in primary_containers(document)
+]:
+    container_name = container.get("name") or "<unknown>"
+    if env_value(container, "FIREMUD_AUTH_JWT_SECRET") is not None:
+        inline_secret = True
+    secret_path = env_value(container, "FIREMUD_AUTH_JWT_SECRET_PATH") or global_secret_path
+    if not secret_path:
+        missing_secret_path.append(f"{workload_name}/{container_name}")
+    elif str(secret_path).startswith("/var/run/secrets/firemud/jwt/") and not has_secret_mount(
+        container, volumes, "jwt-signing-keys", "/var/run/secrets/firemud/jwt"
+    ):
+        missing_signing_mount.append(f"{workload_name}/{container_name}")
+    jwks_path = env_value(container, "FIREMUD_AUTH_JWKS_PATH") or global_jwks_path
+    if (
+        container_name == "account-service"
+        and jwks_path
+        and str(jwks_path).startswith("/var/run/secrets/firemud/jwks/")
+        and not has_secret_mount(container, volumes, "jwt-jwks", "/var/run/secrets/firemud/jwks")
+    ):
+        missing_jwks_mount.append(f"{workload_name}/{container_name}")
+
+if inline_secret:
+    result("PREFLIGHT-JWT-001", "fail", "Inline JWT secret material detected in rendered workloads")
+elif missing_secret_path:
+    result("PREFLIGHT-JWT-001", "fail", "FIREMUD_AUTH_JWT_SECRET_PATH is missing for workloads: " + ", ".join(missing_secret_path))
+elif missing_signing_mount:
+    result("PREFLIGHT-JWT-001", "fail", "JWT signing Secret is not mounted at the configured path for workloads: " + ", ".join(missing_signing_mount))
+else:
+    result("PREFLIGHT-JWT-001", "pass", "JWT file-path contract and signing Secret mounts are satisfied")
+
+if has_resource("ConfigMap", "jwt-jwks"):
+    result("PREFLIGHT-JWKS-001", "fail", "jwt-jwks is configured as a ConfigMap in player-facing context")
+elif not has_resource("Secret", "jwt-jwks"):
+    result("PREFLIGHT-JWKS-001", "fail", "No jwt-jwks Secret found in rendered manifests")
+elif missing_jwks_mount:
+    result("PREFLIGHT-JWKS-001", "fail", "Account Service does not mount jwt-jwks at the configured JWKS path: " + ", ".join(missing_jwks_mount))
+else:
+    result("PREFLIGHT-JWKS-001", "pass", "jwt-jwks Secret contract and Account Service mount are satisfied")
+PY
+)"
+while IFS=$'\t' read -r policy_id required status message; do
+  [ -z "$policy_id" ] && continue
+  append_result "$policy_id" "$required" "$status" "$message"
+done <<<"$JWT_JWKS_RESULTS"
 
 # PREFLIGHT-BRIDGE-001
 GW_LINE="$(printf '%s\n' "$RENDERED" | grep -E 'name:[[:space:]]*GATEWAY_WS_URL' -A 1 | grep -E 'value:[[:space:]]*' | head -n1 || true)"

@@ -62,6 +62,45 @@ spec:
           env:
             - name: GATEWAY_WS_URL
               value: wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local/ws/game
+          envFrom:
+            - configMapRef:
+                name: firemud-config
+          volumeMounts:
+            - name: jwt-signing-keys
+              mountPath: /var/run/secrets/firemud/jwt
+              readOnly: true
+      volumes:
+        - name: jwt-signing-keys
+          secret:
+            secretName: jwt-signing-keys
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: account-service
+          image: ghcr.io/benhook1013/account-service:latest
+          envFrom:
+            - configMapRef:
+                name: firemud-config
+          volumeMounts:
+            - name: jwt-signing-keys
+              mountPath: /var/run/secrets/firemud/jwt
+              readOnly: true
+            - name: jwt-jwks
+              mountPath: /var/run/secrets/firemud/jwks
+              readOnly: true
+      volumes:
+        - name: jwt-signing-keys
+          secret:
+            secretName: jwt-signing-keys
+        - name: jwt-jwks
+          secret:
+            secretName: jwt-jwks
 YAML
 
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
