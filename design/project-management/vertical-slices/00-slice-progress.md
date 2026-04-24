@@ -82,6 +82,7 @@ These are not broad audit topics anymore; they are real future slices with known
    Remaining: the first proto contract guard now prevents ambiguous cross-service time fields such as bare `timeout`, `expires`, and `duration`; broader runtime adoption remains future work as timed gameplay systems land.
 9. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
 10. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
+   Remaining: Entity Management now has the first gameplay-attested actor-state read substrate for baseline resources plus persisted resource/condition rows; authored definitions, shared effect evaluation, mutation/expiry, equipment/action contributions, and damage/mitigation remain future work.
 11. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
 12. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
 13. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)

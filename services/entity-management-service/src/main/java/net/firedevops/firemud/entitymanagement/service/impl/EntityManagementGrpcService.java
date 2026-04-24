@@ -9,10 +9,13 @@ import net.firedevops.firemud.common.security.GameplaySessionAttestationClaims;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
+import net.firedevops.firemud.entitymanagement.dto.ActorResourceStateDto;
 import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
+import net.firedevops.firemud.entitymanagement.service.ActorStateService;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
@@ -24,6 +27,8 @@ import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
 import net.firedevops.firemud.entitymanagement.service.RuntimeInstanceCleanupService;
+import net.firedevops.firemud.entitymanagement.v1.ActorConditionState;
+import net.firedevops.firemud.entitymanagement.v1.ActorResourceValue;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceRequest;
 import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse;
@@ -57,6 +62,8 @@ import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateRequest;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
@@ -88,6 +95,7 @@ public class EntityManagementGrpcService
   private static final Logger logger = LoggerFactory.getLogger(EntityManagementGrpcService.class);
   private final PingService pingService;
   private final CharacterService characterService;
+  private final ActorStateService actorStateService;
   private final EntityDraftDesignDigestService entityDraftDesignDigestService;
 
   private final EquipmentService equipmentService;
@@ -109,6 +117,7 @@ public class EntityManagementGrpcService
   EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
+      ActorStateService actorStateService,
       EntityDraftDesignDigestService entityDraftDesignDigestService,
       EquipmentService equipmentService,
       InventoryService inventoryService,
@@ -122,6 +131,7 @@ public class EntityManagementGrpcService
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.characterService = characterService;
+    this.actorStateService = actorStateService;
     this.entityDraftDesignDigestService = entityDraftDesignDigestService;
     this.equipmentService = equipmentService;
     this.inventoryService = inventoryService;
@@ -135,10 +145,38 @@ public class EntityManagementGrpcService
     this.meterRegistry = meterRegistry;
   }
 
+  public EntityManagementGrpcService(
+      PingService pingService,
+      CharacterService characterService,
+      EntityDraftDesignDigestService entityDraftDesignDigestService,
+      EquipmentService equipmentService,
+      InventoryService inventoryService,
+      ContainerService containerService,
+      RoomEntityService roomEntityService,
+      EntityMutationEffectReplayService entityMutationEffectReplayService,
+      EntityUpgradeValidationService entityUpgradeValidationService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
+      MeterRegistry meterRegistry) {
+    this(
+        pingService,
+        characterService,
+        unsupportedActorStateService(),
+        entityDraftDesignDigestService,
+        equipmentService,
+        inventoryService,
+        containerService,
+        roomEntityService,
+        entityMutationEffectReplayService,
+        entityUpgradeValidationService,
+        gameplaySessionAttestationService,
+        meterRegistry);
+  }
+
   @Autowired
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
+      ActorStateService actorStateService,
       EntityDraftDesignDigestService entityDraftDesignDigestService,
       EquipmentService equipmentService,
       InventoryService inventoryService,
@@ -152,6 +190,7 @@ public class EntityManagementGrpcService
     this(
         pingService,
         characterService,
+        actorStateService,
         entityDraftDesignDigestService,
         equipmentService,
         inventoryService,
@@ -170,6 +209,7 @@ public class EntityManagementGrpcService
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
+      ActorStateService actorStateService,
       EntityDraftDesignDigestService entityDraftDesignDigestService,
       EquipmentService equipmentService,
       InventoryService inventoryService,
@@ -182,6 +222,7 @@ public class EntityManagementGrpcService
     this(
         pingService,
         characterService,
+        actorStateService,
         entityDraftDesignDigestService,
         equipmentService,
         inventoryService,
@@ -668,6 +709,88 @@ public class EntityManagementGrpcService
       QueryInventoryResponse response =
           QueryInventoryResponse.newBuilder()
               .setError(GrpcAppErrors.internal(meterRegistry, logger, "QueryInventory", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.queryActorState")
+  public void queryActorState(
+      QueryActorStateRequest request, StreamObserver<QueryActorStateResponse> responseObserver) {
+    try {
+      GameplaySessionAttestationClaims claims =
+          requireGameplaySessionAttestation(
+              request.getSessionAttestation(),
+              request.getTenantId(),
+              request.getCharacterId(),
+              request.getGameInstanceId(),
+              null);
+      long tenantId = Long.parseLong(request.getTenantId());
+      requireTenantAccessWhenPresent(tenantId);
+      long characterId = Long.parseLong(request.getCharacterId());
+      var actorState =
+          actorStateService.queryActorState(
+              tenantId,
+              characterId,
+              resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
+              requirePlayableStateScope(request.getPlayableStateScope()));
+      QueryActorStateResponse response =
+          QueryActorStateResponse.newBuilder()
+              .setTenantId(String.valueOf(actorState.tenantId()))
+              .setGameInstanceId(String.valueOf(actorState.gameInstanceId()))
+              .setCharacterId(String.valueOf(actorState.characterId()))
+              .addAllResources(actorState.resources().stream().map(this::toProto).toList())
+              .addAllActiveConditions(
+                  actorState.activeConditions().stream().map(this::toProto).toList())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      QueryActorStateResponse response =
+          QueryActorStateResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "QueryActorState",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      QueryActorStateResponse response =
+          QueryActorStateResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "QueryActorState", ex.getCode(), ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      QueryActorStateResponse response =
+          QueryActorStateResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "QueryActorState",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      QueryActorStateResponse response =
+          QueryActorStateResponse.newBuilder().setError(appError("QueryActorState", ex)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      QueryActorStateResponse response =
+          QueryActorStateResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "QueryActorState", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1638,6 +1761,12 @@ public class EntityManagementGrpcService
     return playableStateScope;
   }
 
+  private static ActorStateService unsupportedActorStateService() {
+    return (tenantId, characterId, gameInstanceId, playableStateScope) -> {
+      throw new UnsupportedOperationException("actor state service is not configured");
+    };
+  }
+
   private String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
   }
@@ -1680,6 +1809,35 @@ public class EntityManagementGrpcService
         .setStamina(dto.stamina())
         .setHealth(dto.health())
         .setMana(dto.mana())
+        .build();
+  }
+
+  private ActorResourceValue toProto(ActorResourceStateDto dto) {
+    ActorResourceValue.Builder builder =
+        ActorResourceValue.newBuilder()
+            .setStatKey(dto.statKey())
+            .setCurrentValue(dto.currentValue())
+            .setPrimitiveKind(dto.primitiveKind())
+            .setSourceType(dto.sourceType() == null ? "" : dto.sourceType())
+            .setSourceId(dto.sourceId() == null ? "" : dto.sourceId());
+    if (dto.maxValue() != null) {
+      builder.setMaxValue(dto.maxValue());
+    }
+    if (dto.baseValue() != null) {
+      builder.setBaseValue(dto.baseValue());
+    }
+    return builder.build();
+  }
+
+  private ActorConditionState toProto(ActorConditionStateDto dto) {
+    return ActorConditionState.newBuilder()
+        .setConditionKey(dto.conditionKey())
+        .setStackCount(dto.stackCount())
+        .setSourceType(dto.sourceType() == null ? "" : dto.sourceType())
+        .setSourceId(dto.sourceId() == null ? "" : dto.sourceId())
+        .setStartedAt(dto.startedAt() == null ? "" : dto.startedAt().toString())
+        .setExpiresAt(dto.expiresAt() == null ? "" : dto.expiresAt().toString())
+        .setEffectPayloadJson(dto.effectPayloadJson() == null ? "" : dto.effectPayloadJson())
         .build();
   }
 

@@ -25,6 +25,7 @@ service EntityManagementService {
   rpc DropItemToRoom(DropItemToRoomRequest) returns (DropItemToRoomResponse);
   rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
   rpc FindCharacterByName(FindCharacterByNameRequest) returns (FindCharacterByNameResponse);
+  rpc QueryActorState(QueryActorStateRequest) returns (QueryActorStateResponse);
   rpc ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse);
   rpc CleanupRuntimeInstance(CleanupRuntimeInstanceRequest) returns (CleanupRuntimeInstanceResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
@@ -314,6 +315,43 @@ message FindCharacterByNameRequest {
 message FindCharacterByNameResponse {
   Character character = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message QueryActorStateRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string game_instance_id = 3;
+  PlayableStateScope playable_state_scope = 4;
+  string session_attestation = 5;
+}
+
+message ActorResourceValue {
+  string stat_key = 1;
+  int64 current_value = 2;
+  optional int64 max_value = 3;
+  optional int64 base_value = 4;
+  string primitive_kind = 5;
+  string source_type = 6;
+  string source_id = 7;
+}
+
+message ActorConditionState {
+  string condition_key = 1;
+  int32 stack_count = 2;
+  string source_type = 3;
+  string source_id = 4;
+  string started_at = 5;
+  string expires_at = 6;
+  string effect_payload_json = 7;
+}
+
+message QueryActorStateResponse {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string character_id = 3;
+  repeated ActorResourceValue resources = 4;
+  repeated ActorConditionState active_conditions = 5;
+  shared.v1.ErrorDetail error = 6;
 }
 
 message ListRoomEntitiesRequest {

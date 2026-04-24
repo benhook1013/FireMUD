@@ -6,13 +6,18 @@ import static org.mockito.Mockito.verify;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationClaims;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
+import net.firedevops.firemud.entitymanagement.dto.ActorResourceStateDto;
+import net.firedevops.firemud.entitymanagement.dto.ActorStateDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
+import net.firedevops.firemud.entitymanagement.service.ActorStateService;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
@@ -41,6 +46,8 @@ import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateRequest;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.ReloadHint;
@@ -1221,6 +1228,95 @@ class EntityManagementGrpcServiceTest {
     assertEquals(2, ref.get().getItems(0).getQuantity());
     assertEquals("55", ref.get().getItems(0).getContainerInstanceId());
     assertEquals("torch12", ref.get().getItems(0).getVisibleRef());
+  }
+
+  @Test
+  void queryActorStateReturnsResourcesAndActiveConditions() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    ActorStateService actorStateService = Mockito.mock(ActorStateService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    var actorState =
+        new ActorStateDto(
+            1L,
+            "99",
+            7L,
+            List.of(new ActorResourceStateDto("health", 65L, 90L, 80L, "INTEGER", "EFFECT", "e1")),
+            List.of(
+                new ActorConditionStateDto(
+                    "poisoned",
+                    2,
+                    "EFFECT",
+                    "e1",
+                    Instant.parse("2026-04-24T00:00:00Z"),
+                    Instant.parse("2026-04-24T00:00:30Z"),
+                    "{\"damage_per_tick\":3}")));
+    Mockito.when(
+            actorStateService.queryActorState(
+                1L,
+                7L,
+                "99",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED))
+        .thenReturn(actorState);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry =
+        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+    io.micrometer.core.instrument.Counter counter =
+        Mockito.mock(io.micrometer.core.instrument.Counter.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(counter);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            actorStateService,
+            digestService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            meterRegistry);
+
+    AtomicReference<QueryActorStateResponse> ref = new AtomicReference<>();
+    service.queryActorState(
+        QueryActorStateRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("99")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED)
+            .setSessionAttestation("attestation")
+            .build(),
+        new StreamObserver<QueryActorStateResponse>() {
+          @Override
+          public void onNext(QueryActorStateResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("99", ref.get().getGameInstanceId());
+    assertEquals("health", ref.get().getResources(0).getStatKey());
+    assertEquals(65L, ref.get().getResources(0).getCurrentValue());
+    assertEquals(90L, ref.get().getResources(0).getMaxValue());
+    assertEquals("poisoned", ref.get().getActiveConditions(0).getConditionKey());
+    assertEquals("2026-04-24T00:00:30Z", ref.get().getActiveConditions(0).getExpiresAt());
   }
 
   @Test

@@ -2,7 +2,14 @@
 
 ## Goal and Status
 
-Goal: define one canonical gameplay-state model for numeric stats, bounded resources, conditions, buffs, debuffs, and transient action states so equipment, potions, spells, actions, and future combat all contribute through the same effect system instead of accumulating one-off rule paths. Status: direction locked; implementation is future work.
+Goal: define one canonical gameplay-state model for numeric stats, bounded resources, conditions, buffs, debuffs, and transient action states so equipment, potions, spells, actions, and future combat all contribute through the same effect system instead of accumulating one-off rule paths. Status: first Entity Management-owned read substrate is live; authored definitions, shared effect evaluation, equipment/action contributions, and damage/mitigation remain future work.
+
+## Implementation Notes
+
+- Entity Management now owns persisted actor resource and active-condition state through `actor_resource_states` and `actor_active_conditions`, keyed by tenant, opaque game instance id, and character id.
+- `QueryActorState` exposes a gameplay-attested, playable-scope-aware read API that returns baseline character stats overlaid with persisted resource rows plus active non-expired conditions.
+- The first implementation is intentionally read-side only: it does not yet author stat/condition definitions, evaluate equipment/action modifiers, apply or expire effects, or resolve combat damage.
+- Runtime game instance identifiers remain opaque strings, matching existing inventory/equipment/room-state tables rather than requiring numeric ids.
 
 ## Checklist
 
@@ -176,19 +183,19 @@ This means the first proof should be able to express things like:
 
 ## 3. Entity Management Service: Runtime State Ownership
 
-- [ ] Define the authoritative runtime model for entity resources and active conditions.
-- [ ] Decide which parts of state are persisted versus recalculated, including:
+- [x] Define the authoritative runtime model for entity resources and active conditions.
+- [x] Decide which parts of state are persisted versus recalculated, including:
   - current resource values;
   - active timed conditions;
   - source-linked effect instances;
   - recalculated equipment contributions.
-- [ ] Define how runtime state records carry enough provenance to explain effective results, such as:
+- [x] Define how runtime state records carry enough provenance to explain effective results, such as:
   - source type;
   - source id;
   - tenant/game/entity context;
   - start time and expiry;
   - stacking keys where relevant.
-- [ ] Introduce or refine query shapes that can return effective gameplay state without leaking transport-specific rendering decisions.
+- [x] Introduce or refine query shapes that can return effective gameplay state without leaking transport-specific rendering decisions.
 - [ ] Add tests proving deterministic effective-state evaluation for at least one resource stat, one equipment contribution, and one timed condition.
 
 ## 4. Shared Effect Evaluation Model

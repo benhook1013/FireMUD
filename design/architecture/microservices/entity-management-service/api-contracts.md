@@ -130,6 +130,12 @@ Cross-service retry orchestration is owned by the Game Session Service reconcili
 
 Only entities approved by the `EntityVisibilityPolicy` are returned; hidden NPCs, private inventory, or offstage summons are filtered out so `LOOK` always aligns with the player’s perspective. The response deliberately omits detailed stats to keep the text output focused on presence rather than numbers.
 
+## Actor State Query
+
+`QueryActorState` is the gameplay-facing read contract for current actor resources and active conditions. Callers must present gameplay session attestation, tenant id, character id, game instance id, and the resolved playable-state scope. Entity Management validates the attestation and scope, reads the scoped character, emits baseline character stat resources, overlays persisted `actor_resource_states` rows, and returns active `actor_active_conditions` rows whose expiry has not passed. The response is transport-neutral state data for Game Logic and Game Session consumers; presentation layers must not infer authoritative gameplay state from transcript text.
+
+The current contract is a read substrate only. Effect application, condition expiry jobs, authored stat/condition definitions, equipment-derived modifiers, and combat resolution are owned by later stats/effect slices.
+
 ## Implementation Status (LOOK Slice)
 
 - **Live:** The seeded `firemud.look.rooms` entries provide the visible entities for the demo rooms, `ListRoomEntities` is wired into Game Logic's `ResolveLook`, and the resulting instrumentation is captured in [`look-instrumentation.md`](../../../project-management/slice-support/look-instrumentation.md).
