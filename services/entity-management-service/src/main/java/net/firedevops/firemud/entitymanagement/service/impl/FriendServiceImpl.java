@@ -37,7 +37,7 @@ public class FriendServiceImpl implements FriendService {
   public CharacterFriendDto addFriend(Long tenantId, Long characterId, Long friendId) {
     Character character = requireCharacterInTenant(tenantId, characterId);
     Character friend = characterRepository.findById(friendId).orElseThrow();
-    requireSameTenant(character, friend);
+    requireSamePlayableState(character, friend);
     CharacterFriendKey key = new CharacterFriendKey();
     key.setCharacterId(characterId);
     key.setFriendId(friendId);
@@ -60,16 +60,19 @@ public class FriendServiceImpl implements FriendService {
   public void removeFriend(Long tenantId, Long characterId, Long friendId) {
     Character character = requireCharacterInTenant(tenantId, characterId);
     Character friend = characterRepository.findById(friendId).orElseThrow();
-    requireSameTenant(character, friend);
+    requireSamePlayableState(character, friend);
     CharacterFriendKey key = new CharacterFriendKey();
     key.setCharacterId(characterId);
     key.setFriendId(friendId);
     repository.deleteById(key);
   }
 
-  private void requireSameTenant(Character character, Character friend) {
+  private void requireSamePlayableState(Character character, Character friend) {
     if (!character.getTenantId().equals(friend.getTenantId())) {
       throw new IllegalArgumentException("Characters must belong to the same tenant");
+    }
+    if (!character.getPlayableStateKey().equals(friend.getPlayableStateKey())) {
+      throw new IllegalArgumentException("Characters must belong to the same playable state");
     }
   }
 

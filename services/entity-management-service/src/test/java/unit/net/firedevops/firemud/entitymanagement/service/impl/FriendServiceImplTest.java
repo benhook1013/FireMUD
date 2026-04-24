@@ -33,12 +33,8 @@ class FriendServiceImplTest {
 
   @Test
   void addFriendReturnsDto() {
-    Character character = new Character();
-    character.setId(2L);
-    character.setTenantId(1L);
-    Character friend = new Character();
-    friend.setId(3L);
-    friend.setTenantId(1L);
+    Character character = character(2L, 1L, "tenant:1:shared");
+    Character friend = character(3L, 1L, "tenant:1:shared");
     when(characterRepository.findById(2L)).thenReturn(Optional.of(character));
     when(characterRepository.findById(3L)).thenReturn(Optional.of(friend));
 
@@ -60,12 +56,8 @@ class FriendServiceImplTest {
 
   @Test
   void addFriendRejectsCrossTenantOwnership() {
-    Character character = new Character();
-    character.setId(2L);
-    character.setTenantId(1L);
-    Character friend = new Character();
-    friend.setId(3L);
-    friend.setTenantId(2L);
+    Character character = character(2L, 1L, "tenant:1:shared");
+    Character friend = character(3L, 2L, "tenant:2:shared");
     when(characterRepository.findById(2L)).thenReturn(Optional.of(character));
     when(characterRepository.findById(3L)).thenReturn(Optional.of(friend));
 
@@ -74,15 +66,39 @@ class FriendServiceImplTest {
 
   @Test
   void removeFriendRejectsCrossTenantOwnership() {
-    Character character = new Character();
-    character.setId(2L);
-    character.setTenantId(1L);
-    Character friend = new Character();
-    friend.setId(3L);
-    friend.setTenantId(2L);
+    Character character = character(2L, 1L, "tenant:1:shared");
+    Character friend = character(3L, 2L, "tenant:2:shared");
     when(characterRepository.findById(2L)).thenReturn(Optional.of(character));
     when(characterRepository.findById(3L)).thenReturn(Optional.of(friend));
 
     assertThrows(IllegalArgumentException.class, () -> service.removeFriend(1L, 2L, 3L));
+  }
+
+  @Test
+  void addFriendRejectsCrossPlayableStateOwnership() {
+    Character character = character(2L, 1L, "tenant:1:shared");
+    Character friend = character(3L, 1L, "tenant:1:instance:fork-a");
+    when(characterRepository.findById(2L)).thenReturn(Optional.of(character));
+    when(characterRepository.findById(3L)).thenReturn(Optional.of(friend));
+
+    assertThrows(IllegalArgumentException.class, () -> service.addFriend(1L, 2L, 3L));
+  }
+
+  @Test
+  void removeFriendRejectsCrossPlayableStateOwnership() {
+    Character character = character(2L, 1L, "tenant:1:shared");
+    Character friend = character(3L, 1L, "tenant:1:instance:fork-a");
+    when(characterRepository.findById(2L)).thenReturn(Optional.of(character));
+    when(characterRepository.findById(3L)).thenReturn(Optional.of(friend));
+
+    assertThrows(IllegalArgumentException.class, () -> service.removeFriend(1L, 2L, 3L));
+  }
+
+  private Character character(Long id, Long tenantId, String playableStateKey) {
+    Character character = new Character();
+    character.setId(id);
+    character.setTenantId(tenantId);
+    character.setPlayableStateKey(playableStateKey);
+    return character;
   }
 }
