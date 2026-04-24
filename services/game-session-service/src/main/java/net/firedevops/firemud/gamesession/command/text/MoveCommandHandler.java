@@ -141,7 +141,11 @@ public class MoveCommandHandler {
         destinationRoomId,
         current.jwt(),
         current.localeTag(),
-        current.bootstrapGameInstanceId());
+        current.bootstrapGameInstanceId(),
+        current.worldSlug(),
+        current.realmSlug(),
+        current.pointerVersion(),
+        current.playableStateScope());
   }
 
   private PreparedMoveCommandResult failureResult(

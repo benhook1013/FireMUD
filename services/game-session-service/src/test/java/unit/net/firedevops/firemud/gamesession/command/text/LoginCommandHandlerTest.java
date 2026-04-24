@@ -19,7 +19,6 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -29,6 +28,8 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -49,24 +50,22 @@ class LoginCommandHandlerTest {
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
-  private final GameplayCatalogProperties gameplayCatalogProperties =
-      new GameplayCatalogProperties();
-  private final GameplayWorldCatalog gameplayWorldCatalog =
-      new GameplayWorldCatalog(gameplayCatalogProperties);
+  private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
+      Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private LoginCommandHandler handler;
 
   @BeforeEach
   void setUp() {
     meterRegistry.clear();
-    gameplayCatalogProperties.setWorlds(
-        List.of(world("demo", "Demo World", List.of(realm("production", "Live Realm", 22L, 1L)))));
     when(accountClient.authenticate(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("77").build());
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
+    when(gameplayAdmissionPointerAuthorityService.findPointer("demo", "production"))
+        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 1L)));
     handler =
         new LoginCommandHandler(
             gameInstanceRepository,
@@ -74,7 +73,7 @@ class LoginCommandHandlerTest {
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
-            gameplayWorldCatalog,
+            gameplayAdmissionPointerAuthorityService,
             meterRegistry);
   }
 
@@ -518,26 +517,20 @@ class LoginCommandHandlerTest {
         .orElse(null);
   }
 
-  private static GameplayCatalogProperties.World world(
-      String slug, String displayName, List<GameplayCatalogProperties.Realm> realms) {
-    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
-    world.setSlug(slug);
-    world.setDisplayName(displayName);
-    world.setRealms(realms);
-    return world;
-  }
-
-  private static GameplayCatalogProperties.Realm realm(
-      String slug, String displayName, long tenantId, long gameInstanceId) {
-    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
-    realm.setSlug(slug);
-    realm.setDisplayName(displayName);
-    realm.setTenantId(tenantId);
-    realm.setGameInstanceId(gameInstanceId);
-    realm.setVisible(true);
-    realm.setRequiresCharacterSelection(false);
-    realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
-    realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
-    return realm;
+  private static GameplayAdmissionPointerSnapshot pointer(
+      String worldSlug, String realmSlug, long tenantId, long gameInstanceId, long pointerVersion) {
+    return new GameplayAdmissionPointerSnapshot(
+        worldSlug,
+        worldSlug,
+        realmSlug,
+        realmSlug,
+        tenantId,
+        gameInstanceId,
+        pointerVersion,
+        true,
+        true,
+        false,
+        "SHARED",
+        "ALLOW_NEW");
   }
 }

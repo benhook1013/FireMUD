@@ -709,6 +709,15 @@ public class GameLogicClient
   }
 
   private PlayableStateScope resolvePlayableStateScope(SessionContext context) {
+    if (StringUtils.hasText(context.playableStateScope())) {
+      return switch (context.playableStateScope()) {
+        case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+        case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+        default ->
+            throw new IllegalStateException(
+                "Unsupported playableStateScope=" + context.playableStateScope());
+      };
+    }
     return gameplayWorldCatalog
         .resolveRealmByRuntimeTarget(context.tenantId(), context.gameInstanceId())
         .map(

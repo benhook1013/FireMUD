@@ -283,7 +283,11 @@ public class PlayCommandHandler {
                   roomInstanceId,
                   context.jwt(),
                   context.localeTag(),
-                  context.bootstrapGameInstanceId());
+                  context.bootstrapGameInstanceId(),
+                  selectedWorld.getSlug(),
+                  selectedRealm.getSlug(),
+                  selectedRealm.getPointerVersion(),
+                  selectedRealm.getStateScope().name());
           sessionContextService.save(updated);
           gameplayPresenceLifecycleService.registerConnected(updated);
 

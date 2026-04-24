@@ -161,16 +161,9 @@ public class CommunicationCommandHandler {
           "TELL command requires a target and a message");
     }
     String targetName = payload.orElseThrow().target();
-    GameplayCatalogProperties.Realm currentRealm =
-        gameplayWorldCatalog
-            .resolveRealmByRuntimeTarget(context.tenantId(), context.gameInstanceId())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "No visible realm matches the current gameplay runtime target"));
     Optional<net.firedevops.firemud.entitymanagement.v1.Character> maybeTargetCharacter =
         entityManagementClient.findCharacterByName(
-            context, toPlayableStateScope(currentRealm), targetName);
+            context, resolvePlayableStateScope(context), targetName);
     if (maybeTargetCharacter.isEmpty()) {
       return new ParsedCommunication(
           false,
@@ -201,6 +194,26 @@ public class CommunicationCommandHandler {
         Optional.of(targetCharacter.getId()),
         Optional.of(targetCharacter.getName()),
         null);
+  }
+
+  private PlayableStateScope resolvePlayableStateScope(SessionContext context) {
+    if (StringUtils.hasText(context.playableStateScope())) {
+      return switch (context.playableStateScope()) {
+        case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+        case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+        default ->
+            throw new IllegalStateException(
+                "Unsupported playableStateScope=" + context.playableStateScope());
+      };
+    }
+    GameplayCatalogProperties.Realm currentRealm =
+        gameplayWorldCatalog
+            .resolveRealmByRuntimeTarget(context.tenantId(), context.gameInstanceId())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "No visible realm matches the current gameplay runtime target"));
+    return toPlayableStateScope(currentRealm);
   }
 
   private CommunicationType mapType(TextCommandType type) {

@@ -511,7 +511,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                         context.roomInstanceId(),
                         context.jwt(),
                         localeTag,
-                        context.bootstrapGameInstanceId())));
+                        context.bootstrapGameInstanceId(),
+                        context.worldSlug(),
+                        context.realmSlug(),
+                        context.pointerVersion(),
+                        context.playableStateScope())));
   }
 
   private PlayerOutput renderReconnectLook(String sessionId) {
