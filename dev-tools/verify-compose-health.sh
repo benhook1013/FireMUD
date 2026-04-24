@@ -74,7 +74,7 @@ if missing or not_ready:
         for service in missing:
             print(f"  - {service}")
     if not_ready:
-        print("Services not healthy yet:")
+        print(f"Services not healthy yet ({len(not_ready)} pending):")
         for line in not_ready:
             print(f"  - {line}")
     sys.exit(1)
