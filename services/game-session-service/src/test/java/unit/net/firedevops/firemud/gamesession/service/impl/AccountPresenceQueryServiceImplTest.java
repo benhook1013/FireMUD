@@ -74,6 +74,8 @@ class AccountPresenceQueryServiceImplTest {
                     11L,
                     1L,
                     2L,
+                    "sandbox",
+                    "production",
                     3L,
                     99L,
                     "Ben",
