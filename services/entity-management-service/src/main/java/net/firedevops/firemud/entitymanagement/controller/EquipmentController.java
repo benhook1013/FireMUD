@@ -8,6 +8,8 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
@@ -23,10 +25,18 @@ public class EquipmentController {
       justification = "Spring injects EquipmentService; storing reference is safe")
   private final EquipmentService equipmentService;
 
+  private final ScopedCharacterResolver scopedCharacterResolver;
+
   @GetMapping
   public ResponseEntity<ApiResponse<Page<CharacterEquipmentEntryDto>>> list(
-      @PathVariable Long tenantId, @PathVariable Long characterId, Pageable pageable) {
+      @PathVariable Long tenantId,
+      @PathVariable Long characterId,
+      @RequestParam String gameInstanceId,
+      @RequestParam PlayableStateScope playableStateScope,
+      Pageable pageable) {
     SessionContext.requireTenantAccess(tenantId);
+    scopedCharacterResolver.requireScopedCharacter(
+        tenantId, characterId, gameInstanceId, playableStateScope);
     Page<CharacterEquipmentEntryDto> list =
         equipmentService.listEquipment(tenantId, characterId, pageable);
     return ResponseEntity.ok(ApiResponse.success(list));
@@ -36,8 +46,12 @@ public class EquipmentController {
   public ResponseEntity<ApiResponse<CharacterEquipmentEntryDto>> wear(
       @PathVariable Long tenantId,
       @PathVariable Long characterId,
+      @RequestParam String gameInstanceId,
+      @RequestParam PlayableStateScope playableStateScope,
       @Valid @RequestBody WearEquipmentItemRequest request) {
     SessionContext.requireTenantAccess(tenantId);
+    scopedCharacterResolver.requireScopedCharacter(
+        tenantId, characterId, gameInstanceId, playableStateScope);
     CharacterEquipmentEntryDto dto =
         equipmentService.wearItem(tenantId, characterId, request.itemId(), null);
     return ResponseEntity.ok(ApiResponse.success(dto));
@@ -45,8 +59,14 @@ public class EquipmentController {
 
   @DeleteMapping("/{slot}")
   public ResponseEntity<ApiResponse<CharacterEquipmentEntryDto>> remove(
-      @PathVariable Long tenantId, @PathVariable Long characterId, @PathVariable String slot) {
+      @PathVariable Long tenantId,
+      @PathVariable Long characterId,
+      @PathVariable String slot,
+      @RequestParam String gameInstanceId,
+      @RequestParam PlayableStateScope playableStateScope) {
     SessionContext.requireTenantAccess(tenantId);
+    scopedCharacterResolver.requireScopedCharacter(
+        tenantId, characterId, gameInstanceId, playableStateScope);
     CharacterEquipmentEntryDto dto = equipmentService.removeWornItem(tenantId, characterId, slot);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }

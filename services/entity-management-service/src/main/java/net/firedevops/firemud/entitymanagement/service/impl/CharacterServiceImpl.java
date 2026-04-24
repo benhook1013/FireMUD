@@ -12,6 +12,7 @@ import net.firedevops.firemud.entitymanagement.mapper.CharacterMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
@@ -32,6 +33,7 @@ public class CharacterServiceImpl implements CharacterService {
   private final CacheManager cacheManager;
   private final MeterRegistry meterRegistry;
   private final PlayableStateKeyResolver playableStateKeyResolver;
+  private final ScopedCharacterResolver scopedCharacterResolver;
 
   private Counter cacheHitCounter;
   private Counter cacheMissCounter;
@@ -102,7 +104,8 @@ public class CharacterServiceImpl implements CharacterService {
       PlayableStateScope playableStateScope,
       int amount) {
     Character character =
-        requireScopedCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
+        scopedCharacterResolver.requireScopedCharacter(
+            tenantId, characterId, gameInstanceId, playableStateScope);
     character.setExperience(character.getExperience() + amount);
     while (character.getExperience() >= character.getLevel() * EXP_PER_LEVEL) {
       character.setExperience(character.getExperience() - character.getLevel() * EXP_PER_LEVEL);
@@ -121,7 +124,8 @@ public class CharacterServiceImpl implements CharacterService {
       String gameInstanceId,
       PlayableStateScope playableStateScope) {
     Character character =
-        requireScopedCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
+        scopedCharacterResolver.requireScopedCharacter(
+            tenantId, characterId, gameInstanceId, playableStateScope);
     character.setLastLoginAt(java.time.Instant.now());
     characterRepository.save(character);
     return true;
@@ -177,19 +181,5 @@ public class CharacterServiceImpl implements CharacterService {
         dto.stamina(),
         dto.health(),
         dto.mana());
-  }
-
-  private Character requireScopedCharacter(
-      Long tenantId,
-      Long characterId,
-      String gameInstanceId,
-      PlayableStateScope playableStateScope) {
-    return characterRepository
-        .findByIdAndTenantIdAndPlayableStateKey(
-            characterId,
-            tenantId,
-            playableStateKeyResolver.resolve(gameInstanceId, playableStateScope))
-        .orElseThrow(
-            () -> new IllegalArgumentException("Character not found for playable state scope"));
   }
 }

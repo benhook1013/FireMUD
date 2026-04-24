@@ -12,7 +12,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.List;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
+import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +33,7 @@ class InventoryControllerTest {
   @Autowired private MockMvc mockMvc;
 
   @MockitoBean private InventoryService inventoryService;
+  @MockitoBean private ScopedCharacterResolver scopedCharacterResolver;
 
   @BeforeEach
   void setUpSecurityContext() {
@@ -45,11 +49,17 @@ class InventoryControllerTest {
   void listReturnsInventory() throws Exception {
     InventoryEntryDto dto =
         new InventoryEntryDto(1L, 2L, 3L, "Torch", "A small torch", 4, null, null, null);
+    when(scopedCharacterResolver.requireScopedCharacter(
+            1L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .thenReturn(new Character());
     when(inventoryService.listInventory(eq(1L), eq(2L), any(Pageable.class)))
         .thenReturn(new PageImpl<>(List.of(dto)));
 
     mockMvc
-        .perform(get("/tenants/1/characters/2/inventory"))
+        .perform(
+            get("/tenants/1/characters/2/inventory")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.content[0].itemName").value("Torch"))
@@ -58,12 +68,17 @@ class InventoryControllerTest {
 
   @Test
   void addAndDeleteUseTenantScopedPath() throws Exception {
+    when(scopedCharacterResolver.requireScopedCharacter(
+            1L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .thenReturn(new Character());
     when(inventoryService.addItem(eq(1L), eq(2L), eq(3L), eq(1)))
         .thenReturn(new InventoryEntryDto(1L, 2L, 3L, "Torch", null, 1, null, null, null));
 
     mockMvc
         .perform(
             post("/tenants/1/characters/2/inventory")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"itemId\":3,\"quantity\":1}"))
         .andExpect(status().isOk())
@@ -71,7 +86,10 @@ class InventoryControllerTest {
         .andExpect(jsonPath("$.data.itemName").value("Torch"));
 
     mockMvc
-        .perform(delete("/tenants/1/characters/2/inventory/3"))
+        .perform(
+            delete("/tenants/1/characters/2/inventory/3")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
   }

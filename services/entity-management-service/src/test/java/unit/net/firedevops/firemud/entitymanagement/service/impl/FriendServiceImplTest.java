@@ -12,6 +12,7 @@ import net.firedevops.firemud.entitymanagement.entity.CharacterFriend;
 import net.firedevops.firemud.entitymanagement.mapper.CharacterFriendMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterFriendRepository;
 import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,7 +33,9 @@ class FriendServiceImplTest {
     CharacterFriendMapper mapper = Mappers.getMapper(CharacterFriendMapper.class);
     service =
         new FriendServiceImpl(
-            repository, characterRepository, mapper, new PlayableStateKeyResolver());
+            repository,
+            mapper,
+            new ScopedCharacterResolver(characterRepository, new PlayableStateKeyResolver()));
   }
 
   @Test

@@ -9,9 +9,8 @@ import net.firedevops.firemud.entitymanagement.entity.CharacterFriend;
 import net.firedevops.firemud.entitymanagement.entity.CharacterFriendKey;
 import net.firedevops.firemud.entitymanagement.mapper.CharacterFriendMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterFriendRepository;
-import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.service.FriendService;
-import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -22,9 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class FriendServiceImpl implements FriendService {
   private final CharacterFriendRepository repository;
-  private final CharacterRepository characterRepository;
   private final CharacterFriendMapper mapper;
-  private final PlayableStateKeyResolver playableStateKeyResolver;
+  private final ScopedCharacterResolver scopedCharacterResolver;
 
   @Override
   @Transactional(readOnly = true)
@@ -35,7 +33,8 @@ public class FriendServiceImpl implements FriendService {
       String gameInstanceId,
       PlayableStateScope playableStateScope,
       Pageable pageable) {
-    requireScopedCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
+    scopedCharacterResolver.requireScopedCharacter(
+        tenantId, characterId, gameInstanceId, playableStateScope);
     return repository.findByIdCharacterId(characterId, pageable).map(mapper::toDto);
   }
 
@@ -49,9 +48,11 @@ public class FriendServiceImpl implements FriendService {
       PlayableStateScope playableStateScope,
       Long friendId) {
     Character character =
-        requireScopedCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
+        scopedCharacterResolver.requireScopedCharacter(
+            tenantId, characterId, gameInstanceId, playableStateScope);
     Character friend =
-        requireScopedCharacter(tenantId, friendId, gameInstanceId, playableStateScope);
+        scopedCharacterResolver.requireScopedCharacter(
+            tenantId, friendId, gameInstanceId, playableStateScope);
     CharacterFriendKey key = new CharacterFriendKey();
     key.setCharacterId(characterId);
     key.setFriendId(friendId);
@@ -77,23 +78,13 @@ public class FriendServiceImpl implements FriendService {
       String gameInstanceId,
       PlayableStateScope playableStateScope,
       Long friendId) {
-    requireScopedCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
-    requireScopedCharacter(tenantId, friendId, gameInstanceId, playableStateScope);
+    scopedCharacterResolver.requireScopedCharacter(
+        tenantId, characterId, gameInstanceId, playableStateScope);
+    scopedCharacterResolver.requireScopedCharacter(
+        tenantId, friendId, gameInstanceId, playableStateScope);
     CharacterFriendKey key = new CharacterFriendKey();
     key.setCharacterId(characterId);
     key.setFriendId(friendId);
     repository.deleteById(key);
-  }
-
-  private Character requireScopedCharacter(
-      Long tenantId,
-      Long characterId,
-      String gameInstanceId,
-      PlayableStateScope playableStateScope) {
-    String playableStateKey = playableStateKeyResolver.resolve(gameInstanceId, playableStateScope);
-    return characterRepository
-        .findByIdAndTenantIdAndPlayableStateKey(characterId, tenantId, playableStateKey)
-        .orElseThrow(
-            () -> new IllegalArgumentException("Character does not belong to gameplay scope"));
   }
 }

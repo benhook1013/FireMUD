@@ -11,6 +11,7 @@ import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.mapper.CharacterMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
@@ -27,7 +28,12 @@ class CharacterServiceImplTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     CharacterServiceImpl service =
         new CharacterServiceImpl(
-            repo, mapper, cacheManager, meterRegistry, new PlayableStateKeyResolver());
+            repo,
+            mapper,
+            cacheManager,
+            meterRegistry,
+            new PlayableStateKeyResolver(),
+            new ScopedCharacterResolver(repo, new PlayableStateKeyResolver()));
     service.initMetrics();
 
     Character character = new Character();
@@ -65,7 +71,12 @@ class CharacterServiceImplTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     CharacterServiceImpl service =
         new CharacterServiceImpl(
-            repo, mapper, cacheManager, meterRegistry, new PlayableStateKeyResolver());
+            repo,
+            mapper,
+            cacheManager,
+            meterRegistry,
+            new PlayableStateKeyResolver(),
+            new ScopedCharacterResolver(repo, new PlayableStateKeyResolver()));
     service.initMetrics();
 
     Character character = new Character();
