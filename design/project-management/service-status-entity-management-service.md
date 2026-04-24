@@ -5,7 +5,7 @@
 - Character, NPC, item, inventory, equipment, container, crafting, and room-entity query surfaces are implemented.
 - The data-driven `LOOK` slice is wired to entity visibility data through the service’s gRPC surface.
 - Actor gameplay state has an initial read substrate: persisted resource rows and active conditions are queryable through the gameplay-attested `QueryActorState` RPC and are merged with baseline character stat fields for current effective reads.
-- A first typed effect-evaluation seam exists for deterministic additive, multiplicative, clamp, flag, and condition projections; producer wiring is still pending.
+- A first typed effect-evaluation seam exists for deterministic additive, multiplicative, clamp, flag, and condition projections; active condition payloads are wired through it for actor-state reads, while equipment/action-state producers remain pending.
 - Runtime item/equipment/container mutation RPCs now carry session/effect context, use the current replay guard for duplicate effect delivery, and persist `item_transfer_audits` for successful holder movement.
 - Character creation and gameplay-scoped character lookup now use the canonical resolved playable-state scope, character read surfaces echo that scope back to callers instead of hiding realm policy behind an internal state-key derivation, and the character-owned REST surfaces for friends, inventory, and equipment now require the resolved gameplay target rather than relying on bare tenant-plus-character IDs.
 - Item instances have stable visible refs for management views and exact targeting, and explicitly stackable item definitions merge through holder-local stack records instead of collapsing ordinary item-instance identity.

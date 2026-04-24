@@ -9,6 +9,14 @@ import java.util.TreeMap;
 import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorResourceStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorStateDto;
+import net.firedevops.firemud.entitymanagement.effect.DefaultEffectEvaluationService;
+import net.firedevops.firemud.entitymanagement.effect.EffectEvaluationInput;
+import net.firedevops.firemud.entitymanagement.effect.EffectEvaluationService;
+import net.firedevops.firemud.entitymanagement.effect.EffectModifier;
+import net.firedevops.firemud.entitymanagement.effect.EffectPayloadParser;
+import net.firedevops.firemud.entitymanagement.effect.EffectResourceValue;
+import net.firedevops.firemud.entitymanagement.effect.EffectSource;
+import net.firedevops.firemud.entitymanagement.effect.EvaluatedResourceValue;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import net.firedevops.firemud.entitymanagement.entity.ActorResourceState;
 import net.firedevops.firemud.entitymanagement.entity.Character;
@@ -29,9 +37,10 @@ public class ActorStateServiceImpl implements ActorStateService {
   private final ScopedCharacterResolver scopedCharacterResolver;
   private final ActorResourceStateRepository resourceStateRepository;
   private final ActorActiveConditionRepository activeConditionRepository;
+  private final EffectEvaluationService effectEvaluationService;
+  private final EffectPayloadParser effectPayloadParser;
   private final Clock clock;
 
-  @Autowired
   public ActorStateServiceImpl(
       ScopedCharacterResolver scopedCharacterResolver,
       ActorResourceStateRepository resourceStateRepository,
@@ -40,6 +49,24 @@ public class ActorStateServiceImpl implements ActorStateService {
         scopedCharacterResolver,
         resourceStateRepository,
         activeConditionRepository,
+        new DefaultEffectEvaluationService(),
+        new EffectPayloadParser(new tools.jackson.databind.ObjectMapper()),
+        Clock.systemUTC());
+  }
+
+  @Autowired
+  public ActorStateServiceImpl(
+      ScopedCharacterResolver scopedCharacterResolver,
+      ActorResourceStateRepository resourceStateRepository,
+      ActorActiveConditionRepository activeConditionRepository,
+      EffectEvaluationService effectEvaluationService,
+      EffectPayloadParser effectPayloadParser) {
+    this(
+        scopedCharacterResolver,
+        resourceStateRepository,
+        activeConditionRepository,
+        effectEvaluationService,
+        effectPayloadParser,
         Clock.systemUTC());
   }
 
@@ -47,10 +74,14 @@ public class ActorStateServiceImpl implements ActorStateService {
       ScopedCharacterResolver scopedCharacterResolver,
       ActorResourceStateRepository resourceStateRepository,
       ActorActiveConditionRepository activeConditionRepository,
+      EffectEvaluationService effectEvaluationService,
+      EffectPayloadParser effectPayloadParser,
       Clock clock) {
     this.scopedCharacterResolver = scopedCharacterResolver;
     this.resourceStateRepository = resourceStateRepository;
     this.activeConditionRepository = activeConditionRepository;
+    this.effectEvaluationService = effectEvaluationService;
+    this.effectPayloadParser = effectPayloadParser;
     this.clock = clock;
   }
 
@@ -77,12 +108,39 @@ public class ActorStateServiceImpl implements ActorStateService {
             .map(this::toDto)
             .sorted(Comparator.comparing(ActorConditionStateDto::conditionKey))
             .toList();
+    List<ActorResourceStateDto> evaluatedResources =
+        evaluateConditionEffects(characterId, resources, activeConditions);
     return new ActorStateDto(
-        tenantId,
-        gameInstanceId,
-        characterId,
-        new ArrayList<>(resources.values()),
-        activeConditions);
+        tenantId, gameInstanceId, characterId, evaluatedResources, activeConditions);
+  }
+
+  private List<ActorResourceStateDto> evaluateConditionEffects(
+      long characterId,
+      Map<String, ActorResourceStateDto> resources,
+      List<ActorConditionStateDto> activeConditions) {
+    List<EffectModifier> modifiers =
+        activeConditions.stream()
+            .flatMap(
+                condition ->
+                    effectPayloadParser
+                        .parseModifiers(
+                            condition.effectPayloadJson(), toEffectSource(characterId, condition))
+                        .stream())
+            .toList();
+    if (modifiers.isEmpty()) {
+      return new ArrayList<>(resources.values());
+    }
+    return effectEvaluationService
+        .evaluate(
+            new EffectEvaluationInput(
+                resources.values().stream()
+                    .map(resource -> toEffectResource(characterId, resource))
+                    .toList(),
+                modifiers))
+        .resources()
+        .stream()
+        .map(this::toDto)
+        .toList();
   }
 
   private void addCharacterBaseline(
@@ -125,5 +183,51 @@ public class ActorStateServiceImpl implements ActorStateService {
         condition.getStartedAt(),
         condition.getExpiresAt(),
         condition.getEffectPayloadJson());
+  }
+
+  private EffectResourceValue toEffectResource(long characterId, ActorResourceStateDto resource) {
+    return new EffectResourceValue(
+        resource.statKey(),
+        resource.currentValue(),
+        resource.maxValue(),
+        resource.baseValue(),
+        resource.primitiveKind(),
+        new EffectSource(resource.sourceType(), resource.sourceId(), String.valueOf(characterId)));
+  }
+
+  private EffectSource toEffectSource(long characterId, ActorConditionStateDto condition) {
+    return new EffectSource(
+        condition.sourceType(), condition.sourceId(), String.valueOf(characterId));
+  }
+
+  private ActorResourceStateDto toDto(EvaluatedResourceValue resource) {
+    EffectSource source = soleSource(resource.contributingSources());
+    return new ActorResourceStateDto(
+        resource.statKey(),
+        resource.currentValue(),
+        resource.maxValue(),
+        resource.baseValue(),
+        resource.primitiveKind(),
+        source.sourceType(),
+        blankToNull(source.sourceId()));
+  }
+
+  private EffectSource soleSource(List<EffectSource> sources) {
+    if (sources.size() == 1) {
+      return sources.get(0);
+    }
+    String sourceId =
+        sources.stream()
+            .map(EffectSource::sourceId)
+            .filter(value -> value != null && !value.isBlank())
+            .distinct()
+            .sorted()
+            .reduce((left, right) -> left + "," + right)
+            .orElse("");
+    return new EffectSource("EFFECT_EVALUATED", sourceId, "");
+  }
+
+  private String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
   }
 }

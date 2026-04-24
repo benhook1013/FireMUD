@@ -132,9 +132,11 @@ Only entities approved by the `EntityVisibilityPolicy` are returned; hidden NPCs
 
 ## Actor State Query
 
-`QueryActorState` is the gameplay-facing read contract for current actor resources and active conditions. Callers must present gameplay session attestation, tenant id, character id, game instance id, and the resolved playable-state scope. Entity Management validates the attestation and scope, reads the scoped character, emits baseline character stat resources, overlays persisted `actor_resource_states` rows, and returns active `actor_active_conditions` rows whose expiry has not passed. The response is transport-neutral state data for Game Logic and Game Session consumers; presentation layers must not infer authoritative gameplay state from transcript text.
+`QueryActorState` is the gameplay-facing read contract for current actor resources and active conditions. Callers must present gameplay session attestation, tenant id, character id, game instance id, and the resolved playable-state scope. Entity Management validates the attestation and scope, reads the scoped character, emits baseline character stat resources, overlays persisted `actor_resource_states` rows, applies active condition `effect_payload_json` modifiers through the shared effect evaluator, and returns active `actor_active_conditions` rows whose expiry has not passed. The response is transport-neutral state data for Game Logic and Game Session consumers; presentation layers must not infer authoritative gameplay state from transcript text.
 
-The current contract is a read substrate only. Effect application, condition expiry jobs, authored stat/condition definitions, equipment-derived modifiers, and combat resolution are owned by later stats/effect slices.
+Condition effect payloads are an internal persisted contract in this first slice. They may contain a top-level `modifiers` array whose entries include `operation`, `target_key`, `value`, optional `scope_kind`, optional `scope_key`, and optional `priority`; supported operations currently match the shared evaluator primitives: `ADD`, `MULTIPLY`, `CLAMP_MIN`, `CLAMP_MAX`, `GRANT_FLAG`, and `GRANT_CONDITION`.
+
+The current contract is still read-side only. Effect application, condition expiry jobs, authored stat/condition definitions, equipment-derived modifiers, and combat resolution are owned by later stats/effect slices.
 
 ## Implementation Status (LOOK Slice)
 

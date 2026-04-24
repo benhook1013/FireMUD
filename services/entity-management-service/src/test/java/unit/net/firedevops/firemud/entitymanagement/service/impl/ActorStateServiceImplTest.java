@@ -7,6 +7,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import net.firedevops.firemud.entitymanagement.effect.DefaultEffectEvaluationService;
+import net.firedevops.firemud.entitymanagement.effect.EffectPayloadParser;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import net.firedevops.firemud.entitymanagement.entity.ActorResourceState;
 import net.firedevops.firemud.entitymanagement.entity.Character;
@@ -32,6 +34,8 @@ class ActorStateServiceImplTest {
             scopedCharacterResolver,
             resourceStateRepository,
             activeConditionRepository,
+            new DefaultEffectEvaluationService(),
+            new EffectPayloadParser(new tools.jackson.databind.ObjectMapper()),
             Clock.fixed(NOW, ZoneOffset.UTC));
 
     Character character = new Character();
@@ -99,5 +103,75 @@ class ActorStateServiceImplTest {
     assertEquals(1, result.activeConditions().size());
     assertEquals("poisoned", result.activeConditions().get(0).conditionKey());
     assertEquals(2, result.activeConditions().get(0).stackCount());
+  }
+
+  @Test
+  void queryActorStateAppliesActiveConditionEffectPayloadsThroughSharedEvaluator() {
+    ScopedCharacterResolver scopedCharacterResolver = Mockito.mock(ScopedCharacterResolver.class);
+    ActorResourceStateRepository resourceStateRepository =
+        Mockito.mock(ActorResourceStateRepository.class);
+    ActorActiveConditionRepository activeConditionRepository =
+        Mockito.mock(ActorActiveConditionRepository.class);
+    ActorStateServiceImpl service =
+        new ActorStateServiceImpl(
+            scopedCharacterResolver,
+            resourceStateRepository,
+            activeConditionRepository,
+            new DefaultEffectEvaluationService(),
+            new EffectPayloadParser(new tools.jackson.databind.ObjectMapper()),
+            Clock.fixed(NOW, ZoneOffset.UTC));
+
+    Character character = new Character();
+    character.setId(7L);
+    character.setTenantId(1L);
+    character.setAccountId(41L);
+    character.setPlayableStateKey("instance-99");
+    character.setName("Test");
+    character.setAgility(5);
+    character.setExperience(123);
+    character.setHealth(80);
+    character.setIntelligence(6);
+    character.setLevel(3);
+    character.setMana(40);
+    character.setStamina(9);
+    character.setStrength(8);
+    when(scopedCharacterResolver.requireScopedCharacter(
+            1L, 7L, "99", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
+        .thenReturn(character);
+    when(resourceStateRepository.findByTenantIdAndGameInstanceIdAndCharacterIdOrderByStatKeyAsc(
+            1L, "99", 7L))
+        .thenReturn(List.of());
+
+    ActorActiveCondition condition = new ActorActiveCondition();
+    condition.setTenantId(1L);
+    condition.setGameInstanceId("99");
+    condition.setCharacterId(7L);
+    condition.setConditionKey("blessed");
+    condition.setStackCount(1);
+    condition.setSourceType("CONDITION");
+    condition.setSourceId("bless:1");
+    condition.setStartedAt(NOW.minusSeconds(5));
+    condition.setEffectPayloadJson(
+        """
+        {"modifiers":[
+          {"operation":"ADD","target_key":"strength","value":2},
+          {"operation":"MULTIPLY","target_key":"strength","value":"1.5"},
+          {"operation":"CLAMP_MAX","target_key":"strength","value":20}
+        ]}
+        """);
+    when(activeConditionRepository.findActiveForCharacter(1L, "99", 7L, NOW))
+        .thenReturn(List.of(condition));
+
+    var result =
+        service.queryActorState(1L, 7L, "99", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED);
+
+    var strength =
+        result.resources().stream()
+            .filter(resource -> resource.statKey().equals("strength"))
+            .findFirst()
+            .orElseThrow();
+    assertEquals(15L, strength.currentValue());
+    assertEquals("EFFECT_EVALUATED", strength.sourceType());
+    assertEquals("bless:1", strength.sourceId());
   }
 }
