@@ -917,6 +917,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setStagedAt(Instant.parse("2026-04-15T00:00:01Z"));
     command.setLastAttemptAt(Instant.parse("2026-04-15T00:00:01Z"));
     command.setAttemptCount(1);
+    command.setEnqueueSeq(33L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(commandRepository.findByCommandId("cmd-123")).thenReturn(Optional.of(command));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -944,6 +945,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("cmd-123", responseRef.get().getCommand().getCommandId());
     assertEquals("STAGED", responseRef.get().getCommand().getExecutionOutcome());
     assertEquals("LOOK", responseRef.get().getCommand().getSanitizedCommandText());
+    assertEquals(33L, responseRef.get().getCommand().getEnqueueSeq());
     assertEquals(
         Instant.parse("2026-04-15T00:00:01Z").toEpochMilli(),
         responseRef.get().getCommand().getStagedAtMs());
@@ -969,6 +971,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setAutomationWorkItemId("work-1");
     command.setRegionId("region-1");
     command.setRegionEpoch(12L);
+    command.setEnqueueSeq(44L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -1006,6 +1009,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("auto-123", responseRef.get().getCommand().getCommandId());
     assertEquals("dispatch-1", responseRef.get().getCommand().getAutomationDispatchId());
     assertEquals("work-1", responseRef.get().getCommand().getAutomationWorkItemId());
+    assertEquals(44L, responseRef.get().getCommand().getEnqueueSeq());
   }
 
   @Test
