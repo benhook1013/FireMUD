@@ -79,6 +79,7 @@ These are not broad audit topics anymore; they are real future slices with known
 7. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
    Remaining: build on the structured hot-buffer entry model by adding bounded durable transcript history when product retention policy becomes active.
 8. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
+   Remaining: the first proto contract guard now prevents ambiguous cross-service time fields such as bare `timeout`, `expires`, and `duration`; broader runtime adoption remains future work as timed gameplay systems land.
 9. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
 10. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
 11. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)

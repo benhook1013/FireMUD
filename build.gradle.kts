@@ -338,6 +338,12 @@ tasks.register<Exec>("checkGrpcPublicMethods") {
     commandLine("bash", "dev-tools/check-grpc-public-methods.sh")
 }
 
+tasks.register<Exec>("checkProtoTimeFields") {
+    group = "verification"
+    description = "Checks proto time-related field names for explicit time domains or units."
+    commandLine("python3", "dev-tools/check-proto-time-fields.py")
+}
+
 tasks.register<Exec>("validateObservabilityContract") {
     group = "verification"
     description = "Validates the design-level observability contract (metric names/labels) against dashboards and snippets."
@@ -391,6 +397,7 @@ tasks.named("check") {
         "checkFlywayVersions",
         "checkGrpcTransportConfig",
         "checkGrpcPublicMethods",
+        "checkProtoTimeFields",
         "validateObservabilityContract",
         "verifyPlatformSettingsDocs"
     )
