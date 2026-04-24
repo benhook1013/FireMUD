@@ -41,6 +41,14 @@ This family makes the multi-tenant gameplay boundary explicit before more system
 - runtime systems consistently distinguish tenant-scoped identity from realm- or instance-scoped playable state.
 - first-party bootstrap and connect-token issuance use the same realm-routing truth as text-client `PLAY` and reconnect flows.
 
+## Locked Direction
+
+- Canonical gameplay admission/routing identity remains an explicit bundle rather than collapsing into a two-slot shortcut payload.
+- Where routing freshness matters, callers should preserve `worldSlug`, `realmSlug`, resolved `gameInstanceId`, and `pointerVersion` together instead of replacing them with a narrower local surrogate.
+- Downstream gameplay APIs may derive narrower scoped identities after admission, but they must derive them from the canonical routing bundle rather than redefining admission truth.
+- Realm/world discovery and admission-pointer resolution must come from one canonical authority; no service may grow an independent local catalog as authority for player-facing routing decisions.
+- Read-through or cached copies of routing data are acceptable only as explicit caches of the canonical Game Session authority and must fail closed when stale or unavailable.
+
 ## Child Slices
 
 - [09.1-task-list-realm-catalog-and-admission-pointer-routing-vertical-slice.md](./09.1-task-list-realm-catalog-and-admission-pointer-routing-vertical-slice.md)
