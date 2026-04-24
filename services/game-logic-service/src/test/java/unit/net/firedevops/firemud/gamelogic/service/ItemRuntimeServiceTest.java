@@ -6,6 +6,9 @@ import static org.mockito.Mockito.when;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import net.firedevops.firemud.entitymanagement.v1.ActorConditionState;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
@@ -92,6 +95,30 @@ class ItemRuntimeServiceTest {
     assertThat(service.pickupItemFromRoom(pickupRequest).getInventoryItem().getItemName())
         .isEqualTo("Torch");
     assertThat(service.dropItemToRoom(dropRequest).hasError()).isFalse();
+  }
+
+  @Test
+  void applyActorConditionDelegatesToEntityRuntime() {
+    ApplyActorConditionRequest request =
+        ApplyActorConditionRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("9")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setConditionKey("blocking")
+            .setSourceType("ACTION_STATE")
+            .setSessionAttestation("attestation")
+            .build();
+    when(entityStub.applyActorCondition(request))
+        .thenReturn(
+            ApplyActorConditionResponse.newBuilder()
+                .setActiveCondition(
+                    ActorConditionState.newBuilder().setConditionKey("blocking").build())
+                .build());
+
+    ApplyActorConditionResponse response = service.applyActorCondition(request);
+
+    assertThat(response.getActiveCondition().getConditionKey()).isEqualTo("blocking");
   }
 
   @Test

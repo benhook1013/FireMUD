@@ -5,6 +5,8 @@ import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
@@ -82,6 +84,16 @@ public class ItemRuntimeService {
     } catch (StatusRuntimeException ex) {
       return DropItemToRoomResponse.newBuilder()
           .setError(error("DropItemToRoom", "INVENTORY_UNAVAILABLE", ex))
+          .build();
+    }
+  }
+
+  public ApplyActorConditionResponse applyActorCondition(ApplyActorConditionRequest request) {
+    try {
+      return entityStub.applyActorCondition(request);
+    } catch (StatusRuntimeException ex) {
+      return ApplyActorConditionResponse.newBuilder()
+          .setError(error("ApplyActorCondition", "ACTOR_STATE_UNAVAILABLE", ex))
           .build();
     }
   }

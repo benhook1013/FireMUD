@@ -35,6 +35,8 @@ service GameLogicService {
       returns (entity_management.v1.PickupItemFromRoomResponse);
   rpc DropItemToRoom(entity_management.v1.DropItemToRoomRequest)
       returns (entity_management.v1.DropItemToRoomResponse);
+  rpc ApplyActorCondition(entity_management.v1.ApplyActorConditionRequest)
+      returns (entity_management.v1.ApplyActorConditionResponse);
   rpc PickupVisibleRoomItem(PickupVisibleRoomItemRequest)
       returns (entity_management.v1.PickupItemFromRoomResponse);
   rpc DropCarriedItem(DropCarriedItemRequest)
