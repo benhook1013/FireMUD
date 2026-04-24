@@ -156,6 +156,45 @@ These example rules enforce the target-state player-centric SLOs defined in the 
     summary: TCP Proxy entry-path availability below 1-day SLO
     description: One or more approved scopes have sustained connection failures on TCP Proxy entry paths over the compliance window. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
 
+- alert: PlayerFlowCanaryLoginFailed
+  expr: max_over_time(playerflow_canary_success{flow="login"}[2m]) == 0
+  for: 2m
+  labels:
+    service: spring-cloud-gateway
+    component: playerflow-canary
+    severity: P0
+    owner: platform
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#login-success-ratio-below-slo
+  annotations:
+    summary: Synthetic login canary failing
+    description: The independent player-flow login canary is failing on at least one monitored public path; treat this as player-impacting even when live traffic is sparse.
+
+- alert: PlayerFlowCanaryCommandFailed
+  expr: max_over_time(playerflow_canary_success{flow="command"}[2m]) == 0
+  for: 2m
+  labels:
+    service: game-session-service
+    component: playerflow-canary
+    severity: P1
+    owner: gameplay
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
+  annotations:
+    summary: Synthetic command canary failing
+    description: The independent player-flow representative command canary is failing after gameplay admission on at least one monitored public path.
+
+- alert: PlayerFlowCanaryLatencyHigh
+  expr: max_over_time(playerflow_canary_latency_ms{flow="command"}[5m]) > 1000
+  for: 5m
+  labels:
+    service: game-session-service
+    component: playerflow-canary
+    severity: P1
+    owner: gameplay
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
+  annotations:
+    summary: Synthetic command canary latency high
+    description: The independent player-flow representative command canary has exceeded 1000ms for at least one monitored public path.
+
 - alert: WebSocketEntryPathBlackboxUnavailable
   expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0
   for: 2m
