@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
@@ -73,6 +75,7 @@ public class TickServiceImpl implements TickService {
   private final SessionContextService sessionContextService;
   private final DurableGameplayCommandExecutionService durableGameplayCommandExecutionService;
   private final AutomationScriptingClient automationScriptingClient;
+  private final ObjectMapper objectMapper = new ObjectMapper();
 
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs;
@@ -204,6 +207,8 @@ public class TickServiceImpl implements TickService {
       String commandId,
       String command,
       boolean requiresSoloTick) {
+    requireText(commandId, "command_id");
+    requireText(command, "command");
     Long normalizedTenantId = tenantId != null ? tenantId : 0L;
     Long normalizedQueueTargetId = queueTargetId != null ? queueTargetId : 0L;
     try (GameplayLoggingContext ignored =
@@ -550,8 +555,10 @@ public class TickServiceImpl implements TickService {
         gameInstanceId,
         batch.getSelectedWorkManifestDigest(),
         replayDigest);
-    markBatchManifestMismatch(batch, replayEntries, replayDigest);
-    return createBatch("PENDING_REPLAY", tenantId, gameInstanceId, false, ownership, replayEntries);
+    List<QueuedCommandEnvelope> sealedEntries = loadSealedReplayEntries(batch);
+    restorePendingProjection(tenantId, gameInstanceId, replayEntries, sealedEntries);
+    markBatchManifestMismatch(batch, sealedEntries, replayDigest);
+    return createBatch("PENDING_REPLAY", tenantId, gameInstanceId, false, ownership, sealedEntries);
   }
 
   private TickBatch createBatch(
@@ -562,6 +569,7 @@ public class TickServiceImpl implements TickService {
       OwnershipSnapshot ownership,
       List<QueuedCommandEnvelope> entries) {
     Instant now = Instant.now();
+    requireDurableCommandIdentifiers(entries);
     List<CommandSelection> selections = commandSelections(entries);
     TickBatch batch = new TickBatch();
     batch.setTickBatchId("tb-" + UUID.randomUUID());
@@ -610,6 +618,93 @@ public class TickServiceImpl implements TickService {
         entries, "RETRY_QUEUED", "PENDING", now, "MANIFEST_MISMATCH", failureMessage, false);
   }
 
+  private List<QueuedCommandEnvelope> loadSealedReplayEntries(TickBatch batch) {
+    try {
+      JsonNode root = objectMapper.readTree(batch.getSelectedWorkManifestJson());
+      JsonNode items = root.path("items");
+      if (!items.isArray() || items.isEmpty()) {
+        throw new IllegalStateException(
+            "Sealed replay manifest is missing item entries for tickBatchId="
+                + batch.getTickBatchId());
+      }
+      List<String> commandIds = new ArrayList<>();
+      List<Boolean> requiresSoloTicks = new ArrayList<>();
+      for (JsonNode item : items) {
+        String commandId = item.path("commandId").asText("").trim();
+        if (commandId.isBlank()) {
+          throw new IllegalStateException(
+              "Sealed replay manifest requires commandId for tickBatchId="
+                  + batch.getTickBatchId());
+        }
+        commandIds.add(commandId);
+        requiresSoloTicks.add(item.path("requiresSoloTick").asBoolean(false));
+      }
+      Map<String, GameplayCommand> commandsById =
+          gameplayCommandRepository.findByCommandIdIn(commandIds).stream()
+              .collect(
+                  java.util.stream.Collectors.toMap(GameplayCommand::getCommandId, cmd -> cmd));
+      List<QueuedCommandEnvelope> entries = new ArrayList<>(commandIds.size());
+      for (int index = 0; index < commandIds.size(); index++) {
+        String commandId = commandIds.get(index);
+        GameplayCommand command = commandsById.get(commandId);
+        if (command == null) {
+          throw new IllegalStateException(
+              "Sealed replay manifest references missing gameplay command "
+                  + commandId
+                  + " for tickBatchId="
+                  + batch.getTickBatchId());
+        }
+        entries.add(
+            new QueuedCommandEnvelope(
+                requiresSoloTicks.get(index), commandId, command.getCommandText()));
+      }
+      return List.copyOf(entries);
+    } catch (java.io.IOException ex) {
+      throw new IllegalStateException(
+          "Failed to restore sealed replay manifest for tickBatchId=" + batch.getTickBatchId(), ex);
+    }
+  }
+
+  private void restorePendingProjection(
+      Long tenantId,
+      Long gameInstanceId,
+      List<QueuedCommandEnvelope> pendingEntries,
+      List<QueuedCommandEnvelope> sealedEntries) {
+    Instant now = Instant.now();
+    Set<String> sealedCommandIds =
+        sealedEntries.stream()
+            .map(QueuedCommandEnvelope::commandId)
+            .collect(java.util.stream.Collectors.toSet());
+    List<QueuedCommandEnvelope> redisOnlyEntries =
+        pendingEntries.stream()
+            .filter(
+                entry ->
+                    entry.commandId() != null
+                        && !entry.commandId().isBlank()
+                        && !sealedCommandIds.contains(entry.commandId()))
+            .toList();
+    if (!redisOnlyEntries.isEmpty()) {
+      requeueEntries(tenantId, gameInstanceId, redisOnlyEntries);
+      updateGameplayCommands(
+          redisOnlyEntries,
+          "RETRY_QUEUED",
+          "PENDING",
+          now,
+          "MANIFEST_MISMATCH",
+          "Redis pending entry was returned to queue because sealed replay manifest won",
+          false);
+    }
+    String pendingKey = pendingKey(tenantId, gameInstanceId);
+    redisTemplate.delete(pendingKey);
+    for (QueuedCommandEnvelope entry : sealedEntries) {
+      redisTemplate
+          .opsForList()
+          .rightPush(
+              pendingKey,
+              queuePayload(entry.requiresSoloTick(), entry.commandId(), entry.command()));
+    }
+  }
+
   private void persistEffects(
       TickBatch batch, Long gameInstanceId, Instant stagedAt, List<QueuedCommandEnvelope> entries) {
     if (entries.isEmpty()) {
@@ -650,6 +745,7 @@ public class TickServiceImpl implements TickService {
     if (entries.isEmpty()) {
       return List.of();
     }
+    requireDurableCommandIdentifiers(entries);
     Map<String, GameplayCommand> commandsById =
         loadCommands(entries).stream()
             .collect(java.util.stream.Collectors.toMap(GameplayCommand::getCommandId, cmd -> cmd));
@@ -790,6 +886,18 @@ public class TickServiceImpl implements TickService {
               queueKey(tenantId, gameInstanceId),
               queuePayload(
                   command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText()));
+    }
+  }
+
+  private void requeueEntries(
+      Long tenantId, Long gameInstanceId, List<QueuedCommandEnvelope> entries) {
+    for (int index = entries.size() - 1; index >= 0; index--) {
+      QueuedCommandEnvelope entry = entries.get(index);
+      redisTemplate
+          .opsForList()
+          .leftPush(
+              queueKey(tenantId, gameInstanceId),
+              queuePayload(entry.requiresSoloTick(), entry.commandId(), entry.command()));
     }
   }
 
@@ -971,6 +1079,15 @@ public class TickServiceImpl implements TickService {
   private void requireText(String value, String fieldName) {
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(fieldName + " is required");
+    }
+  }
+
+  private void requireDurableCommandIdentifiers(List<QueuedCommandEnvelope> entries) {
+    for (QueuedCommandEnvelope entry : entries) {
+      if (entry.commandId() == null || entry.commandId().isBlank()) {
+        throw new IllegalStateException(
+            "Durable tick batching requires linked command ids for all queued commands");
+      }
     }
   }
 

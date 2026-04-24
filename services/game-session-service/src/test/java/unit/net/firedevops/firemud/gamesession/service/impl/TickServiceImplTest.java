@@ -139,11 +139,9 @@ class TickServiceImplTest {
   }
 
   @Test
-  void enqueueCommandKeepsLegacyPayloadShapeWhenCommandIdIsAbsent() {
-    service.enqueueCommand(1L, 2L, "look", true);
-    ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
-    verify(listOps).rightPush(eq("gamesession:tick:queue:1:2"), payloadCaptor.capture());
-    org.junit.jupiter.api.Assertions.assertEquals("S|-|look", payloadCaptor.getValue());
+  void enqueueCommandRejectsMissingCommandId() {
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalArgumentException.class, () -> service.enqueueCommand(1L, 2L, null, "look", true));
   }
 
   @Test
@@ -217,7 +215,7 @@ class TickServiceImplTest {
               return 1L;
             });
 
-    service.enqueueCommand(9L, 2L, "look", false);
+    service.enqueueCommand(9L, 2L, "cmd-ctx", "look", false);
 
     org.junit.jupiter.api.Assertions.assertNull(MDC.get("tenantId"));
     org.junit.jupiter.api.Assertions.assertNull(MDC.get("gameInstanceId"));
@@ -586,7 +584,10 @@ class TickServiceImplTest {
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
     existingBatch.setBatchSource("FRESH_STAGE");
-    existingBatch.setSelectedWorkManifestDigest("digest-old");
+    String sealedManifest = replayManifestJson((TickServiceImpl) service, List.of("N|cmd-1|look"));
+    existingBatch.setSelectedWorkManifestJson(sealedManifest);
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest((TickServiceImpl) service, List.of("N|cmd-1|look")));
     existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
     net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
     command.setEnqueueSeq(5L);
@@ -602,8 +603,51 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", existingBatch.getStatus());
     org.junit.jupiter.api.Assertions.assertEquals(
         "MANIFEST_MISMATCH", existingBatch.getFailureCode());
+    verify(redisTemplate).delete("gamesession:tick:pending:1:2");
+    verify(listOps).rightPush("gamesession:tick:pending:1:2", "N|cmd-1|look");
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("tick_manifest_mismatch_total").counter().count(), 0.001);
+  }
+
+  @Test
+  void processTickRequeuesRedisOnlyEntriesWhenReplayFallsBackToSealedManifest() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(2L);
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-1|look", "N|cmd-2|wave"));
+    net.firedevops.firemud.gamesession.entity.TickBatch existingBatch =
+        new net.firedevops.firemud.gamesession.entity.TickBatch();
+    existingBatch.setTickBatchId("tb-existing");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setBatchSource("FRESH_STAGE");
+    String sealedManifest = replayManifestJson((TickServiceImpl) service, List.of("N|cmd-1|look"));
+    existingBatch.setSelectedWorkManifestJson(sealedManifest);
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest((TickServiceImpl) service, List.of("N|cmd-1|look")));
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand first = gameplayCommand("cmd-1");
+    first.setEnqueueSeq(5L);
+    net.firedevops.firemud.gamesession.entity.GameplayCommand second = gameplayCommand("cmd-2");
+    second.setCommandText("wave");
+    second.setSanitizedCommandText("wave");
+    second.setEnqueueSeq(6L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
+        .thenReturn(List.of(first, second));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    service.processTick(1L, 2L);
+
+    verify(redisTemplate).delete("gamesession:tick:pending:1:2");
+    verify(listOps).rightPush("gamesession:tick:pending:1:2", "N|cmd-1|look");
+    verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-2|wave");
   }
 
   private static net.firedevops.firemud.gamesession.entity.GameplayCommand gameplayCommand(
@@ -649,6 +693,11 @@ class TickServiceImplTest {
   }
 
   private static String replayManifestDigest(TickServiceImpl service, List<Object> rawEntries) {
+    String manifest = replayManifestJson(service, rawEntries);
+    return shortHash(service, manifest);
+  }
+
+  private static String replayManifestJson(TickServiceImpl service, List<Object> rawEntries) {
     try {
       var parseMethod = TickServiceImpl.class.getDeclaredMethod("parseQueuedCommand", String.class);
       parseMethod.setAccessible(true);
@@ -663,12 +712,19 @@ class TickServiceImplTest {
       var manifestMethod =
           TickServiceImpl.class.getDeclaredMethod("selectedWorkManifest", List.class);
       manifestMethod.setAccessible(true);
-      String manifest = (String) manifestMethod.invoke(service, selections);
+      return (String) manifestMethod.invoke(service, selections);
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException("Failed to compute replay manifest json", e);
+    }
+  }
+
+  private static String shortHash(TickServiceImpl service, String value) {
+    try {
       var hashMethod = TickServiceImpl.class.getDeclaredMethod("shortHash", String.class);
       hashMethod.setAccessible(true);
-      return (String) hashMethod.invoke(service, manifest);
+      return (String) hashMethod.invoke(service, value);
     } catch (ReflectiveOperationException e) {
-      throw new IllegalStateException("Failed to compute replay manifest digest", e);
+      throw new IllegalStateException("Failed to compute short hash", e);
     }
   }
 }
