@@ -17,6 +17,7 @@ import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorResourceStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorStateDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
+import net.firedevops.firemud.entitymanagement.service.ActorConditionMutationService;
 import net.firedevops.firemud.entitymanagement.service.ActorStateService;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
@@ -26,6 +27,8 @@ import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
@@ -1317,6 +1320,106 @@ class EntityManagementGrpcServiceTest {
     assertEquals(90L, ref.get().getResources(0).getMaxValue());
     assertEquals("poisoned", ref.get().getActiveConditions(0).getConditionKey());
     assertEquals("2026-04-24T00:00:30Z", ref.get().getActiveConditions(0).getExpiresAt());
+  }
+
+  @Test
+  void applyActorConditionPersistsGameplayAttestedCondition() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    ActorStateService actorStateService = Mockito.mock(ActorStateService.class);
+    ActorConditionMutationService conditionMutationService =
+        Mockito.mock(ActorConditionMutationService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    Mockito.when(
+            conditionMutationService.applyCondition(
+                1L,
+                7L,
+                "99",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED,
+                "blocking",
+                1,
+                "ACTION_STATE",
+                "effect-1",
+                Instant.parse("2026-04-24T00:00:05Z"),
+                "{\"modifiers\":[]}"))
+        .thenReturn(
+            new ActorConditionStateDto(
+                "blocking",
+                1,
+                "ACTION_STATE",
+                "effect-1",
+                Instant.parse("2026-04-24T00:00:00Z"),
+                Instant.parse("2026-04-24T00:00:05Z"),
+                "{\"modifiers\":[]}"));
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            actorStateService,
+            conditionMutationService,
+            digestService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ApplyActorConditionResponse> ref = new AtomicReference<>();
+    service.applyActorCondition(
+        ApplyActorConditionRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("99")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED)
+            .setSessionAttestation("attestation")
+            .setConditionKey("blocking")
+            .setStackCount(1)
+            .setSourceType("ACTION_STATE")
+            .setSourceId("effect-1")
+            .setExpiresAt("2026-04-24T00:00:05Z")
+            .setEffectPayloadJson("{\"modifiers\":[]}")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyActorConditionResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("blocking", ref.get().getActiveCondition().getConditionKey());
+    assertEquals("2026-04-24T00:00:05Z", ref.get().getActiveCondition().getExpiresAt());
+    verify(conditionMutationService)
+        .applyCondition(
+            1L,
+            7L,
+            "99",
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_ISOLATED,
+            "blocking",
+            1,
+            "ACTION_STATE",
+            "effect-1",
+            Instant.parse("2026-04-24T00:00:05Z"),
+            "{\"modifiers\":[]}");
   }
 
   @Test

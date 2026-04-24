@@ -26,6 +26,7 @@ service EntityManagementService {
   rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
   rpc FindCharacterByName(FindCharacterByNameRequest) returns (FindCharacterByNameResponse);
   rpc QueryActorState(QueryActorStateRequest) returns (QueryActorStateResponse);
+  rpc ApplyActorCondition(ApplyActorConditionRequest) returns (ApplyActorConditionResponse);
   rpc ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse);
   rpc CleanupRuntimeInstance(CleanupRuntimeInstanceRequest) returns (CleanupRuntimeInstanceResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
@@ -352,6 +353,25 @@ message QueryActorStateResponse {
   repeated ActorResourceValue resources = 4;
   repeated ActorConditionState active_conditions = 5;
   shared.v1.ErrorDetail error = 6;
+}
+
+message ApplyActorConditionRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string game_instance_id = 3;
+  PlayableStateScope playable_state_scope = 4;
+  string session_attestation = 5;
+  string condition_key = 6;
+  int32 stack_count = 7;
+  string source_type = 8;
+  string source_id = 9;
+  string expires_at = 10;
+  string effect_payload_json = 11;
+}
+
+message ApplyActorConditionResponse {
+  ActorConditionState active_condition = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message ListRoomEntitiesRequest {
