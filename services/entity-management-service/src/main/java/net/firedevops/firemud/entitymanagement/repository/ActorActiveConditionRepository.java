@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.repository;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -26,6 +27,14 @@ public interface ActorActiveConditionRepository extends JpaRepository<ActorActiv
       @Param("gameInstanceId") String gameInstanceId,
       @Param("characterId") Long characterId,
       @Param("now") Instant now);
+
+  Optional<ActorActiveCondition>
+      findFirstByTenantIdAndGameInstanceIdAndCharacterIdAndSourceTypeAndSourceIdOrderByIdAsc(
+          Long tenantId,
+          String gameInstanceId,
+          Long characterId,
+          String sourceType,
+          String sourceId);
 
   @Modifying
   @Query(

@@ -50,14 +50,25 @@ public class ActorConditionMutationServiceImpl implements ActorConditionMutation
       String effectPayloadJson) {
     scopedCharacterResolver.requireScopedCharacter(
         tenantId, characterId, gameInstanceId, playableStateScope);
+    String normalizedSourceType = requireText(sourceType, "sourceType");
+    String normalizedSourceId = blankToNull(sourceId);
+    if (normalizedSourceId != null) {
+      var existing =
+          activeConditionRepository
+              .findFirstByTenantIdAndGameInstanceIdAndCharacterIdAndSourceTypeAndSourceIdOrderByIdAsc(
+                  tenantId, gameInstanceId, characterId, normalizedSourceType, normalizedSourceId);
+      if (existing.isPresent()) {
+        return toDto(existing.orElseThrow());
+      }
+    }
     ActorActiveCondition condition = new ActorActiveCondition();
     condition.setTenantId(tenantId);
     condition.setGameInstanceId(gameInstanceId);
     condition.setCharacterId(characterId);
     condition.setConditionKey(requireText(conditionKey, "conditionKey"));
     condition.setStackCount(stackCount <= 0 ? 1 : stackCount);
-    condition.setSourceType(requireText(sourceType, "sourceType"));
-    condition.setSourceId(blankToNull(sourceId));
+    condition.setSourceType(normalizedSourceType);
+    condition.setSourceId(normalizedSourceId);
     Instant now = clock.instant();
     condition.setStartedAt(now);
     condition.setExpiresAt(expiresAt);

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.repository.ActorActiveConditionRepository;
@@ -73,5 +74,43 @@ class ActorConditionMutationServiceImplTest {
     int expired = service.expireConditions(NOW.minusSeconds(1));
 
     assertEquals(3, expired);
+  }
+
+  @Test
+  void applyConditionReturnsExistingConditionForSameSourceIdentity() {
+    ActorActiveConditionRepository activeConditionRepository =
+        Mockito.mock(ActorActiveConditionRepository.class);
+    ActorActiveCondition existing = new ActorActiveCondition();
+    existing.setConditionKey("blocking");
+    existing.setStackCount(1);
+    existing.setSourceType("ACTION_STATE");
+    existing.setSourceId("effect-1");
+    existing.setStartedAt(NOW);
+    existing.setExpiresAt(NOW.plusSeconds(5));
+    when(activeConditionRepository
+            .findFirstByTenantIdAndGameInstanceIdAndCharacterIdAndSourceTypeAndSourceIdOrderByIdAsc(
+                1L, "99", 7L, "ACTION_STATE", "effect-1"))
+        .thenReturn(Optional.of(existing));
+    ActorConditionMutationServiceImpl service =
+        new ActorConditionMutationServiceImpl(
+            Mockito.mock(ScopedCharacterResolver.class),
+            activeConditionRepository,
+            Clock.fixed(NOW, ZoneOffset.UTC));
+
+    var result =
+        service.applyCondition(
+            1L,
+            7L,
+            "99",
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
+            "blocking",
+            1,
+            " ACTION_STATE ",
+            " effect-1 ",
+            NOW.plusSeconds(5),
+            null);
+
+    assertEquals("blocking", result.conditionKey());
+    verify(activeConditionRepository, Mockito.never()).save(Mockito.any());
   }
 }
