@@ -12,6 +12,7 @@ public enum TextCommandType {
   PLAY,
   HELP,
   AFK,
+  BLOCK,
   WHO,
   FRIENDS,
   INVENTORY,
@@ -48,6 +49,7 @@ public enum TextCommandType {
       case "PLAY" -> PLAY;
       case "HELP" -> HELP;
       case "AFK", "BRB" -> AFK;
+      case "BLOCK", "GUARD" -> BLOCK;
       case "WHO" -> WHO;
       case "FRIENDS" -> FRIENDS;
       case "INVENTORY", "INV", "I" -> INVENTORY;

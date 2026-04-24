@@ -66,7 +66,7 @@ public sealed interface TextCommandPayload
   static TextCommandPayload fromLegacy(TextCommandType type, List<String> args) {
     List<String> safeArgs = args == null ? List.of() : List.copyOf(args);
     return switch (type) {
-      case NOOP, LOGOUT -> new None();
+      case NOOP, LOGOUT, BLOCK -> new None();
       case AFK -> new AfkRequest(true);
       case WORLDS, LOOK, QUICKLOOK, WHO, FRIENDS, INVENTORY, EQUIPMENT ->
           new ViewRequest(type.name());

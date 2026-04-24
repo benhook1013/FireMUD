@@ -4,6 +4,7 @@ package net.firedevops.firemud.gamesession.command.text;
 public enum TextCommandActionTag {
   MOVEMENT,
   COMMUNICATION,
+  COMBAT,
   INVENTORY,
   WORLD_BROWSE,
   SOCIAL_PRESENCE,

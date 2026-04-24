@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.client;
 
 import jakarta.annotation.PostConstruct;
+import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
@@ -8,6 +9,8 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsRequest;
@@ -648,6 +651,41 @@ public class GameLogicClient
       LOG.warn("Game Logic container take failed", ex);
       return TakeItemFromContainerResponse.newBuilder()
           .setError(error("CONTAINER_UNAVAILABLE", "Container service unavailable"))
+          .build();
+    }
+  }
+
+  public ApplyActorConditionResponse applyActorCondition(
+      SessionContext context,
+      String conditionKey,
+      String sourceType,
+      String sourceId,
+      Instant expiresAt,
+      String effectPayloadJson) {
+    ApplyActorConditionRequest.Builder request =
+        ApplyActorConditionRequest.newBuilder()
+            .setTenantId(Long.toString(context.tenantId()))
+            .setCharacterId(Long.toString(context.characterId()))
+            .setGameInstanceId(Long.toString(context.gameInstanceId()))
+            .setPlayableStateScope(resolvePlayableStateScope(context))
+            .setSessionAttestation(sessionAttestation(context, context.roomInstanceId()))
+            .setConditionKey(conditionKey)
+            .setSourceType(sourceType);
+    if (StringUtils.hasText(sourceId)) {
+      request.setSourceId(sourceId);
+    }
+    if (expiresAt != null) {
+      request.setExpiresAt(expiresAt.toString());
+    }
+    if (StringUtils.hasText(effectPayloadJson)) {
+      request.setEffectPayloadJson(effectPayloadJson);
+    }
+    try {
+      return callStub().applyActorCondition(request.build());
+    } catch (RuntimeException ex) {
+      LOG.warn("Game Logic actor condition apply failed", ex);
+      return ApplyActorConditionResponse.newBuilder()
+          .setError(error("ACTOR_STATE_UNAVAILABLE", "Actor state service unavailable"))
           .build();
     }
   }

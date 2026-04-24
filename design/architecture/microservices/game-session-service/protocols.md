@@ -43,6 +43,7 @@ PLAY <world> [realm] [character]
 | `INVENTORY` / `INV HERE` | Lists carried items or the current room-ground item holder. The command is rendered by Game Session, but item state is read through Game Logic and Entity Management. | `INV HERE` |
 | `GET <item>` / `DROP <item>` | Moves a visible room-ground item into carried inventory, or a carried item into the current room. Game Session forwards the raw selector and quantity to Game Logic; Game Logic resolves names, visible refs, container refs, and stack refs before Entity Management mutates state. | `GET torch1` |
 | `EQUIPMENT` / `WEAR <item>` / `REMOVE <item>` | Lists equipped items and binds or unbinds a carried item through Game Logic and Entity Management equipment validation. | `WEAR sword1` |
+| `BLOCK` / `GUARD` | Applies the short-lived `blocking` action state through the durable gameplay-command path. Game Session enqueues the action, Game Logic routes the actor-state mutation, and Entity Management owns the active condition row and expiry. | `BLOCK` |
 | `SAY <text>` | Standard room-local communication action. Targets the caller's current room and uses the shared communication model to resolve listeners and any observer/interceptor views. | `SAY Hello travelers` |
 | `WHISPER <character> <text>` | Standard directed in-room communication action. Targets one nearby character in the current room; baseline default is full content for sender and target, with observer handling controlled by communication-type and target rules. | `WHISPER Sora The forge smells of brimstone` |
 | `TELL <character> <text>` | Standard direct communication action. Targets one character directly, outside room scope by default, while still flowing through the shared communication model and Game Logic. | `TELL Sora Meet me at the forge` |
@@ -337,7 +338,7 @@ Metrics `gamesession.command.look.invocations` and `gamesession.command.look.fai
 ## Response Format
 
 - System commands such as `LOGIN`, `LOGON`, `PING`, and lightweight state queries are allowed to produce synchronous responses without enqueuing gameplay actions. Their side effects stay limited to session binding, health checks, or read-only projections.
-- Gameplay commands such as `LOOK`, `SAY`, movement, and combat are tick-driven actions. Game Session validates and normalizes them, emits enqueue metadata, and must not perform gameplay state mutations outside the tick executor.
+- Gameplay commands such as `LOOK`, `SAY`, movement, `BLOCK`, and later combat are tick-driven actions. Game Session validates and normalizes them, emits enqueue metadata, and must not perform gameplay state mutations outside the tick executor.
 - If the interpreter produces both immediate text and enqueue metadata and the enqueue step fails, for example because of a Redis outage, Game Session surfaces a single `ERROR` response and does not report success followed by a dropped action.
 - Every response is plain text. The first line is either `OK <COMMAND>` or `ERROR <CODE> <message>`.
 - Success responses may include additional lines describing the outcome.

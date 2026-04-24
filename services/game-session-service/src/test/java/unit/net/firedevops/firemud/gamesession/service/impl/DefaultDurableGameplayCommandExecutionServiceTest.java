@@ -7,6 +7,8 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
+import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandlingResult;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
@@ -41,6 +43,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   private final CommunicationCommandHandler communicationCommandHandler =
       Mockito.mock(CommunicationCommandHandler.class);
   private final AfkCommandHandler afkCommandHandler = Mockito.mock(AfkCommandHandler.class);
+  private final ActionStateCommandHandler actionStateCommandHandler =
+      Mockito.mock(ActionStateCommandHandler.class);
   private final DurableGameplayReplayService durableGameplayReplayService =
       Mockito.mock(DurableGameplayReplayService.class);
   private final MovementEffectIdempotencyService movementEffectIdempotencyService =
@@ -62,6 +66,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             itemCommandHandler,
             communicationCommandHandler,
             afkCommandHandler,
+            actionStateCommandHandler,
             durableGameplayReplayService,
             movementEffectIdempotencyService,
             playerOutputDeliveryService);
@@ -249,6 +254,32 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     assertThat(result.gameplayResult()).isEqualTo("APPLIED");
     verify(durableGameplayReplayService)
         .save(22L, 42L, "tfx-5", true, null, null, java.util.List.of(output));
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+  }
+
+  @Test
+  void executeAppliesDurableBlockAndStoresReplay() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("BLOCK", "BLOCK");
+    TickEffect effect = tickEffect("tfx-6", "cmd-6");
+    TextCommand parsed = new TextCommand(TextCommandType.BLOCK, java.util.List.of(), "BLOCK");
+    PlayerOutput output = PlayerOutput.notice("You brace for the next blow.");
+    when(parser.parse("BLOCK")).thenReturn(parsed);
+    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-6")).thenReturn(Optional.empty());
+    when(actionStateCommandHandler.handle(context, parsed, "tfx-6"))
+        .thenReturn(
+            new ActionStateCommandHandlingResult(
+                CommandEnqueueResult.success(), java.util.List.of(output)));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("APPLIED");
+    assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
+    assertThat(result.gameplayResult()).isEqualTo("APPLIED");
+    verify(durableGameplayReplayService)
+        .save(22L, 42L, "tfx-6", true, null, null, java.util.List.of(output));
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
   }
 
