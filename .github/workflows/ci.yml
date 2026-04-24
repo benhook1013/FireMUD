@@ -232,6 +232,7 @@ jobs:
         run: |
           bash ./dev-tools/tests/reset-service-db-contract.sh
           bash ./dev-tools/tests/preflight-contract.sh
+          bash ./dev-tools/tests/secret-compliance-contract.sh
 
   yaml-lint:
     name: YAML Lint

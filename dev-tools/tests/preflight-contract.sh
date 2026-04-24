@@ -11,6 +11,51 @@ RENDERED_MANIFEST="$TMP_DIR/hobby-rendered.yaml"
 REPORT_PATH="$TMP_DIR/preflight-report.json"
 TRAFFIC_EVIDENCE="$TMP_DIR/traffic-open.json"
 
+python3 - <<'PY' "$ROOT_DIR"
+import pathlib
+import sys
+import yaml
+
+root = pathlib.Path(sys.argv[1])
+required_paths = [
+    "internalBindings.postgres.endpoint",
+    "internalBindings.postgres.credentialsRef",
+    "internalBindings.redis.coordination.endpoint",
+    "internalBindings.redis.cache.endpoint",
+    "internalBindings.jwt.signingKeysRef",
+    "internalBindings.jwt.jwksRef",
+    "internalBindings.certificates.issuerRef",
+    "internalBindings.certificates.workloadMtlsRef",
+    "internalBindings.certificates.gatewayInternalWsListenerRef",
+    "internalBindings.certificates.tcpProxyBridgeClientRef",
+    "internalBindings.certificates.backupControlPlaneClientRef",
+    "internalBindings.registry.imagePullSecretRef",
+    "backupStorage.bucket",
+    "backupStorage.bindingRef",
+    "assetStorage.bucket",
+    "assetStorage.bindingRef",
+    "operatorCredentials.bindingRef",
+    "serviceDiscovery.mode",
+]
+
+def get(data, dotted):
+    cur = data
+    for part in dotted.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+for env in ("production", "staging", "hobby-self-hosted"):
+    ref = pathlib.Path(f"design/operations/environments/{env}/expected-bindings.yaml")
+    data = yaml.safe_load((root / ref).read_text(encoding="utf-8"))
+    if data.get("environment") != env:
+        raise SystemExit(f"{ref}: environment mismatch")
+    missing = [path for path in required_paths if not get(data, path)]
+    if missing:
+        raise SystemExit(f"{ref}: missing required binding paths: {missing}")
+PY
+
 cat >"$RENDERED_MANIFEST" <<'YAML'
 apiVersion: v1
 kind: ConfigMap
