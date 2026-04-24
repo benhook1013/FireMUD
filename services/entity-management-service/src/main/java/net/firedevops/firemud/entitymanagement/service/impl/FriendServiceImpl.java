@@ -11,6 +11,8 @@ import net.firedevops.firemud.entitymanagement.mapper.CharacterFriendMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterFriendRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.service.FriendService;
+import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -22,22 +24,34 @@ public class FriendServiceImpl implements FriendService {
   private final CharacterFriendRepository repository;
   private final CharacterRepository characterRepository;
   private final CharacterFriendMapper mapper;
+  private final PlayableStateKeyResolver playableStateKeyResolver;
 
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "friend.list")
-  public Page<CharacterFriendDto> listFriends(Long tenantId, Long characterId, Pageable pageable) {
-    requireCharacterInTenant(tenantId, characterId);
+  public Page<CharacterFriendDto> listFriends(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      Pageable pageable) {
+    requireScopedCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     return repository.findByIdCharacterId(characterId, pageable).map(mapper::toDto);
   }
 
   @Override
   @Transactional
   @Timed(value = "friend.add")
-  public CharacterFriendDto addFriend(Long tenantId, Long characterId, Long friendId) {
-    Character character = requireCharacterInTenant(tenantId, characterId);
-    Character friend = characterRepository.findById(friendId).orElseThrow();
-    requireSamePlayableState(character, friend);
+  public CharacterFriendDto addFriend(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      Long friendId) {
+    Character character =
+        requireScopedCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
+    Character friend =
+        requireScopedCharacter(tenantId, friendId, gameInstanceId, playableStateScope);
     CharacterFriendKey key = new CharacterFriendKey();
     key.setCharacterId(characterId);
     key.setFriendId(friendId);
@@ -57,30 +71,29 @@ public class FriendServiceImpl implements FriendService {
   @Override
   @Transactional
   @Timed(value = "friend.remove")
-  public void removeFriend(Long tenantId, Long characterId, Long friendId) {
-    Character character = requireCharacterInTenant(tenantId, characterId);
-    Character friend = characterRepository.findById(friendId).orElseThrow();
-    requireSamePlayableState(character, friend);
+  public void removeFriend(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      Long friendId) {
+    requireScopedCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
+    requireScopedCharacter(tenantId, friendId, gameInstanceId, playableStateScope);
     CharacterFriendKey key = new CharacterFriendKey();
     key.setCharacterId(characterId);
     key.setFriendId(friendId);
     repository.deleteById(key);
   }
 
-  private void requireSamePlayableState(Character character, Character friend) {
-    if (!character.getTenantId().equals(friend.getTenantId())) {
-      throw new IllegalArgumentException("Characters must belong to the same tenant");
-    }
-    if (!character.getPlayableStateKey().equals(friend.getPlayableStateKey())) {
-      throw new IllegalArgumentException("Characters must belong to the same playable state");
-    }
-  }
-
-  private Character requireCharacterInTenant(Long tenantId, Long characterId) {
-    Character character = characterRepository.findById(characterId).orElseThrow();
-    if (!character.getTenantId().equals(tenantId)) {
-      throw new IllegalArgumentException("Character does not belong to tenant");
-    }
-    return character;
+  private Character requireScopedCharacter(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope) {
+    String playableStateKey = playableStateKeyResolver.resolve(gameInstanceId, playableStateScope);
+    return characterRepository
+        .findByIdAndTenantIdAndPlayableStateKey(characterId, tenantId, playableStateKey)
+        .orElseThrow(
+            () -> new IllegalArgumentException("Character does not belong to gameplay scope"));
   }
 }

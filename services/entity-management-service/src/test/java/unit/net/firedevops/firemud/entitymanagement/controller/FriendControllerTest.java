@@ -17,6 +17,7 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.CharacterFriendDto;
 import net.firedevops.firemud.entitymanagement.service.FriendService;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.test.WithFiremudHttpAuthTestProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -52,12 +53,19 @@ class FriendControllerTest {
 
   @Test
   void listUsesTenantScopedPath() throws Exception {
-    when(friendService.listFriends(eq(1L), eq(2L), any(Pageable.class)))
+    when(friendService.listFriends(
+            eq(1L),
+            eq(2L),
+            eq("live"),
+            eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED),
+            any(Pageable.class)))
         .thenReturn(new PageImpl<>(List.of(new CharacterFriendDto(2L, 3L, 123L))));
 
     mockMvc
         .perform(
             get("/tenants/1/characters/2/friends")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantToken("1")))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
@@ -66,11 +74,15 @@ class FriendControllerTest {
 
   @Test
   void addAndRemoveUseTenantScopedPath() throws Exception {
-    when(friendService.addFriend(1L, 2L, 3L)).thenReturn(new CharacterFriendDto(2L, 3L, 123L));
+    when(friendService.addFriend(
+            1L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 3L))
+        .thenReturn(new CharacterFriendDto(2L, 3L, 123L));
 
     mockMvc
         .perform(
             post("/tenants/1/characters/2/friends")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
                 .contentType(MediaType.APPLICATION_JSON)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantToken("1"))
                 .content("{\"friendId\":3}"))
@@ -81,6 +93,8 @@ class FriendControllerTest {
     mockMvc
         .perform(
             delete("/tenants/1/characters/2/friends/3")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantToken("1")))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
@@ -91,6 +105,8 @@ class FriendControllerTest {
     mockMvc
         .perform(
             get("/tenants/1/characters/2/friends")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantToken("9")))
         .andExpect(status().isForbidden());
   }
