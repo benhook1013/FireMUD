@@ -12,8 +12,11 @@ import net.firedevops.firemud.entitymanagement.effect.EffectPayloadParser;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import net.firedevops.firemud.entitymanagement.entity.ActorResourceState;
 import net.firedevops.firemud.entitymanagement.entity.Character;
+import net.firedevops.firemud.entitymanagement.entity.Item;
+import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
 import net.firedevops.firemud.entitymanagement.repository.ActorActiveConditionRepository;
 import net.firedevops.firemud.entitymanagement.repository.ActorResourceStateRepository;
+import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
@@ -29,11 +32,13 @@ class ActorStateServiceImplTest {
         Mockito.mock(ActorResourceStateRepository.class);
     ActorActiveConditionRepository activeConditionRepository =
         Mockito.mock(ActorActiveConditionRepository.class);
+    ItemInstanceRepository itemInstanceRepository = Mockito.mock(ItemInstanceRepository.class);
     ActorStateServiceImpl service =
         new ActorStateServiceImpl(
             scopedCharacterResolver,
             resourceStateRepository,
             activeConditionRepository,
+            itemInstanceRepository,
             new DefaultEffectEvaluationService(),
             new EffectPayloadParser(new tools.jackson.databind.ObjectMapper()),
             Clock.fixed(NOW, ZoneOffset.UTC));
@@ -83,6 +88,10 @@ class ActorStateServiceImplTest {
     condition.setEffectPayloadJson("{\"damage_per_tick\":3}");
     when(activeConditionRepository.findActiveForCharacter(1L, "99", 7L, NOW))
         .thenReturn(List.of(condition));
+    when(itemInstanceRepository
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNotNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByEquipmentSlotAscIdAsc(
+                1L, 7L))
+        .thenReturn(List.of());
 
     var result =
         service.queryActorState(1L, 7L, "99", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED);
@@ -112,11 +121,13 @@ class ActorStateServiceImplTest {
         Mockito.mock(ActorResourceStateRepository.class);
     ActorActiveConditionRepository activeConditionRepository =
         Mockito.mock(ActorActiveConditionRepository.class);
+    ItemInstanceRepository itemInstanceRepository = Mockito.mock(ItemInstanceRepository.class);
     ActorStateServiceImpl service =
         new ActorStateServiceImpl(
             scopedCharacterResolver,
             resourceStateRepository,
             activeConditionRepository,
+            itemInstanceRepository,
             new DefaultEffectEvaluationService(),
             new EffectPayloadParser(new tools.jackson.databind.ObjectMapper()),
             Clock.fixed(NOW, ZoneOffset.UTC));
@@ -161,6 +172,10 @@ class ActorStateServiceImplTest {
         """);
     when(activeConditionRepository.findActiveForCharacter(1L, "99", 7L, NOW))
         .thenReturn(List.of(condition));
+    when(itemInstanceRepository
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNotNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByEquipmentSlotAscIdAsc(
+                1L, 7L))
+        .thenReturn(List.of());
 
     var result =
         service.queryActorState(1L, 7L, "99", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED);
@@ -173,5 +188,78 @@ class ActorStateServiceImplTest {
     assertEquals(15L, strength.currentValue());
     assertEquals("EFFECT_EVALUATED", strength.sourceType());
     assertEquals("bless:1", strength.sourceId());
+  }
+
+  @Test
+  void queryActorStateAppliesEquippedItemEffectPayloadsThroughSharedEvaluator() {
+    ScopedCharacterResolver scopedCharacterResolver = Mockito.mock(ScopedCharacterResolver.class);
+    ActorResourceStateRepository resourceStateRepository =
+        Mockito.mock(ActorResourceStateRepository.class);
+    ActorActiveConditionRepository activeConditionRepository =
+        Mockito.mock(ActorActiveConditionRepository.class);
+    ItemInstanceRepository itemInstanceRepository = Mockito.mock(ItemInstanceRepository.class);
+    ActorStateServiceImpl service =
+        new ActorStateServiceImpl(
+            scopedCharacterResolver,
+            resourceStateRepository,
+            activeConditionRepository,
+            itemInstanceRepository,
+            new DefaultEffectEvaluationService(),
+            new EffectPayloadParser(new tools.jackson.databind.ObjectMapper()),
+            Clock.fixed(NOW, ZoneOffset.UTC));
+
+    Character character = new Character();
+    character.setId(7L);
+    character.setTenantId(1L);
+    character.setAccountId(41L);
+    character.setPlayableStateKey("instance-99");
+    character.setName("Test");
+    character.setAgility(5);
+    character.setExperience(123);
+    character.setHealth(80);
+    character.setIntelligence(6);
+    character.setLevel(3);
+    character.setMana(40);
+    character.setStamina(9);
+    character.setStrength(8);
+    when(scopedCharacterResolver.requireScopedCharacter(
+            1L, 7L, "99", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
+        .thenReturn(character);
+    when(resourceStateRepository.findByTenantIdAndGameInstanceIdAndCharacterIdOrderByStatKeyAsc(
+            1L, "99", 7L))
+        .thenReturn(List.of());
+    when(activeConditionRepository.findActiveForCharacter(1L, "99", 7L, NOW)).thenReturn(List.of());
+
+    Item armour = new Item();
+    armour.setId(55L);
+    armour.setTenantId(1L);
+    armour.setName("Armour");
+    armour.setEffectPayloadJson(
+        """
+        {"modifiers":[{"operation":"ADD","target_key":"armour_value","value":12}]}
+        """);
+    ItemInstance equipped = new ItemInstance();
+    equipped.setId(101L);
+    equipped.setTenantId(1L);
+    equipped.setCharacter(character);
+    equipped.setEquipmentSlot("CHEST");
+    equipped.setVisibleRef("armour1");
+    equipped.setItem(armour);
+    when(itemInstanceRepository
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNotNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByEquipmentSlotAscIdAsc(
+                1L, 7L))
+        .thenReturn(List.of(equipped));
+
+    var result =
+        service.queryActorState(1L, 7L, "99", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED);
+
+    var armourValue =
+        result.resources().stream()
+            .filter(resource -> resource.statKey().equals("armour_value"))
+            .findFirst()
+            .orElseThrow();
+    assertEquals(12L, armourValue.currentValue());
+    assertEquals("EQUIPMENT", armourValue.sourceType());
+    assertEquals("armour1", armourValue.sourceId());
   }
 }
