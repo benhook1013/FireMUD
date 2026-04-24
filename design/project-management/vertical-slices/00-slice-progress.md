@@ -86,7 +86,7 @@ These are not broad audit topics anymore; they are real future slices with known
 11. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
    Remaining: the first typed in-process effect evaluation seam now exists for additive/multiplicative/clamp modifiers, granted flags/conditions, scopes, and provenance, and active condition payloads are wired through it for actor-state reads; authored definitions plus equipment/action-state producer wiring remain future work.
 12. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
-   Remaining: equipped item templates can now contribute effect payload modifiers through actor-state reads; transient action-state mutation/expiry and richer scoped combat-facing consumption remain future work.
+   Remaining: equipped item templates can now contribute effect payload modifiers through actor-state reads, and an internal condition/action-state apply/expire seam exists; player command wiring, scheduled expiry execution, and richer scoped combat-facing consumption remain future work.
 13. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
 
 ### 4. Lower-priority platform/settings expansion

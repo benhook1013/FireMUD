@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.List;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -25,4 +26,13 @@ public interface ActorActiveConditionRepository extends JpaRepository<ActorActiv
       @Param("gameInstanceId") String gameInstanceId,
       @Param("characterId") Long characterId,
       @Param("now") Instant now);
+
+  @Modifying
+  @Query(
+      """
+      delete from ActorActiveCondition condition
+      where condition.expiresAt is not null
+        and condition.expiresAt <= :now
+      """)
+  int deleteExpired(@Param("now") Instant now);
 }
