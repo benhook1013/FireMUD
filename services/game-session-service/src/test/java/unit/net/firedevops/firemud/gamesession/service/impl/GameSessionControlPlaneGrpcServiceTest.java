@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -1047,8 +1048,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("ENQUEUED", responseRef.get().getAdmissionOutcome());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    Mockito.verify(commandRepository, Mockito.times(2)).save(commandCaptor.capture());
-    GameplayCommand staged = commandCaptor.getAllValues().get(1);
+    Mockito.verify(commandRepository, Mockito.times(3)).save(commandCaptor.capture());
+    GameplayCommand staged = commandCaptor.getAllValues().get(2);
     assertEquals(responseRef.get().getCommandId(), staged.getCommandId());
     assertEquals("AUTOMATION", staged.getSourceType());
     assertEquals("dispatch-1", staged.getAutomationDispatchId());
@@ -1061,6 +1062,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("region-1", staged.getRegionId());
     assertEquals(12L, staged.getRegionEpoch());
     assertEquals(34L, staged.getDueTickId());
+    assertEquals(1L, staged.getEnqueueSeq());
     assertEquals("STAGED", staged.getExecutionOutcome());
     Mockito.verify(tickService)
         .enqueueCommand(1L, 7L, responseRef.get().getCommandId(), "say hello", false);
@@ -1106,8 +1108,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(true, responseRef.get().getAccepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    Mockito.verify(commandRepository, Mockito.times(2)).save(commandCaptor.capture());
-    GameplayCommand staged = commandCaptor.getAllValues().get(1);
+    Mockito.verify(commandRepository, Mockito.times(3)).save(commandCaptor.capture());
+    GameplayCommand staged = commandCaptor.getAllValues().get(2);
     assertEquals(null, staged.getDueTickId());
   }
 
@@ -1595,8 +1597,16 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   private static GameplayCommandRepository commandRepositorySavingArgument() {
     GameplayCommandRepository repository = Mockito.mock(GameplayCommandRepository.class);
+    AtomicLong idSequence = new AtomicLong();
     Mockito.when(repository.save(Mockito.any(GameplayCommand.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              GameplayCommand command = invocation.getArgument(0);
+              if (command.getId() == null) {
+                command.setId(idSequence.incrementAndGet());
+              }
+              return command;
+            });
     return repository;
   }
 

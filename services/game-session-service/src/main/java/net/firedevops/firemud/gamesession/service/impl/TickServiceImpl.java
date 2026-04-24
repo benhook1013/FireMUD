@@ -92,6 +92,7 @@ public class TickServiceImpl implements TickService {
   private Counter budgetExceededCounter;
   private Counter requeuedActionCounter;
   private Counter retryBackoffCounter;
+  private Counter manifestMismatchCounter;
   private Timer tickTimer;
   private Timer luaTimer;
   private RedisScript<Long> stageScript;
@@ -112,6 +113,13 @@ public class TickServiceImpl implements TickService {
 
   private record QueuedCommandEnvelope(
       boolean requiresSoloTick, String commandId, String command) {}
+
+  private record CommandSelection(
+      QueuedCommandEnvelope entry,
+      GameplayCommand command,
+      int sourceOrdinal,
+      String effectKey,
+      String commandDigest) {}
 
   private static final class StaleOwnershipException extends RuntimeException {
     private StaleOwnershipException(String message) {
@@ -154,6 +162,7 @@ public class TickServiceImpl implements TickService {
     this.requeuedActionCounter =
         meterRegistry.counter("tick_requeued_action_total", "source", "player");
     this.retryBackoffCounter = meterRegistry.counter("tick_retry_backoff_count_total");
+    this.manifestMismatchCounter = meterRegistry.counter("tick_manifest_mismatch_total");
     meterRegistry.gauge("game_session_retry_queue_depth_total", retryQueueDepthTotal);
     meterRegistry.gauge(
         "game_session_retry_queue_targets_with_pending", retryQueueTargetsWithPending);
@@ -520,13 +529,29 @@ public class TickServiceImpl implements TickService {
       Long gameInstanceId,
       List<QueuedCommandEnvelope> replayEntries,
       OwnershipSnapshot ownership) {
-    return tickBatchRepository
-        .findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
-            tenantId, gameInstanceId, "STAGED")
-        .orElseGet(
-            () ->
-                createBatch(
-                    "PENDING_REPLAY", tenantId, gameInstanceId, false, ownership, replayEntries));
+    Optional<TickBatch> existing =
+        tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            tenantId, gameInstanceId, "STAGED");
+    if (existing.isEmpty()) {
+      return createBatch(
+          "PENDING_REPLAY", tenantId, gameInstanceId, false, ownership, replayEntries);
+    }
+    TickBatch batch = existing.orElseThrow();
+    String replayManifest = selectedWorkManifest(commandSelections(replayEntries));
+    String replayDigest = shortHash(replayManifest);
+    if (replayDigest.equals(batch.getSelectedWorkManifestDigest())) {
+      return batch;
+    }
+    manifestMismatchCounter.increment();
+    logger.warn(
+        "Replay manifest mismatch for staged batch tickBatchId={} tenantId={} gameInstanceId={} expectedDigest={} actualDigest={}",
+        batch.getTickBatchId(),
+        tenantId,
+        gameInstanceId,
+        batch.getSelectedWorkManifestDigest(),
+        replayDigest);
+    markBatchManifestMismatch(batch, replayEntries, replayDigest);
+    return createBatch("PENDING_REPLAY", tenantId, gameInstanceId, false, ownership, replayEntries);
   }
 
   private TickBatch createBatch(
@@ -537,6 +562,7 @@ public class TickServiceImpl implements TickService {
       OwnershipSnapshot ownership,
       List<QueuedCommandEnvelope> entries) {
     Instant now = Instant.now();
+    List<CommandSelection> selections = commandSelections(entries);
     TickBatch batch = new TickBatch();
     batch.setTickBatchId("tb-" + UUID.randomUUID());
     batch.setTenantId(tenantId);
@@ -548,7 +574,7 @@ public class TickServiceImpl implements TickService {
     batch.setRequiresSoloTick(requiresSoloTick);
     batch.setCommandCount(entries.size());
     batch.setExpectedEffectCount(entries.size());
-    String selectedWorkManifest = selectedWorkManifest(entries);
+    String selectedWorkManifest = selectedWorkManifest(selections);
     batch.setSelectedWorkManifestJson(selectedWorkManifest);
     batch.setSelectedWorkManifestDigest(shortHash(selectedWorkManifest));
     batch.setStagedAt(now);
@@ -563,6 +589,25 @@ public class TickServiceImpl implements TickService {
         batchSource,
         entries.size());
     return savedBatch;
+  }
+
+  private void markBatchManifestMismatch(
+      TickBatch batch, List<QueuedCommandEnvelope> entries, String actualManifestDigest) {
+    Instant now = Instant.now();
+    String failureMessage =
+        truncate(
+            "Pending replay digest %s no longer matches sealed batch manifest %s"
+                .formatted(actualManifestDigest, batch.getSelectedWorkManifestDigest()),
+            500);
+    batch.setStatus("ABANDONED");
+    batch.setCompletedAt(now);
+    batch.setFailureCode("MANIFEST_MISMATCH");
+    batch.setFailureMessage(failureMessage);
+    tickBatchRepository.save(batch);
+    updateEffectStatuses(
+        batch.getTickBatchId(), "ABANDONED", now, "MANIFEST_MISMATCH", failureMessage);
+    updateGameplayCommands(
+        entries, "RETRY_QUEUED", "PENDING", now, "MANIFEST_MISMATCH", failureMessage, false);
   }
 
   private void persistEffects(
@@ -599,6 +644,27 @@ public class TickServiceImpl implements TickService {
       command.setLastAttemptAt(attemptedAt);
     }
     gameplayCommandRepository.saveAll(commands);
+  }
+
+  private List<CommandSelection> commandSelections(List<QueuedCommandEnvelope> entries) {
+    if (entries.isEmpty()) {
+      return List.of();
+    }
+    Map<String, GameplayCommand> commandsById =
+        loadCommands(entries).stream()
+            .collect(java.util.stream.Collectors.toMap(GameplayCommand::getCommandId, cmd -> cmd));
+    List<CommandSelection> selections = new ArrayList<>(entries.size());
+    for (int index = 0; index < entries.size(); index++) {
+      QueuedCommandEnvelope entry = entries.get(index);
+      GameplayCommand command =
+          entry.commandId() == null || entry.commandId().isBlank()
+              ? null
+              : commandsById.get(entry.commandId());
+      String effectKey = effectKey(entry, index);
+      selections.add(
+          new CommandSelection(entry, command, index, effectKey, shortHash(entry.command())));
+    }
+    return List.copyOf(selections);
   }
 
   private void markBatchDrained(TickBatch batch, List<QueuedCommandEnvelope> entries) {
@@ -927,30 +993,51 @@ public class TickServiceImpl implements TickService {
     return "tfx-" + shortHash(tickBatchId + "|" + effectKey);
   }
 
-  private String selectedWorkManifest(List<QueuedCommandEnvelope> entries) {
+  private String selectedWorkManifest(List<CommandSelection> selections) {
     StringBuilder builder = new StringBuilder();
     builder.append("{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"items\":[");
-    for (int index = 0; index < entries.size(); index++) {
+    for (int index = 0; index < selections.size(); index++) {
       if (index > 0) {
         builder.append(',');
       }
-      QueuedCommandEnvelope entry = entries.get(index);
+      CommandSelection selection = selections.get(index);
+      QueuedCommandEnvelope entry = selection.entry();
+      GameplayCommand command = selection.command();
       builder
           .append("{\"sourceKind\":\"GAMEPLAY_COMMAND\",\"sourceOrdinal\":")
-          .append(index)
+          .append(selection.sourceOrdinal())
+          .append(",\"sourceState\":\"REDIS_PENDING_CLAIMED\"")
           .append(",\"effectKey\":\"")
-          .append(jsonEscape(effectKey(entry, index)))
+          .append(jsonEscape(selection.effectKey()))
           .append("\",\"commandId\":");
       if (entry.commandId() == null || entry.commandId().isBlank()) {
         builder.append("null");
       } else {
         builder.append('"').append(jsonEscape(entry.commandId())).append('"');
       }
+      builder.append(",\"sourceType\":");
+      if (command == null || command.getSourceType() == null || command.getSourceType().isBlank()) {
+        builder.append("null");
+      } else {
+        builder.append('"').append(jsonEscape(command.getSourceType())).append('"');
+      }
+      builder.append(",\"enqueueSeq\":");
+      if (command == null || command.getEnqueueSeq() == null) {
+        builder.append("null");
+      } else {
+        builder.append(command.getEnqueueSeq());
+      }
+      builder.append(",\"dueTickId\":");
+      if (command == null || command.getDueTickId() == null) {
+        builder.append("null");
+      } else {
+        builder.append(command.getDueTickId());
+      }
       builder
           .append(",\"requiresSoloTick\":")
           .append(entry.requiresSoloTick())
           .append(",\"commandDigest\":\"")
-          .append(shortHash(entry.command()))
+          .append(selection.commandDigest())
           .append("\"}");
     }
     builder.append("]}");

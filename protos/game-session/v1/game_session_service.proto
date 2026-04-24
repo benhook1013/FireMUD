@@ -407,6 +407,7 @@ message GameplayCommandStatus {
   string region_id = 25;
   int64 region_epoch = 26;
   int64 due_tick_id = 27;
+  int64 enqueue_seq = 28;
 }
 
 message GetGameplayCommandStatusResponse {

@@ -30,7 +30,7 @@ Current live substrate to keep in mind while reading:
 - the live durable ownership and command-status boundary is currently keyed by `{tenantId, gameInstanceId}`, not true `regionId` partitioning;
 - the live control-plane/status APIs are `GetRuntimeOwnershipStatus` and `GetGameplayCommandStatus`, not the fuller target-state `GetRegionTickStatus` / `GetCommandStatus` contract described later in this doc;
 - the live `executorFence` is an opaque generation token used for compare-and-match stale-fence protection, not yet the richer numeric ordering model used in some target-state examples;
-- the live `tick_batch` / `tick_effect` substrate is real, but the full selected-work manifest and cross-region result-return contract described below are still target-state follow-through rather than fully shipped behavior.
+- the live `tick_batch` / `tick_effect` substrate is real, and the current gameplay-command manifest now carries current-boundary `enqueueSeq`, `sourceType`, `dueTickId`, and explicit claimed-source state plus digest-checked replay reuse; timer/retry/remote-follow-up source-claim breadth and the cross-region result-return contract described below are still target-state follow-through rather than fully shipped behavior.
 
 ---
 

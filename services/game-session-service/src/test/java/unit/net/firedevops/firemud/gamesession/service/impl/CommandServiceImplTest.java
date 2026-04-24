@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -86,13 +87,14 @@ class CommandServiceImplTest {
     verify(tickService, times(1)).enqueueCommand(9L, 7L, result.commandId(), "look", true);
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
-    GameplayCommand staged = commandCaptor.getAllValues().get(1);
+    verify(commandRepository, times(3)).save(commandCaptor.capture());
+    GameplayCommand staged = commandCaptor.getAllValues().get(2);
     assertEquals(result.commandId(), staged.getCommandId());
     assertEquals("STAGED", staged.getExecutionOutcome());
     assertEquals("PENDING", staged.getGameplayResult());
     assertEquals("LOOK", staged.getCommandName());
     assertEquals("look", staged.getSanitizedCommandText());
+    assertEquals(1L, staged.getEnqueueSeq());
   }
 
   @Test
@@ -197,7 +199,7 @@ class CommandServiceImplTest {
     assertTrue(!logs.contains("LOGIN demo@example.com swordfish"));
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository, times(3)).save(commandCaptor.capture());
     assertEquals("LOGIN [redacted]", commandCaptor.getAllValues().get(0).getSanitizedCommandText());
   }
 
@@ -236,8 +238,8 @@ class CommandServiceImplTest {
     assertEquals("INVALID_ARGUMENT", result.errorCode());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
-    GameplayCommand failed = commandCaptor.getAllValues().get(1);
+    verify(commandRepository, times(3)).save(commandCaptor.capture());
+    GameplayCommand failed = commandCaptor.getAllValues().get(2);
     assertEquals(result.commandId(), failed.getCommandId());
     assertEquals("FAILED", failed.getExecutionOutcome());
     assertEquals("NOT_APPLIED", failed.getGameplayResult());
@@ -246,8 +248,16 @@ class CommandServiceImplTest {
 
   private GameplayCommandRepository commandRepositorySavingArgument() {
     GameplayCommandRepository repository = Mockito.mock(GameplayCommandRepository.class);
+    AtomicLong idSequence = new AtomicLong();
     Mockito.when(repository.save(Mockito.any(GameplayCommand.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              GameplayCommand command = invocation.getArgument(0);
+              if (command.getId() == null) {
+                command.setId(idSequence.incrementAndGet());
+              }
+              return command;
+            });
     return repository;
   }
 }

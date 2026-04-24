@@ -1054,7 +1054,6 @@ public final class GameSessionControlPlaneGrpcService
       return rejected.get();
     }
     GameplayCommand command = acceptedAutomationCommand(request, tenantId, gameInstanceId);
-    gameplayCommandRepository.save(command);
     try {
       tickService.enqueueCommand(
           tenantId,
@@ -1144,7 +1143,12 @@ public final class GameSessionControlPlaneGrpcService
     command.setRegionId(request.getRegionId());
     command.setRegionEpoch(request.getRegionEpoch());
     command.setDueTickId(request.getDueTickId() > 0 ? request.getDueTickId() : null);
-    return command;
+    GameplayCommand saved = gameplayCommandRepository.save(command);
+    if (saved.getEnqueueSeq() == null && saved.getId() != null) {
+      saved.setEnqueueSeq(saved.getId());
+      saved = gameplayCommandRepository.save(saved);
+    }
+    return saved;
   }
 
   private void markAutomationStaged(GameplayCommand command) {
@@ -1566,6 +1570,9 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (command.getDueTickId() != null) {
       builder.setDueTickId(command.getDueTickId());
+    }
+    if (command.getEnqueueSeq() != null) {
+      builder.setEnqueueSeq(command.getEnqueueSeq());
     }
     return builder.build();
   }

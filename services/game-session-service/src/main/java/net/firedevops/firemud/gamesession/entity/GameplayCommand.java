@@ -75,6 +75,9 @@ public class GameplayCommand {
   @Column(name = "attempt_count", nullable = false)
   private int attemptCount;
 
+  @Column(name = "enqueue_seq")
+  private Long enqueueSeq;
+
   @Column(name = "failure_code", length = 80)
   private String failureCode;
 

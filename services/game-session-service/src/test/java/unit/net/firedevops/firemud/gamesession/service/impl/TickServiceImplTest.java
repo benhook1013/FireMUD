@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressRequest;
 import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressResponse;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
@@ -59,6 +60,17 @@ class TickServiceImplTest {
     repository = mock(net.firedevops.firemud.gamesession.repository.GameInstanceRepository.class);
     gameplayCommandRepository =
         mock(net.firedevops.firemud.gamesession.repository.GameplayCommandRepository.class);
+    AtomicLong commandIds = new AtomicLong();
+    when(gameplayCommandRepository.save(any()))
+        .thenAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.GameplayCommand command =
+                  invocation.getArgument(0);
+              if (command.getId() == null) {
+                command.setId(commandIds.incrementAndGet());
+              }
+              return command;
+            });
     runtimeIdentity =
         new net.firedevops.firemud.common.runtime.RuntimeIdentity(
             "game-session-service",
@@ -256,7 +268,7 @@ class TickServiceImplTest {
         .thenReturn(1L);
     when(listOps.size(any(String.class))).thenReturn(0L);
 
-    setField(service, "tickBudgetMs", 0L);
+    setField(service, "tickBudgetMs", -1L);
 
     service.processTick(1L, 2L);
 
@@ -359,7 +371,8 @@ class TickServiceImplTest {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(1L);
-    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
+    List<Object> replayEntries = List.of("N|cmd-1|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(replayEntries);
     net.firedevops.firemud.gamesession.entity.TickBatch existingBatch =
         new net.firedevops.firemud.gamesession.entity.TickBatch();
     existingBatch.setTickBatchId("tb-existing");
@@ -375,8 +388,10 @@ class TickServiceImplTest {
             1L, 2L, "STAGED"))
         .thenReturn(java.util.Optional.of(existingBatch));
     when(tickEffectRepository.findByTickBatchId("tb-existing")).thenReturn(List.of());
-    when(gameplayCommandRepository.findByCommandIdIn(any()))
-        .thenReturn(List.of(gameplayCommand("cmd-1")));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
+    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(command));
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest((TickServiceImpl) service, replayEntries));
 
     service.processTick(1L, 2L);
 
@@ -520,11 +535,83 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals(8L, request.getTickId());
   }
 
+  @Test
+  void processTickPersistsComparableOrderingInSelectedWorkManifest() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|say hello");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-1|say hello"));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
+    command.setSourceType("AUTOMATION");
+    command.setDueTickId(14L);
+    command.setEnqueueSeq(77L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(command));
+
+    service.processTick(1L, 2L);
+
+    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.TickBatch> batchCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.TickBatch.class);
+    verify(tickBatchRepository, org.mockito.Mockito.atLeastOnce()).save(batchCaptor.capture());
+    net.firedevops.firemud.gamesession.entity.TickBatch stagedBatch =
+        batchCaptor.getAllValues().stream()
+            .filter(batch -> "FRESH_STAGE".equals(batch.getBatchSource()))
+            .findFirst()
+            .orElseThrow();
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"enqueueSeq\":77"));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"sourceType\":\"AUTOMATION\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"dueTickId\":14"));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch
+            .getSelectedWorkManifestJson()
+            .contains("\"sourceState\":\"REDIS_PENDING_CLAIMED\""));
+  }
+
+  @Test
+  void processTickAbandonsReplayBatchWhenPendingDigestNoLongerMatchesSealedManifest() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(1L);
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
+    net.firedevops.firemud.gamesession.entity.TickBatch existingBatch =
+        new net.firedevops.firemud.gamesession.entity.TickBatch();
+    existingBatch.setTickBatchId("tb-existing");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setBatchSource("FRESH_STAGE");
+    existingBatch.setSelectedWorkManifestDigest("digest-old");
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
+    command.setEnqueueSeq(5L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(command));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+    when(tickEffectRepository.findByTickBatchId("tb-existing")).thenReturn(List.of());
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", existingBatch.getStatus());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "MANIFEST_MISMATCH", existingBatch.getFailureCode());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1.0, meterRegistry.get("tick_manifest_mismatch_total").counter().count(), 0.001);
+  }
+
   private static net.firedevops.firemud.gamesession.entity.GameplayCommand gameplayCommand(
       String commandId) {
     var command = new net.firedevops.firemud.gamesession.entity.GameplayCommand();
     command.setCommandId(commandId);
     command.setCommandText("look");
+    command.setSanitizedCommandText("look");
     command.setAttemptCount(1);
     command.setExecutionOutcome("STAGED");
     command.setGameplayResult("PENDING");
@@ -558,6 +645,30 @@ class TickServiceImplTest {
       field.set(target, value);
     } catch (ReflectiveOperationException e) {
       throw new IllegalStateException("Failed to set field " + fieldName, e);
+    }
+  }
+
+  private static String replayManifestDigest(TickServiceImpl service, List<Object> rawEntries) {
+    try {
+      var parseMethod = TickServiceImpl.class.getDeclaredMethod("parseQueuedCommand", String.class);
+      parseMethod.setAccessible(true);
+      List<Object> entries = new java.util.ArrayList<>();
+      for (Object rawEntry : rawEntries) {
+        entries.add(parseMethod.invoke(service, rawEntry.toString()));
+      }
+      var selectionsMethod =
+          TickServiceImpl.class.getDeclaredMethod("commandSelections", List.class);
+      selectionsMethod.setAccessible(true);
+      Object selections = selectionsMethod.invoke(service, entries);
+      var manifestMethod =
+          TickServiceImpl.class.getDeclaredMethod("selectedWorkManifest", List.class);
+      manifestMethod.setAccessible(true);
+      String manifest = (String) manifestMethod.invoke(service, selections);
+      var hashMethod = TickServiceImpl.class.getDeclaredMethod("shortHash", String.class);
+      hashMethod.setAccessible(true);
+      return (String) hashMethod.invoke(service, manifest);
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException("Failed to compute replay manifest digest", e);
     }
   }
 }
