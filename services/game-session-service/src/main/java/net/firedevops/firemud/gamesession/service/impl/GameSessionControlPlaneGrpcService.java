@@ -1143,12 +1143,7 @@ public final class GameSessionControlPlaneGrpcService
     command.setRegionId(request.getRegionId());
     command.setRegionEpoch(request.getRegionEpoch());
     command.setDueTickId(request.getDueTickId() > 0 ? request.getDueTickId() : null);
-    GameplayCommand saved = gameplayCommandRepository.save(command);
-    if (saved.getEnqueueSeq() == null && saved.getId() != null) {
-      saved.setEnqueueSeq(saved.getId());
-      saved = gameplayCommandRepository.save(saved);
-    }
-    return saved;
+    return gameplayCommandRepository.save(command);
   }
 
   private void markAutomationStaged(GameplayCommand command) {

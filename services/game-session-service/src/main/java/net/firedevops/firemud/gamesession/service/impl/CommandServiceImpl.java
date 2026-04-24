@@ -161,12 +161,7 @@ public class CommandServiceImpl implements CommandService {
     gameplayCommand.setAcceptedAt(now);
     gameplayCommand.setLastAttemptAt(now);
     gameplayCommand.setAttemptCount(1);
-    GameplayCommand saved = gameplayCommandRepository.save(gameplayCommand);
-    if (saved.getEnqueueSeq() == null && saved.getId() != null) {
-      saved.setEnqueueSeq(saved.getId());
-      saved = gameplayCommandRepository.save(saved);
-    }
-    return saved;
+    return gameplayCommandRepository.save(gameplayCommand);
   }
 
   private void markStaged(GameplayCommand gameplayCommand) {

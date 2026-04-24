@@ -87,8 +87,8 @@ class CommandServiceImplTest {
     verify(tickService, times(1)).enqueueCommand(9L, 7L, result.commandId(), "look", true);
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(3)).save(commandCaptor.capture());
-    GameplayCommand staged = commandCaptor.getAllValues().get(2);
+    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    GameplayCommand staged = commandCaptor.getAllValues().get(1);
     assertEquals(result.commandId(), staged.getCommandId());
     assertEquals("STAGED", staged.getExecutionOutcome());
     assertEquals("PENDING", staged.getGameplayResult());
@@ -199,7 +199,7 @@ class CommandServiceImplTest {
     assertTrue(!logs.contains("LOGIN demo@example.com swordfish"));
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(3)).save(commandCaptor.capture());
+    verify(commandRepository, times(2)).save(commandCaptor.capture());
     assertEquals("LOGIN [redacted]", commandCaptor.getAllValues().get(0).getSanitizedCommandText());
   }
 
@@ -238,8 +238,8 @@ class CommandServiceImplTest {
     assertEquals("INVALID_ARGUMENT", result.errorCode());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(3)).save(commandCaptor.capture());
-    GameplayCommand failed = commandCaptor.getAllValues().get(2);
+    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    GameplayCommand failed = commandCaptor.getAllValues().get(1);
     assertEquals(result.commandId(), failed.getCommandId());
     assertEquals("FAILED", failed.getExecutionOutcome());
     assertEquals("NOT_APPLIED", failed.getGameplayResult());
@@ -254,7 +254,9 @@ class CommandServiceImplTest {
             invocation -> {
               GameplayCommand command = invocation.getArgument(0);
               if (command.getId() == null) {
-                command.setId(idSequence.incrementAndGet());
+                long id = idSequence.incrementAndGet();
+                command.setId(id);
+                command.setEnqueueSeq(id);
               }
               return command;
             });

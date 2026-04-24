@@ -1052,8 +1052,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("ENQUEUED", responseRef.get().getAdmissionOutcome());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    Mockito.verify(commandRepository, Mockito.times(3)).save(commandCaptor.capture());
-    GameplayCommand staged = commandCaptor.getAllValues().get(2);
+    Mockito.verify(commandRepository, Mockito.times(2)).save(commandCaptor.capture());
+    GameplayCommand staged = commandCaptor.getAllValues().get(1);
     assertEquals(responseRef.get().getCommandId(), staged.getCommandId());
     assertEquals("AUTOMATION", staged.getSourceType());
     assertEquals("dispatch-1", staged.getAutomationDispatchId());
@@ -1112,8 +1112,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(true, responseRef.get().getAccepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    Mockito.verify(commandRepository, Mockito.times(3)).save(commandCaptor.capture());
-    GameplayCommand staged = commandCaptor.getAllValues().get(2);
+    Mockito.verify(commandRepository, Mockito.times(2)).save(commandCaptor.capture());
+    GameplayCommand staged = commandCaptor.getAllValues().get(1);
     assertEquals(null, staged.getDueTickId());
   }
 
@@ -1607,7 +1607,9 @@ class GameSessionControlPlaneGrpcServiceTest {
             invocation -> {
               GameplayCommand command = invocation.getArgument(0);
               if (command.getId() == null) {
-                command.setId(idSequence.incrementAndGet());
+                long id = idSequence.incrementAndGet();
+                command.setId(id);
+                command.setEnqueueSeq(id);
               }
               return command;
             });
