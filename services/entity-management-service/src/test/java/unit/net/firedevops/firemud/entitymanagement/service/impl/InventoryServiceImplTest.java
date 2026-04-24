@@ -23,12 +23,16 @@ import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepos
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemStackRepository;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 
 class InventoryServiceImplTest {
+  private static final PlayableStateScope PLAYABLE_STATE_SCOPE =
+      PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+
   @Test
   void listInventoryReturnsInstanceBackedDtos() {
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
@@ -69,7 +73,7 @@ class InventoryServiceImplTest {
     when(containerInstanceRepo.findByItemInstance_Id(501L))
         .thenReturn(Optional.of(containerInstance));
 
-    var result = service.listInventory(11L, 1L, Pageable.unpaged());
+    var result = service.listInventory(11L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, Pageable.unpaged());
 
     assertEquals(1, result.getTotalElements());
     assertEquals(501L, result.getContent().get(0).itemInstanceId());
@@ -112,7 +116,7 @@ class InventoryServiceImplTest {
                 11L, 1L, Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of()));
 
-    var result = service.listInventory(11L, 1L, Pageable.unpaged());
+    var result = service.listInventory(11L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, Pageable.unpaged());
 
     assertEquals(2, result.getTotalElements());
     assertEquals(501L, result.getContent().get(0).itemInstanceId());
@@ -154,7 +158,7 @@ class InventoryServiceImplTest {
                 11L, 1L, Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(stack)));
 
-    var result = service.listInventory(11L, 1L, Pageable.unpaged());
+    var result = service.listInventory(11L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, Pageable.unpaged());
 
     assertEquals(1, result.getTotalElements());
     assertEquals(4, result.getContent().get(0).quantity());
@@ -231,7 +235,9 @@ class InventoryServiceImplTest {
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character(1L, 1L)));
     when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.empty());
 
-    assertThrows(IllegalArgumentException.class, () -> service.addItem(1L, 1L, 2L, 1));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.addItem(1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, 2L, 1));
   }
 
   @Test
@@ -266,7 +272,9 @@ class InventoryServiceImplTest {
     when(itemInstanceRepo.save(Mockito.any(ItemInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var dropped = service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1);
+    var dropped =
+        service.dropItemToRoom(
+            1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "R-1", 2L, null, null, null, 1);
 
     assertEquals("GI-1", first.getGameInstanceId());
     assertEquals("R-1", first.getRoomInstanceId());
@@ -307,7 +315,7 @@ class InventoryServiceImplTest {
     when(itemInstanceRepo.save(any(ItemInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1);
+    service.dropItemToRoom(1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "R-1", 2L, null, null, null, 1);
 
     ItemTransferSupport transferSupport = new ItemTransferSupport();
     verify(itemTransferAuditWriter)
@@ -351,7 +359,8 @@ class InventoryServiceImplTest {
     when(itemInstanceRepo.save(any(ItemInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1, "effect-1");
+    service.dropItemToRoom(
+        1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "R-1", 2L, null, null, null, 1, "effect-1");
 
     ItemTransferSupport transferSupport = new ItemTransferSupport();
     verify(itemTransferAuditWriter)
@@ -401,7 +410,9 @@ class InventoryServiceImplTest {
     when(itemStackRepo.save(Mockito.any(ItemStack.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var dropped = service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 2);
+    var dropped =
+        service.dropItemToRoom(
+            1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "R-1", 2L, null, null, null, 2);
 
     assertEquals(2, dropped.quantity());
     assertEquals(1, inventoryStack.getQuantity());
@@ -451,7 +462,7 @@ class InventoryServiceImplTest {
     when(itemStackRepo.save(any(ItemStack.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 2);
+    service.dropItemToRoom(1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "R-1", 2L, null, null, null, 2);
 
     ItemTransferSupport transferSupport = new ItemTransferSupport();
     verify(itemTransferAuditWriter)
@@ -503,7 +514,9 @@ class InventoryServiceImplTest {
     IllegalArgumentException ex =
         assertThrows(
             IllegalArgumentException.class,
-            () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1));
+            () ->
+                service.dropItemToRoom(
+                    1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "R-1", 2L, null, null, null, 1));
 
     assertEquals(
         "Multiple stack families exist for item 2; explicit stack selection required",
@@ -541,7 +554,9 @@ class InventoryServiceImplTest {
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1));
+        () ->
+            service.dropItemToRoom(
+                1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "R-1", 2L, null, null, null, 1));
   }
 
   @Test
@@ -576,7 +591,9 @@ class InventoryServiceImplTest {
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.pickupItemFromRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1));
+        () ->
+            service.pickupItemFromRoom(
+                1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "R-1", 2L, null, null, null, 1));
   }
 
   @Test
@@ -613,7 +630,9 @@ class InventoryServiceImplTest {
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.pickupItemFromRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1));
+        () ->
+            service.pickupItemFromRoom(
+                1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "R-1", 2L, null, null, null, 1));
 
     verify(itemTransferAuditWriter, never()).recordInstanceTransfer(any(), any(), any(), any());
     verify(itemTransferAuditWriter, never())
@@ -653,7 +672,9 @@ class InventoryServiceImplTest {
     IllegalArgumentException ex =
         assertThrows(
             IllegalArgumentException.class,
-            () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, null, 1));
+            () ->
+                service.dropItemToRoom(
+                    1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "R-1", 2L, null, null, null, 1));
 
     assertEquals("Item already at destination", ex.getMessage());
   }
@@ -689,7 +710,9 @@ class InventoryServiceImplTest {
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, 41L, null, null, 2));
+        () ->
+            service.dropItemToRoom(
+                1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "R-1", 2L, 41L, null, null, 2));
   }
 
   @Test
@@ -733,7 +756,9 @@ class InventoryServiceImplTest {
     when(itemStackRepo.save(Mockito.any(ItemStack.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var dropped = service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, "ammo/steel", 2);
+    var dropped =
+        service.dropItemToRoom(
+            1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "R-1", 2L, null, null, "ammo/steel", 2);
 
     assertEquals("ammo/steel", dropped.visibleRef());
     assertEquals(2, second.getQuantity());
@@ -782,6 +807,7 @@ class InventoryServiceImplTest {
     Character character = new Character();
     character.setId(id);
     character.setTenantId(tenantId);
+    character.setPlayableStateKey("shared-live");
     return character;
   }
 

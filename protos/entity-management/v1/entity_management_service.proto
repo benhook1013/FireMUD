@@ -63,6 +63,8 @@ message QueryInventoryRequest {
   string tenant_id = 1;
   string character_id = 2;
   string session_attestation = 3;
+  string game_instance_id = 4;
+  PlayableStateScope playable_state_scope = 5;
 }
 
 message QueryInventoryResponse {
@@ -96,6 +98,8 @@ message ListEquipmentRequest {
   string tenant_id = 1;
   string character_id = 2;
   string session_attestation = 3;
+  string game_instance_id = 4;
+  PlayableStateScope playable_state_scope = 5;
 }
 
 message ListEquipmentResponse {
@@ -110,6 +114,8 @@ message WearEquipmentItemRequest {
   string item_instance_id = 4;
   string session_attestation = 5;
   string effect_id = 6;
+  string game_instance_id = 7;
+  PlayableStateScope playable_state_scope = 8;
 }
 
 message WearEquipmentItemResponse {
@@ -123,6 +129,8 @@ message RemoveEquipmentRequest {
   string slot = 3;
   string session_attestation = 4;
   string effect_id = 5;
+  string game_instance_id = 6;
+  PlayableStateScope playable_state_scope = 7;
 }
 
 message RemoveEquipmentResponse {
@@ -147,6 +155,8 @@ message ListContainerContentsRequest {
   string character_id = 2;
   string container_instance_id = 3;
   string session_attestation = 4;
+  string game_instance_id = 5;
+  PlayableStateScope playable_state_scope = 6;
 }
 
 message ListContainerContentsResponse {
@@ -164,6 +174,8 @@ message PutItemIntoContainerRequest {
   string stack_family_key = 7;
   string session_attestation = 8;
   string effect_id = 9;
+  string game_instance_id = 10;
+  PlayableStateScope playable_state_scope = 11;
 }
 
 message PutItemIntoContainerResponse {
@@ -181,6 +193,8 @@ message TakeItemFromContainerRequest {
   string stack_family_key = 7;
   string session_attestation = 8;
   string effect_id = 9;
+  string game_instance_id = 10;
+  PlayableStateScope playable_state_scope = 11;
 }
 
 message TakeItemFromContainerResponse {
@@ -225,6 +239,7 @@ message PickupItemFromRoomRequest {
   string stack_family_key = 9;
   string session_attestation = 10;
   string effect_id = 11;
+  PlayableStateScope playable_state_scope = 12;
 }
 
 message PickupItemFromRoomResponse {
@@ -245,6 +260,7 @@ message DropItemToRoomRequest {
   string stack_family_key = 9;
   string session_attestation = 10;
   string effect_id = 11;
+  PlayableStateScope playable_state_scope = 12;
 }
 
 message DropItemToRoomResponse {

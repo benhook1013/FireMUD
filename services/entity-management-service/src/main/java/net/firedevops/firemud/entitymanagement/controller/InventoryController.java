@@ -8,7 +8,6 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.AddInventoryItemRequest;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
-import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -25,8 +24,6 @@ public class InventoryController {
       justification = "Spring injects InventoryService; storing reference is safe")
   private final InventoryService inventoryService;
 
-  private final ScopedCharacterResolver scopedCharacterResolver;
-
   @GetMapping
   public ResponseEntity<ApiResponse<Page<InventoryEntryDto>>> list(
       @PathVariable Long tenantId,
@@ -35,9 +32,9 @@ public class InventoryController {
       @RequestParam PlayableStateScope playableStateScope,
       Pageable pageable) {
     SessionContext.requireTenantAccess(tenantId);
-    scopedCharacterResolver.requireScopedCharacter(
-        tenantId, characterId, gameInstanceId, playableStateScope);
-    Page<InventoryEntryDto> list = inventoryService.listInventory(tenantId, characterId, pageable);
+    Page<InventoryEntryDto> list =
+        inventoryService.listInventory(
+            tenantId, characterId, gameInstanceId, playableStateScope, pageable);
     return ResponseEntity.ok(ApiResponse.success(list));
   }
 
@@ -49,10 +46,14 @@ public class InventoryController {
       @RequestParam PlayableStateScope playableStateScope,
       @Valid @RequestBody AddInventoryItemRequest request) {
     SessionContext.requireTenantAccess(tenantId);
-    scopedCharacterResolver.requireScopedCharacter(
-        tenantId, characterId, gameInstanceId, playableStateScope);
     InventoryEntryDto dto =
-        inventoryService.addItem(tenantId, characterId, request.itemId(), request.quantity());
+        inventoryService.addItem(
+            tenantId,
+            characterId,
+            gameInstanceId,
+            playableStateScope,
+            request.itemId(),
+            request.quantity());
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 
@@ -64,9 +65,7 @@ public class InventoryController {
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope) {
     SessionContext.requireTenantAccess(tenantId);
-    scopedCharacterResolver.requireScopedCharacter(
-        tenantId, characterId, gameInstanceId, playableStateScope);
-    inventoryService.removeItem(tenantId, characterId, itemId);
+    inventoryService.removeItem(tenantId, characterId, gameInstanceId, playableStateScope, itemId);
     return ResponseEntity.ok(ApiResponse.success(null));
   }
 }

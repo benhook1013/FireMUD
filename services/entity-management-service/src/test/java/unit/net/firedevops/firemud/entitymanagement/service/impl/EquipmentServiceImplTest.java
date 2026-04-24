@@ -22,12 +22,16 @@ import net.firedevops.firemud.entitymanagement.repository.EquipmentSlotDefinitio
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.service.EquipmentSlotIncompatibleException;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 
 class EquipmentServiceImplTest {
+  private static final PlayableStateScope PLAYABLE_STATE_SCOPE =
+      PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+
   @Test
   void listEquipmentReturnsInstanceBackedDtos() {
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
@@ -66,7 +70,7 @@ class EquipmentServiceImplTest {
     when(containerInstanceRepo.findByItemInstance_Id(601L))
         .thenReturn(Optional.of(containerInstance));
 
-    var result = service.listEquipment(11L, 1L, Pageable.unpaged());
+    var result = service.listEquipment(11L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, Pageable.unpaged());
 
     assertEquals(1, result.getTotalElements());
     assertEquals("HEAD", result.getContent().get(0).slot());
@@ -121,7 +125,7 @@ class EquipmentServiceImplTest {
     when(containerInstanceRepo.findByItemInstance_Id(701L))
         .thenReturn(Optional.of(containerInstance));
 
-    var equipped = service.wearItem(1L, 1L, 2L, null);
+    var equipped = service.wearItem(1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, 2L, null);
 
     assertEquals("HEAD", carried.getEquipmentSlot());
     assertEquals("HEAD", equipped.slot());
@@ -176,7 +180,9 @@ class EquipmentServiceImplTest {
                 1L, 1L, 2L))
         .thenReturn(List.of(stale));
 
-    assertThrows(IllegalArgumentException.class, () -> service.wearItem(1L, 1L, 2L, null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.wearItem(1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, 2L, null));
     verify(itemTransferAuditWriter, never()).recordInstanceTransfer(any(), any(), any(), any());
   }
 
@@ -222,7 +228,7 @@ class EquipmentServiceImplTest {
     when(containerInstanceRepo.findByItemInstance_Id(701L))
         .thenReturn(Optional.of(containerInstance));
 
-    var removed = service.removeWornItem(1L, 1L, "HEAD");
+    var removed = service.removeWornItem(1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "HEAD");
 
     assertEquals(77L, removed.containerInstanceId());
     assertEquals("HEAD", removed.slot());
@@ -270,7 +276,9 @@ class EquipmentServiceImplTest {
                 1L, 1L, "HEAD"))
         .thenReturn(Optional.of(stale));
 
-    assertThrows(IllegalArgumentException.class, () -> service.removeWornItem(1L, 1L, "HEAD"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.removeWornItem(1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "HEAD"));
   }
 
   @Test
@@ -304,7 +312,9 @@ class EquipmentServiceImplTest {
         .thenReturn(Optional.empty());
 
     IllegalArgumentException ex =
-        assertThrows(IllegalArgumentException.class, () -> service.wearItem(1L, 1L, 2L, null));
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.wearItem(1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, 2L, null));
     assertEquals("Equipment slot is not defined", ex.getMessage());
     verify(itemInstanceRepo, never())
         .existsByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
@@ -350,7 +360,8 @@ class EquipmentServiceImplTest {
 
     EquipmentSlotIncompatibleException ex =
         assertThrows(
-            EquipmentSlotIncompatibleException.class, () -> service.wearItem(1L, 1L, 2L, null));
+            EquipmentSlotIncompatibleException.class,
+            () -> service.wearItem(1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, 2L, null));
     assertEquals("Leather Boots cannot be worn by this body layout.", ex.getMessage());
     verify(itemInstanceRepo, never())
         .existsByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
@@ -389,7 +400,9 @@ class EquipmentServiceImplTest {
     when(slotRepo.findByTenantIdAndVersionIdAndSlotKey(1L, 1L, "BACK"))
         .thenReturn(Optional.of(slot));
 
-    assertThrows(IllegalArgumentException.class, () -> service.wearItem(1L, 1L, 2L, null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.wearItem(1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, 2L, null));
     verify(itemInstanceRepo, never())
         .existsByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
             any(), any(), any());
@@ -399,6 +412,7 @@ class EquipmentServiceImplTest {
     Character character = new Character();
     character.setId(id);
     character.setTenantId(tenantId);
+    character.setPlayableStateKey("shared-live");
     return character;
   }
 

@@ -17,6 +17,7 @@ import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRequest
 import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
@@ -39,6 +40,8 @@ class ItemRuntimeServiceTest {
         QueryInventoryRequest.newBuilder()
             .setTenantId("1")
             .setCharacterId("7")
+            .setGameInstanceId("9")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setSessionAttestation("attestation")
             .build();
     when(entityStub.queryInventory(request))
@@ -61,6 +64,7 @@ class ItemRuntimeServiceTest {
             .setTenantId("1")
             .setCharacterId("7")
             .setGameInstanceId("9")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setRoomInstanceId("room-1")
             .setItemId("100")
             .setQuantity(1)
@@ -76,6 +80,7 @@ class ItemRuntimeServiceTest {
             .setTenantId("1")
             .setCharacterId("7")
             .setGameInstanceId("9")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setRoomInstanceId("room-1")
             .setItemId("100")
             .setQuantity(1)
@@ -95,6 +100,8 @@ class ItemRuntimeServiceTest {
         WearEquipmentItemRequest.newBuilder()
             .setTenantId("1")
             .setCharacterId("7")
+            .setGameInstanceId("9")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setItemId("100")
             .setSessionAttestation("attestation")
             .build();
@@ -119,6 +126,8 @@ class ItemRuntimeServiceTest {
         ListEquipmentRequest.newBuilder()
             .setTenantId("1")
             .setCharacterId("7")
+            .setGameInstanceId("9")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setSessionAttestation("attestation")
             .build();
     when(entityStub.listEquipment(request))
@@ -136,6 +145,8 @@ class ItemRuntimeServiceTest {
         WearEquipmentItemRequest.newBuilder()
             .setTenantId("1")
             .setCharacterId("7")
+            .setGameInstanceId("9")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setItemId("100")
             .setSessionAttestation("attestation")
             .build();
@@ -160,6 +171,7 @@ class ItemRuntimeServiceTest {
             .setRoomInstanceId("room-1")
             .setItemReference("torch1")
             .setQuantity(1)
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setSessionAttestation("attestation")
             .setEffectId("effect-1")
             .build();
@@ -186,6 +198,7 @@ class ItemRuntimeServiceTest {
                 .setTenantId("1")
                 .setCharacterId("7")
                 .setGameInstanceId("9")
+                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                 .setRoomInstanceId("room-1")
                 .setItemId("100")
                 .setItemInstanceId("500")
@@ -216,6 +229,7 @@ class ItemRuntimeServiceTest {
             .setRoomInstanceId("room-1")
             .setItemReference("ammo/iron")
             .setQuantity(3)
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setSessionAttestation("attestation")
             .setEffectId("effect-1")
             .build();
@@ -223,6 +237,8 @@ class ItemRuntimeServiceTest {
             QueryInventoryRequest.newBuilder()
                 .setTenantId("1")
                 .setCharacterId("7")
+                .setGameInstanceId("9")
+                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                 .setSessionAttestation("attestation")
                 .build()))
         .thenReturn(
@@ -240,6 +256,7 @@ class ItemRuntimeServiceTest {
                 .setTenantId("1")
                 .setCharacterId("7")
                 .setGameInstanceId("9")
+                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                 .setRoomInstanceId("room-1")
                 .setItemId("100")
                 .setContainerInstanceId("100")
@@ -264,6 +281,7 @@ class ItemRuntimeServiceTest {
             .setGameInstanceId("9")
             .setRoomInstanceId("room-1")
             .setQuantity(1)
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setSessionAttestation("attestation")
             .build();
 

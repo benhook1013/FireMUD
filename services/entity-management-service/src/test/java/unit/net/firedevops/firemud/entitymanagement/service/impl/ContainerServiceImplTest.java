@@ -20,12 +20,16 @@ import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepos
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemStackRepository;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 
 class ContainerServiceImplTest {
+  private static final PlayableStateScope PLAYABLE_STATE_SCOPE =
+      PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+
   @Test
   void listContainerContentsReturnsInstanceBackedDtos() {
     ContainerInstanceRepository containerInstanceRepo =
@@ -58,7 +62,7 @@ class ContainerServiceImplTest {
 
     when(characterRepo.findByIdAndTenantId(7L, 1L)).thenReturn(Optional.of(character));
     when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
-            500L, 1L, 7L, null, null))
+            500L, 1L, 7L, "GI-1", null))
         .thenReturn(Optional.of(containerInstance));
     when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdOrderByIdAsc(
             1L, 500L, Pageable.unpaged()))
@@ -67,7 +71,9 @@ class ContainerServiceImplTest {
             1L, 500L, Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of()));
 
-    var result = service.listContainerContents(1L, 7L, 500L, Pageable.unpaged());
+    var result =
+        service.listContainerContents(
+            1L, 7L, 500L, "GI-1", PLAYABLE_STATE_SCOPE, null, Pageable.unpaged());
 
     assertEquals(1, result.getTotalElements());
     assertEquals("Torch", result.getContent().get(0).itemName());
@@ -113,7 +119,7 @@ class ContainerServiceImplTest {
 
     when(characterRepo.findByIdAndTenantId(7L, 1L)).thenReturn(Optional.of(character));
     when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
-            500L, 1L, 7L, null, null))
+            500L, 1L, 7L, "GI-1", null))
         .thenReturn(Optional.of(containerInstance));
     when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdOrderByIdAsc(
             1L, 500L, Pageable.unpaged()))
@@ -122,7 +128,9 @@ class ContainerServiceImplTest {
             1L, 500L, Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(stack)));
 
-    var result = service.listContainerContents(1L, 7L, 500L, Pageable.unpaged());
+    var result =
+        service.listContainerContents(
+            1L, 7L, 500L, "GI-1", PLAYABLE_STATE_SCOPE, null, Pageable.unpaged());
 
     assertEquals(1, result.getTotalElements());
     assertEquals(4, result.getContent().get(0).quantity());
@@ -163,7 +171,7 @@ class ContainerServiceImplTest {
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
     when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
-            500L, 1L, 1L, null, null))
+            500L, 1L, 1L, "GI-1", null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
     when(itemInstanceRepo
@@ -173,7 +181,9 @@ class ContainerServiceImplTest {
     when(itemInstanceRepo.save(any(ItemInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var stored = service.putItemIntoContainer(1L, 1L, 500L, 3L, null, null, 1);
+    var stored =
+        service.putItemIntoContainer(
+            1L, 1L, 500L, "GI-1", PLAYABLE_STATE_SCOPE, null, 3L, null, null, 1);
 
     assertEquals("Torch", stored.itemName());
     assertEquals(1, stored.quantity());
@@ -225,7 +235,7 @@ class ContainerServiceImplTest {
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
     when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
-            500L, 1L, 1L, null, null))
+            500L, 1L, 1L, "GI-1", null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(arrows));
     when(itemStackRepo
@@ -238,7 +248,9 @@ class ContainerServiceImplTest {
     when(itemStackRepo.save(any(ItemStack.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var stored = service.putItemIntoContainer(1L, 1L, 500L, 3L, null, null, 2);
+    var stored =
+        service.putItemIntoContainer(
+            1L, 1L, 500L, "GI-1", PLAYABLE_STATE_SCOPE, null, 3L, null, null, 2);
 
     assertEquals(2, stored.quantity());
     assertEquals(3, inventoryStack.getQuantity());
@@ -285,7 +297,7 @@ class ContainerServiceImplTest {
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
     when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
-            500L, 1L, 1L, null, null))
+            500L, 1L, 1L, "GI-1", null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
     when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(1L, 500L, 3L))
@@ -293,7 +305,9 @@ class ContainerServiceImplTest {
     when(itemInstanceRepo.save(any(ItemInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var taken = service.takeItemFromContainer(1L, 1L, 500L, 3L, 42L, null, 1);
+    var taken =
+        service.takeItemFromContainer(
+            1L, 1L, 500L, "GI-1", PLAYABLE_STATE_SCOPE, null, 3L, 42L, null, 1);
 
     assertEquals("Torch", taken.itemName());
     assertEquals(character, second.getCharacter());
@@ -329,14 +343,16 @@ class ContainerServiceImplTest {
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
     when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
-            500L, 1L, 1L, null, null))
+            500L, 1L, 1L, "GI-1", null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(nestedContainer));
 
     IllegalArgumentException ex =
         assertThrows(
             IllegalArgumentException.class,
-            () -> service.putItemIntoContainer(1L, 1L, 500L, 3L, null, null, 1));
+            () ->
+                service.putItemIntoContainer(
+                    1L, 1L, 500L, "GI-1", PLAYABLE_STATE_SCOPE, null, 3L, null, null, 1));
 
     assertEquals("Nested containers are not supported", ex.getMessage());
   }
@@ -387,7 +403,7 @@ class ContainerServiceImplTest {
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
     when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterIdOrRoom(
-            500L, 1L, 1L, null, null))
+            500L, 1L, 1L, "GI-1", null))
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(arrows));
     when(itemStackRepo
@@ -400,7 +416,9 @@ class ContainerServiceImplTest {
     when(itemStackRepo.save(any(ItemStack.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var stored = service.putItemIntoContainer(1L, 1L, 500L, 3L, null, "ammo/steel", 2);
+    var stored =
+        service.putItemIntoContainer(
+            1L, 1L, 500L, "GI-1", PLAYABLE_STATE_SCOPE, null, 3L, null, "ammo/steel", 2);
 
     assertEquals("ammo/steel", stored.visibleRef());
     assertEquals(2, second.getQuantity());
@@ -411,6 +429,7 @@ class ContainerServiceImplTest {
     Character character = new Character();
     character.setId(id);
     character.setTenantId(tenantId);
+    character.setPlayableStateKey("shared-live");
     return character;
   }
 

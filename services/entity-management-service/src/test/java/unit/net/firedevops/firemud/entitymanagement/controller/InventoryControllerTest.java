@@ -12,9 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.List;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
-import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
-import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +31,6 @@ class InventoryControllerTest {
   @Autowired private MockMvc mockMvc;
 
   @MockitoBean private InventoryService inventoryService;
-  @MockitoBean private ScopedCharacterResolver scopedCharacterResolver;
 
   @BeforeEach
   void setUpSecurityContext() {
@@ -49,10 +46,12 @@ class InventoryControllerTest {
   void listReturnsInventory() throws Exception {
     InventoryEntryDto dto =
         new InventoryEntryDto(1L, 2L, 3L, "Torch", "A small torch", 4, null, null, null);
-    when(scopedCharacterResolver.requireScopedCharacter(
-            1L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
-        .thenReturn(new Character());
-    when(inventoryService.listInventory(eq(1L), eq(2L), any(Pageable.class)))
+    when(inventoryService.listInventory(
+            eq(1L),
+            eq(2L),
+            eq("live"),
+            eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED),
+            any(Pageable.class)))
         .thenReturn(new PageImpl<>(List.of(dto)));
 
     mockMvc
@@ -68,10 +67,13 @@ class InventoryControllerTest {
 
   @Test
   void addAndDeleteUseTenantScopedPath() throws Exception {
-    when(scopedCharacterResolver.requireScopedCharacter(
-            1L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
-        .thenReturn(new Character());
-    when(inventoryService.addItem(eq(1L), eq(2L), eq(3L), eq(1)))
+    when(inventoryService.addItem(
+            eq(1L),
+            eq(2L),
+            eq("live"),
+            eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED),
+            eq(3L),
+            eq(1)))
         .thenReturn(new InventoryEntryDto(1L, 2L, 3L, "Torch", null, 1, null, null, null));
 
     mockMvc

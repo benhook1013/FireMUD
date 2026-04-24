@@ -139,6 +139,7 @@ message PickupVisibleRoomItemRequest {
   int32 quantity = 8;
   string session_attestation = 9;
   string effect_id = 10;
+  entity_management.v1.PlayableStateScope playable_state_scope = 11;
 }
 
 message DropCarriedItemRequest {
@@ -152,6 +153,7 @@ message DropCarriedItemRequest {
   int32 quantity = 8;
   string session_attestation = 9;
   string effect_id = 10;
+  entity_management.v1.PlayableStateScope playable_state_scope = 11;
 }
 
 enum CommunicationType {

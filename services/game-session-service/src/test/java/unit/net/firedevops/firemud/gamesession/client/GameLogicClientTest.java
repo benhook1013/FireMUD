@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import java.lang.reflect.Field;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -18,6 +19,7 @@ import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRequest
 import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
@@ -26,6 +28,7 @@ import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.Test;
@@ -109,6 +112,8 @@ class GameLogicClientTest {
         QueryInventoryRequest.newBuilder()
             .setTenantId("22")
             .setCharacterId("123")
+            .setGameInstanceId("1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setSessionAttestation("attestation")
             .build();
     when(stub.queryInventory(request))
@@ -136,6 +141,7 @@ class GameLogicClientTest {
             .setTenantId("22")
             .setCharacterId("123")
             .setGameInstanceId("1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setRoomInstanceId("1021")
             .setItemId("7")
             .setItemInstanceId("item-7")
@@ -181,6 +187,7 @@ class GameLogicClientTest {
             .setRoomInstanceId("1021")
             .setItemReference("torch1")
             .setQuantity(1)
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setSessionAttestation("attestation")
             .setEffectId("effect-1")
             .build();
@@ -240,6 +247,7 @@ class GameLogicClientTest {
             .setTenantId("22")
             .setCharacterId("123")
             .setGameInstanceId("1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setRoomInstanceId("1021")
             .setItemId("7")
             .setItemInstanceId("item-7")
@@ -284,6 +292,7 @@ class GameLogicClientTest {
             .setRoomInstanceId("1021")
             .setItemReference("torch1")
             .setQuantity(1)
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setSessionAttestation("attestation")
             .setEffectId("effect-1")
             .build();
@@ -305,12 +314,26 @@ class GameLogicClientTest {
         mock(GameplaySessionAttestationService.class);
     when(attestationService.issueGameplaySessionAttestation("22", "41", "0", "123", "1", "1021"))
         .thenReturn("attestation");
+    GameplayCatalogProperties properties = new GameplayCatalogProperties();
+    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
+    world.setSlug("world");
+    world.setDisplayName("World");
+    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+    realm.setSlug("realm");
+    realm.setDisplayName("Realm");
+    realm.setTenantId(22L);
+    realm.setGameInstanceId(1L);
+    realm.setVisible(true);
+    realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
+    world.setRealms(java.util.List.of(realm));
+    properties.setWorlds(java.util.List.of(world));
     return new GameLogicClient(
         new ServiceEndpointsProperties(),
         new CommonGrpcClientProperties(),
         mock(GrpcChannelFactory.class),
         BlockingGrpcStubCustomizer.noop(),
-        attestationService);
+        attestationService,
+        new GameplayWorldCatalog(properties));
   }
 
   private static void setStub(GameLogicClient client, Object stub) throws Exception {

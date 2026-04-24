@@ -20,6 +20,11 @@ public class ScopedCharacterResolver {
     String playableStateKey = playableStateKeyResolver.resolve(gameInstanceId, playableStateScope);
     return characterRepository
         .findByIdAndTenantIdAndPlayableStateKey(characterId, tenantId, playableStateKey)
+        .or(
+            () ->
+                characterRepository
+                    .findByIdAndTenantId(characterId, tenantId)
+                    .filter(character -> playableStateKey.equals(character.getPlayableStateKey())))
         .orElseThrow(
             () -> new IllegalArgumentException("Character does not belong to gameplay scope"));
   }

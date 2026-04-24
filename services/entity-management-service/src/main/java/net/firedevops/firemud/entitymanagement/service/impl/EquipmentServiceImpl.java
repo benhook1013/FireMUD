@@ -17,6 +17,9 @@ import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.EquipmentSlotIncompatibleException;
+import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -35,7 +38,7 @@ public class EquipmentServiceImpl implements EquipmentService {
       justification = "Spring repositories are framework-managed singletons and only stored")
   private final ContainerInstanceRepository containerInstanceRepository;
 
-  private final CharacterRepository characterRepository;
+  private final ScopedCharacterResolver scopedCharacterResolver;
   private final ItemRepository itemRepository;
   private final ItemTransferSupport itemTransferSupport;
   private final ItemTransferAuditWriter itemTransferAuditWriter;
@@ -47,7 +50,7 @@ public class EquipmentServiceImpl implements EquipmentService {
   public EquipmentServiceImpl(
       ItemInstanceRepository itemInstanceRepository,
       ContainerInstanceRepository containerInstanceRepository,
-      CharacterRepository characterRepository,
+      ScopedCharacterResolver scopedCharacterResolver,
       ItemRepository itemRepository,
       ItemTransferSupport itemTransferSupport,
       ItemTransferAuditWriter itemTransferAuditWriter,
@@ -56,7 +59,7 @@ public class EquipmentServiceImpl implements EquipmentService {
       BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository) {
     this.itemInstanceRepository = itemInstanceRepository;
     this.containerInstanceRepository = containerInstanceRepository;
-    this.characterRepository = characterRepository;
+    this.scopedCharacterResolver = scopedCharacterResolver;
     this.itemRepository = itemRepository;
     this.itemTransferSupport = itemTransferSupport;
     this.itemTransferAuditWriter = itemTransferAuditWriter;
@@ -77,7 +80,49 @@ public class EquipmentServiceImpl implements EquipmentService {
     this(
         itemInstanceRepository,
         containerInstanceRepository,
-        characterRepository,
+        new ScopedCharacterResolver(characterRepository, new PlayableStateKeyResolver()),
+        itemRepository,
+        itemTransferSupport,
+        containerHolderSyncSupport,
+        equipmentSlotDefinitionRepository,
+        bodyLayoutSlotDefinitionRepository);
+  }
+
+  EquipmentServiceImpl(
+      ItemInstanceRepository itemInstanceRepository,
+      ContainerInstanceRepository containerInstanceRepository,
+      CharacterRepository characterRepository,
+      ItemRepository itemRepository,
+      ItemTransferSupport itemTransferSupport,
+      ItemTransferAuditWriter itemTransferAuditWriter,
+      ContainerHolderSyncSupport containerHolderSyncSupport,
+      EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository,
+      BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository) {
+    this(
+        itemInstanceRepository,
+        containerInstanceRepository,
+        new ScopedCharacterResolver(characterRepository, new PlayableStateKeyResolver()),
+        itemRepository,
+        itemTransferSupport,
+        itemTransferAuditWriter,
+        containerHolderSyncSupport,
+        equipmentSlotDefinitionRepository,
+        bodyLayoutSlotDefinitionRepository);
+  }
+
+  EquipmentServiceImpl(
+      ItemInstanceRepository itemInstanceRepository,
+      ContainerInstanceRepository containerInstanceRepository,
+      ScopedCharacterResolver scopedCharacterResolver,
+      ItemRepository itemRepository,
+      ItemTransferSupport itemTransferSupport,
+      ContainerHolderSyncSupport containerHolderSyncSupport,
+      EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository,
+      BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository) {
+    this(
+        itemInstanceRepository,
+        containerInstanceRepository,
+        scopedCharacterResolver,
         itemRepository,
         itemTransferSupport,
         new NoOpItemTransferAuditWriter(),
@@ -90,8 +135,12 @@ public class EquipmentServiceImpl implements EquipmentService {
   @Transactional(readOnly = true)
   @Timed(value = "equipment.list")
   public Page<CharacterEquipmentEntryDto> listEquipment(
-      Long tenantId, Long characterId, Pageable pageable) {
-    requireCharacter(tenantId, characterId);
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      Pageable pageable) {
+    requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     return itemInstanceRepository
         .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNotNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByEquipmentSlotAscIdAsc(
             tenantId, characterId, pageable)
@@ -104,11 +153,14 @@ public class EquipmentServiceImpl implements EquipmentService {
   public CharacterEquipmentEntryDto wearItem(
       Long tenantId,
       Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
       Long itemId,
       Long itemInstanceId,
       String effectId,
       String sessionId) {
-    Character character = requireCharacter(tenantId, characterId);
+    Character character =
+        requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     Item item = requireWearableItem(tenantId, itemId);
     String slot = normalizeSlot(requireWearableSlot(item));
     requireSlotCompatible(character, item, slot);
@@ -118,7 +170,8 @@ public class EquipmentServiceImpl implements EquipmentService {
       throw new IllegalArgumentException("Equipment slot is occupied");
     }
     ItemInstance instance =
-        resolveWearableItemInstance(tenantId, characterId, itemId, itemInstanceId);
+        resolveWearableItemInstance(
+            tenantId, characterId, gameInstanceId, playableStateScope, itemId, itemInstanceId);
     ItemTransferSupport.ExpectedSource expectedSource =
         itemTransferSupport.inventory(tenantId, characterId);
     ItemTransferSupport.Destination destination = itemTransferSupport.equipment(character, slot);
@@ -136,9 +189,16 @@ public class EquipmentServiceImpl implements EquipmentService {
   @Transactional
   @Timed(value = "equipment.remove")
   public CharacterEquipmentEntryDto removeWornItem(
-      Long tenantId, Long characterId, String slot, String effectId, String sessionId) {
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      String slot,
+      String effectId,
+      String sessionId) {
     String normalizedSlot = normalizeSlot(requireText(slot, "slot"));
-    Character character = requireCharacter(tenantId, characterId);
+    Character character =
+        requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     ItemInstance instance =
         itemInstanceRepository
             .findByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
@@ -167,10 +227,13 @@ public class EquipmentServiceImpl implements EquipmentService {
         removed.visibleRef());
   }
 
-  private Character requireCharacter(Long tenantId, Long characterId) {
-    return characterRepository
-        .findByIdAndTenantId(characterId, tenantId)
-        .orElseThrow(() -> new IllegalArgumentException("Character not found for tenant"));
+  private Character requireCharacter(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope) {
+    return scopedCharacterResolver.requireScopedCharacter(
+        tenantId, characterId, gameInstanceId, playableStateScope);
   }
 
   private Item requireWearableItem(Long tenantId, Long itemId) {
@@ -235,7 +298,13 @@ public class EquipmentServiceImpl implements EquipmentService {
   }
 
   private ItemInstance resolveWearableItemInstance(
-      Long tenantId, Long characterId, Long itemId, Long itemInstanceId) {
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      Long itemId,
+      Long itemInstanceId) {
+    requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     if (itemInstanceId != null) {
       return itemInstanceRepository
           .findByIdAndTenantId(itemInstanceId, tenantId)

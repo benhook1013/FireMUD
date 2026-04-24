@@ -4,7 +4,6 @@ import io.micrometer.core.annotation.Timed;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomGroundInventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.entity.Character;
@@ -18,6 +17,10 @@ import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemStackRepository;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
+import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -25,11 +28,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@RequiredArgsConstructor
 public class InventoryServiceImpl implements InventoryService {
   private final ItemInstanceRepository itemInstanceRepository;
   private final ContainerInstanceRepository containerInstanceRepository;
-  private final CharacterRepository characterRepository;
+  private final ScopedCharacterResolver scopedCharacterResolver;
   private final ItemRepository itemRepository;
   private final ItemStackRepository itemStackRepository;
   private final ItemVisibleRefAllocator itemVisibleRefAllocator;
@@ -38,11 +40,64 @@ public class InventoryServiceImpl implements InventoryService {
   private final ContainerHolderSyncSupport containerHolderSyncSupport;
   private final StackableItemSupport stackableItemSupport;
 
+  @Autowired
+  public InventoryServiceImpl(
+      ItemInstanceRepository itemInstanceRepository,
+      ContainerInstanceRepository containerInstanceRepository,
+      ScopedCharacterResolver scopedCharacterResolver,
+      ItemRepository itemRepository,
+      ItemStackRepository itemStackRepository,
+      ItemVisibleRefAllocator itemVisibleRefAllocator,
+      ItemTransferSupport itemTransferSupport,
+      ItemTransferAuditWriter itemTransferAuditWriter,
+      ContainerHolderSyncSupport containerHolderSyncSupport,
+      StackableItemSupport stackableItemSupport) {
+    this.itemInstanceRepository = itemInstanceRepository;
+    this.containerInstanceRepository = containerInstanceRepository;
+    this.scopedCharacterResolver = scopedCharacterResolver;
+    this.itemRepository = itemRepository;
+    this.itemStackRepository = itemStackRepository;
+    this.itemVisibleRefAllocator = itemVisibleRefAllocator;
+    this.itemTransferSupport = itemTransferSupport;
+    this.itemTransferAuditWriter = itemTransferAuditWriter;
+    this.containerHolderSyncSupport = containerHolderSyncSupport;
+    this.stackableItemSupport = stackableItemSupport;
+  }
+
+  InventoryServiceImpl(
+      ItemInstanceRepository itemInstanceRepository,
+      ContainerInstanceRepository containerInstanceRepository,
+      CharacterRepository characterRepository,
+      ItemRepository itemRepository,
+      ItemStackRepository itemStackRepository,
+      ItemVisibleRefAllocator itemVisibleRefAllocator,
+      ItemTransferSupport itemTransferSupport,
+      ItemTransferAuditWriter itemTransferAuditWriter,
+      ContainerHolderSyncSupport containerHolderSyncSupport,
+      StackableItemSupport stackableItemSupport) {
+    this(
+        itemInstanceRepository,
+        containerInstanceRepository,
+        new ScopedCharacterResolver(characterRepository, new PlayableStateKeyResolver()),
+        itemRepository,
+        itemStackRepository,
+        itemVisibleRefAllocator,
+        itemTransferSupport,
+        itemTransferAuditWriter,
+        containerHolderSyncSupport,
+        stackableItemSupport);
+  }
+
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "inventory.list")
-  public Page<InventoryEntryDto> listInventory(Long tenantId, Long characterId, Pageable pageable) {
-    requireCharacter(tenantId, characterId);
+  public Page<InventoryEntryDto> listInventory(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      Pageable pageable) {
+    requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     List<InventoryEntryDto> entries = new ArrayList<>();
     entries.addAll(
         itemInstanceRepository
@@ -63,9 +118,16 @@ public class InventoryServiceImpl implements InventoryService {
   @Override
   @Transactional
   @Timed(value = "inventory.add")
-  public InventoryEntryDto addItem(Long tenantId, Long characterId, Long itemId, int quantity) {
+  public InventoryEntryDto addItem(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      Long itemId,
+      int quantity) {
     requirePositiveQuantity(quantity);
-    Character character = requireCharacter(tenantId, characterId);
+    Character character =
+        requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     Item item = requireItem(tenantId, itemId);
     if (stackableItemSupport.usesStackStorage(item)) {
       incrementInventoryStack(character, item, quantity);
@@ -79,8 +141,14 @@ public class InventoryServiceImpl implements InventoryService {
   @Override
   @Transactional
   @Timed(value = "inventory.remove")
-  public void removeItem(Long tenantId, Long characterId, Long itemId) {
-    Character character = requireCharacter(tenantId, characterId);
+  public void removeItem(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      Long itemId) {
+    Character character =
+        requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     Item item = requireItem(tenantId, itemId);
     if (stackableItemSupport.usesStackStorage(item)) {
       List<ItemStack> stacks =
@@ -132,6 +200,7 @@ public class InventoryServiceImpl implements InventoryService {
       Long tenantId,
       Long characterId,
       String gameInstanceId,
+      PlayableStateScope playableStateScope,
       String roomInstanceId,
       Long itemId,
       Long itemInstanceId,
@@ -143,7 +212,8 @@ public class InventoryServiceImpl implements InventoryService {
     requirePositiveQuantity(quantity);
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
     String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
-    Character character = requireCharacter(tenantId, characterId);
+    Character character =
+        requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     Item item = requireItem(tenantId, itemId);
     if (stackableItemSupport.usesStackStorage(item)) {
       String selectedStackFamilyKey =
@@ -185,6 +255,7 @@ public class InventoryServiceImpl implements InventoryService {
       Long tenantId,
       Long characterId,
       String gameInstanceId,
+      PlayableStateScope playableStateScope,
       String roomInstanceId,
       Long itemId,
       Long itemInstanceId,
@@ -196,7 +267,8 @@ public class InventoryServiceImpl implements InventoryService {
     requirePositiveQuantity(quantity);
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
     String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
-    Character character = requireCharacter(tenantId, characterId);
+    Character character =
+        requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     Item item = requireItem(tenantId, itemId);
     if (stackableItemSupport.usesStackStorage(item)) {
       String selectedStackFamilyKey =
@@ -225,10 +297,13 @@ public class InventoryServiceImpl implements InventoryService {
     return inventoryDtoForMutation(selected.get(0), quantity);
   }
 
-  private Character requireCharacter(Long tenantId, Long characterId) {
-    return characterRepository
-        .findByIdAndTenantId(characterId, tenantId)
-        .orElseThrow(() -> new IllegalArgumentException("Character not found for tenant"));
+  private Character requireCharacter(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope) {
+    return scopedCharacterResolver.requireScopedCharacter(
+        tenantId, characterId, gameInstanceId, playableStateScope);
   }
 
   private Item requireItem(Long tenantId, Long itemId) {

@@ -121,6 +121,7 @@ public class ItemRuntimeService {
             .setTenantId(request.getTenantId())
             .setCharacterId(request.getCharacterId())
             .setGameInstanceId(request.getGameInstanceId())
+            .setPlayableStateScope(request.getPlayableStateScope())
             .setRoomInstanceId(request.getRoomInstanceId())
             .setItemId(item.getItemId())
             .setQuantity(request.getQuantity())
@@ -153,6 +154,8 @@ public class ItemRuntimeService {
             QueryInventoryRequest.newBuilder()
                 .setTenantId(request.getTenantId())
                 .setCharacterId(request.getCharacterId())
+                .setGameInstanceId(request.getGameInstanceId())
+                .setPlayableStateScope(request.getPlayableStateScope())
                 .setSessionAttestation(request.getSessionAttestation())
                 .build());
     if (inventory.hasError()) {
@@ -174,6 +177,7 @@ public class ItemRuntimeService {
             .setTenantId(request.getTenantId())
             .setCharacterId(request.getCharacterId())
             .setGameInstanceId(request.getGameInstanceId())
+            .setPlayableStateScope(request.getPlayableStateScope())
             .setRoomInstanceId(request.getRoomInstanceId())
             .setItemId(item.getItemId())
             .setQuantity(request.getQuantity())
