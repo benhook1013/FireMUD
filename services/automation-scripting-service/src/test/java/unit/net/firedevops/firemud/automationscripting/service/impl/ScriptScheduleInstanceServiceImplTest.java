@@ -1,7 +1,9 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -10,6 +12,7 @@ import java.time.Instant;
 import java.util.List;
 import net.firedevops.firemud.automationscripting.config.ScriptSchedulerProperties;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleDefinition;
@@ -42,6 +45,7 @@ class ScriptScheduleInstanceServiceImplTest {
   private AutomationQueueService automationQueueService;
   private AutomationAdmissionStateService automationAdmissionStateService;
   private ScriptScheduleInstanceService service;
+  private SimpleMeterRegistry meterRegistry;
 
   @BeforeEach
   void setup() {
@@ -54,6 +58,7 @@ class ScriptScheduleInstanceServiceImplTest {
     eventAuditRepository = mock(ScriptEventAuditRepository.class);
     automationQueueService = mock(AutomationQueueService.class);
     automationAdmissionStateService = mock(AutomationAdmissionStateService.class);
+    meterRegistry = new SimpleMeterRegistry();
     when(automationAdmissionStateService.getState("1", "game-1", "region-1"))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
@@ -72,7 +77,7 @@ class ScriptScheduleInstanceServiceImplTest {
             automationQueueService,
             automationAdmissionStateService,
             new ScriptSchedulerProperties(),
-            new SimpleMeterRegistry());
+            meterRegistry);
   }
 
   @Test
@@ -391,6 +396,122 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void observeRuntimeTickProgressSuppressesDueWallClockTimerWhenRuntimeScopeChanges() {
+    ScriptScheduleInstance timerInstance = new ScriptScheduleInstance();
+    timerInstance.setTenantId("1");
+    timerInstance.setGameInstanceId("game-1");
+    timerInstance.setScriptPatchVersion("patch-1");
+    timerInstance.setScriptId("npc-guard");
+    timerInstance.setEventType("onTimerExpire");
+    timerInstance.setScheduleDefinitionId("guard.alert.expire.v1");
+    timerInstance.setScheduleKind("TIMER");
+    timerInstance.setCadenceUnit("MILLISECONDS");
+    timerInstance.setCadenceValue(5_000L);
+    timerInstance.setPriorityTag("normal");
+    timerInstance.setTargetScopeType("ENTITY");
+    timerInstance.setTargetScopeId("guard-1");
+    timerInstance.setMaterializationStatus("READY");
+    timerInstance.setRuntimeRegionId("region-old");
+    timerInstance.setRuntimeRegionEpoch(11L);
+    timerInstance.setLastObservedTickId(120L);
+    timerInstance.setNextDueAt(Instant.ofEpochMilli(5_000L));
+    timerInstance.setScheduleMetadataJson("{}");
+    timerInstance.setScheduleSemanticsHash("hash-ms");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of());
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(timerInstance));
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(
+            new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+                "1", "game-1", "region-new", 12L, 131L, 6_000L));
+
+    assertThat(result.updatedScheduleCount()).isEqualTo(1);
+    assertThat(result.firedScheduleCount()).isZero();
+    assertThat(result.truncatedFiringCount()).isZero();
+    verify(workItemRepository, never()).saveAndFlush(any());
+    verify(automationQueueService, never()).enqueueWorkItem(any());
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).save(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getFinalStage()).isEqualTo("ADMISSION");
+    assertThat(auditCaptor.getValue().getFinalOutcome()).isEqualTo("canceled");
+    assertThat(auditCaptor.getValue().getFinalReason()).isEqualTo("runtime_scope_changed");
+    assertThat(auditCaptor.getValue().getRegionId()).isEqualTo("region-old");
+    assertThat(auditCaptor.getValue().getRegionEpoch()).isEqualTo(11L);
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<ScriptScheduleInstance>> scheduleCaptor =
+        ArgumentCaptor.forClass(List.class);
+    verify(scheduleInstanceRepository).saveAll(scheduleCaptor.capture());
+    assertThat(scheduleCaptor.getValue())
+        .singleElement()
+        .satisfies(
+            instance -> {
+              assertThat(instance.getRuntimeRegionId()).isEqualTo("region-new");
+              assertThat(instance.getRuntimeRegionEpoch()).isEqualTo(12L);
+              assertThat(instance.getNextDueAt()).isNull();
+            });
+    assertThat(
+            meterRegistry
+                .get("automation_script_timer_runtime_fence_dropped_total")
+                .tag("tenantId", "1")
+                .tag("scriptId", "npc-guard")
+                .tag("eventType", "onTimerExpire")
+                .tag("reason", "runtime_scope_changed")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+  }
+
+  @Test
+  void observeRuntimeTickProgressRecordsCatchUpTruncationWithReasonLabels() {
+    ScriptSchedulerProperties schedulerProperties = new ScriptSchedulerProperties();
+    schedulerProperties.setMaxCatchUpFiringsPerObservation(1);
+    service =
+        new ScriptScheduleInstanceServiceImpl(
+            scheduleDefinitionRepository,
+            scheduleInstanceRepository,
+            pinProjectionRepository,
+            pluginRuntimeStateRepository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            automationQueueService,
+            automationAdmissionStateService,
+            schedulerProperties,
+            meterRegistry);
+    ScriptScheduleInstance first =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 20L, 120L);
+    ScriptScheduleInstance second =
+        tickSchedule("guard-2", "npc-scout", "guard.scout.v1", 20L, 120L);
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(first, second));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of());
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(
+            new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+                "1", "game-1", "region-1", 12L, 130L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isEqualTo(1);
+    assertThat(result.truncatedFiringCount()).isEqualTo(1);
+    verify(eventAuditRepository, org.mockito.Mockito.times(2)).save(any(ScriptEventAudit.class));
+    assertThat(
+            meterRegistry
+                .get("automation_script_timer_catchup_truncated_total")
+                .tag("tenantId", "1")
+                .tag("scriptId", "npc-scout")
+                .tag("eventType", "onInterval")
+                .tag("reason", "catch_up_truncated")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+  }
+
+  @Test
   void observeRuntimeTickProgressHandlesMixedTickAndWallClockCandidates() {
     ScriptScheduleInstance tickInstance = new ScriptScheduleInstance();
     tickInstance.setTenantId("1");
@@ -525,5 +646,34 @@ class ScriptScheduleInstanceServiceImplTest {
     binding.setRequiresExclusiveEvent(requiresExclusiveEvent);
     binding.setEnabled(true);
     return binding;
+  }
+
+  private static ScriptScheduleInstance tickSchedule(
+      String targetScopeId,
+      String scriptId,
+      String scheduleDefinitionId,
+      long cadence,
+      long dueTick) {
+    ScriptScheduleInstance instance = new ScriptScheduleInstance();
+    instance.setTenantId("1");
+    instance.setGameInstanceId("game-1");
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptId(scriptId);
+    instance.setEventType("onInterval");
+    instance.setScheduleDefinitionId(scheduleDefinitionId);
+    instance.setScheduleKind("INTERVAL");
+    instance.setCadenceUnit("TICKS");
+    instance.setCadenceValue(cadence);
+    instance.setPriorityTag("normal");
+    instance.setTargetScopeType("ENTITY");
+    instance.setTargetScopeId(targetScopeId);
+    instance.setMaterializationStatus("READY");
+    instance.setRuntimeRegionId("region-1");
+    instance.setRuntimeRegionEpoch(12L);
+    instance.setLastObservedTickId(90L);
+    instance.setNextDueTickId(dueTick);
+    instance.setScheduleMetadataJson("{}");
+    instance.setScheduleSemanticsHash("hash-" + scheduleDefinitionId);
+    return instance;
   }
 }

@@ -1,7 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -50,6 +49,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private static final String STATUS_PENDING_RUNTIME_PROGRESS = "PENDING_RUNTIME_PROGRESS";
   private static final String DEFAULT_SCHEMA_VERSION = "v1";
   private static final String SOURCE_SERVICE = "automation-scripting-service";
+  private static final String FINAL_STAGE_ADMISSION = "ADMISSION";
+  private static final String FINAL_OUTCOME_CANCELED = "canceled";
+  private static final String REASON_CATCH_UP_TRUNCATED = "catch_up_truncated";
+  private static final String REASON_RUNTIME_SCOPE_CHANGED = "runtime_scope_changed";
 
   private final ScriptScheduleDefinitionRepository scheduleDefinitionRepository;
   private final ScriptScheduleInstanceRepository scheduleInstanceRepository;
@@ -61,8 +64,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private final AutomationQueueService automationQueueService;
   private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptSchedulerProperties schedulerProperties;
-  private final Counter timerFiredCounter;
-  private final Counter timerTruncatedCounter;
+  private final MeterRegistry meterRegistry;
 
   public ScriptScheduleInstanceServiceImpl(
       ScriptScheduleDefinitionRepository scheduleDefinitionRepository,
@@ -86,8 +88,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     this.automationQueueService = automationQueueService;
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.schedulerProperties = schedulerProperties;
-    this.timerFiredCounter = meterRegistry.counter("script_timer_fired_total");
-    this.timerTruncatedCounter = meterRegistry.counter("script_timer_catchup_truncated_total");
+    this.meterRegistry = meterRegistry;
   }
 
   @Override
@@ -222,6 +223,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     List<ScriptScheduleInstance> updates = new ArrayList<>();
     int maxFirings = schedulerProperties.getMaxCatchUpFiringsPerObservation();
     List<TimerFiringCandidate> candidates = new ArrayList<>();
+    List<TimerFiringCandidate> suppressedCandidates = new ArrayList<>();
     List<ScriptScheduleInstance> tickInstances =
         safeInstances(
             scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
@@ -238,6 +240,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           advance.fireDueTicks().stream()
               .map(dueTick -> TimerFiringCandidate.tick(instance, dueTick))
               .toList());
+      suppressedCandidates.addAll(advance.suppressedDueTicks());
       if (advance.changed()) {
         updates.add(instance);
       }
@@ -248,22 +251,34 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       if (advance.fireDueAt() != null) {
         candidates.add(TimerFiringCandidate.wallClock(instance, advance.fireDueAt()));
       }
+      if (advance.suppressedCandidate() != null) {
+        suppressedCandidates.add(advance.suppressedCandidate());
+      }
       if (advance.changed()) {
         updates.add(instance);
       }
     }
     List<TimerFiringCandidate> selectedCandidates = roundRobinCandidates(candidates, maxFirings);
+    Set<String> selectedIdentities =
+        selectedCandidates.stream()
+            .map(TimerFiringCandidate::identity)
+            .collect(java.util.stream.Collectors.toSet());
+    List<TimerFiringCandidate> truncatedCandidates =
+        candidates.stream()
+            .filter(candidate -> !selectedIdentities.contains(candidate.identity()))
+            .toList();
+    recordSkippedCandidates(suppressedCandidates, REASON_RUNTIME_SCOPE_CHANGED, now);
+    recordSkippedCandidates(truncatedCandidates, REASON_CATCH_UP_TRUNCATED, now);
+    List<TimerFiringCandidate> firedCandidates = new ArrayList<>();
     for (TimerFiringCandidate candidate : selectedCandidates) {
       if (emitTimerWorkItem(candidate, now)) {
         fired++;
+        firedCandidates.add(candidate);
       }
     }
     int truncated = Math.max(0, candidates.size() - selectedCandidates.size());
     if (fired > 0) {
-      timerFiredCounter.increment(fired);
-    }
-    if (truncated > 0) {
-      timerTruncatedCounter.increment(truncated);
+      incrementTimerMetric("automation_script_timer_fired_total", firedCandidates, null);
     }
     if (!updates.isEmpty()) {
       scheduleInstanceRepository.saveAll(updates);
@@ -402,11 +417,32 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       Instant observedAt,
       Instant now,
       int perScheduleCandidateLimit) {
+    boolean priorRuntimeKnown =
+        !blankToEmpty(instance.getRuntimeRegionId()).isBlank()
+            && instance.getRuntimeRegionEpoch() != null
+            && instance.getRuntimeRegionEpoch() > 0;
     boolean runtimeScopeChanged =
-        !observation.regionId().equals(blankToEmpty(instance.getRuntimeRegionId()))
-            || instance.getRuntimeRegionEpoch() == null
-            || instance.getRuntimeRegionEpoch() != observation.regionEpoch();
+        priorRuntimeKnown
+            && (!observation.regionId().equals(blankToEmpty(instance.getRuntimeRegionId()))
+                || instance.getRuntimeRegionEpoch() != observation.regionEpoch());
     Long currentDueTick = instance.getNextDueTickId();
+    List<TimerFiringCandidate> suppressedDueTicks =
+        runtimeScopeChanged && currentDueTick != null && currentDueTick <= observation.tickId()
+            ? dueTicks(
+                    currentDueTick,
+                    observation.tickId(),
+                    instance.getCadenceValue(),
+                    perScheduleCandidateLimit)
+                .stream()
+                .map(
+                    dueTick ->
+                        TimerFiringCandidate.suppressedTick(
+                            instance,
+                            dueTick,
+                            blankToEmpty(instance.getRuntimeRegionId()),
+                            instance.getRuntimeRegionEpoch()))
+                .toList()
+            : List.of();
     List<Long> fireDueTicks =
         !runtimeScopeChanged && currentDueTick != null && currentDueTick <= observation.tickId()
             ? dueTicks(
@@ -427,7 +463,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             || instance.getLastObservedTickId() == null
             || instance.getLastObservedTickId() != observation.tickId();
     if (!changed) {
-      return new TickAdvanceResult(false, fireDueTicks);
+      return new TickAdvanceResult(false, fireDueTicks, suppressedDueTicks);
     }
     instance.setMaterializationStatus(STATUS_READY);
     instance.setRuntimeRegionId(observation.regionId());
@@ -437,7 +473,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setNextDueTickId(nextDueTick);
     instance.setNextDueAt(null);
     instance.setUpdatedAt(now);
-    return new TickAdvanceResult(true, fireDueTicks);
+    return new TickAdvanceResult(true, fireDueTicks, suppressedDueTicks);
   }
 
   private WallClockAdvanceResult advanceWallClockProgress(
@@ -445,13 +481,26 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       RuntimeTickProgressObservation observation,
       Instant observedAt,
       Instant now) {
+    boolean priorRuntimeKnown =
+        !blankToEmpty(instance.getRuntimeRegionId()).isBlank()
+            && instance.getRuntimeRegionEpoch() != null
+            && instance.getRuntimeRegionEpoch() > 0;
     boolean runtimeScopeChanged =
-        !observation.regionId().equals(blankToEmpty(instance.getRuntimeRegionId()))
-            || instance.getRuntimeRegionEpoch() == null
-            || instance.getRuntimeRegionEpoch() != observation.regionEpoch();
+        priorRuntimeKnown
+            && (!observation.regionId().equals(blankToEmpty(instance.getRuntimeRegionId()))
+                || instance.getRuntimeRegionEpoch() != observation.regionEpoch());
     Instant currentDueAt = instance.getNextDueAt();
+    TimerFiringCandidate suppressedCandidate =
+        runtimeScopeChanged && currentDueAt != null && !currentDueAt.isAfter(observedAt)
+            ? TimerFiringCandidate.suppressedWallClock(
+                instance,
+                currentDueAt,
+                blankToEmpty(instance.getRuntimeRegionId()),
+                instance.getRuntimeRegionEpoch())
+            : null;
     Instant fireDueAt =
-        currentDueAt != null
+        !runtimeScopeChanged
+                && currentDueAt != null
                 && !currentDueAt.isAfter(observedAt)
                 && !blankToEmpty(observation.regionId()).isBlank()
                 && observation.regionEpoch() > 0
@@ -463,15 +512,95 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             || instance.getLastObservedTickId() != observation.tickId()
             || !STATUS_READY.equals(instance.getMaterializationStatus());
     if (!changed) {
-      return new WallClockAdvanceResult(false, fireDueAt);
+      return new WallClockAdvanceResult(false, fireDueAt, suppressedCandidate);
     }
     instance.setMaterializationStatus(STATUS_READY);
     instance.setRuntimeRegionId(observation.regionId());
     instance.setRuntimeRegionEpoch(observation.regionEpoch());
     instance.setLastObservedTickId(observation.tickId());
     instance.setLastRuntimeProgressObservedAt(observedAt);
+    if (runtimeScopeChanged && suppressedCandidate != null) {
+      instance.setNextDueAt(null);
+    }
     instance.setUpdatedAt(now);
-    return new WallClockAdvanceResult(true, fireDueAt);
+    return new WallClockAdvanceResult(true, fireDueAt, suppressedCandidate);
+  }
+
+  private void recordSkippedCandidates(
+      List<TimerFiringCandidate> candidates, String reason, Instant now) {
+    if (candidates.isEmpty()) {
+      return;
+    }
+    incrementTimerMetric(metricNameForReason(reason), candidates, reason);
+    for (TimerFiringCandidate candidate : candidates) {
+      persistSkippedAudit(candidate, reason, now);
+    }
+  }
+
+  private String metricNameForReason(String reason) {
+    return switch (reason) {
+      case REASON_CATCH_UP_TRUNCATED -> "automation_script_timer_catchup_truncated_total";
+      case REASON_RUNTIME_SCOPE_CHANGED -> "automation_script_timer_runtime_fence_dropped_total";
+      default -> throw new IllegalArgumentException("Unknown timer skip reason: " + reason);
+    };
+  }
+
+  private void incrementTimerMetric(
+      String metricName, List<TimerFiringCandidate> candidates, String reason) {
+    for (TimerFiringCandidate candidate : candidates) {
+      ScriptScheduleInstance instance = candidate.instance();
+      io.micrometer.core.instrument.Counter.Builder builder =
+          io.micrometer.core.instrument.Counter.builder(metricName)
+              .tag("tenantId", instance.getTenantId())
+              .tag("scriptId", instance.getScriptId())
+              .tag("eventType", instance.getEventType());
+      if (reason != null) {
+        builder.tag("reason", reason);
+      }
+      builder.register(meterRegistry).increment();
+    }
+  }
+
+  private void persistSkippedAudit(
+      TimerFiringCandidate candidate, String finalReason, Instant now) {
+    ScriptScheduleInstance instance = candidate.instance();
+    String entityId = targetEntityId(instance);
+    String scriptEventId = timerScriptEventId(candidate);
+    if (eventAuditRepository
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            instance.getTenantId(),
+            instance.getGameInstanceId(),
+            candidate.regionId(),
+            candidate.regionEpoch(),
+            entityId,
+            instance.getScriptId(),
+            instance.getEventType(),
+            DEFAULT_SCHEMA_VERSION,
+            instance.getScriptPatchVersion(),
+            scriptEventId,
+            false)) {
+      return;
+    }
+    ScriptEventAudit audit = new ScriptEventAudit();
+    audit.setTenantId(instance.getTenantId());
+    audit.setGameInstanceId(instance.getGameInstanceId());
+    audit.setRegionId(candidate.regionId());
+    audit.setRegionEpoch(candidate.regionEpoch());
+    audit.setEntityId(entityId);
+    audit.setScriptId(instance.getScriptId());
+    audit.setEventType(instance.getEventType());
+    audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
+    audit.setScriptPatchVersion(instance.getScriptPatchVersion());
+    audit.setScriptEventId(scriptEventId);
+    audit.setDryRun(false);
+    audit.setSourceService(SOURCE_SERVICE);
+    audit.setTriggerMode(TriggerMode.TRIGGER_MODE_CATCH_UP.name());
+    audit.setFinalStage(FINAL_STAGE_ADMISSION);
+    audit.setFinalOutcome(FINAL_OUTCOME_CANCELED);
+    audit.setFinalReason(finalReason);
+    audit.setCreatedAt(now);
+    audit.setUpdatedAt(now);
+    eventAuditRepository.save(audit);
   }
 
   private List<TimerFiringCandidate> roundRobinCandidates(
@@ -545,8 +674,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             instance.getTenantId(),
             instance.getGameInstanceId(),
-            blankToEmpty(instance.getRuntimeRegionId()),
-            instance.getRuntimeRegionEpoch(),
+            candidate.regionId(),
+            candidate.regionEpoch(),
             entityId,
             instance.getScriptId(),
             instance.getEventType(),
@@ -558,14 +687,12 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
     AutomationAdmissionStateService.AdmissionStateSummary admissionState =
         automationAdmissionStateService.getState(
-            instance.getTenantId(),
-            instance.getGameInstanceId(),
-            blankToEmpty(instance.getRuntimeRegionId()));
+            instance.getTenantId(), instance.getGameInstanceId(), candidate.regionId());
     ScriptWorkItem item = new ScriptWorkItem();
     item.setTenantId(instance.getTenantId());
     item.setGameInstanceId(instance.getGameInstanceId());
-    item.setRegionId(blankToEmpty(instance.getRuntimeRegionId()));
-    item.setRegionEpoch(instance.getRuntimeRegionEpoch());
+    item.setRegionId(candidate.regionId());
+    item.setRegionEpoch(candidate.regionEpoch());
     item.setEntityId(entityId);
     item.setScriptId(instance.getScriptId());
     item.setPluginId(blankToEmpty(instance.getPluginId()));
@@ -603,8 +730,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     ScriptEventAudit audit = new ScriptEventAudit();
     audit.setTenantId(instance.getTenantId());
     audit.setGameInstanceId(instance.getGameInstanceId());
-    audit.setRegionId(blankToEmpty(instance.getRuntimeRegionId()));
-    audit.setRegionEpoch(instance.getRuntimeRegionEpoch());
+    audit.setRegionId(candidate.regionId());
+    audit.setRegionEpoch(candidate.regionEpoch());
     audit.setEntityId(workItem.getEntityId());
     audit.setScriptId(instance.getScriptId());
     audit.setEventType(instance.getEventType());
@@ -652,7 +779,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         + ":"
         + instance.getGameInstanceId()
         + ":"
-        + instance.getRuntimeRegionEpoch()
+        + candidate.regionEpoch()
         + ":"
         + candidate.duePointToken()
         + ":"
@@ -763,18 +890,47 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     return blankToEmpty(scriptId) + "\u0000" + blankToEmpty(eventType);
   }
 
-  private record TickAdvanceResult(boolean changed, List<Long> fireDueTicks) {}
+  private record TickAdvanceResult(
+      boolean changed, List<Long> fireDueTicks, List<TimerFiringCandidate> suppressedDueTicks) {}
 
-  private record WallClockAdvanceResult(boolean changed, Instant fireDueAt) {}
+  private record WallClockAdvanceResult(
+      boolean changed, Instant fireDueAt, TimerFiringCandidate suppressedCandidate) {}
 
   private record TimerFiringCandidate(
-      ScriptScheduleInstance instance, Long dueTickId, Instant dueAt, boolean wallClock) {
+      ScriptScheduleInstance instance,
+      String regionId,
+      Long regionEpoch,
+      Long dueTickId,
+      Instant dueAt,
+      boolean wallClock) {
     private static TimerFiringCandidate tick(ScriptScheduleInstance instance, long dueTickId) {
-      return new TimerFiringCandidate(instance, dueTickId, null, false);
+      return new TimerFiringCandidate(
+          instance,
+          blankToEmpty(instance.getRuntimeRegionId()),
+          instance.getRuntimeRegionEpoch(),
+          dueTickId,
+          null,
+          false);
     }
 
     private static TimerFiringCandidate wallClock(ScriptScheduleInstance instance, Instant dueAt) {
-      return new TimerFiringCandidate(instance, null, dueAt, true);
+      return new TimerFiringCandidate(
+          instance,
+          blankToEmpty(instance.getRuntimeRegionId()),
+          instance.getRuntimeRegionEpoch(),
+          null,
+          dueAt,
+          true);
+    }
+
+    private static TimerFiringCandidate suppressedTick(
+        ScriptScheduleInstance instance, long dueTickId, String regionId, Long regionEpoch) {
+      return new TimerFiringCandidate(instance, regionId, regionEpoch, dueTickId, null, false);
+    }
+
+    private static TimerFiringCandidate suppressedWallClock(
+        ScriptScheduleInstance instance, Instant dueAt, String regionId, Long regionEpoch) {
+      return new TimerFiringCandidate(instance, regionId, regionEpoch, null, dueAt, true);
     }
 
     private String duePointToken() {
@@ -790,9 +946,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           + "|"
           + instance.getGameInstanceId()
           + "|"
-          + blankToEmpty(instance.getRuntimeRegionId())
+          + regionId
           + "|"
-          + instance.getRuntimeRegionEpoch()
+          + regionEpoch
           + "|"
           + targetEntityId(instance)
           + "|"
