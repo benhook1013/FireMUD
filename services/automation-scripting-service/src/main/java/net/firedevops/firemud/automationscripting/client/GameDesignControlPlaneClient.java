@@ -12,6 +12,8 @@ import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,6 +75,25 @@ public class GameDesignControlPlaneClient
     }
   }
 
+  public GetPublishedScriptPatchVersionResponse getPublishedScriptPatchVersion(
+      String tenantId, String scriptPatchVersion) {
+    if (stub() == null) {
+      return unavailableScriptPatchVersion();
+    }
+    try {
+      return stub()
+          .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+          .getPublishedScriptPatchVersion(
+              GetPublishedScriptPatchVersionRequest.newBuilder()
+                  .setTenantId(tenantId)
+                  .setScriptPatchVersion(scriptPatchVersion)
+                  .build());
+    } catch (RuntimeException ex) {
+      logger.warn("Game Design getPublishedScriptPatchVersion failed", ex);
+      return unavailableScriptPatchVersion();
+    }
+  }
+
   public GetPublishedReleaseBundleResponse getPublishedReleaseBundle(
       String tenantId, long versionId) {
     if (stub() == null) {
@@ -94,6 +115,15 @@ public class GameDesignControlPlaneClient
 
   private static GetPublishedPluginVersionResponse unavailablePluginVersion() {
     return GetPublishedPluginVersionResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("GAME_DESIGN_UNAVAILABLE")
+                .setMessage("Game Design service unavailable"))
+        .build();
+  }
+
+  private static GetPublishedScriptPatchVersionResponse unavailableScriptPatchVersion() {
+    return GetPublishedScriptPatchVersionResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
                 .setCode("GAME_DESIGN_UNAVAILABLE")

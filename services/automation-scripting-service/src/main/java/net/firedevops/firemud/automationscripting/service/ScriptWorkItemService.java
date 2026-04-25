@@ -90,7 +90,9 @@ public interface ScriptWorkItemService {
       String scriptPatchVersion,
       ScriptPatchStatus status,
       String statusReason,
-      long lastChangedAtMs) {}
+      long lastChangedAtMs,
+      long baseVersionId,
+      String abilitySchemaDigest) {}
 
   record AutomationDrainStatusSummary(
       String tenantId,

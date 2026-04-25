@@ -224,7 +224,7 @@ Outputs: same as `SetPinnedScriptPatchVersion`.
 
 #### `GetScriptPatchStatus`
 
-Implementation note: the current Automation & Scripting API exposes the runtime-readiness subset of this contract from durable `script_work_items`: `status`, `statusReason`, and `lastChangedAt`. The richer design-time compatibility fields such as `baseVersionId`, `abilitySchemaDigest`, and `supersededByScriptPatchVersion` remain target-state companion data from the publication/control-plane model rather than current response fields.
+Implementation note: the current Automation & Scripting API exposes these reads from durable `script_work_items` and now enriches them with Game Design publication metadata. The live response includes the current runtime-readiness summary plus the published script patch `baseVersionId` and the current Automation participant `abilitySchemaDigest` derived from the published release bundle for that base version. `supersededByScriptPatchVersion` still remains target-state follow-through rather than a shipped field.
 
 Inputs:
 
@@ -238,7 +238,6 @@ Outputs:
 - `statusReason` (optional)
 - `baseVersionId` (required)
 - `abilitySchemaDigest` (required for compatibility/audit surfaces)
-- `supersededByScriptPatchVersion` (nullable; required when `status=SUPERSEDED`)
 - `lastChangedAt`
 
 Boundary rule:
@@ -254,7 +253,7 @@ Inputs:
 
 Outputs:
 
-- A list of `GetScriptPatchStatus` records.
+- A list of `GetScriptPatchStatus` records, including `baseVersionId` and `abilitySchemaDigest`.
 
 #### `GetAutomationDrainStatus`
 

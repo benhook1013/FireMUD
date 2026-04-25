@@ -206,7 +206,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "patch-1",
                     ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
                     "runtime_work_terminal",
-                    123L)));
+                    123L,
+                    7L,
+                    "ability-1")));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -226,6 +228,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getStatus()).isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY);
     assertThat(ref.get().getStatusReason()).isEqualTo("runtime_work_terminal");
     assertThat(ref.get().getLastChangedAtMs()).isEqualTo(123L);
+    assertThat(ref.get().getBaseVersionId()).isEqualTo(7L);
+    assertThat(ref.get().getAbilitySchemaDigest()).isEqualTo("ability-1");
   }
 
   @Test
@@ -241,7 +245,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "patch-2",
                     ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED,
                     "terminal_work_failed",
-                    15L)));
+                    15L,
+                    7L,
+                    "ability-1")));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -264,6 +270,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getPatches(0).getScriptPatchVersion()).isEqualTo("patch-2");
     assertThat(ref.get().getPatches(0).getStatus())
         .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
+    assertThat(ref.get().getPatches(0).getBaseVersionId()).isEqualTo(7L);
+    assertThat(ref.get().getPatches(0).getAbilitySchemaDigest()).isEqualTo("ability-1");
   }
 
   @Test

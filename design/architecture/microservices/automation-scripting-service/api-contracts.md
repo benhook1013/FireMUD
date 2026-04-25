@@ -133,8 +133,8 @@ For retry behavior:
 
 The service exposes control-plane read and lifecycle surfaces for script patch visibility and plugin runtime lifecycle management:
 
-- `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns tenant-readiness lifecycle state (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `SUPERSEDED`), `baseVersionId`, `abilitySchemaDigest`, timestamps, and any last-error details.
-- `ListScriptPatchStatuses(tenantId, status?, changedAfter?, changedBefore?)` – lists known tenant patch statuses.
+- `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns the current runtime-readiness lifecycle state plus the published script patch `baseVersionId`, the current Automation participant `abilitySchemaDigest` for that base version, timestamps, and any last-error details.
+- `ListScriptPatchStatuses(tenantId, status?, changedAfter?, changedBefore?)` – lists known tenant patch statuses with the same publication metadata fields used by the single-patch read.
 - `ScriptPatchTenantStatusChanged` – emitted whenever `<tenantId, scriptPatchVersion>` transitions between tenant readiness lifecycle states.
 - `ScriptPatchInstanceRolloutChanged` – consumed as the authoritative instance rollout history stream produced by Game Session (`PINNED`, `ROLLED_BACK`, `REPINNED`) and projected into read APIs.
 - `GetScriptPatchInstanceRolloutStatus(tenantId, gameInstanceId, scriptPatchVersion)` and `ListScriptPatchInstanceRollouts(...)` – read APIs for instance-scoped rollout history and correlation.

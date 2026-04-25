@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
@@ -24,6 +25,11 @@ import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjecti
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
+import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
+import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageRequest;
@@ -44,6 +50,33 @@ class ScriptWorkItemServiceImplTest {
             new AutomationAdmissionStateService.AdmissionStateSummary(
                 "1", "game-1", "region-1", "NORMAL", 1L, "", "", "", 100L));
     return service;
+  }
+
+  private static GameDesignControlPlaneClient gameDesignClient() {
+    GameDesignControlPlaneClient client = Mockito.mock(GameDesignControlPlaneClient.class);
+    when(client.getPublishedScriptPatchVersion(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetPublishedScriptPatchVersionResponse.newBuilder()
+                .setScriptPatch(
+                    PublishedScriptPatchVersion.newBuilder()
+                        .setTenantId("1")
+                        .setScriptPatchVersion("patch-1")
+                        .setBaseVersionId(7L)
+                        .build())
+                .build());
+    when(client.getPublishedReleaseBundle(Mockito.anyString(), Mockito.eq(7L)))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .addParticipantDigests(
+                            ParticipantDigest.newBuilder()
+                                .setParticipantKey("AUTOMATION_SCRIPTING")
+                                .setContentDigest("ability-1")
+                                .build())
+                        .build())
+                .build());
+    return client;
   }
 
   @Test
@@ -72,7 +105,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     long canceled =
         service.cancelPendingForPatch(
@@ -118,7 +152,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     long canceled =
         service.cancelPendingForPluginVersion(
@@ -154,7 +189,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(10);
 
@@ -176,7 +212,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     assertThatThrownBy(() -> service.claimPendingForEvaluation(0))
         .isInstanceOf(IllegalArgumentException.class)
@@ -203,7 +240,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     List<ScriptWorkItem> claimed = service.claimPendingForEvaluation(List.of(99L, 100L), 10);
 
@@ -236,7 +274,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     ScriptWorkItemService.TerminalCleanupResult result = service.cleanupTerminalWorkItems();
 
@@ -274,7 +313,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     ScriptWorkItemService.TerminalCleanupResult result = service.cleanupTerminalWorkItems();
 
@@ -300,7 +340,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     Optional<ScriptWorkItemService.PatchStatusSummary> status =
         service.getPatchStatus("1", "patch-1");
@@ -310,6 +351,8 @@ class ScriptWorkItemServiceImplTest {
         .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_ONLOAD_RUNNING);
     assertThat(status.get().statusReason()).isEqualTo("runtime_work_active");
     assertThat(status.get().lastChangedAtMs()).isEqualTo(200L);
+    assertThat(status.get().baseVersionId()).isEqualTo(7L);
+    assertThat(status.get().abilitySchemaDigest()).isEqualTo("ability-1");
   }
 
   @Test
@@ -334,7 +377,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     List<ScriptWorkItemService.PatchStatusSummary> statuses =
         service.listPatchStatuses("1", ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED, 250L, 0L);
@@ -342,6 +386,8 @@ class ScriptWorkItemServiceImplTest {
     assertThat(statuses).hasSize(1);
     assertThat(statuses.get(0).scriptPatchVersion()).isEqualTo("patch-failed");
     assertThat(statuses.get(0).status()).isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
+    assertThat(statuses.get(0).baseVersionId()).isEqualTo(7L);
+    assertThat(statuses.get(0).abilitySchemaDigest()).isEqualTo("ability-1");
   }
 
   @Test
@@ -378,7 +424,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     ScriptWorkItemService.AutomationDrainStatusSummary summary =
         service.getAutomationDrainStatus("1", "game-1", "region-1");
@@ -411,7 +458,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     ScriptWorkItemService.AutomationDrainStatusSummary summary =
         service.getAutomationDrainStatus("1", "game-1", "");
@@ -464,7 +512,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             pinProjectionService,
             rolloutProjectionService,
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> summary =
         service.getPatchInstanceRolloutStatus("1", "game-1", "patch-1");
@@ -518,7 +567,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             pinProjectionService,
             rolloutProjectionService,
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> summary =
         service.getPatchInstanceRolloutStatus("1", "game-1", "patch-1");
@@ -596,7 +646,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             pinProjectionService,
             rolloutProjectionService,
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     List<ScriptWorkItemService.PatchInstanceRolloutSummary> summaries =
         service.listPatchInstanceRollouts(
@@ -644,7 +695,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     List<ScriptWorkItemService.DeadLetterSummary> deadLetters =
         service.listDeadLetters("1", "game-1", "patch-1", 25);
@@ -698,7 +750,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     List<ScriptWorkItemService.HandoffEventSummary> events =
         service.listHandoffEvents("1", "game-1", "patch-1", "99", "enqueued", 10L, 20L, 25);
@@ -768,7 +821,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             pinProjectionService,
             rolloutProjectionService(),
-            pluginRuntimeStateService);
+            pluginRuntimeStateService,
+            gameDesignClient());
 
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
@@ -844,7 +898,8 @@ class ScriptWorkItemServiceImplTest {
             admissionStateService(),
             pinProjectionService,
             rolloutProjectionService(),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
 
     ScriptWorkItemService.ReplayResult result =
         service.replayDeadLetters(
@@ -858,6 +913,7 @@ class ScriptWorkItemServiceImplTest {
 
   private static ScriptWorkItem workItem(String patchVersion, String status, Instant updatedAt) {
     ScriptWorkItem item = new ScriptWorkItem();
+    item.setTenantId("1");
     item.setScriptPatchVersion(patchVersion);
     item.setStatus(status);
     item.setUpdatedAt(updatedAt);

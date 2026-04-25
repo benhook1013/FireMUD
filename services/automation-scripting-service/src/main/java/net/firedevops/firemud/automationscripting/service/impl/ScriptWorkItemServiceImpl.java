@@ -6,6 +6,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
@@ -21,6 +22,9 @@ import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjecti
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are internal Spring collaborators")
 public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
+  private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";
   private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_EVALUATING = "EVALUATING";
   private static final String STATUS_CANCELED = "CANCELED";
@@ -52,6 +57,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
   private final PluginRuntimeStateService pluginRuntimeStateService;
+  private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
 
   public ScriptWorkItemServiceImpl(
       ScriptWorkItemRepository workItemRepository,
@@ -62,7 +68,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
-      PluginRuntimeStateService pluginRuntimeStateService) {
+      PluginRuntimeStateService pluginRuntimeStateService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient) {
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
     this.ingressAuditRepository = ingressAuditRepository;
@@ -72,6 +79,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
     this.rolloutProjectionService = rolloutProjectionService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
+    this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
   }
 
   @Override
@@ -411,9 +419,41 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             .max(Comparator.naturalOrder())
             .orElse(Instant.EPOCH);
     ScriptPatchStatus status = statusFor(workItems);
+    PublicationMetadata publicationMetadata =
+        publicationMetadata(workItems.getFirst().getTenantId(), scriptPatchVersion);
     return Optional.of(
         new PatchStatusSummary(
-            scriptPatchVersion, status, statusReasonFor(status), lastChanged.toEpochMilli()));
+            scriptPatchVersion,
+            status,
+            statusReasonFor(status),
+            lastChanged.toEpochMilli(),
+            publicationMetadata.baseVersionId(),
+            publicationMetadata.abilitySchemaDigest()));
+  }
+
+  private PublicationMetadata publicationMetadata(String tenantId, String scriptPatchVersion) {
+    GetPublishedScriptPatchVersionResponse scriptPatchResponse =
+        gameDesignControlPlaneClient.getPublishedScriptPatchVersion(tenantId, scriptPatchVersion);
+    if (scriptPatchResponse.hasError() && !scriptPatchResponse.getError().getCode().isBlank()) {
+      return PublicationMetadata.empty();
+    }
+    long baseVersionId = scriptPatchResponse.getScriptPatch().getBaseVersionId();
+    if (baseVersionId <= 0) {
+      return PublicationMetadata.empty();
+    }
+    GetPublishedReleaseBundleResponse releaseBundleResponse =
+        gameDesignControlPlaneClient.getPublishedReleaseBundle(tenantId, baseVersionId);
+    if (releaseBundleResponse.hasError() && !releaseBundleResponse.getError().getCode().isBlank()) {
+      return new PublicationMetadata(baseVersionId, "");
+    }
+    String abilitySchemaDigest =
+        releaseBundleResponse.getBundle().getParticipantDigestsList().stream()
+            .filter(
+                digest -> PARTICIPANT_KEY_AUTOMATION_SCRIPTING.equals(digest.getParticipantKey()))
+            .map(ParticipantDigest::getContentDigest)
+            .findFirst()
+            .orElse("");
+    return new PublicationMetadata(baseVersionId, abilitySchemaDigest);
   }
 
   private ScriptPatchStatus statusFor(List<ScriptWorkItem> workItems) {
@@ -443,6 +483,16 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       case SCRIPT_PATCH_STATUS_READY -> "runtime_work_terminal";
       default -> "runtime_status_unknown";
     };
+  }
+
+  private record PublicationMetadata(long baseVersionId, String abilitySchemaDigest) {
+    private PublicationMetadata {
+      abilitySchemaDigest = abilitySchemaDigest == null ? "" : abilitySchemaDigest;
+    }
+
+    private static PublicationMetadata empty() {
+      return new PublicationMetadata(0L, "");
+    }
   }
 
   private static DeadLetterSummary toDeadLetterSummary(ScriptWorkItem item) {

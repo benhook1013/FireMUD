@@ -183,7 +183,9 @@ public final class AutomationScriptingControlPlaneGrpcService
                   response
                       .setStatus(summary.status())
                       .setStatusReason(summary.statusReason())
-                      .setLastChangedAtMs(summary.lastChangedAtMs()),
+                      .setLastChangedAtMs(summary.lastChangedAtMs())
+                      .setBaseVersionId(summary.baseVersionId())
+                      .setAbilitySchemaDigest(summary.abilitySchemaDigest()),
               () -> response.setError(notFound("GetScriptPatchStatus", "script_patch_not_found")));
     } catch (IllegalArgumentException ex) {
       response.setError(
@@ -866,6 +868,8 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setStatus(summary.status())
         .setStatusReason(summary.statusReason())
         .setLastChangedAtMs(summary.lastChangedAtMs())
+        .setBaseVersionId(summary.baseVersionId())
+        .setAbilitySchemaDigest(summary.abilitySchemaDigest())
         .build();
   }
 

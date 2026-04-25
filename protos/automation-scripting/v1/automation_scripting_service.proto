@@ -396,7 +396,9 @@ message GetScriptPatchStatusResponse {
   ScriptPatchStatus status = 1;
   string status_reason = 2;
   int64 last_changed_at_ms = 3;
-  shared.v1.ErrorDetail error = 4;
+  int64 base_version_id = 4;
+  string ability_schema_digest = 5;
+  shared.v1.ErrorDetail error = 6;
 }
 
 message ListScriptPatchStatusesRequest {
@@ -411,6 +413,8 @@ message ScriptPatchStatusEntry {
   ScriptPatchStatus status = 2;
   string status_reason = 3;
   int64 last_changed_at_ms = 4;
+  int64 base_version_id = 5;
+  string ability_schema_digest = 6;
 }
 
 message ListScriptPatchStatusesResponse {
