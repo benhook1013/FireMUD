@@ -510,7 +510,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   private Comparator<TimerFiringCandidate> timerCandidateComparator() {
-    return Comparator.comparingLong(TimerFiringCandidate::dueTickId)
+    return Comparator.comparingInt(
+            (TimerFiringCandidate candidate) -> candidate.wallClock() ? 1 : 0)
+        .thenComparingLong((TimerFiringCandidate candidate) -> candidate.dueOrderValue())
         .thenComparingInt(candidate -> priorityRank(candidate.instance().getPriorityTag()))
         .thenComparing(candidate -> scheduleKey(candidate.instance()));
   }
@@ -777,6 +779,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
     private String duePointToken() {
       return wallClock ? Long.toString(dueAt.toEpochMilli()) : Long.toString(dueTickId);
+    }
+
+    private long dueOrderValue() {
+      return wallClock ? dueAt.toEpochMilli() : dueTickId;
     }
 
     private String identity() {

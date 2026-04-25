@@ -390,6 +390,66 @@ class ScriptScheduleInstanceServiceImplTest {
             });
   }
 
+  @Test
+  void observeRuntimeTickProgressHandlesMixedTickAndWallClockCandidates() {
+    ScriptScheduleInstance tickInstance = new ScriptScheduleInstance();
+    tickInstance.setTenantId("1");
+    tickInstance.setGameInstanceId("game-1");
+    tickInstance.setScriptPatchVersion("patch-1");
+    tickInstance.setScriptId("npc-guard");
+    tickInstance.setEventType("onInterval");
+    tickInstance.setScheduleDefinitionId("guard.patrol.v1");
+    tickInstance.setScheduleKind("INTERVAL");
+    tickInstance.setCadenceUnit("TICKS");
+    tickInstance.setCadenceValue(30L);
+    tickInstance.setPriorityTag("high");
+    tickInstance.setTargetScopeType("ENTITY");
+    tickInstance.setTargetScopeId("guard-1");
+    tickInstance.setMaterializationStatus("READY");
+    tickInstance.setRuntimeRegionId("region-1");
+    tickInstance.setRuntimeRegionEpoch(12L);
+    tickInstance.setLastObservedTickId(100L);
+    tickInstance.setNextDueTickId(130L);
+    tickInstance.setScheduleMetadataJson("{}");
+    tickInstance.setScheduleSemanticsHash("hash-ticks");
+
+    ScriptScheduleInstance timerInstance = new ScriptScheduleInstance();
+    timerInstance.setTenantId("1");
+    timerInstance.setGameInstanceId("game-1");
+    timerInstance.setScriptPatchVersion("patch-1");
+    timerInstance.setScriptId("npc-guard");
+    timerInstance.setEventType("onTimerExpire");
+    timerInstance.setScheduleDefinitionId("guard.alert.expire.v1");
+    timerInstance.setScheduleKind("TIMER");
+    timerInstance.setCadenceUnit("MILLISECONDS");
+    timerInstance.setCadenceValue(5_000L);
+    timerInstance.setPriorityTag("normal");
+    timerInstance.setTargetScopeType("ENTITY");
+    timerInstance.setTargetScopeId("guard-1");
+    timerInstance.setMaterializationStatus("READY");
+    timerInstance.setNextDueAt(Instant.ofEpochMilli(5_000L));
+    timerInstance.setScheduleMetadataJson("{}");
+    timerInstance.setScheduleSemanticsHash("hash-ms");
+
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(tickInstance));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(timerInstance));
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(
+            new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+                "1", "game-1", "region-1", 12L, 131L, 6_000L));
+
+    assertThat(result.updatedScheduleCount()).isEqualTo(2);
+    assertThat(result.firedScheduleCount()).isEqualTo(2);
+    assertThat(result.truncatedFiringCount()).isZero();
+    verify(workItemRepository, org.mockito.Mockito.times(2))
+        .saveAndFlush(org.mockito.Mockito.any());
+  }
+
   private static ScriptScheduleDefinition millisecondsDefinition() {
     ScriptScheduleDefinition definition = new ScriptScheduleDefinition();
     definition.setTenantId(1L);
