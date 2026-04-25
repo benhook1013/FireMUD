@@ -238,6 +238,9 @@ class ScriptScheduleInstanceServiceImplTest {
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "TICKS"))
         .thenReturn(List.of(tickInstance));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of());
 
     ScriptScheduleInstanceService.RuntimeTickProgressResult result =
         service.observeRuntimeTickProgress(
@@ -290,6 +293,9 @@ class ScriptScheduleInstanceServiceImplTest {
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "TICKS"))
         .thenReturn(List.of(tickInstance));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of());
 
     ScriptScheduleInstanceService.RuntimeTickProgressResult result =
         service.observeRuntimeTickProgress(
@@ -322,6 +328,65 @@ class ScriptScheduleInstanceServiceImplTest {
             instance -> {
               assertThat(instance.getNextDueTickId()).isEqualTo(160L);
               assertThat(instance.getLastObservedTickId()).isEqualTo(131L);
+            });
+  }
+
+  @Test
+  void observeRuntimeTickProgressStampsAndFiresDueWallClockTimer() {
+    ScriptScheduleInstance timerInstance = new ScriptScheduleInstance();
+    timerInstance.setTenantId("1");
+    timerInstance.setGameInstanceId("game-1");
+    timerInstance.setScriptPatchVersion("patch-1");
+    timerInstance.setScriptId("npc-guard");
+    timerInstance.setEventType("onTimerExpire");
+    timerInstance.setScheduleDefinitionId("guard.alert.expire.v1");
+    timerInstance.setScheduleKind("TIMER");
+    timerInstance.setCadenceUnit("MILLISECONDS");
+    timerInstance.setCadenceValue(5_000L);
+    timerInstance.setPriorityTag("normal");
+    timerInstance.setTargetScopeType("ENTITY");
+    timerInstance.setTargetScopeId("guard-1");
+    timerInstance.setMaterializationStatus("READY");
+    timerInstance.setNextDueAt(Instant.ofEpochMilli(5_000L));
+    timerInstance.setScheduleMetadataJson("{}");
+    timerInstance.setScheduleSemanticsHash("hash-ms");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of());
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(timerInstance));
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(
+            new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+                "1", "game-1", "region-1", 12L, 131L, 6_000L));
+
+    assertThat(result.updatedScheduleCount()).isEqualTo(1);
+    assertThat(result.firedScheduleCount()).isEqualTo(1);
+    assertThat(result.truncatedFiringCount()).isZero();
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository).saveAndFlush(workItemCaptor.capture());
+    ScriptWorkItem workItem = workItemCaptor.getValue();
+    assertThat(workItem.getRegionId()).isEqualTo("region-1");
+    assertThat(workItem.getRegionEpoch()).isEqualTo(12L);
+    assertThat(workItem.getPayloadJson())
+        .contains("\"scheduleId\":\"guard.alert.expire.v1\"")
+        .contains("\"dueAt\":5000");
+    assertThat(workItem.getReadSnapshotToken()).startsWith("automation:onTimerExpire:");
+    verify(automationQueueService).enqueueWorkItem(workItem);
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<ScriptScheduleInstance>> scheduleCaptor =
+        ArgumentCaptor.forClass(List.class);
+    verify(scheduleInstanceRepository).saveAll(scheduleCaptor.capture());
+    assertThat(scheduleCaptor.getValue())
+        .singleElement()
+        .satisfies(
+            instance -> {
+              assertThat(instance.getRuntimeRegionId()).isEqualTo("region-1");
+              assertThat(instance.getRuntimeRegionEpoch()).isEqualTo(12L);
+              assertThat(instance.getLastObservedTickId()).isEqualTo(131L);
+              assertThat(instance.getNextDueAt()).isNull();
             });
   }
 

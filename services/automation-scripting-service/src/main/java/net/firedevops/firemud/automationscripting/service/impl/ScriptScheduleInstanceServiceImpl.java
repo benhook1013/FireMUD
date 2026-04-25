@@ -219,27 +219,42 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             ? Instant.ofEpochMilli(observation.observedAtMs())
             : Instant.now();
     Instant now = Instant.now();
-    List<ScriptScheduleInstance> instances =
-        scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
-            observation.tenantId(), observation.gameInstanceId(), UNIT_TICKS);
     List<ScriptScheduleInstance> updates = new ArrayList<>();
     int maxFirings = schedulerProperties.getMaxCatchUpFiringsPerObservation();
     List<TimerFiringCandidate> candidates = new ArrayList<>();
+    List<ScriptScheduleInstance> tickInstances =
+        safeInstances(
+            scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+                observation.tenantId(), observation.gameInstanceId(), UNIT_TICKS));
+    List<ScriptScheduleInstance> wallClockInstances =
+        safeInstances(
+            scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+                observation.tenantId(), observation.gameInstanceId(), UNIT_MILLISECONDS));
     int fired = 0;
-    for (ScriptScheduleInstance instance : instances) {
+    for (ScriptScheduleInstance instance : tickInstances) {
       TickAdvanceResult advance =
           advanceRuntimeProgress(instance, observation, observedAt, now, maxFirings + 1);
       candidates.addAll(
           advance.fireDueTicks().stream()
-              .map(dueTick -> new TimerFiringCandidate(instance, dueTick))
+              .map(dueTick -> TimerFiringCandidate.tick(instance, dueTick))
               .toList());
+      if (advance.changed()) {
+        updates.add(instance);
+      }
+    }
+    for (ScriptScheduleInstance instance : wallClockInstances) {
+      WallClockAdvanceResult advance =
+          advanceWallClockProgress(instance, observation, observedAt, now);
+      if (advance.fireDueAt() != null) {
+        candidates.add(TimerFiringCandidate.wallClock(instance, advance.fireDueAt()));
+      }
       if (advance.changed()) {
         updates.add(instance);
       }
     }
     List<TimerFiringCandidate> selectedCandidates = roundRobinCandidates(candidates, maxFirings);
     for (TimerFiringCandidate candidate : selectedCandidates) {
-      if (emitTimerWorkItem(candidate.instance(), candidate.dueTickId(), now)) {
+      if (emitTimerWorkItem(candidate, now)) {
         fired++;
       }
     }
@@ -425,6 +440,40 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     return new TickAdvanceResult(true, fireDueTicks);
   }
 
+  private WallClockAdvanceResult advanceWallClockProgress(
+      ScriptScheduleInstance instance,
+      RuntimeTickProgressObservation observation,
+      Instant observedAt,
+      Instant now) {
+    boolean runtimeScopeChanged =
+        !observation.regionId().equals(blankToEmpty(instance.getRuntimeRegionId()))
+            || instance.getRuntimeRegionEpoch() == null
+            || instance.getRuntimeRegionEpoch() != observation.regionEpoch();
+    Instant currentDueAt = instance.getNextDueAt();
+    Instant fireDueAt =
+        currentDueAt != null
+                && !currentDueAt.isAfter(observedAt)
+                && !blankToEmpty(observation.regionId()).isBlank()
+                && observation.regionEpoch() > 0
+            ? currentDueAt
+            : null;
+    boolean changed =
+        runtimeScopeChanged
+            || instance.getLastObservedTickId() == null
+            || instance.getLastObservedTickId() != observation.tickId()
+            || !STATUS_READY.equals(instance.getMaterializationStatus());
+    if (!changed) {
+      return new WallClockAdvanceResult(false, fireDueAt);
+    }
+    instance.setMaterializationStatus(STATUS_READY);
+    instance.setRuntimeRegionId(observation.regionId());
+    instance.setRuntimeRegionEpoch(observation.regionEpoch());
+    instance.setLastObservedTickId(observation.tickId());
+    instance.setLastRuntimeProgressObservedAt(observedAt);
+    instance.setUpdatedAt(now);
+    return new WallClockAdvanceResult(true, fireDueAt);
+  }
+
   private List<TimerFiringCandidate> roundRobinCandidates(
       List<TimerFiringCandidate> candidates, int maxFirings) {
     if (candidates.isEmpty() || maxFirings <= 0) {
@@ -486,9 +535,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     return List.copyOf(dueTicks);
   }
 
-  private boolean emitTimerWorkItem(ScriptScheduleInstance instance, long dueTickId, Instant now) {
+  private boolean emitTimerWorkItem(TimerFiringCandidate candidate, Instant now) {
+    ScriptScheduleInstance instance = candidate.instance();
     String entityId = targetEntityId(instance);
-    String scriptEventId = timerScriptEventId(instance, dueTickId);
+    String scriptEventId = timerScriptEventId(candidate);
     if (workItemRepository
         .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             instance.getTenantId(),
@@ -526,15 +576,19 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setSourceService(SOURCE_SERVICE);
     item.setTriggerMode(TriggerMode.TRIGGER_MODE_CATCH_UP.name());
     item.setPriorityTag(instance.getPriorityTag());
-    item.setReadSnapshotToken(timerReadSnapshotToken(instance, dueTickId));
-    item.setPayloadJson(timerPayload(instance, dueTickId));
+    item.setReadSnapshotToken(timerReadSnapshotToken(candidate));
+    item.setPayloadJson(timerPayload(candidate));
     item.setAdmissionEpoch(admissionState.admissionEpoch());
     item.setCreatedAt(now);
     item.setUpdatedAt(now);
     try {
       ScriptWorkItem saved = workItemRepository.saveAndFlush(item);
       automationQueueService.enqueueWorkItem(saved);
-      persistTimerAudit(instance, saved, dueTickId, now);
+      persistTimerAudit(candidate, saved, now);
+      if (candidate.wallClock()) {
+        instance.setNextDueAt(null);
+        instance.setUpdatedAt(now);
+      }
       return true;
     } catch (DataIntegrityViolationException ex) {
       return false;
@@ -542,7 +596,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   private void persistTimerAudit(
-      ScriptScheduleInstance instance, ScriptWorkItem workItem, long dueTickId, Instant now) {
+      TimerFiringCandidate candidate, ScriptWorkItem workItem, Instant now) {
+    ScriptScheduleInstance instance = candidate.instance();
     ScriptEventAudit audit = new ScriptEventAudit();
     audit.setTenantId(instance.getTenantId());
     audit.setGameInstanceId(instance.getGameInstanceId());
@@ -560,7 +615,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setWorkItemId(workItem.getId());
     audit.setFinalStage("ADMISSION");
     audit.setFinalOutcome("work_item_persisted");
-    audit.setFinalReason("timer_due_tick_" + dueTickId);
+    audit.setFinalReason(candidate.finalReason());
     audit.setCreatedAt(now);
     audit.setUpdatedAt(now);
     eventAuditRepository.save(audit);
@@ -584,53 +639,39 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         : "";
   }
 
-  private static String timerScriptEventId(ScriptScheduleInstance instance, long dueTickId) {
-    return "timer-" + shortHash(timerIdentity(instance, dueTickId));
+  private static String timerScriptEventId(TimerFiringCandidate candidate) {
+    return "timer-" + shortHash(candidate.identity());
   }
 
-  private static String timerReadSnapshotToken(ScriptScheduleInstance instance, long dueTickId) {
-    return "automation:onInterval:"
+  private static String timerReadSnapshotToken(TimerFiringCandidate candidate) {
+    ScriptScheduleInstance instance = candidate.instance();
+    return "automation:"
+        + instance.getEventType()
+        + ":"
         + instance.getGameInstanceId()
         + ":"
         + instance.getRuntimeRegionEpoch()
         + ":"
-        + dueTickId
+        + candidate.duePointToken()
         + ":"
         + shortHash(instance.getScheduleDefinitionId());
   }
 
-  private static String timerPayload(ScriptScheduleInstance instance, long dueTickId) {
-    return "{\"scheduleDefinitionId\":\""
+  private static String timerPayload(TimerFiringCandidate candidate) {
+    ScriptScheduleInstance instance = candidate.instance();
+    String dueField =
+        candidate.wallClock()
+            ? "\"dueAt\":" + candidate.dueAt().toEpochMilli()
+            : "\"dueTickId\":" + candidate.dueTickId();
+    return "{\"scheduleId\":\""
         + escape(instance.getScheduleDefinitionId())
-        + "\",\"dueTickId\":"
-        + dueTickId
+        + "\","
+        + dueField
         + ",\"targetScopeType\":\""
         + escape(instance.getTargetScopeType())
         + "\",\"targetScopeId\":\""
         + escape(instance.getTargetScopeId())
         + "\"}";
-  }
-
-  private static String timerIdentity(ScriptScheduleInstance instance, long dueTickId) {
-    return instance.getTenantId()
-        + "|"
-        + instance.getGameInstanceId()
-        + "|"
-        + blankToEmpty(instance.getRuntimeRegionId())
-        + "|"
-        + instance.getRuntimeRegionEpoch()
-        + "|"
-        + targetEntityId(instance)
-        + "|"
-        + instance.getScriptId()
-        + "|"
-        + instance.getEventType()
-        + "|"
-        + instance.getScriptPatchVersion()
-        + "|"
-        + instance.getScheduleDefinitionId()
-        + "|"
-        + dueTickId;
   }
 
   private static String scheduleKey(ScriptScheduleInstance instance) {
@@ -722,10 +763,56 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private record TickAdvanceResult(boolean changed, List<Long> fireDueTicks) {}
 
-  private record TimerFiringCandidate(ScriptScheduleInstance instance, long dueTickId) {}
+  private record WallClockAdvanceResult(boolean changed, Instant fireDueAt) {}
+
+  private record TimerFiringCandidate(
+      ScriptScheduleInstance instance, Long dueTickId, Instant dueAt, boolean wallClock) {
+    private static TimerFiringCandidate tick(ScriptScheduleInstance instance, long dueTickId) {
+      return new TimerFiringCandidate(instance, dueTickId, null, false);
+    }
+
+    private static TimerFiringCandidate wallClock(ScriptScheduleInstance instance, Instant dueAt) {
+      return new TimerFiringCandidate(instance, null, dueAt, true);
+    }
+
+    private String duePointToken() {
+      return wallClock ? Long.toString(dueAt.toEpochMilli()) : Long.toString(dueTickId);
+    }
+
+    private String identity() {
+      return instance.getTenantId()
+          + "|"
+          + instance.getGameInstanceId()
+          + "|"
+          + blankToEmpty(instance.getRuntimeRegionId())
+          + "|"
+          + instance.getRuntimeRegionEpoch()
+          + "|"
+          + targetEntityId(instance)
+          + "|"
+          + instance.getScriptId()
+          + "|"
+          + instance.getEventType()
+          + "|"
+          + instance.getScriptPatchVersion()
+          + "|"
+          + instance.getScheduleDefinitionId()
+          + "|"
+          + (wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId);
+    }
+
+    private String finalReason() {
+      return wallClock ? "timer_due_at_" + dueAt.toEpochMilli() : "timer_due_tick_" + dueTickId;
+    }
+  }
 
   private static String blankToEmpty(String value) {
     return value == null ? "" : value;
+  }
+
+  private static List<ScriptScheduleInstance> safeInstances(
+      List<ScriptScheduleInstance> instances) {
+    return instances == null ? List.of() : instances;
   }
 
   private static void requireText(String value, String fieldName) {
