@@ -2,9 +2,6 @@ package net.firedevops.firemud.tcpproxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.grpc.Server;
-import io.grpc.ServerBuilder;
-import io.grpc.stub.StreamObserver;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.Tracer;
 import java.io.BufferedReader;
@@ -16,22 +13,10 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import javax.sql.DataSource;
-import net.firedevops.firemud.account.v1.AccountServiceGrpc;
-import net.firedevops.firemud.account.v1.AuthenticateRequest;
-import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
-import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
-import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
-import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
-import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
@@ -55,6 +40,7 @@ import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
+import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import net.firedevops.firemud.test.HttpTestSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -117,7 +103,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   static final GenericContainer<?> REDIS =
       new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine")).withExposedPorts(6379);
 
-  private static AccountServiceStub ACCOUNT_STUB;
+  private static AccountRuntimeStubServer ACCOUNT_STUB;
   private static WorldManagementStubServer WORLD_STUB;
   private static EntityManagementStubServer ENTITY_STUB;
   private static SocialGroupsStubServer SOCIAL_STUB;
@@ -158,7 +144,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       gameSession.close();
     }
 
-    AccountServiceStub accountStub = ACCOUNT_STUB;
+    AccountRuntimeStubServer accountStub = ACCOUNT_STUB;
     ACCOUNT_STUB = null;
     if (accountStub != null) {
       accountStub.close();
@@ -237,7 +223,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     assertThat(telnetLookResponse.trim()).matches(matchesCanonicalLookWithOptionalPrompt());
 
-    assertThat(ACCOUNT_STUB.capturedRequests())
+    assertThat(ACCOUNT_STUB.capturedAuthenticateRequests())
         .anyMatch(
             request ->
                 request.getUsername().equals("demo@example.com")
@@ -943,8 +929,11 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     }
   }
 
-  private static AccountServiceStub startAccountStub() throws IOException {
-    return new AccountServiceStub(0);
+  private static AccountRuntimeStubServer startAccountStub() throws IOException {
+    AccountRuntimeStubServer stub = new AccountRuntimeStubServer(0);
+    stub.setDefaultAccountId(ACCOUNT_ID);
+    stub.mapAccountId("sora@example.com", SORA_ACCOUNT_ID);
+    return stub;
   }
 
   private static WorldManagementStubServer startWorldStub() throws IOException {
@@ -1234,104 +1223,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             || response.equals(leadingPrompt)
             || response.equals(trailingPrompt)
             || response.equals(wrappedPrompt);
-  }
-
-  private static final class AccountServiceStub extends AccountServiceGrpc.AccountServiceImplBase {
-    private final Server server;
-    private final List<AuthenticateRequest> requests = new CopyOnWriteArrayList<>();
-    private final AtomicBoolean gameplayAdmissionAllowed = new AtomicBoolean(true);
-    private final AtomicBoolean gameplayAvailable = new AtomicBoolean(true);
-    private final int port;
-
-    AccountServiceStub(int port) throws IOException {
-      this.server = ServerBuilder.forPort(port).addService(this).build().start();
-      this.port = server.getPort();
-    }
-
-    List<AuthenticateRequest> capturedRequests() {
-      return List.copyOf(requests);
-    }
-
-    int port() {
-      return port;
-    }
-
-    void setGameplayAdmissionAllowed(boolean allowed) {
-      gameplayAdmissionAllowed.set(allowed);
-    }
-
-    void setGameplayAvailable(boolean available) {
-      gameplayAvailable.set(available);
-    }
-
-    @Override
-    public void authenticate(
-        AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
-      requests.add(request);
-      long accountId =
-          switch (request.getUsername()) {
-            case "sora@example.com" -> SORA_ACCOUNT_ID;
-            default -> ACCOUNT_ID;
-          };
-      AuthenticateResponse response =
-          AuthenticateResponse.newBuilder()
-              .setAccountId(String.valueOf(accountId))
-              .setAuthToken("stub-token")
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
-
-    @Override
-    public void getTenantMembershipForRuntime(
-        GetTenantMembershipForRuntimeRequest request,
-        StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
-      responseObserver.onNext(
-          GetTenantMembershipForRuntimeResponse.newBuilder()
-              .setAccountId(request.getAccountId())
-              .setTenantId(request.getTenantId())
-              .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
-              .setMembershipVersion(1L)
-              .setEvaluatedAt("2026-03-30T00:00:00Z")
-              .build());
-      responseObserver.onCompleted();
-    }
-
-    @Override
-    public void getTenantEntitlementsForRuntime(
-        GetTenantEntitlementsForRuntimeRequest request,
-        StreamObserver<GetTenantEntitlementsForRuntimeResponse> responseObserver) {
-      responseObserver.onNext(
-          GetTenantEntitlementsForRuntimeResponse.newBuilder()
-              .setTenantId(request.getTenantId())
-              .setGameplayAvailable(gameplayAvailable.get())
-              .setEntitlementVersion(1L)
-              .setTenantBillingSequence(1L)
-              .setEvaluatedAt("2026-03-30T00:00:00Z")
-              .build());
-      responseObserver.onCompleted();
-    }
-
-    @Override
-    public void ensurePublicProductionPlayerMembership(
-        EnsurePublicProductionPlayerMembershipRequest request,
-        StreamObserver<EnsurePublicProductionPlayerMembershipResponse> responseObserver) {
-      responseObserver.onNext(
-          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
-              .setAccountId(request.getAccountId())
-              .setTenantId(request.getTenantId())
-              .setRealmSlug(request.getRealmSlug())
-              .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
-              .setMembershipVersion(1L)
-              .setCreated(gameplayAdmissionAllowed.get())
-              .setEvaluatedAt("2026-03-30T00:00:00Z")
-              .build());
-      responseObserver.onCompleted();
-    }
-
-    void close() {
-      server.shutdownNow();
-    }
   }
 
   private static final class GameLogicHolder {
