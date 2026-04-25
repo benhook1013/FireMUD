@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import net.firedevops.firemud.automationscripting.service.FactionService;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -20,12 +21,16 @@ class FactionControllerTest {
 
   @Test
   void adjustReputationReturnsValue() throws Exception {
-    when(factionService.adjustReputation(1L, 2L, 3L, 5)).thenReturn(5);
+    when(factionService.adjustReputation(
+            1L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 3L, 5))
+        .thenReturn(5);
 
     mockMvc
         .perform(
             patch("/factions/3/reputation")
                 .param("characterId", "2")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
                 .param("delta", "5")
                 .param("tenantId", "1"))
         .andExpect(status().isOk())
