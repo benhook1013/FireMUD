@@ -192,7 +192,7 @@ if failures:
     raise SystemExit(f"unexpected required preflight failures: {failures}")
 PY
 
-cat >"$TRAFFIC_EVIDENCE" <<'JSON'
+cat >"$TRAFFIC_EVIDENCE" <<JSON
 {
   "schemaVersion": "traffic-open-record/v1",
   "environment": "hobby-self-hosted",
@@ -201,7 +201,7 @@ cat >"$TRAFFIC_EVIDENCE" <<'JSON'
   "assessedAt": "2026-04-22T00:00:00Z",
   "assessedBy": "preflight-contract",
   "backupComplianceRef": "design/operations/deployments/hobby-self-hosted/backup-compliance.yaml",
-  "preflightReportPath": "design/operations/deployments/hobby-self-hosted/preflight/contract-hobby.json",
+  "preflightReportPath": "$REPORT_PATH",
   "evidenceRefs": [
     "contract-test"
   ]

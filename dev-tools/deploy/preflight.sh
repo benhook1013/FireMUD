@@ -549,6 +549,41 @@ if record.get("smokeStatus") != "pass":
 if not record.get("smokeEvidence"):
     print(f"fail\t{rollback_mode}\tStaging deployment record missing smokeEvidence")
     raise SystemExit(0)
+preflight_ref = record.get("preflightReportPath")
+if not preflight_ref:
+    print(f"fail\t{rollback_mode}\tStaging deployment record missing preflightReportPath")
+    raise SystemExit(0)
+preflight_path = root_dir / str(preflight_ref)
+if not preflight_path.exists():
+    print(f"fail\t{rollback_mode}\tStaging preflight report not found: {preflight_ref}")
+    raise SystemExit(0)
+try:
+    preflight_report = json.loads(preflight_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"fail\t{rollback_mode}\tStaging preflight report unreadable: {exc}")
+    raise SystemExit(0)
+if preflight_report.get("environment") != "staging":
+    print(f"fail\t{rollback_mode}\tStaging preflight report has wrong environment")
+    raise SystemExit(0)
+if preflight_report.get("expectedBindingsRef") != "design/operations/environments/staging/expected-bindings.yaml":
+    print(f"fail\t{rollback_mode}\tStaging preflight report expectedBindingsRef mismatch")
+    raise SystemExit(0)
+preflight_results = preflight_report.get("checkResults")
+if not isinstance(preflight_results, list) or not preflight_results:
+    print(f"fail\t{rollback_mode}\tStaging preflight report missing checkResults")
+    raise SystemExit(0)
+required_failures = [
+    check.get("policyId")
+    for check in preflight_results
+    if isinstance(check, dict)
+    and check.get("status") == "fail"
+    and check.get("policyId") != "PREFLIGHT-DIGEST-002"
+]
+if required_failures:
+    print(
+        f"fail\t{rollback_mode}\tStaging preflight report contains failing required checks: {', '.join(required_failures)}"
+    )
+    raise SystemExit(0)
 if not record.get("secretComplianceSnapshotAt"):
     print(f"fail\t{rollback_mode}\tStaging deployment record missing secretComplianceSnapshotAt")
     raise SystemExit(0)
@@ -788,7 +823,7 @@ if [ "$ENV_CLASS" = "hobby-self-hosted" ]; then
     append_result "PREFLIGHT-BACKUP-003" "false" "not_applicable" "Hobby traffic-open backup gate applies only to first-live or reopen events"
   else
     TRAFFIC_EVIDENCE="${FIREMUD_TRAFFIC_OPEN_EVIDENCE:-$ROOT_DIR/design/operations/deployments/hobby-self-hosted/traffic-open/${DEPLOYMENT_REF}.json}"
-    HOBBY_RESULT="$(python3 - <<'PY' "$ROOT_DIR/design/operations/deployments/hobby-self-hosted/backup-compliance.yaml" "$TRAFFIC_EVIDENCE" "$TRAFFIC_OPEN_EVENT" "$DEPLOYMENT_REF"
+    HOBBY_RESULT="$(python3 - <<'PY' "$ROOT_DIR/design/operations/deployments/hobby-self-hosted/backup-compliance.yaml" "$TRAFFIC_EVIDENCE" "$TRAFFIC_OPEN_EVENT" "$DEPLOYMENT_REF" "$ROOT_DIR"
 import datetime as dt
 import json
 import pathlib
@@ -799,6 +834,7 @@ compliance_path = pathlib.Path(sys.argv[1])
 traffic_path = pathlib.Path(sys.argv[2])
 event = sys.argv[3]
 deployment_ref = sys.argv[4]
+root_dir = pathlib.Path(sys.argv[5])
 if not compliance_path.exists():
     print(f"fail\tHobby backup-compliance record not found: {compliance_path}")
     raise SystemExit(0)
@@ -826,8 +862,47 @@ if traffic.get("backupComplianceRef") != "design/operations/deployments/hobby-se
 if compliance.get("status") != "pass":
     print("fail\tHobby backup-compliance status must be pass")
     raise SystemExit(0)
-if not traffic.get("preflightReportPath"):
+preflight_ref = traffic.get("preflightReportPath")
+if not preflight_ref:
     print("fail\tHobby traffic-open evidence missing preflightReportPath")
+    raise SystemExit(0)
+preflight_path = pathlib.Path(preflight_ref)
+if not preflight_path.is_absolute():
+    preflight_path = root_dir / str(preflight_ref)
+if not preflight_path.exists():
+    print(f"fail\tHobby preflight report not found: {preflight_ref}")
+    raise SystemExit(0)
+try:
+    preflight_report = json.loads(preflight_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"fail\tHobby preflight report unreadable: {exc}")
+    raise SystemExit(0)
+if preflight_report.get("environment") != "hobby-self-hosted":
+    print("fail\tHobby preflight report must target hobby-self-hosted")
+    raise SystemExit(0)
+if preflight_report.get("expectedBindingsRef") != "design/operations/environments/hobby-self-hosted/expected-bindings.yaml":
+    print("fail\tHobby preflight report expectedBindingsRef mismatch")
+    raise SystemExit(0)
+deployment_ref_obj = preflight_report.get("deploymentRef", {})
+if not isinstance(deployment_ref_obj, dict) or str(deployment_ref_obj.get("manifestRef", "")) != str(deployment_ref):
+    print("fail\tHobby preflight report deploymentRef mismatch")
+    raise SystemExit(0)
+preflight_results = preflight_report.get("checkResults")
+if not isinstance(preflight_results, list) or not preflight_results:
+    print("fail\tHobby preflight report missing checkResults")
+    raise SystemExit(0)
+required_failures = [
+    check.get("policyId")
+    for check in preflight_results
+    if isinstance(check, dict)
+    and check.get("status") == "fail"
+    and check.get("policyId") != "PREFLIGHT-DIGEST-002"
+]
+if required_failures:
+    print(
+        "fail\tHobby preflight report contains failing required checks: "
+        + ", ".join(required_failures)
+    )
     raise SystemExit(0)
 print("pass\tHobby traffic-open backup compliance evidence is valid")
 PY
