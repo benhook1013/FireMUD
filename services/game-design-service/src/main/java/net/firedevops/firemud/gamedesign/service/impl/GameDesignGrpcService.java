@@ -4,6 +4,8 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -62,6 +64,8 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionAssetPurgeStatusRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetPurgeStatusResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
+import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusesRequest;
+import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusesResponse;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
 import net.firedevops.firemud.gamedesign.v1.PingRequest;
@@ -366,6 +370,49 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     } catch (Exception ex) {
       builder.setError(
           GrpcAppErrors.internal(meterRegistry, logger, "GetPublishedPluginVersion", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.listPluginVersionStatuses")
+  public void listPluginVersionStatuses(
+      ListPluginVersionStatusesRequest request,
+      StreamObserver<ListPluginVersionStatusesResponse> responseObserver) {
+    ListPluginVersionStatusesResponse.Builder builder =
+        ListPluginVersionStatusesResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      versionService
+          .listPublishedPluginVersions(
+              request.getTenantId(),
+              request.getPluginId(),
+              toModelVersionLifecycleState(request.getPublicationState()),
+              toLocalDateTime(request.getChangedAfterMs()),
+              toLocalDateTime(request.getChangedBeforeMs()),
+              request.getLimit())
+          .forEach(
+              publication -> builder.addPluginVersions(toProtoPublishedPluginVersion(publication)));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ListPluginVersionStatuses",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ListPluginVersionStatuses",
+              pluginPublicationErrorCode(ex.getMessage()),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "ListPluginVersionStatuses", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
@@ -832,6 +879,32 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       case FAILED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_FAILED;
       case RETIRED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_RETIRED;
     };
+  }
+
+  private net.firedevops.firemud.gamedesign.model.VersionLifecycleState
+      toModelVersionLifecycleState(VersionLifecycleState state) {
+    return switch (state) {
+      case VERSION_LIFECYCLE_STATE_UNSPECIFIED -> null;
+      case VERSION_LIFECYCLE_STATE_DRAFT ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.DRAFT;
+      case VERSION_LIFECYCLE_STATE_PUBLISHED ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.PUBLISHED;
+      case VERSION_LIFECYCLE_STATE_ACTIVE ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.ACTIVE;
+      case VERSION_LIFECYCLE_STATE_FAILED ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.FAILED;
+      case VERSION_LIFECYCLE_STATE_RETIRED ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.RETIRED;
+      case UNRECOGNIZED ->
+          throw new IllegalArgumentException("INVALID_ARGUMENT: unknown version state");
+    };
+  }
+
+  private LocalDateTime toLocalDateTime(long epochMillis) {
+    if (epochMillis <= 0L) {
+      return null;
+    }
+    return LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), ZoneOffset.UTC);
   }
 
   private PluginComponentPolicyDecision toProtoComponentPolicyDecision(String decision) {

@@ -19,6 +19,8 @@ service GameDesignService {
   rpc PublishPluginVersion(PublishPluginVersionRequest) returns (PublishPluginVersionResponse);
   rpc GetPublishedPluginVersion(GetPublishedPluginVersionRequest)
       returns (GetPublishedPluginVersionResponse);
+  rpc ListPluginVersionStatuses(ListPluginVersionStatusesRequest)
+      returns (ListPluginVersionStatusesResponse);
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
   rpc GetDesignControlPlaneDigest(GetDesignControlPlaneDigestRequest)
       returns (GetDesignControlPlaneDigestResponse);
@@ -162,6 +164,20 @@ message GetPublishedPluginVersionRequest {
 
 message GetPublishedPluginVersionResponse {
   PublishedPluginVersion plugin_version = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListPluginVersionStatusesRequest {
+  string tenant_id = 1;
+  string plugin_id = 2;
+  VersionLifecycleState publication_state = 3;
+  int64 changed_after_ms = 4;
+  int64 changed_before_ms = 5;
+  int32 limit = 6;
+}
+
+message ListPluginVersionStatusesResponse {
+  repeated PublishedPluginVersion plugin_versions = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

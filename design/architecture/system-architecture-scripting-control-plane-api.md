@@ -136,6 +136,28 @@ Contract rules:
 - A plugin version that is not `PUBLISHED` must be rejected by runtime activation APIs with deterministic application errors rather than being partially loaded and then downgraded later.
 - `distributionManifestHash` and `distributionManifestPath` describe the plugin-version-scoped asset distribution manifest owned by Game Design. They must not point into or mutate the base version's `published_release_bundle`.
 
+#### `ListPluginVersionStatuses`
+
+Implementation note: the current Game Design proto/service path now exposes this broader publication listing read over the same immutable plugin publication rows used by `GetPublishedPluginVersion`, with optional filtering by `pluginId`, `publicationState`, `changedAfterMs`, and `changedBeforeMs`.
+
+Inputs:
+
+- `tenantId`
+- Optional `pluginId`
+- Optional `publicationState`
+- Optional `changedAfterMs` / `changedBeforeMs`
+- Optional bounded `limit`
+
+Outputs:
+
+- ordered `PublishedPluginVersion` rows containing `tenantId`, `pluginId`, `pluginVersionId`, `publicationId`, `baseVersionId`, `publicationState`, `abilitySchemaDigest`, `bundleDigest`, distribution-manifest metadata, signer metadata, and `lastChangedAtMs`
+
+Contract rules:
+
+- This read remains design-time publication truth only. Tooling that needs runtime activation or drain state must join it with Automation & Scripting reads such as `GetPluginStatus` and `ListPluginRuntimeEvents`.
+- Ordering is newest-first by publication change time so operator tooling can poll recent design-time publication changes without reconstructing chronology from runtime rows.
+- This API must not collapse design-time publication and instance runtime activation into one synthetic lifecycle enum.
+
 ### Game Session: Patch Pinning
 
 #### `GetPinnedScriptPatchVersion`

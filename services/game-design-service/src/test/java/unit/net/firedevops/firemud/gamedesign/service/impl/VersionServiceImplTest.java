@@ -3,18 +3,22 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
+import net.firedevops.firemud.gamedesign.entity.PublishedPluginVersion;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
@@ -36,6 +40,7 @@ import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.data.domain.Pageable;
 
 class VersionServiceImplTest {
   @Mock private VersionRepository versionRepository;
@@ -372,6 +377,73 @@ class VersionServiceImplTest {
     DesignControlPlaneDigestDto dto = service.getDesignControlPlaneDigest("tenant-1", 7L);
 
     assertEquals("digest-1", dto.contentDigest());
+  }
+
+  @Test
+  void listPublishedPluginVersionsUsesRepositoryFiltersAndLimitClamp() {
+    PublishedPluginVersion newer = new PublishedPluginVersion();
+    newer.setId(22L);
+    newer.setTenantId("tenant-1");
+    newer.setPluginId("plugin-1");
+    newer.setPluginVersionId("plugin-v2");
+    newer.setBaseVersionId(7L);
+    newer.setPublicationState(VersionLifecycleState.PUBLISHED);
+    newer.setAbilitySchemaDigest("ability-2");
+    newer.setBundleDigest("bundle-2");
+    newer.setManifestSchemaVersion(1);
+    newer.setSignerKeyId("signer-2");
+    newer.setSignerRevoked(false);
+    newer.setComponentPolicyDecision("REPORT_ONLY");
+    newer.setLastChangedAt(LocalDateTime.parse("2026-04-22T10:00:00"));
+
+    when(publishedPluginVersionRepository.listPublishedPluginVersions(
+            org.mockito.ArgumentMatchers.eq("tenant-1"),
+            org.mockito.ArgumentMatchers.eq("plugin-1"),
+            org.mockito.ArgumentMatchers.eq(VersionLifecycleState.PUBLISHED),
+            org.mockito.ArgumentMatchers.eq(LocalDateTime.parse("2026-04-20T10:00:00")),
+            isNull(),
+            any(Pageable.class)))
+        .thenReturn(List.of(newer));
+
+    List<PublishedPluginVersionDto> results =
+        service.listPublishedPluginVersions(
+            "tenant-1",
+            "plugin-1",
+            VersionLifecycleState.PUBLISHED,
+            LocalDateTime.parse("2026-04-20T10:00:00"),
+            null,
+            500);
+
+    assertEquals(1, results.size());
+    assertEquals("plugin-v2", results.get(0).pluginVersionId());
+    org.mockito.ArgumentCaptor<Pageable> pageableCaptor =
+        org.mockito.ArgumentCaptor.forClass(Pageable.class);
+    verify(publishedPluginVersionRepository)
+        .listPublishedPluginVersions(
+            org.mockito.ArgumentMatchers.eq("tenant-1"),
+            org.mockito.ArgumentMatchers.eq("plugin-1"),
+            org.mockito.ArgumentMatchers.eq(VersionLifecycleState.PUBLISHED),
+            org.mockito.ArgumentMatchers.eq(LocalDateTime.parse("2026-04-20T10:00:00")),
+            isNull(),
+            pageableCaptor.capture());
+    assertEquals(200, pageableCaptor.getValue().getPageSize());
+  }
+
+  @Test
+  void listPublishedPluginVersionsRejectsInvertedTimeWindow() {
+    IllegalArgumentException thrown =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.listPublishedPluginVersions(
+                    "tenant-1",
+                    "",
+                    null,
+                    LocalDateTime.parse("2026-04-22T10:00:00"),
+                    LocalDateTime.parse("2026-04-20T10:00:00"),
+                    10));
+
+    assertTrue(thrown.getMessage().contains("changedAfter"));
   }
 
   @Test

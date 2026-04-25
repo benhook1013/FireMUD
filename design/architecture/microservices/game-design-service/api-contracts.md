@@ -8,7 +8,7 @@ For REST endpoints, the authoritative request/response schema source is [openapi
 
 ## Implementation Status
 
-The release-attestation, launch-resolution, version-state, settings, asset-purge, script-patch publication read APIs, and the first plugin publication metadata path (`PublishPluginVersion` plus `GetPublishedPluginVersion`) are live in the current proto/service path. The heavier signed-bundle upload/extraction lifecycle (`UploadPluginBundle` and richer `ListPluginVersionStatuses` / signer-validation state) remains target-state contract work for the modding slice.
+The release-attestation, launch-resolution, version-state, settings, asset-purge, script-patch publication read APIs, and the first plugin publication metadata path (`PublishPluginVersion`, `GetPublishedPluginVersion`, and `ListPluginVersionStatuses`) are live in the current proto/service path. The heavier signed-bundle upload/extraction lifecycle (`UploadPluginBundle`) and richer pre-publication signer-validation state remain target-state contract work for the modding slice.
 
 ## gRPC APIs
 
@@ -19,7 +19,7 @@ The release-attestation, launch-resolution, version-state, settings, asset-purge
 - `UploadPluginBundle` – target-state signed bundle ingestion, archive verification, and indexed manifest extraction flow.
 - `PublishPluginVersion` – records immutable design-time plugin publication metadata and marks the version `PUBLISHED` for later runtime activation checks.
 - `GetPublishedPluginVersion` – authoritative design-time read API for plugin publication lifecycle and compatibility metadata.
-- `ListPluginVersionStatuses` – target-state broader plugin publication listing surface.
+- `ListPluginVersionStatuses` – authoritative broader plugin publication listing surface for operator and authoring tooling.
 - `ListVersions` – enumerates published versions for selection when creating a game instance.
 - `GetVersionState` / `CompareAndSetVersionState` – authoritative control-plane version lifecycle reads and CAS transitions. These APIs are now live in the proto/service path and are the canonical owner for `versionStateEpoch`.
 - `GetDesignControlPlaneDigest` – digest surface for publish gating over normalized metadata.
@@ -61,6 +61,7 @@ Detailed request and response schemas are defined in the [OpenAPI specification]
 - `GetPublishedScriptPatchVersion(GetPublishedScriptPatchVersionRequest) returns (GetPublishedScriptPatchVersionResponse)` – returns the immutable script-patch publication read model, including base version, lifecycle state, digest identity, and last-changed time.
 - `PublishPluginVersion(PublishPluginVersionRequest) returns (PublishPluginVersionResponse)` – records immutable design-time plugin publication metadata keyed by `(tenantId, pluginId, pluginVersionId)`.
 - `GetPublishedPluginVersion(GetPublishedPluginVersionRequest) returns (GetPublishedPluginVersionResponse)` – returns the immutable plugin publication read model, including base version, publication state, bundle digest, and distribution-manifest metadata.
+- `ListPluginVersionStatuses(ListPluginVersionStatusesRequest) returns (ListPluginVersionStatusesResponse)` – lists immutable plugin publication rows for a tenant with optional `pluginId`, `publicationState`, `changedAfterMs`, `changedBeforeMs`, and bounded `limit` filters.
 - `ListVersions(ListVersionsRequest) returns (ListVersionsResponse)` – lists available versions.
 - `GetVersionState(GetVersionStateRequest) returns (GetVersionStateResponse)` – reads authoritative version lifecycle state and CAS epoch.
 - `CompareAndSetVersionState(CompareAndSetVersionStateRequest) returns (CompareAndSetVersionStateResponse)` – performs CAS-guarded lifecycle transitions.

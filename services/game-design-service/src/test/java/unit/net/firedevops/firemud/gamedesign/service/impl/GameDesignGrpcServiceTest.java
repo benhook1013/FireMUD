@@ -46,6 +46,8 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
+import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusesRequest;
+import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusesResponse;
 import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionResponse;
@@ -318,6 +320,85 @@ class GameDesignGrpcServiceTest {
     assertEquals(
         PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED,
         ref.get().getPluginVersion().getComponentPolicyDecision());
+  }
+
+  @Test
+  void listPluginVersionStatusesReturnsFilteredPublicationRows() {
+    Mockito.when(
+            versionService.listPublishedPluginVersions(
+                Mockito.eq("tenant-1"),
+                Mockito.eq("plugin-1"),
+                Mockito.eq(VersionLifecycleState.PUBLISHED),
+                Mockito.eq(LocalDateTime.parse("2026-04-20T10:00:00")),
+                Mockito.eq(LocalDateTime.parse("2026-04-22T10:00:00")),
+                Mockito.eq(25)))
+        .thenReturn(
+            List.of(
+                new PublishedPluginVersionDto(
+                    15L,
+                    "tenant-1",
+                    "plugin-1",
+                    "plugin-v2",
+                    7L,
+                    VersionLifecycleState.PUBLISHED,
+                    "ability-2",
+                    "bundle-2",
+                    1,
+                    "dist-hash-2",
+                    "dist-path-2",
+                    "signer-2",
+                    false,
+                    "REPORT_ONLY",
+                    "notes",
+                    LocalDateTime.parse("2026-04-22T09:00:00")),
+                new PublishedPluginVersionDto(
+                    14L,
+                    "tenant-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    7L,
+                    VersionLifecycleState.PUBLISHED,
+                    "ability-1",
+                    "bundle-1",
+                    1,
+                    "",
+                    "",
+                    "signer-1",
+                    true,
+                    "ALLOWED",
+                    "",
+                    LocalDateTime.parse("2026-04-21T09:00:00"))));
+
+    AtomicReference<ListPluginVersionStatusesResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.listPluginVersionStatuses(
+          ListPluginVersionStatusesRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setPluginId("plugin-1")
+              .setPublicationState(
+                  net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                      .VERSION_LIFECYCLE_STATE_PUBLISHED)
+              .setChangedAfterMs(
+                  LocalDateTime.parse("2026-04-20T10:00:00")
+                      .toInstant(java.time.ZoneOffset.UTC)
+                      .toEpochMilli())
+              .setChangedBeforeMs(
+                  LocalDateTime.parse("2026-04-22T10:00:00")
+                      .toInstant(java.time.ZoneOffset.UTC)
+                      .toEpochMilli())
+              .setLimit(25)
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals(2, ref.get().getPluginVersionsCount());
+    assertEquals("plugin-v2", ref.get().getPluginVersions(0).getPluginVersionId());
+    assertEquals(
+        PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_REPORT_ONLY,
+        ref.get().getPluginVersions(0).getComponentPolicyDecision());
+    assertEquals("plugin-v1", ref.get().getPluginVersions(1).getPluginVersionId());
+    assertEquals(true, ref.get().getPluginVersions(1).getSignerRevoked());
   }
 
   @Test

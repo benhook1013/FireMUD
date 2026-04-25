@@ -35,6 +35,7 @@ import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,6 +44,9 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are not exposed")
 public class VersionServiceImpl implements VersionService {
+  private static final int DEFAULT_PLUGIN_VERSION_STATUS_LIMIT = 100;
+  private static final int MAX_PLUGIN_VERSION_STATUS_LIMIT = 200;
+
   private static final Logger logger = LoggingUtil.getLogger(VersionServiceImpl.class);
 
   private final VersionRepository versionRepository;
@@ -319,6 +323,32 @@ public class VersionServiceImpl implements VersionService {
 
   @Override
   @Transactional(readOnly = true)
+  public List<PublishedPluginVersionDto> listPublishedPluginVersions(
+      String tenantId,
+      String pluginId,
+      VersionLifecycleState publicationState,
+      LocalDateTime changedAfter,
+      LocalDateTime changedBefore,
+      int limit) {
+    if (changedAfter != null && changedBefore != null && changedAfter.isAfter(changedBefore)) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: changedAfter must be before or equal to changedBefore");
+    }
+    return publishedPluginVersionRepository
+        .listPublishedPluginVersions(
+            tenantId,
+            normalizeBlank(pluginId),
+            publicationState,
+            changedAfter,
+            changedBefore,
+            PageRequest.of(0, sanitizePluginVersionStatusLimit(limit)))
+        .stream()
+        .map(this::toPublishedPluginVersionDto)
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   @Timed(value = "gamedesign.version.list")
   public List<VersionDto> listVersions(String tenantId) {
     Game game =
@@ -527,5 +557,12 @@ public class VersionServiceImpl implements VersionService {
 
   private static String normalizeBlank(String value) {
     return value == null ? "" : value;
+  }
+
+  private static int sanitizePluginVersionStatusLimit(int limit) {
+    if (limit <= 0) {
+      return DEFAULT_PLUGIN_VERSION_STATUS_LIMIT;
+    }
+    return Math.min(limit, MAX_PLUGIN_VERSION_STATUS_LIMIT);
   }
 }

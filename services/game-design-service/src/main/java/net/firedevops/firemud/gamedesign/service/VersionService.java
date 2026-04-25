@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
@@ -34,6 +35,14 @@ public interface VersionService {
 
   PublishedPluginVersionDto getPublishedPluginVersion(
       String tenantId, String pluginId, String pluginVersionId);
+
+  List<PublishedPluginVersionDto> listPublishedPluginVersions(
+      String tenantId,
+      String pluginId,
+      VersionLifecycleState publicationState,
+      LocalDateTime changedAfter,
+      LocalDateTime changedBefore,
+      int limit);
 
   List<VersionDto> listVersions(String tenantId);
 
