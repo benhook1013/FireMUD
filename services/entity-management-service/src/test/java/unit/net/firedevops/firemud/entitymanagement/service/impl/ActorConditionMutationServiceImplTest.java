@@ -11,6 +11,7 @@ import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.repository.ActorActiveConditionRepository;
+import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
 import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
@@ -27,7 +28,10 @@ class ActorConditionMutationServiceImplTest {
         Mockito.mock(ActorActiveConditionRepository.class);
     ActorConditionMutationServiceImpl service =
         new ActorConditionMutationServiceImpl(
-            scopedCharacterResolver, activeConditionRepository, Clock.fixed(NOW, ZoneOffset.UTC));
+            scopedCharacterResolver,
+            activeConditionRepository,
+            new PlayableStateKeyResolver(),
+            Clock.fixed(NOW, ZoneOffset.UTC));
 
     Character character = new Character();
     character.setId(7L);
@@ -54,6 +58,7 @@ class ActorConditionMutationServiceImplTest {
         ArgumentCaptor.forClass(ActorActiveCondition.class);
     verify(activeConditionRepository).save(saved.capture());
     assertEquals(1, saved.getValue().getStackCount());
+    assertEquals("instance:99", saved.getValue().getPlayableStateKey());
     assertEquals(NOW, saved.getValue().getStartedAt());
     assertEquals("blocking", result.conditionKey());
     assertEquals("ACTION_STATE", result.sourceType());
@@ -68,6 +73,7 @@ class ActorConditionMutationServiceImplTest {
         new ActorConditionMutationServiceImpl(
             Mockito.mock(ScopedCharacterResolver.class),
             activeConditionRepository,
+            new PlayableStateKeyResolver(),
             Clock.fixed(NOW, ZoneOffset.UTC));
     when(activeConditionRepository.deleteExpired(NOW.minusSeconds(1))).thenReturn(3);
 
@@ -88,13 +94,14 @@ class ActorConditionMutationServiceImplTest {
     existing.setStartedAt(NOW);
     existing.setExpiresAt(NOW.plusSeconds(5));
     when(activeConditionRepository
-            .findFirstByTenantIdAndGameInstanceIdAndCharacterIdAndSourceTypeAndSourceIdOrderByIdAsc(
-                1L, "99", 7L, "ACTION_STATE", "effect-1"))
+            .findFirstByTenantIdAndPlayableStateKeyAndCharacterIdAndSourceTypeAndSourceIdOrderByIdAsc(
+                1L, "instance:99", 7L, "ACTION_STATE", "effect-1"))
         .thenReturn(Optional.of(existing));
     ActorConditionMutationServiceImpl service =
         new ActorConditionMutationServiceImpl(
             Mockito.mock(ScopedCharacterResolver.class),
             activeConditionRepository,
+            new PlayableStateKeyResolver(),
             Clock.fixed(NOW, ZoneOffset.UTC));
 
     var result =

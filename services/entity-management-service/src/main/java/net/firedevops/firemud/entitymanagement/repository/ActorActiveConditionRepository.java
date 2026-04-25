@@ -17,21 +17,21 @@ public interface ActorActiveConditionRepository extends JpaRepository<ActorActiv
       select condition
       from ActorActiveCondition condition
       where condition.tenantId = :tenantId
-        and condition.gameInstanceId = :gameInstanceId
+        and condition.playableStateKey = :playableStateKey
         and condition.characterId = :characterId
         and (condition.expiresAt is null or condition.expiresAt > :now)
       order by condition.conditionKey asc, condition.startedAt asc, condition.id asc
       """)
   List<ActorActiveCondition> findActiveForCharacter(
       @Param("tenantId") Long tenantId,
-      @Param("gameInstanceId") String gameInstanceId,
+      @Param("playableStateKey") String playableStateKey,
       @Param("characterId") Long characterId,
       @Param("now") Instant now);
 
   Optional<ActorActiveCondition>
-      findFirstByTenantIdAndGameInstanceIdAndCharacterIdAndSourceTypeAndSourceIdOrderByIdAsc(
+      findFirstByTenantIdAndPlayableStateKeyAndCharacterIdAndSourceTypeAndSourceIdOrderByIdAsc(
           Long tenantId,
-          String gameInstanceId,
+          String playableStateKey,
           Long characterId,
           String sourceType,
           String sourceId);

@@ -7,6 +7,6 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface ActorResourceStateRepository extends JpaRepository<ActorResourceState, Long> {
-  List<ActorResourceState> findByTenantIdAndGameInstanceIdAndCharacterIdOrderByStatKeyAsc(
-      Long tenantId, String gameInstanceId, Long characterId);
+  List<ActorResourceState> findByTenantIdAndPlayableStateKeyAndCharacterIdOrderByStatKeyAsc(
+      Long tenantId, String playableStateKey, Long characterId);
 }

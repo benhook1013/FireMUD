@@ -17,6 +17,7 @@ import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
 import net.firedevops.firemud.entitymanagement.repository.ActorActiveConditionRepository;
 import net.firedevops.firemud.entitymanagement.repository.ActorResourceStateRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
+import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
 import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,7 @@ class ActorStateServiceImplTest {
             resourceStateRepository,
             activeConditionRepository,
             itemInstanceRepository,
+            new PlayableStateKeyResolver(),
             new DefaultEffectEvaluationService(),
             new EffectPayloadParser(new tools.jackson.databind.ObjectMapper()),
             Clock.fixed(NOW, ZoneOffset.UTC));
@@ -47,7 +49,7 @@ class ActorStateServiceImplTest {
     character.setId(7L);
     character.setTenantId(1L);
     character.setAccountId(41L);
-    character.setPlayableStateKey("instance-99");
+    character.setPlayableStateKey("instance:99");
     character.setName("Test");
     character.setAgility(5);
     character.setExperience(123);
@@ -63,7 +65,7 @@ class ActorStateServiceImplTest {
 
     ActorResourceState health = new ActorResourceState();
     health.setTenantId(1L);
-    health.setGameInstanceId("99");
+    health.setPlayableStateKey("instance:99");
     health.setCharacterId(7L);
     health.setStatKey("health");
     health.setCurrentValue(65L);
@@ -71,13 +73,13 @@ class ActorStateServiceImplTest {
     health.setBaseValue(80L);
     health.setSourceType("EFFECT");
     health.setSourceId("poison:1");
-    when(resourceStateRepository.findByTenantIdAndGameInstanceIdAndCharacterIdOrderByStatKeyAsc(
-            1L, "99", 7L))
+    when(resourceStateRepository.findByTenantIdAndPlayableStateKeyAndCharacterIdOrderByStatKeyAsc(
+            1L, "instance:99", 7L))
         .thenReturn(List.of(health));
 
     ActorActiveCondition condition = new ActorActiveCondition();
     condition.setTenantId(1L);
-    condition.setGameInstanceId("99");
+    condition.setPlayableStateKey("instance:99");
     condition.setCharacterId(7L);
     condition.setConditionKey("poisoned");
     condition.setStackCount(2);
@@ -86,7 +88,7 @@ class ActorStateServiceImplTest {
     condition.setStartedAt(NOW.minusSeconds(5));
     condition.setExpiresAt(NOW.plusSeconds(30));
     condition.setEffectPayloadJson("{\"damage_per_tick\":3}");
-    when(activeConditionRepository.findActiveForCharacter(1L, "99", 7L, NOW))
+    when(activeConditionRepository.findActiveForCharacter(1L, "instance:99", 7L, NOW))
         .thenReturn(List.of(condition));
     when(itemInstanceRepository
             .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNotNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByEquipmentSlotAscIdAsc(
@@ -128,6 +130,7 @@ class ActorStateServiceImplTest {
             resourceStateRepository,
             activeConditionRepository,
             itemInstanceRepository,
+            new PlayableStateKeyResolver(),
             new DefaultEffectEvaluationService(),
             new EffectPayloadParser(new tools.jackson.databind.ObjectMapper()),
             Clock.fixed(NOW, ZoneOffset.UTC));
@@ -136,7 +139,7 @@ class ActorStateServiceImplTest {
     character.setId(7L);
     character.setTenantId(1L);
     character.setAccountId(41L);
-    character.setPlayableStateKey("instance-99");
+    character.setPlayableStateKey("instance:99");
     character.setName("Test");
     character.setAgility(5);
     character.setExperience(123);
@@ -149,13 +152,13 @@ class ActorStateServiceImplTest {
     when(scopedCharacterResolver.requireScopedCharacter(
             1L, 7L, "99", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .thenReturn(character);
-    when(resourceStateRepository.findByTenantIdAndGameInstanceIdAndCharacterIdOrderByStatKeyAsc(
-            1L, "99", 7L))
+    when(resourceStateRepository.findByTenantIdAndPlayableStateKeyAndCharacterIdOrderByStatKeyAsc(
+            1L, "instance:99", 7L))
         .thenReturn(List.of());
 
     ActorActiveCondition condition = new ActorActiveCondition();
     condition.setTenantId(1L);
-    condition.setGameInstanceId("99");
+    condition.setPlayableStateKey("instance:99");
     condition.setCharacterId(7L);
     condition.setConditionKey("blessed");
     condition.setStackCount(1);
@@ -170,7 +173,7 @@ class ActorStateServiceImplTest {
           {"operation":"CLAMP_MAX","target_key":"strength","value":20}
         ]}
         """);
-    when(activeConditionRepository.findActiveForCharacter(1L, "99", 7L, NOW))
+    when(activeConditionRepository.findActiveForCharacter(1L, "instance:99", 7L, NOW))
         .thenReturn(List.of(condition));
     when(itemInstanceRepository
             .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNotNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByEquipmentSlotAscIdAsc(
@@ -204,6 +207,7 @@ class ActorStateServiceImplTest {
             resourceStateRepository,
             activeConditionRepository,
             itemInstanceRepository,
+            new PlayableStateKeyResolver(),
             new DefaultEffectEvaluationService(),
             new EffectPayloadParser(new tools.jackson.databind.ObjectMapper()),
             Clock.fixed(NOW, ZoneOffset.UTC));
@@ -212,7 +216,7 @@ class ActorStateServiceImplTest {
     character.setId(7L);
     character.setTenantId(1L);
     character.setAccountId(41L);
-    character.setPlayableStateKey("instance-99");
+    character.setPlayableStateKey("instance:99");
     character.setName("Test");
     character.setAgility(5);
     character.setExperience(123);
@@ -225,10 +229,11 @@ class ActorStateServiceImplTest {
     when(scopedCharacterResolver.requireScopedCharacter(
             1L, 7L, "99", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .thenReturn(character);
-    when(resourceStateRepository.findByTenantIdAndGameInstanceIdAndCharacterIdOrderByStatKeyAsc(
-            1L, "99", 7L))
+    when(resourceStateRepository.findByTenantIdAndPlayableStateKeyAndCharacterIdOrderByStatKeyAsc(
+            1L, "instance:99", 7L))
         .thenReturn(List.of());
-    when(activeConditionRepository.findActiveForCharacter(1L, "99", 7L, NOW)).thenReturn(List.of());
+    when(activeConditionRepository.findActiveForCharacter(1L, "instance:99", 7L, NOW))
+        .thenReturn(List.of());
 
     Item armour = new Item();
     armour.setId(55L);

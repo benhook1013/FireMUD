@@ -24,8 +24,8 @@ public class ActorResourceState {
   @Column(nullable = false)
   private Long tenantId;
 
-  @Column(nullable = false)
-  private String gameInstanceId;
+  @Column(name = "playable_state_key", nullable = false, length = 120)
+  private String playableStateKey;
 
   @Column(nullable = false)
   private Long characterId;

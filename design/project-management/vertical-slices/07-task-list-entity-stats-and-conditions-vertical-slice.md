@@ -6,7 +6,7 @@ Goal: define one canonical gameplay-state model for numeric stats, bounded resou
 
 ## Implementation Notes
 
-- Entity Management now owns persisted actor resource and active-condition state through `actor_resource_states` and `actor_active_conditions`, keyed by tenant, opaque game instance id, and character id.
+- Entity Management now owns persisted actor resource and active-condition state through `actor_resource_states` and `actor_active_conditions`, keyed by tenant, derived playable-state namespace, and character id rather than a raw game-instance shortcut.
 - `QueryActorState` exposes a gameplay-attested, playable-scope-aware read API that returns baseline character stats overlaid with persisted resource rows plus active non-expired conditions.
 - The first implementation is intentionally read-side only: active condition payload modifiers can influence evaluated resources, but the slice does not yet author stat/condition definitions, evaluate equipment/action modifiers, apply or expire effects, or resolve combat damage.
 - Runtime game instance identifiers remain opaque strings, matching existing inventory/equipment/room-state tables rather than requiring numeric ids.

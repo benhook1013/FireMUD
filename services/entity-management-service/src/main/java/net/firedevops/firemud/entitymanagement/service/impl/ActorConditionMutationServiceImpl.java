@@ -6,6 +6,7 @@ import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import net.firedevops.firemud.entitymanagement.repository.ActorActiveConditionRepository;
 import net.firedevops.firemud.entitymanagement.service.ActorConditionMutationService;
+import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
 import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,21 +18,28 @@ import org.springframework.util.StringUtils;
 public class ActorConditionMutationServiceImpl implements ActorConditionMutationService {
   private final ScopedCharacterResolver scopedCharacterResolver;
   private final ActorActiveConditionRepository activeConditionRepository;
+  private final PlayableStateKeyResolver playableStateKeyResolver;
   private final Clock clock;
 
   @Autowired
   public ActorConditionMutationServiceImpl(
       ScopedCharacterResolver scopedCharacterResolver,
       ActorActiveConditionRepository activeConditionRepository) {
-    this(scopedCharacterResolver, activeConditionRepository, Clock.systemUTC());
+    this(
+        scopedCharacterResolver,
+        activeConditionRepository,
+        new PlayableStateKeyResolver(),
+        Clock.systemUTC());
   }
 
   ActorConditionMutationServiceImpl(
       ScopedCharacterResolver scopedCharacterResolver,
       ActorActiveConditionRepository activeConditionRepository,
+      PlayableStateKeyResolver playableStateKeyResolver,
       Clock clock) {
     this.scopedCharacterResolver = scopedCharacterResolver;
     this.activeConditionRepository = activeConditionRepository;
+    this.playableStateKeyResolver = playableStateKeyResolver;
     this.clock = clock;
   }
 
@@ -50,20 +58,25 @@ public class ActorConditionMutationServiceImpl implements ActorConditionMutation
       String effectPayloadJson) {
     scopedCharacterResolver.requireScopedCharacter(
         tenantId, characterId, gameInstanceId, playableStateScope);
+    String playableStateKey = playableStateKeyResolver.resolve(gameInstanceId, playableStateScope);
     String normalizedSourceType = requireText(sourceType, "sourceType");
     String normalizedSourceId = blankToNull(sourceId);
     if (normalizedSourceId != null) {
       var existing =
           activeConditionRepository
-              .findFirstByTenantIdAndGameInstanceIdAndCharacterIdAndSourceTypeAndSourceIdOrderByIdAsc(
-                  tenantId, gameInstanceId, characterId, normalizedSourceType, normalizedSourceId);
+              .findFirstByTenantIdAndPlayableStateKeyAndCharacterIdAndSourceTypeAndSourceIdOrderByIdAsc(
+                  tenantId,
+                  playableStateKey,
+                  characterId,
+                  normalizedSourceType,
+                  normalizedSourceId);
       if (existing.isPresent()) {
         return toDto(existing.orElseThrow());
       }
     }
     ActorActiveCondition condition = new ActorActiveCondition();
     condition.setTenantId(tenantId);
-    condition.setGameInstanceId(gameInstanceId);
+    condition.setPlayableStateKey(playableStateKey);
     condition.setCharacterId(characterId);
     condition.setConditionKey(requireText(conditionKey, "conditionKey"));
     condition.setStackCount(stackCount <= 0 ? 1 : stackCount);

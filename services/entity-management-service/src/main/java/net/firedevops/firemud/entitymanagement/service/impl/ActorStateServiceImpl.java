@@ -25,6 +25,7 @@ import net.firedevops.firemud.entitymanagement.repository.ActorActiveConditionRe
 import net.firedevops.firemud.entitymanagement.repository.ActorResourceStateRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.service.ActorStateService;
+import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
 import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,6 +41,7 @@ public class ActorStateServiceImpl implements ActorStateService {
   private final ActorResourceStateRepository resourceStateRepository;
   private final ActorActiveConditionRepository activeConditionRepository;
   private final ItemInstanceRepository itemInstanceRepository;
+  private final PlayableStateKeyResolver playableStateKeyResolver;
   private final EffectEvaluationService effectEvaluationService;
   private final EffectPayloadParser effectPayloadParser;
   private final Clock clock;
@@ -53,6 +55,7 @@ public class ActorStateServiceImpl implements ActorStateService {
         resourceStateRepository,
         activeConditionRepository,
         null,
+        new PlayableStateKeyResolver(),
         new DefaultEffectEvaluationService(),
         new EffectPayloadParser(new tools.jackson.databind.ObjectMapper()),
         Clock.systemUTC());
@@ -64,6 +67,7 @@ public class ActorStateServiceImpl implements ActorStateService {
       ActorResourceStateRepository resourceStateRepository,
       ActorActiveConditionRepository activeConditionRepository,
       ItemInstanceRepository itemInstanceRepository,
+      PlayableStateKeyResolver playableStateKeyResolver,
       EffectEvaluationService effectEvaluationService,
       EffectPayloadParser effectPayloadParser) {
     this(
@@ -71,6 +75,7 @@ public class ActorStateServiceImpl implements ActorStateService {
         resourceStateRepository,
         activeConditionRepository,
         itemInstanceRepository,
+        playableStateKeyResolver,
         effectEvaluationService,
         effectPayloadParser,
         Clock.systemUTC());
@@ -81,6 +86,7 @@ public class ActorStateServiceImpl implements ActorStateService {
       ActorResourceStateRepository resourceStateRepository,
       ActorActiveConditionRepository activeConditionRepository,
       ItemInstanceRepository itemInstanceRepository,
+      PlayableStateKeyResolver playableStateKeyResolver,
       EffectEvaluationService effectEvaluationService,
       EffectPayloadParser effectPayloadParser,
       Clock clock) {
@@ -88,6 +94,7 @@ public class ActorStateServiceImpl implements ActorStateService {
     this.resourceStateRepository = resourceStateRepository;
     this.activeConditionRepository = activeConditionRepository;
     this.itemInstanceRepository = itemInstanceRepository;
+    this.playableStateKeyResolver = playableStateKeyResolver;
     this.effectEvaluationService = effectEvaluationService;
     this.effectPayloadParser = effectPayloadParser;
     this.clock = clock;
@@ -103,15 +110,16 @@ public class ActorStateServiceImpl implements ActorStateService {
     Character character =
         scopedCharacterResolver.requireScopedCharacter(
             tenantId, characterId, gameInstanceId, playableStateScope);
+    String playableStateKey = playableStateKeyResolver.resolve(gameInstanceId, playableStateScope);
     Map<String, ActorResourceStateDto> resources = new TreeMap<>();
     addCharacterBaseline(resources, character);
     resourceStateRepository
-        .findByTenantIdAndGameInstanceIdAndCharacterIdOrderByStatKeyAsc(
-            tenantId, gameInstanceId, characterId)
+        .findByTenantIdAndPlayableStateKeyAndCharacterIdOrderByStatKeyAsc(
+            tenantId, playableStateKey, characterId)
         .forEach(resource -> resources.put(resource.getStatKey(), toDto(resource)));
     List<ActorConditionStateDto> activeConditions =
         activeConditionRepository
-            .findActiveForCharacter(tenantId, gameInstanceId, characterId, clock.instant())
+            .findActiveForCharacter(tenantId, playableStateKey, characterId, clock.instant())
             .stream()
             .map(this::toDto)
             .sorted(Comparator.comparing(ActorConditionStateDto::conditionKey))
