@@ -22,7 +22,7 @@ public class AutomationScriptingClient
     extends AbstractBlockingGrpcClient<
         AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub> {
   private static final Logger LOG = LoggerFactory.getLogger(AutomationScriptingClient.class);
-  private static final long CALL_DEADLINE_SECONDS = 3L;
+  private static final long EVENT_TRIGGER_DEADLINE_MILLIS = 250L;
   private static final long TICK_PROGRESS_DEADLINE_MILLIS = 250L;
 
   public AutomationScriptingClient(
@@ -61,7 +61,7 @@ public class AutomationScriptingClient
     }
     try {
       return stub()
-          .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+          .withDeadlineAfter(EVENT_TRIGGER_DEADLINE_MILLIS, TimeUnit.MILLISECONDS)
           .triggerScriptEvent(request);
     } catch (RuntimeException ex) {
       LOG.warn("Automation & Scripting triggerScriptEvent failed", ex);

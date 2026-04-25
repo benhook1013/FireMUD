@@ -21,6 +21,7 @@ import net.firedevops.firemud.gamesession.service.DurableGameplayReplayService;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyResult;
 import net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.stereotype.Service;
@@ -42,6 +43,7 @@ public final class DefaultDurableGameplayCommandExecutionService
   private final DurableGameplayReplayService durableGameplayReplayService;
   private final MovementEffectIdempotencyService movementEffectIdempotencyService;
   private final PlayerOutputDeliveryService playerOutputDeliveryService;
+  private final ScriptEventPublisher scriptEventPublisher;
 
   public DefaultDurableGameplayCommandExecutionService(
       MeterRegistry meterRegistry,
@@ -54,7 +56,8 @@ public final class DefaultDurableGameplayCommandExecutionService
       ActionStateCommandHandler actionStateCommandHandler,
       DurableGameplayReplayService durableGameplayReplayService,
       MovementEffectIdempotencyService movementEffectIdempotencyService,
-      PlayerOutputDeliveryService playerOutputDeliveryService) {
+      PlayerOutputDeliveryService playerOutputDeliveryService,
+      ScriptEventPublisher scriptEventPublisher) {
     this.meterRegistry = meterRegistry;
     this.textCommandParser = textCommandParser;
     this.sessionContextService = sessionContextService;
@@ -66,6 +69,7 @@ public final class DefaultDurableGameplayCommandExecutionService
     this.durableGameplayReplayService = durableGameplayReplayService;
     this.movementEffectIdempotencyService = movementEffectIdempotencyService;
     this.playerOutputDeliveryService = playerOutputDeliveryService;
+    this.scriptEventPublisher = scriptEventPublisher;
   }
 
   @Override
@@ -121,7 +125,9 @@ public final class DefaultDurableGameplayCommandExecutionService
     MoveEffectApplyResult applyResult =
         movementEffectIdempotencyService.apply(
             effect.getEffectId(), context, prepared.updatedContext().roomInstanceId());
-    return Optional.of(recordResult(command, resultForApply(applyResult, prepared)));
+    return Optional.of(
+        recordResult(
+            command, resultForApply(applyResult, prepared, context, effect.getEffectId())));
   }
 
   private DurableGameplayCommandExecutionResult executeItemMutation(
@@ -251,15 +257,20 @@ public final class DefaultDurableGameplayCommandExecutionService
   }
 
   private DurableGameplayCommandExecutionResult resultForApply(
-      MoveEffectApplyResult applyResult, PreparedMoveCommandResult prepared) {
+      MoveEffectApplyResult applyResult,
+      PreparedMoveCommandResult prepared,
+      SessionContext originalContext,
+      String effectId) {
     return switch (applyResult.status()) {
       case APPLIED -> {
         deliverPreparedOutputs(applyResult.context(), prepared);
+        publishRegionTransitionEvents(originalContext, applyResult.context(), effectId);
         yield new DurableGameplayCommandExecutionResult(
             "APPLIED", "APPLIED", "APPLIED", null, null);
       }
       case REPLAYED -> {
         deliverPreparedOutputs(applyResult.context(), prepared);
+        publishRegionTransitionEvents(originalContext, applyResult.context(), effectId);
         yield new DurableGameplayCommandExecutionResult(
             "REPLAY_NOOP", "APPLIED", "REPLAY_NOOP", null, null);
       }
@@ -285,6 +296,11 @@ public final class DefaultDurableGameplayCommandExecutionService
       return;
     }
     playerOutputDeliveryService.deliver(context, List.of(prepared.responseOutput()), true);
+  }
+
+  private void publishRegionTransitionEvents(
+      SessionContext originalContext, SessionContext updatedContext, String effectId) {
+    scriptEventPublisher.publishRegionTransitionEvents(originalContext, updatedContext, effectId);
   }
 
   private boolean isDurableItemMutation(TextCommandType type) {

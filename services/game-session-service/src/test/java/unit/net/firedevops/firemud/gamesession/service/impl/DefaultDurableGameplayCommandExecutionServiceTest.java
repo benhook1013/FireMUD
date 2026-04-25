@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyServi
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyResult;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyStatus;
 import net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,6 +52,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
       Mockito.mock(MovementEffectIdempotencyService.class);
   private final PlayerOutputDeliveryService playerOutputDeliveryService =
       Mockito.mock(PlayerOutputDeliveryService.class);
+  private final ScriptEventPublisher scriptEventPublisher =
+      Mockito.mock(ScriptEventPublisher.class);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
   private DefaultDurableGameplayCommandExecutionService service;
@@ -69,7 +72,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             actionStateCommandHandler,
             durableGameplayReplayService,
             movementEffectIdempotencyService,
-            playerOutputDeliveryService);
+            playerOutputDeliveryService,
+            scriptEventPublisher);
   }
 
   @Test
@@ -117,6 +121,31 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
                 .count())
         .isEqualTo(1.0);
     verify(playerOutputDeliveryService).deliver(moved, java.util.List.of(output), true);
+    verify(scriptEventPublisher).publishRegionTransitionEvents(context, moved, "tfx-1");
+  }
+
+  @Test
+  void executePublishesMovementLifecycleEventsAfterFirstApply() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext moved =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-2", "jwt-token");
+    GameplayCommand command = gameplayCommand("MOVE", "north");
+    TickEffect effect = tickEffect("tfx-9", "cmd-9");
+    when(parser.parse("north"))
+        .thenReturn(new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
+    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(moveCommandHandler.prepare(Mockito.eq(context), Mockito.any()))
+        .thenReturn(
+            new PreparedMoveCommandResult(
+                CommandEnqueueResult.success(), PlayerOutput.message("moved"), moved));
+    when(movementEffectIdempotencyService.apply("tfx-9", context, "R-2"))
+        .thenReturn(new MoveEffectApplyResult(MoveEffectApplyStatus.APPLIED, moved));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("APPLIED");
+    verify(scriptEventPublisher).publishRegionTransitionEvents(context, moved, "tfx-9");
   }
 
   @Test
