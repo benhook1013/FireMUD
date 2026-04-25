@@ -62,6 +62,27 @@ require_contains(
         "Verify the public API schema or proto method for the exact seam being marked complete.",
     ],
 )
+canonical_reset_anchor = "[Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence)"
+for path in [
+    "design/architecture/system-architecture-redis-reset-and-recovery.md",
+    "design/architecture/system-architecture-redis-incident-runbook.md",
+    "design/architecture/system-architecture-backup-recovery.md",
+]:
+    require_contains(path, [canonical_reset_anchor])
+
+operations_text = (root / "design/architecture/system-architecture-redis-operations.md").read_text(encoding="utf-8")
+required_reset_steps = [
+    "1. `coordination-maintenance pause --operation reset ...`",
+    "2. `coordination-maintenance reset ...`",
+    "3. `coordination-maintenance reconcile-ledger ...`",
+    "4. `coordination-maintenance converge-commands ...`",
+    "5. `coordination-maintenance init-meta ...`",
+    "7. `coordination-maintenance smoke-check ...`",
+    "8. `coordination-maintenance resume ...`",
+]
+missing_steps = [step for step in required_reset_steps if step not in operations_text]
+if missing_steps:
+    raise SystemExit(f"design/architecture/system-architecture-redis-operations.md: canonical reset sequence missing steps: {missing_steps}")
 
 print("architecture doc contracts passed")
 PY

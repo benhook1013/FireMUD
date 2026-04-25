@@ -1,6 +1,6 @@
 # FireMUD Redis Reset & Recovery
 
-This document defines the **coordination reset model** for FireMUD: when and how Coordination Redis can be reset, how tail‑loss interacts with recovery, and what operators should expect during incidents. It complements the conceptual hub (`system-architecture-redis.md`) and the concrete runbooks in `system-architecture-redis-operations.md`.
+This document defines the **coordination reset model** for FireMUD: when and how Coordination Redis can be reset, how tail‑loss interacts with recovery, and what operators should expect during incidents. It complements the conceptual hub (`system-architecture-redis.md`) and the concrete runbooks in `system-architecture-redis-operations.md`, which owns the canonical reset command sequence.
 
 ## Implementation Notes
 
@@ -54,7 +54,7 @@ Resets are always executed via **versioned coordination tooling** (for example, 
 - Uses shared key builders and descriptors for the relevant prefixes.
 - Emits audit events documenting who initiated the reset, why, and what was affected.
 
-Concrete commands live in `system-architecture-redis-operations.md`; this document explains when and why to choose each scope.
+Concrete commands live in [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence); this document explains when and why to choose each scope.
 
 ### Tick Reset Handshake (Timeline View)
 
@@ -283,15 +283,7 @@ Symptoms:
 
 Recommended actions:
 
-- Execute the canonical region-scoped workflow:
-  - `coordination-maintenance pause --scope region --tenant <tenantId> --region <regionId>`
-  - `coordination-maintenance reset --scope region --tenant <tenantId> --region <regionId>` (this command performs and audits the `region_epoch` bump)
-  - `coordination-maintenance reconcile-ledger --scope region --tenant <tenantId> --region <regionId> --old-region-epoch <epoch>`
-  - `coordination-maintenance converge-commands --scope region --tenant <tenantId> --region <regionId> --old-region-epoch <epoch>`
-  - `coordination-maintenance init-meta --scope region --tenant <tenantId> --region <regionId> --region-epoch <epoch> --current-tick-id -1`
-  - `coordination-maintenance rebind-sessions --scope region --tenant <tenantId> --region <regionId> --region-epoch <epoch>`
-  - `coordination-maintenance smoke-check --scope region --tenant <tenantId> --region <regionId>`
-  - `coordination-maintenance resume --scope region --tenant <tenantId> --region <regionId>`
+- Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) at region scope.
 - Apply the default region reset session policy:
   - Leave sessions and other non-region-scoped keys intact unless a broader documented workflow is explicitly chosen.
   - Recreate region-local gameplay bindings for preserved sessions through the rebind step before normal command intake resumes.
@@ -311,16 +303,8 @@ Symptoms:
 Recommended actions:
 
 - Roll out a fixed script version.
-- Execute the canonical tenant-scoped workflow:
-  - `coordination-maintenance pause --scope tenant --tenant <tenantId>`
-  - `coordination-maintenance reset --scope tenant --tenant <tenantId> [--preserve-sessions]` (this command performs and audits the `region_epoch` bump; auth sessions are still invalidated)
-  - `coordination-maintenance reconcile-ledger --scope tenant --tenant <tenantId> --old-region-epoch-map <path>`
-  - `coordination-maintenance converge-commands --scope tenant --tenant <tenantId> --old-region-epoch-map <path>`
-  - `coordination-maintenance init-meta --scope tenant --tenant <tenantId> --region-epoch-map <path> --current-tick-id -1`
-  - `coordination-maintenance rebind-sessions --scope tenant --tenant <tenantId> --region-epoch-map <path>` when `--preserve-sessions` was used
-  - `coordination-maintenance smoke-check --scope tenant --tenant <tenantId>`
-  - `coordination-maintenance resume --scope tenant --tenant <tenantId>`
-- Choose the tenant session policy explicitly when player-binding state is part of the incident.
+- Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) at tenant scope.
+- Choose the tenant session policy explicitly when player-binding state is part of the incident, including whether `--preserve-sessions` is allowed for the affected tenant reset.
 
 Expected impact:
 
@@ -336,7 +320,7 @@ Symptoms:
 Recommended actions:
 
 - Treat the affected scope as “coordination state may be inconsistent”.
-- Execute the canonical region- or tenant-scoped workflow for the smallest safe scope, using the same `pause -> reset -> reconcile-ledger -> converge-commands -> init-meta -> smoke-check -> resume` sequence defined above.
+- Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) for the smallest safe region or tenant scope.
 - Record the incident using the standard audit fields (who, when, why, which prefixes/tenants/regions).
 
 Expected impact:
@@ -352,7 +336,7 @@ Symptoms:
 Recommended actions:
 
 - Plan a **cluster‑scoped reset** as part of a controlled maintenance window.
-- Execute the canonical cluster-scoped workflow from `system-architecture-redis-operations.md`, including `pause`, epoch fencing, storage-level wipe, `reconcile-ledger`, `converge-commands`, `init-meta`, `smoke-check`, and `resume`.
+- Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) at cluster scope, with the storage-level wipe inserted between the canonical `reset` and `reconcile-ledger` steps as described in the operations runbook.
 - Communicate expected impact to tenants and players.
 
 Expected impact:
