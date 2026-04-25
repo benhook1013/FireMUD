@@ -2,7 +2,7 @@
 
 ## Goal and Status
 
-Goal: give the scripting and automation domain one coherent slice family covering runtime ingress, scheduling, execution budgets, tick handoff, and operator visibility so future work stops being scattered across gameplay hardening, publish-control-plane, and service-local docs. Status: planned, discussion-gated before implementation.
+Goal: give the scripting and automation domain one coherent slice family covering runtime ingress, scheduling, execution budgets, tick handoff, and operator visibility so future work stops being scattered across gameplay hardening, publish-control-plane, and service-local docs. Status: complete as the parent slice-family framing; child slices now own implementation follow-through.
 
 ## Why This Slice Exists
 
@@ -10,7 +10,13 @@ FireMUD already has substantial scripting architecture and real implementation s
 
 ## Implementation Notes
 
-This family was introduced during design-to-slice coverage cleanup rather than from a dedicated prior discussion thread. The design direction is solid enough to decompose, but this `10` family requires a human discussion/review pass before implementation starts.
+The parent family is no longer discussion-gated. The scripting/runtime direction is now locked and the family is actively implemented through child slices:
+
+- `10.1` event ingress and handler resolution
+- `10.2` scheduler/timer ownership
+- `10.3` execution budgets, quotas, and isolation
+- `10.4` automation handoff and tick integration
+- `10.5` operator visibility and runtime convergence
 
 ## Scope
 
@@ -35,12 +41,12 @@ This family was introduced during design-to-slice coverage cleanup rather than f
 
 ## Current Remaining Work
 
-- promote the main runtime/control-plane/execution subdomains into bounded child slices.
+- continue implementation and closure work in the child slices rather than reopening the parent family definition.
 - keep `08.4` as the publication-boundary companion rather than duplicating it here.
-- use this family for future scripting implementation instead of burying work under generic hardening or gameplay slices.
+- add future scripting/runtime work under the `10.x` family instead of burying it under generic hardening or gameplay slices.
 
 ## Checklist
 
 - [x] Define target-state behavior and scope.
-- [ ] Implement the slice end to end.
-- [ ] Verify and close follow-ups.
+- [x] Implement the slice end to end.
+- [x] Verify and close follow-ups.
