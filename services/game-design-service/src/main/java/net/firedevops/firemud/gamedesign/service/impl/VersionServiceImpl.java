@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PublishedPluginVersion;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
+import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
@@ -265,7 +266,6 @@ public class VersionServiceImpl implements VersionService {
       throw new IllegalArgumentException(
           "INVALID_ARGUMENT: manifestSchemaVersion must be positive");
     }
-    requireTenantVersion(tenantId, baseVersionId);
 
     Optional<PublishedPluginVersion> existing =
         publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
@@ -288,6 +288,25 @@ public class VersionServiceImpl implements VersionService {
             "PLUGIN_VERSION_IMMUTABLE: plugin version already exists with different metadata");
       }
       return toPublishedPluginVersionDto(entity);
+    }
+
+    requireTenantVersion(tenantId, baseVersionId);
+    requireDistributionManifestFields(distributionManifestHash, distributionManifestPath);
+    if (signerRevoked) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: revoked signer metadata cannot be published");
+    }
+    if ("BLOCKED".equals(componentPolicyDecision)) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: blocked component policy cannot be published");
+    }
+    PublishedReleaseBundleDto baseBundle =
+        publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, baseVersionId);
+    PublishedReleaseBundleContract.requireSupportedSchemaForRead(baseBundle);
+    String expectedAbilitySchemaDigest = requiredAutomationAbilitySchemaDigest(baseBundle);
+    if (!expectedAbilitySchemaDigest.equals(abilitySchemaDigest)) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: abilitySchemaDigest does not match published release bundle");
     }
 
     PublishedPluginVersion entity = new PublishedPluginVersion();
@@ -504,6 +523,30 @@ public class VersionServiceImpl implements VersionService {
       throw new IllegalArgumentException(
           "INVALID_ARGUMENT: componentPolicyDecision must be ALLOWED, REPORT_ONLY, or BLOCKED");
     }
+  }
+
+  private void requireDistributionManifestFields(
+      String distributionManifestHash, String distributionManifestPath) {
+    boolean hasHash = !normalizeBlank(distributionManifestHash).isBlank();
+    boolean hasPath = !normalizeBlank(distributionManifestPath).isBlank();
+    if (hasHash != hasPath) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: distributionManifestHash and distributionManifestPath must both be set or both be empty");
+    }
+  }
+
+  private String requiredAutomationAbilitySchemaDigest(PublishedReleaseBundleDto bundle) {
+    return bundle.participantDigests().stream()
+        .filter(
+            digest ->
+                PublishParticipantKey.AUTOMATION_SCRIPTING.name().equals(digest.participantKey()))
+        .map(PublishParticipantDigestDto::contentDigest)
+        .filter(digest -> digest != null && !digest.isBlank())
+        .findFirst()
+        .orElseThrow(
+            () ->
+                new IllegalArgumentException(
+                    "INVALID_ARGUMENT: published release bundle is missing the Automation ability-schema digest"));
   }
 
   private VersionStateDto toVersionStateDto(Version version) {

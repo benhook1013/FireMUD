@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -362,6 +363,124 @@ class VersionServiceImplTest {
   }
 
   @Test
+  void publishPluginVersionRequiresPublishedBaseVersionAbilityDigestMatch() {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenReturn(publishedReleaseBundle("tenant-1", 7L, "digest-live"));
+
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.publishPluginVersion(
+                    "tenant-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    7L,
+                    "digest-requested",
+                    "bundle-1",
+                    1,
+                    null,
+                    null,
+                    "signer-1",
+                    false,
+                    "ALLOWED",
+                    "notes"));
+
+    assertTrue(thrown.getMessage().contains("abilitySchemaDigest"));
+  }
+
+  @Test
+  void publishPluginVersionRejectsRevokedSignerMetadata() {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.publishPluginVersion(
+                    "tenant-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    7L,
+                    "digest-live",
+                    "bundle-1",
+                    1,
+                    null,
+                    null,
+                    "signer-1",
+                    true,
+                    "ALLOWED",
+                    "notes"));
+
+    assertTrue(thrown.getMessage().contains("revoked signer"));
+  }
+
+  @Test
+  void publishPluginVersionRejectsBlockedComponentPolicy() {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.publishPluginVersion(
+                    "tenant-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    7L,
+                    "digest-live",
+                    "bundle-1",
+                    1,
+                    null,
+                    null,
+                    "signer-1",
+                    false,
+                    "BLOCKED",
+                    "notes"));
+
+    assertTrue(thrown.getMessage().contains("blocked component policy"));
+  }
+
+  @Test
+  void publishPluginVersionRequiresDistributionManifestFieldsAsAPair() {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.publishPluginVersion(
+                    "tenant-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    7L,
+                    "digest-live",
+                    "bundle-1",
+                    1,
+                    "manifest-hash",
+                    null,
+                    "signer-1",
+                    false,
+                    "ALLOWED",
+                    "notes"));
+
+    assertTrue(thrown.getMessage().contains("distributionManifestHash"));
+  }
+
+  @Test
   void getDesignControlPlaneDigestUsesStoredVersionScope() {
     Version version = new Version();
     version.setId(7L);
@@ -475,5 +594,31 @@ class VersionServiceImplTest {
     assertEquals(2, versions.size());
     assertTrue(versions.get(0).versionNumber() < versions.get(1).versionNumber());
     verify(versionRepository).findAllByTenantIdOrderByVersionNumberAsc("tenant-1");
+  }
+
+  private PublishedReleaseBundleDto publishedReleaseBundle(
+      String tenantId, long versionId, String automationDigest) {
+    return new PublishedReleaseBundleDto(
+        1L,
+        tenantId,
+        versionId,
+        7,
+        "v1",
+        "workflow-1",
+        "manifest-1",
+        List.of("manifest.json"),
+        List.of(
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING",
+                String.valueOf(versionId),
+                "version:" + versionId,
+                automationDigest,
+                1,
+                null,
+                null)),
+        "genrev-1",
+        false,
+        null,
+        LocalDateTime.parse("2026-04-26T10:00:00"));
   }
 }

@@ -8,7 +8,7 @@ For REST endpoints, the authoritative request/response schema source is [openapi
 
 ## Implementation Status
 
-The release-attestation, launch-resolution, version-state, settings, asset-purge, script-patch publication read APIs, and the first plugin publication metadata path (`PublishPluginVersion`, `GetPublishedPluginVersion`, and `ListPluginVersionStatuses`) are live in the current proto/service path. The heavier signed-bundle upload/extraction lifecycle (`UploadPluginBundle`) and richer pre-publication signer-validation state remain target-state contract work for the modding slice.
+The release-attestation, launch-resolution, version-state, settings, asset-purge, script-patch publication read APIs, and the first plugin publication metadata path (`PublishPluginVersion`, `GetPublishedPluginVersion`, and `ListPluginVersionStatuses`) are live in the current proto/service path. `PublishPluginVersion` now validates against the published base-version release attestation instead of trusting arbitrary caller metadata: the target `baseVersionId` must already have a published bundle, the requested plugin `abilitySchemaDigest` must match the attested `AUTOMATION_SCRIPTING` participant digest for that base version, revoked signer metadata and blocked component-policy metadata are rejected, and distribution-manifest hash/path fields must be provided as a pair. The heavier signed-bundle upload/extraction lifecycle (`UploadPluginBundle`) and richer pre-publication signer-validation state remain target-state contract work for the modding slice.
 
 ## gRPC APIs
 
