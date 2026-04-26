@@ -18,6 +18,8 @@ public interface VersionService {
 
   VersionDto getPublishedScriptPatchVersion(String tenantId, String scriptPatchVersion);
 
+  PublishedPluginVersionDto uploadPluginBundle(String tenantId, byte[] bundleBytes, String notes);
+
   PublishedPluginVersionDto publishPluginVersion(
       String tenantId,
       String pluginId,

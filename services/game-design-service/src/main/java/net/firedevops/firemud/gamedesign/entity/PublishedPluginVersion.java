@@ -72,6 +72,9 @@ public class PublishedPluginVersion {
   @Column(name = "notes", length = 2000)
   private String notes;
 
+  @Column(name = "status_reason", length = 256)
+  private String statusReason;
+
   @Column(name = "last_changed_at", nullable = false)
   private LocalDateTime lastChangedAt;
 }

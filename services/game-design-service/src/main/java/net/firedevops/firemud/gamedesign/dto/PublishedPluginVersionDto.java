@@ -19,4 +19,5 @@ public record PublishedPluginVersionDto(
     boolean signerRevoked,
     String componentPolicyDecision,
     String notes,
+    String statusReason,
     LocalDateTime lastChangedAt) {}

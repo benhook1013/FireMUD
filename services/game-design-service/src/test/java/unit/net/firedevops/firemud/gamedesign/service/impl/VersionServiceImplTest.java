@@ -30,6 +30,10 @@ import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.ParsedPluginBundle;
+import net.firedevops.firemud.gamedesign.service.PluginBundleIntakeService;
+import net.firedevops.firemud.gamedesign.service.PluginBundleStorageService;
+import net.firedevops.firemud.gamedesign.service.PluginDistributionManifest;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
@@ -55,6 +59,8 @@ class VersionServiceImplTest {
   @Mock private VersionAssetArtifactService versionAssetArtifactService;
   @Mock private PublishedReleaseBundleService publishedReleaseBundleService;
   @Mock private RecordedParticipantDigestService recordedParticipantDigestService;
+  @Mock private PluginBundleIntakeService pluginBundleIntakeService;
+  @Mock private PluginBundleStorageService pluginBundleStorageService;
 
   private VersionServiceImpl service;
 
@@ -75,7 +81,9 @@ class VersionServiceImplTest {
             controlPlaneDigestService,
             versionAssetArtifactService,
             publishedReleaseBundleService,
-            recordedParticipantDigestService);
+            recordedParticipantDigestService,
+            pluginBundleIntakeService,
+            pluginBundleStorageService);
   }
 
   @Test
@@ -368,6 +376,15 @@ class VersionServiceImplTest {
     version.setId(7L);
     version.setTenantId("tenant-1");
     when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+    PublishedPluginVersion uploaded = uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
+    uploaded.setAbilitySchemaDigest("digest-requested");
+    when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
+            "tenant-1", "plugin-1", "plugin-v1"))
+        .thenReturn(Optional.of(uploaded));
+    when(pluginBundleStorageService.loadPluginBundle("tenant-1", "plugin-1", "plugin-v1"))
+        .thenReturn(new byte[] {1, 2, 3});
+    when(pluginBundleIntakeService.parseAndVerify(any()))
+        .thenReturn(parsedPluginBundle("plugin-1", "plugin-v1", 7L, "digest-requested"));
     when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
         .thenReturn(publishedReleaseBundle("tenant-1", 7L, "digest-live"));
 
@@ -390,7 +407,7 @@ class VersionServiceImplTest {
                     "ALLOWED",
                     "notes"));
 
-    assertTrue(thrown.getMessage().contains("abilitySchemaDigest"));
+    assertTrue(thrown.getMessage().contains("VALIDATION_FAILED_DESIGN"));
   }
 
   @Test
@@ -399,6 +416,9 @@ class VersionServiceImplTest {
     version.setId(7L);
     version.setTenantId("tenant-1");
     when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+    when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
+            "tenant-1", "plugin-1", "plugin-v1"))
+        .thenReturn(Optional.of(uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1")));
 
     IllegalArgumentException thrown =
         assertThrows(
@@ -419,7 +439,7 @@ class VersionServiceImplTest {
                     "ALLOWED",
                     "notes"));
 
-    assertTrue(thrown.getMessage().contains("revoked signer"));
+    assertTrue(thrown.getMessage().contains("uploaded plugin bundle metadata"));
   }
 
   @Test
@@ -428,6 +448,9 @@ class VersionServiceImplTest {
     version.setId(7L);
     version.setTenantId("tenant-1");
     when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+    when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
+            "tenant-1", "plugin-1", "plugin-v1"))
+        .thenReturn(Optional.of(uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1")));
 
     IllegalArgumentException thrown =
         assertThrows(
@@ -452,11 +475,26 @@ class VersionServiceImplTest {
   }
 
   @Test
-  void publishPluginVersionRequiresDistributionManifestFieldsAsAPair() {
+  void publishPluginVersionRejectsPublishRequestThatDoesNotMatchUploadedBundleMetadata() {
     Version version = new Version();
     version.setId(7L);
     version.setTenantId("tenant-1");
     when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+    when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
+            "tenant-1", "plugin-1", "plugin-v1"))
+        .thenReturn(Optional.of(uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1")));
+    when(pluginBundleStorageService.loadPluginBundle("tenant-1", "plugin-1", "plugin-v1"))
+        .thenReturn(new byte[] {1, 2, 3});
+    when(pluginBundleIntakeService.parseAndVerify(any()))
+        .thenReturn(parsedPluginBundle("plugin-1", "plugin-v1", 7L, "digest-live"));
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenReturn(publishedReleaseBundle("tenant-1", 7L, "digest-live"));
+    when(pluginBundleStorageService.exportPluginAssets(
+            org.mockito.ArgumentMatchers.eq("tenant-1"),
+            any(ParsedPluginBundle.class),
+            org.mockito.ArgumentMatchers.eq("signer-1"),
+            org.mockito.ArgumentMatchers.eq("bundle-1")))
+        .thenReturn(new PluginDistributionManifest("", ""));
 
     IllegalArgumentException thrown =
         assertThrows(
@@ -470,14 +508,14 @@ class VersionServiceImplTest {
                     "digest-live",
                     "bundle-1",
                     1,
-                    "manifest-hash",
-                    null,
-                    "signer-1",
+                    "",
+                    "",
+                    "signer-2",
                     false,
                     "ALLOWED",
                     "notes"));
 
-    assertTrue(thrown.getMessage().contains("distributionManifestHash"));
+    assertTrue(thrown.getMessage().contains("uploaded plugin bundle metadata"));
   }
 
   @Test
@@ -620,5 +658,42 @@ class VersionServiceImplTest {
         false,
         null,
         LocalDateTime.parse("2026-04-26T10:00:00"));
+  }
+
+  private PublishedPluginVersion uploadedPluginVersion(
+      String tenantId, String pluginId, String pluginVersionId) {
+    PublishedPluginVersion entity = new PublishedPluginVersion();
+    entity.setId(15L);
+    entity.setTenantId(tenantId);
+    entity.setPluginId(pluginId);
+    entity.setPluginVersionId(pluginVersionId);
+    entity.setBaseVersionId(7L);
+    entity.setPublicationState(VersionLifecycleState.SIGNATURE_VERIFIED);
+    entity.setAbilitySchemaDigest("digest-live");
+    entity.setBundleDigest("bundle-1");
+    entity.setManifestSchemaVersion(1);
+    entity.setDistributionManifestHash("");
+    entity.setDistributionManifestPath("");
+    entity.setSignerKeyId("signer-1");
+    entity.setSignerRevoked(false);
+    entity.setComponentPolicyDecision("UNSPECIFIED");
+    entity.setNotes("notes");
+    entity.setStatusReason("");
+    entity.setLastChangedAt(LocalDateTime.parse("2026-04-26T10:00:00"));
+    return entity;
+  }
+
+  private ParsedPluginBundle parsedPluginBundle(
+      String pluginId, String pluginVersionId, long baseVersionId, String abilitySchemaDigest) {
+    return new ParsedPluginBundle(
+        pluginId,
+        pluginVersionId,
+        baseVersionId,
+        abilitySchemaDigest,
+        "bundle-1",
+        1,
+        "signer-1",
+        List.of(),
+        java.util.Map.of("plugin-manifest.json", new byte[] {1}));
   }
 }

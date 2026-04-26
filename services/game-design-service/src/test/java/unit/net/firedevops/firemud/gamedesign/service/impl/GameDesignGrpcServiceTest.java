@@ -57,6 +57,8 @@ import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionResponse;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsResponse;
+import net.firedevops.firemud.gamedesign.v1.UploadPluginBundleRequest;
+import net.firedevops.firemud.gamedesign.v1.UploadPluginBundleResponse;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
@@ -218,6 +220,46 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void uploadPluginBundleReturnsPublicationId() {
+    Mockito.when(
+            versionService.uploadPluginBundle(
+                Mockito.eq("tenant-1"), Mockito.any(byte[].class), Mockito.eq("notes")))
+        .thenReturn(
+            new PublishedPluginVersionDto(
+                14L,
+                "tenant-1",
+                "plugin-1",
+                "plugin-v1",
+                7L,
+                VersionLifecycleState.SIGNATURE_VERIFIED,
+                "ability-1",
+                "bundle-1",
+                1,
+                "",
+                "",
+                "signer-1",
+                false,
+                "UNSPECIFIED",
+                "notes",
+                "",
+                LocalDateTime.parse("2026-04-22T12:00:00")));
+
+    AtomicReference<UploadPluginBundleResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.uploadPluginBundle(
+          UploadPluginBundleRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBundleBytes(com.google.protobuf.ByteString.copyFrom(new byte[] {1, 2, 3}))
+              .setNotes("notes")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals(14L, ref.get().getPublicationId());
+  }
+
+  @Test
   void publishPluginVersionReturnsPublicationId() {
     Mockito.when(
             versionService.publishPluginVersion(
@@ -251,6 +293,7 @@ class GameDesignGrpcServiceTest {
                 false,
                 "ALLOWED",
                 "notes",
+                "",
                 LocalDateTime.parse("2026-04-22T12:00:00")));
 
     AtomicReference<PublishPluginVersionResponse> ref = new AtomicReference<>();
@@ -298,6 +341,7 @@ class GameDesignGrpcServiceTest {
                 false,
                 "ALLOWED",
                 "notes",
+                "",
                 LocalDateTime.parse("2026-04-22T12:00:00")));
 
     AtomicReference<GetPublishedPluginVersionResponse> ref = new AtomicReference<>();
@@ -350,6 +394,7 @@ class GameDesignGrpcServiceTest {
                     false,
                     "REPORT_ONLY",
                     "notes",
+                    "",
                     LocalDateTime.parse("2026-04-22T09:00:00")),
                 new PublishedPluginVersionDto(
                     14L,
@@ -367,6 +412,7 @@ class GameDesignGrpcServiceTest {
                     true,
                     "ALLOWED",
                     "",
+                    "signer_revoked",
                     LocalDateTime.parse("2026-04-21T09:00:00"))));
 
     AtomicReference<ListPluginVersionStatusesResponse> ref = new AtomicReference<>();

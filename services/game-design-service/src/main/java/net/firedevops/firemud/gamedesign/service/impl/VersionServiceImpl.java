@@ -27,6 +27,10 @@ import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.ParsedPluginBundle;
+import net.firedevops.firemud.gamedesign.service.PluginBundleIntakeService;
+import net.firedevops.firemud.gamedesign.service.PluginBundleStorageService;
+import net.firedevops.firemud.gamedesign.service.PluginDistributionManifest;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
@@ -62,6 +66,8 @@ public class VersionServiceImpl implements VersionService {
   private final VersionAssetArtifactService versionAssetArtifactService;
   private final PublishedReleaseBundleService publishedReleaseBundleService;
   private final RecordedParticipantDigestService recordedParticipantDigestService;
+  private final PluginBundleIntakeService pluginBundleIntakeService;
+  private final PluginBundleStorageService pluginBundleStorageService;
 
   @Autowired
   public VersionServiceImpl(
@@ -76,7 +82,9 @@ public class VersionServiceImpl implements VersionService {
       ControlPlaneDigestService controlPlaneDigestService,
       VersionAssetArtifactService versionAssetArtifactService,
       PublishedReleaseBundleService publishedReleaseBundleService,
-      RecordedParticipantDigestService recordedParticipantDigestService) {
+      RecordedParticipantDigestService recordedParticipantDigestService,
+      PluginBundleIntakeService pluginBundleIntakeService,
+      PluginBundleStorageService pluginBundleStorageService) {
     this.versionRepository = versionRepository;
     this.gameRepository = gameRepository;
     this.publishedPluginVersionRepository = publishedPluginVersionRepository;
@@ -89,6 +97,8 @@ public class VersionServiceImpl implements VersionService {
     this.versionAssetArtifactService = versionAssetArtifactService;
     this.publishedReleaseBundleService = publishedReleaseBundleService;
     this.recordedParticipantDigestService = recordedParticipantDigestService;
+    this.pluginBundleIntakeService = pluginBundleIntakeService;
+    this.pluginBundleStorageService = pluginBundleStorageService;
   }
 
   @Override
@@ -239,6 +249,45 @@ public class VersionServiceImpl implements VersionService {
 
   @Override
   @Transactional
+  public PublishedPluginVersionDto uploadPluginBundle(
+      String tenantId, byte[] bundleBytes, String notes) {
+    ParsedPluginBundle bundle = pluginBundleIntakeService.parseAndVerify(bundleBytes);
+    Optional<PublishedPluginVersion> existing =
+        publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
+            tenantId, bundle.pluginId(), bundle.pluginVersionId());
+    if (existing.isPresent()) {
+      PublishedPluginVersion entity = existing.get();
+      if (!sameUploadedBundle(entity, bundle)) {
+        throw new IllegalArgumentException(
+            "PLUGIN_VERSION_IMMUTABLE: plugin version already exists with different uploaded bundle metadata");
+      }
+      return toPublishedPluginVersionDto(entity);
+    }
+
+    pluginBundleStorageService.storePluginBundle(
+        tenantId, bundle.pluginId(), bundle.pluginVersionId(), bundleBytes);
+    PublishedPluginVersion entity = new PublishedPluginVersion();
+    entity.setTenantId(tenantId);
+    entity.setPluginId(bundle.pluginId());
+    entity.setPluginVersionId(bundle.pluginVersionId());
+    entity.setBaseVersionId(bundle.baseVersionId());
+    entity.setPublicationState(VersionLifecycleState.SIGNATURE_VERIFIED);
+    entity.setAbilitySchemaDigest(bundle.abilitySchemaDigest());
+    entity.setBundleDigest(bundle.bundleDigest());
+    entity.setManifestSchemaVersion(bundle.manifestSchemaVersion());
+    entity.setDistributionManifestHash("");
+    entity.setDistributionManifestPath("");
+    entity.setSignerKeyId(bundle.signerKeyId());
+    entity.setSignerRevoked(false);
+    entity.setComponentPolicyDecision("UNSPECIFIED");
+    entity.setNotes(normalizeBlank(notes));
+    entity.setStatusReason("");
+    entity.setLastChangedAt(LocalDateTime.now());
+    return toPublishedPluginVersionDto(publishedPluginVersionRepository.save(entity));
+  }
+
+  @Override
+  @Transactional
   public PublishedPluginVersionDto publishPluginVersion(
       String tenantId,
       String pluginId,
@@ -270,62 +319,80 @@ public class VersionServiceImpl implements VersionService {
     Optional<PublishedPluginVersion> existing =
         publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
             tenantId, pluginId, pluginVersionId);
-    if (existing.isPresent()) {
-      PublishedPluginVersion entity = existing.get();
-      if (!samePublication(
-          entity,
-          baseVersionId,
-          abilitySchemaDigest,
-          bundleDigest,
-          manifestSchemaVersion,
-          distributionManifestHash,
-          distributionManifestPath,
-          signerKeyId,
-          signerRevoked,
-          componentPolicyDecision,
-          notes)) {
-        throw new IllegalArgumentException(
-            "PLUGIN_VERSION_IMMUTABLE: plugin version already exists with different metadata");
-      }
+    if (existing.isEmpty()) {
+      throw new IllegalArgumentException("NOT_FOUND: uploaded plugin version not found");
+    }
+    PublishedPluginVersion entity = existing.get();
+    if (entity.getPublicationState() == VersionLifecycleState.PUBLISHED
+        && samePublication(
+            entity,
+            baseVersionId,
+            abilitySchemaDigest,
+            bundleDigest,
+            manifestSchemaVersion,
+            entity.getDistributionManifestHash(),
+            entity.getDistributionManifestPath(),
+            signerKeyId,
+            signerRevoked,
+            componentPolicyDecision,
+            notes)) {
       return toPublishedPluginVersionDto(entity);
     }
 
-    requireTenantVersion(tenantId, baseVersionId);
-    requireDistributionManifestFields(distributionManifestHash, distributionManifestPath);
+    requireRequestedUploadMatchesStoredBundle(
+        entity,
+        baseVersionId,
+        abilitySchemaDigest,
+        bundleDigest,
+        manifestSchemaVersion,
+        signerKeyId,
+        signerRevoked);
+
     if (signerRevoked) {
-      throw new IllegalArgumentException(
-          "INVALID_ARGUMENT: revoked signer metadata cannot be published");
+      markValidationFailed(entity, "revoked_signer_metadata");
+      throw new IllegalArgumentException("VALIDATION_FAILED_DESIGN: revoked signer metadata");
     }
     if ("BLOCKED".equals(componentPolicyDecision)) {
-      throw new IllegalArgumentException(
-          "INVALID_ARGUMENT: blocked component policy cannot be published");
-    }
-    PublishedReleaseBundleDto baseBundle =
-        publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, baseVersionId);
-    PublishedReleaseBundleContract.requireSupportedSchemaForRead(baseBundle);
-    String expectedAbilitySchemaDigest = requiredAutomationAbilitySchemaDigest(baseBundle);
-    if (!expectedAbilitySchemaDigest.equals(abilitySchemaDigest)) {
-      throw new IllegalArgumentException(
-          "INVALID_ARGUMENT: abilitySchemaDigest does not match published release bundle");
+      markValidationFailed(entity, "component_policy_blocked");
+      throw new IllegalArgumentException("VALIDATION_FAILED_DESIGN: blocked component policy");
     }
 
-    PublishedPluginVersion entity = new PublishedPluginVersion();
-    entity.setTenantId(tenantId);
-    entity.setPluginId(pluginId);
-    entity.setPluginVersionId(pluginVersionId);
-    entity.setBaseVersionId(baseVersionId);
-    entity.setPublicationState(VersionLifecycleState.PUBLISHED);
-    entity.setAbilitySchemaDigest(abilitySchemaDigest);
-    entity.setBundleDigest(bundleDigest);
-    entity.setManifestSchemaVersion(manifestSchemaVersion);
-    entity.setDistributionManifestHash(normalizeBlank(distributionManifestHash));
-    entity.setDistributionManifestPath(normalizeBlank(distributionManifestPath));
-    entity.setSignerKeyId(signerKeyId);
-    entity.setSignerRevoked(signerRevoked);
-    entity.setComponentPolicyDecision(componentPolicyDecision);
-    entity.setNotes(normalizeBlank(notes));
-    entity.setLastChangedAt(LocalDateTime.now());
-    return toPublishedPluginVersionDto(publishedPluginVersionRepository.save(entity));
+    ParsedPluginBundle parsedBundle =
+        pluginBundleIntakeService.parseAndVerify(
+            pluginBundleStorageService.loadPluginBundle(tenantId, pluginId, pluginVersionId));
+    if (!sameUploadedBundle(entity, parsedBundle)) {
+      markValidationFailed(entity, "uploaded_bundle_metadata_mismatch");
+      throw new IllegalArgumentException(
+          "VALIDATION_FAILED_DESIGN: uploaded bundle metadata no longer matches persisted publication metadata");
+    }
+
+    try {
+      requireTenantVersion(tenantId, baseVersionId);
+      PublishedReleaseBundleDto baseBundle =
+          publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, baseVersionId);
+      PublishedReleaseBundleContract.requireSupportedSchemaForRead(baseBundle);
+      String expectedAbilitySchemaDigest = requiredAutomationAbilitySchemaDigest(baseBundle);
+      if (!expectedAbilitySchemaDigest.equals(abilitySchemaDigest)) {
+        throw new IllegalArgumentException(
+            "VALIDATION_FAILED_DESIGN: abilitySchemaDigest does not match published release bundle");
+      }
+      PluginDistributionManifest exportedManifest =
+          pluginBundleStorageService.exportPluginAssets(
+              tenantId, parsedBundle, parsedBundle.signerKeyId(), parsedBundle.bundleDigest());
+      entity.setPublicationState(VersionLifecycleState.PUBLISHED);
+      entity.setDistributionManifestHash(normalizeBlank(exportedManifest.manifestHash()));
+      entity.setDistributionManifestPath(normalizeBlank(exportedManifest.manifestPath()));
+      entity.setComponentPolicyDecision(componentPolicyDecision);
+      entity.setNotes(normalizeBlank(notes));
+      entity.setStatusReason("");
+      entity.setLastChangedAt(LocalDateTime.now());
+      return toPublishedPluginVersionDto(publishedPluginVersionRepository.save(entity));
+    } catch (IllegalArgumentException ex) {
+      if (ex.getMessage() != null && ex.getMessage().startsWith("VALIDATION_FAILED_DESIGN:")) {
+        markValidationFailed(entity, validationStatusReason(ex.getMessage()));
+      }
+      throw ex;
+    }
   }
 
   @Override
@@ -497,6 +564,16 @@ public class VersionServiceImpl implements VersionService {
         && normalizeBlank(entity.getNotes()).equals(normalizeBlank(notes));
   }
 
+  private boolean sameUploadedBundle(PublishedPluginVersion entity, ParsedPluginBundle bundle) {
+    return entity.getPluginId().equals(bundle.pluginId())
+        && entity.getPluginVersionId().equals(bundle.pluginVersionId())
+        && entity.getBaseVersionId() == bundle.baseVersionId()
+        && entity.getAbilitySchemaDigest().equals(bundle.abilitySchemaDigest())
+        && entity.getBundleDigest().equals(bundle.bundleDigest())
+        && entity.getManifestSchemaVersion() == bundle.manifestSchemaVersion()
+        && entity.getSignerKeyId().equals(bundle.signerKeyId());
+  }
+
   private PublishedPluginVersionDto toPublishedPluginVersionDto(PublishedPluginVersion entity) {
     return new PublishedPluginVersionDto(
         entity.getId(),
@@ -514,24 +591,35 @@ public class VersionServiceImpl implements VersionService {
         entity.isSignerRevoked(),
         entity.getComponentPolicyDecision(),
         normalizeBlank(entity.getNotes()),
+        normalizeBlank(entity.getStatusReason()),
         entity.getLastChangedAt());
   }
 
   private void requireComponentPolicyDecision(String componentPolicyDecision) {
     requireText(componentPolicyDecision, "componentPolicyDecision");
-    if (!List.of("ALLOWED", "REPORT_ONLY", "BLOCKED").contains(componentPolicyDecision)) {
+    if (!List.of("ALLOWED", "REPORT_ONLY", "BLOCKED", "UNSPECIFIED")
+        .contains(componentPolicyDecision)) {
       throw new IllegalArgumentException(
-          "INVALID_ARGUMENT: componentPolicyDecision must be ALLOWED, REPORT_ONLY, or BLOCKED");
+          "INVALID_ARGUMENT: componentPolicyDecision must be ALLOWED, REPORT_ONLY, BLOCKED, or UNSPECIFIED");
     }
   }
 
-  private void requireDistributionManifestFields(
-      String distributionManifestHash, String distributionManifestPath) {
-    boolean hasHash = !normalizeBlank(distributionManifestHash).isBlank();
-    boolean hasPath = !normalizeBlank(distributionManifestPath).isBlank();
-    if (hasHash != hasPath) {
+  private void requireRequestedUploadMatchesStoredBundle(
+      PublishedPluginVersion entity,
+      long baseVersionId,
+      String abilitySchemaDigest,
+      String bundleDigest,
+      int manifestSchemaVersion,
+      String signerKeyId,
+      boolean signerRevoked) {
+    if (entity.getBaseVersionId() != baseVersionId
+        || !entity.getAbilitySchemaDigest().equals(abilitySchemaDigest)
+        || !entity.getBundleDigest().equals(bundleDigest)
+        || entity.getManifestSchemaVersion() != manifestSchemaVersion
+        || !entity.getSignerKeyId().equals(signerKeyId)
+        || entity.isSignerRevoked() != signerRevoked) {
       throw new IllegalArgumentException(
-          "INVALID_ARGUMENT: distributionManifestHash and distributionManifestPath must both be set or both be empty");
+          "PLUGIN_VERSION_IMMUTABLE: publish request does not match uploaded plugin bundle metadata");
     }
   }
 
@@ -547,6 +635,18 @@ public class VersionServiceImpl implements VersionService {
             () ->
                 new IllegalArgumentException(
                     "INVALID_ARGUMENT: published release bundle is missing the Automation ability-schema digest"));
+  }
+
+  private void markValidationFailed(PublishedPluginVersion entity, String statusReason) {
+    entity.setPublicationState(VersionLifecycleState.VALIDATION_FAILED_DESIGN);
+    entity.setStatusReason(statusReason);
+    entity.setLastChangedAt(LocalDateTime.now());
+    publishedPluginVersionRepository.save(entity);
+  }
+
+  private String validationStatusReason(String message) {
+    String reason = message.substring("VALIDATION_FAILED_DESIGN:".length()).trim();
+    return normalizeBlank(reason).replace(' ', '_');
   }
 
   private VersionStateDto toVersionStateDto(Version version) {

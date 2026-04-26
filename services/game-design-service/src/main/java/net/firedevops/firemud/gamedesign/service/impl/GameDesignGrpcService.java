@@ -92,6 +92,8 @@ import net.firedevops.firemud.gamedesign.v1.TemplateRemapSet;
 import net.firedevops.firemud.gamedesign.v1.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsResponse;
+import net.firedevops.firemud.gamedesign.v1.UploadPluginBundleRequest;
+import net.firedevops.firemud.gamedesign.v1.UploadPluginBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
@@ -290,6 +292,37 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     } catch (Exception ex) {
       builder.setError(
           GrpcAppErrors.internal(meterRegistry, logger, "GetPublishedScriptPatchVersion", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.uploadPluginBundle")
+  public void uploadPluginBundle(
+      UploadPluginBundleRequest request,
+      StreamObserver<UploadPluginBundleResponse> responseObserver) {
+    UploadPluginBundleResponse.Builder builder = UploadPluginBundleResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      PublishedPluginVersionDto publication =
+          versionService.uploadPluginBundle(
+              request.getTenantId(), request.getBundleBytes().toByteArray(), request.getNotes());
+      builder.setPublicationId(publication.id());
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "UploadPluginBundle", "PERMISSION_DENIED", ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "UploadPluginBundle",
+              pluginPublicationErrorCode(ex.getMessage()),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "UploadPluginBundle", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
@@ -866,6 +899,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         .setSignerRevoked(plugin.signerRevoked())
         .setComponentPolicyDecision(
             toProtoComponentPolicyDecision(plugin.componentPolicyDecision()))
+        .setStatusReason(plugin.statusReason())
         .setLastChangedAtMs(plugin.lastChangedAt().toInstant(ZoneOffset.UTC).toEpochMilli())
         .build();
   }
@@ -878,6 +912,12 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       case ACTIVE -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE;
       case FAILED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_FAILED;
       case RETIRED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_RETIRED;
+      case UPLOAD_REJECTED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_UPLOAD_REJECTED;
+      case SIGNATURE_VERIFIED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_SIGNATURE_VERIFIED;
+      case VALIDATION_FAILED_DESIGN ->
+          VersionLifecycleState.VERSION_LIFECYCLE_STATE_VALIDATION_FAILED_DESIGN;
+      case SUPERSEDED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_SUPERSEDED;
+      case REVOKED_DESIGN -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_REVOKED_DESIGN;
     };
   }
 
@@ -895,6 +935,16 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
           net.firedevops.firemud.gamedesign.model.VersionLifecycleState.FAILED;
       case VERSION_LIFECYCLE_STATE_RETIRED ->
           net.firedevops.firemud.gamedesign.model.VersionLifecycleState.RETIRED;
+      case VERSION_LIFECYCLE_STATE_UPLOAD_REJECTED ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.UPLOAD_REJECTED;
+      case VERSION_LIFECYCLE_STATE_SIGNATURE_VERIFIED ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.SIGNATURE_VERIFIED;
+      case VERSION_LIFECYCLE_STATE_VALIDATION_FAILED_DESIGN ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.VALIDATION_FAILED_DESIGN;
+      case VERSION_LIFECYCLE_STATE_SUPERSEDED ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.SUPERSEDED;
+      case VERSION_LIFECYCLE_STATE_REVOKED_DESIGN ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.REVOKED_DESIGN;
       case UNRECOGNIZED ->
           throw new IllegalArgumentException("INVALID_ARGUMENT: unknown version state");
     };
@@ -939,6 +989,16 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
           net.firedevops.firemud.gamedesign.model.VersionLifecycleState.FAILED;
       case VERSION_LIFECYCLE_STATE_RETIRED ->
           net.firedevops.firemud.gamedesign.model.VersionLifecycleState.RETIRED;
+      case VERSION_LIFECYCLE_STATE_UPLOAD_REJECTED ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.UPLOAD_REJECTED;
+      case VERSION_LIFECYCLE_STATE_SIGNATURE_VERIFIED ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.SIGNATURE_VERIFIED;
+      case VERSION_LIFECYCLE_STATE_VALIDATION_FAILED_DESIGN ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.VALIDATION_FAILED_DESIGN;
+      case VERSION_LIFECYCLE_STATE_SUPERSEDED ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.SUPERSEDED;
+      case VERSION_LIFECYCLE_STATE_REVOKED_DESIGN ->
+          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.REVOKED_DESIGN;
       case VERSION_LIFECYCLE_STATE_UNSPECIFIED, UNRECOGNIZED ->
           throw new IllegalArgumentException("INVALID_ARGUMENT: new version state is required");
     };
