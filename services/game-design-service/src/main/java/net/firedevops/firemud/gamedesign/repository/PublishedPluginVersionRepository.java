@@ -15,6 +15,9 @@ public interface PublishedPluginVersionRepository
   Optional<PublishedPluginVersion> findByTenantIdAndPluginIdAndPluginVersionId(
       String tenantId, String pluginId, String pluginVersionId);
 
+  List<PublishedPluginVersion> findAllByTenantIdAndPluginIdAndPublicationState(
+      String tenantId, String pluginId, VersionLifecycleState publicationState);
+
   @Query(
       """
       select publication

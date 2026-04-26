@@ -519,6 +519,63 @@ class VersionServiceImplTest {
   }
 
   @Test
+  void publishPluginVersionSupersedesOlderPublishedVersionsForSamePlugin() {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+
+    PublishedPluginVersion uploaded = uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v2");
+    uploaded.setId(15L);
+    PublishedPluginVersion olderPublished =
+        uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
+    olderPublished.setId(14L);
+    olderPublished.setPublicationState(VersionLifecycleState.PUBLISHED);
+    olderPublished.setComponentPolicyDecision("ALLOWED");
+
+    when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
+            "tenant-1", "plugin-1", "plugin-v2"))
+        .thenReturn(Optional.of(uploaded));
+    when(pluginBundleStorageService.loadPluginBundle("tenant-1", "plugin-1", "plugin-v2"))
+        .thenReturn(new byte[] {1, 2, 3});
+    when(pluginBundleIntakeService.parseAndVerify(any()))
+        .thenReturn(parsedPluginBundle("plugin-1", "plugin-v2", 7L, "digest-live"));
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenReturn(publishedReleaseBundle("tenant-1", 7L, "digest-live"));
+    when(pluginBundleStorageService.exportPluginAssets(
+            org.mockito.ArgumentMatchers.eq("tenant-1"),
+            any(ParsedPluginBundle.class),
+            org.mockito.ArgumentMatchers.eq("signer-1"),
+            org.mockito.ArgumentMatchers.eq("bundle-1")))
+        .thenReturn(new PluginDistributionManifest("", ""));
+    when(publishedPluginVersionRepository.findAllByTenantIdAndPluginIdAndPublicationState(
+            "tenant-1", "plugin-1", VersionLifecycleState.PUBLISHED))
+        .thenReturn(List.of(olderPublished));
+    when(publishedPluginVersionRepository.save(any(PublishedPluginVersion.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    PublishedPluginVersionDto published =
+        service.publishPluginVersion(
+            "tenant-1",
+            "plugin-1",
+            "plugin-v2",
+            7L,
+            "digest-live",
+            "bundle-1",
+            1,
+            "",
+            "",
+            "signer-1",
+            false,
+            "ALLOWED",
+            "notes");
+
+    assertEquals(VersionLifecycleState.PUBLISHED, published.publicationState());
+    assertEquals(VersionLifecycleState.SUPERSEDED, olderPublished.getPublicationState());
+    assertEquals("superseded_by:plugin-v2", olderPublished.getStatusReason());
+  }
+
+  @Test
   void getDesignControlPlaneDigestUsesStoredVersionScope() {
     Version version = new Version();
     version.setId(7L);

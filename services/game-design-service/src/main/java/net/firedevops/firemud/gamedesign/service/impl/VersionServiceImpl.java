@@ -379,6 +379,7 @@ public class VersionServiceImpl implements VersionService {
       PluginDistributionManifest exportedManifest =
           pluginBundleStorageService.exportPluginAssets(
               tenantId, parsedBundle, parsedBundle.signerKeyId(), parsedBundle.bundleDigest());
+      supersedeOtherPublishedVersions(entity);
       entity.setPublicationState(VersionLifecycleState.PUBLISHED);
       entity.setDistributionManifestHash(normalizeBlank(exportedManifest.manifestHash()));
       entity.setDistributionManifestPath(normalizeBlank(exportedManifest.manifestPath()));
@@ -647,6 +648,22 @@ public class VersionServiceImpl implements VersionService {
   private String validationStatusReason(String message) {
     String reason = message.substring("VALIDATION_FAILED_DESIGN:".length()).trim();
     return normalizeBlank(reason).replace(' ', '_');
+  }
+
+  private void supersedeOtherPublishedVersions(PublishedPluginVersion publishedVersion) {
+    for (PublishedPluginVersion existing :
+        publishedPluginVersionRepository.findAllByTenantIdAndPluginIdAndPublicationState(
+            publishedVersion.getTenantId(),
+            publishedVersion.getPluginId(),
+            VersionLifecycleState.PUBLISHED)) {
+      if (existing.getId().equals(publishedVersion.getId())) {
+        continue;
+      }
+      existing.setPublicationState(VersionLifecycleState.SUPERSEDED);
+      existing.setStatusReason("superseded_by:" + publishedVersion.getPluginVersionId());
+      existing.setLastChangedAt(LocalDateTime.now());
+      publishedPluginVersionRepository.save(existing);
+    }
   }
 
   private VersionStateDto toVersionStateDto(Version version) {
