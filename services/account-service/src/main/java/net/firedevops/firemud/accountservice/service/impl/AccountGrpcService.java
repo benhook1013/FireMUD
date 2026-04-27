@@ -15,6 +15,8 @@ import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipR
 import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.ExportAccountRequest;
 import net.firedevops.firemud.account.v1.ExportAccountResponse;
+import net.firedevops.firemud.account.v1.ExportTenantDataRequest;
+import net.firedevops.firemud.account.v1.ExportTenantDataResponse;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
 import net.firedevops.firemud.account.v1.GetProfileResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
@@ -32,6 +34,7 @@ import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
+import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
@@ -334,16 +337,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void exportAccount(
       ExportAccountRequest request, StreamObserver<ExportAccountResponse> responseObserver) {
     try {
-      var data =
-          accountService.exportAccountData(
-              Long.valueOf(request.getTenantId()), Long.valueOf(request.getAccountId()));
+      var data = accountService.exportAccountData(Long.valueOf(request.getAccountId()));
       ExportAccountResponse response =
           ExportAccountResponse.newBuilder()
               .setAccountJson(JsonMapper.builder().build().writeValueAsString(data.account()))
-              .setProfileJson(
-                  data.profile() != null
-                      ? JsonMapper.builder().build().writeValueAsString(data.profile())
-                      : "")
+              .setProfilesJson(JsonMapper.builder().build().writeValueAsString(data.profiles()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -358,13 +356,41 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
+  @Timed(value = "accountGrpc.exportTenantData")
+  public void exportTenantData(
+      ExportTenantDataRequest request, StreamObserver<ExportTenantDataResponse> responseObserver) {
+    try {
+      var data =
+          accountService.exportTenantData(
+              Long.valueOf(request.getTenantId()), Long.valueOf(request.getAccountId()));
+      ExportTenantDataResponse response =
+          ExportTenantDataResponse.newBuilder()
+              .setTenantId(String.valueOf(data.tenantId()))
+              .setAccountJson(JsonMapper.builder().build().writeValueAsString(data.account()))
+              .setProfileJson(
+                  data.profile() != null
+                      ? JsonMapper.builder().build().writeValueAsString(data.profile())
+                      : "")
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ExportTenantDataResponse response =
+          ExportTenantDataResponse.newBuilder()
+              .setError(appError("ExportTenantData", "NOT_FOUND", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
   @Timed(value = "accountGrpc.deleteAccount")
   public void deleteAccount(
       DeleteAccountRequest request, StreamObserver<DeleteAccountResponse> responseObserver) {
     try {
       AdminRoleGuard.requireAdminRole();
-      accountService.deleteAccount(
-          Long.valueOf(request.getTenantId()), Long.valueOf(request.getAccountId()));
+      accountService.deleteAccount(Long.valueOf(request.getAccountId()));
       DeleteAccountResponse response = DeleteAccountResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -373,6 +399,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           DeleteAccountResponse.newBuilder()
               .setSuccess(false)
               .setError(appError("DeleteAccount", "PERMISSION_DENIED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AccountLifecycleException ex) {
+      DeleteAccountResponse response =
+          DeleteAccountResponse.newBuilder()
+              .setSuccess(false)
+              .setError(appError("DeleteAccount", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -394,8 +428,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       StreamObserver<net.firedevops.firemud.account.v1.RequestPasswordResetResponse>
           responseObserver) {
     try {
-      accountService.requestPasswordReset(
-          new PasswordResetRequest(Long.valueOf(request.getTenantId()), request.getEmail()));
+      accountService.requestPasswordReset(new PasswordResetRequest(request.getEmail()));
       var response =
           net.firedevops.firemud.account.v1.RequestPasswordResetResponse.newBuilder()
               .setSuccess(true)
@@ -421,8 +454,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           responseObserver) {
     try {
       accountService.completePasswordReset(
-          new CompletePasswordResetRequest(
-              Long.valueOf(request.getTenantId()), request.getToken(), request.getNewPassword()));
+          new CompletePasswordResetRequest(request.getToken(), request.getNewPassword()));
       var response =
           net.firedevops.firemud.account.v1.CompletePasswordResetResponse.newBuilder()
               .setSuccess(true)
@@ -477,8 +509,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       StreamObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse>
           responseObserver) {
     try {
-      accountService.requestEmailVerification(
-          Long.valueOf(request.getTenantId()), Long.valueOf(request.getAccountId()));
+      accountService.requestEmailVerification(Long.valueOf(request.getAccountId()));
       var response =
           net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
               .setSuccess(true)
@@ -503,8 +534,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       StreamObserver<net.firedevops.firemud.account.v1.VerifyEmailResponse> responseObserver) {
     try {
       accountService.verifyEmail(
-          new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest(
-              Long.valueOf(request.getTenantId()), request.getToken()));
+          new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest(request.getToken()));
       var response =
           net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
               .setSuccess(true)

@@ -7,6 +7,6 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface FactionStandingRepository extends JpaRepository<FactionStanding, Long> {
-  Optional<FactionStanding> findByTenantIdAndCharacterIdAndFaction_Id(
-      Long tenantId, Long characterId, Long factionId);
+  Optional<FactionStanding> findByTenantIdAndCharacterIdAndPlayableStateKeyAndFaction_Id(
+      Long tenantId, Long characterId, String playableStateKey, Long factionId);
 }

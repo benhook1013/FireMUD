@@ -3,7 +3,7 @@ package net.firedevops.firemud.accountservice.controller;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import java.util.List;
-import net.firedevops.firemud.accountservice.dto.AccountRefRequest;
+import net.firedevops.firemud.accountservice.dto.AccountIdRequest;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
 import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
@@ -111,8 +111,8 @@ public class AuthController {
 
   @PostMapping("/request-email-verification")
   public ResponseEntity<ApiResponse<Void>> requestEmailVerification(
-      @Valid @RequestBody AccountRefRequest request) {
-    accountService.requestEmailVerification(request.tenantId(), request.accountId());
+      @Valid @RequestBody AccountIdRequest request) {
+    accountService.requestEmailVerification(request.accountId());
     return ResponseEntity.ok(ApiResponse.success(null));
   }
 

@@ -49,6 +49,9 @@ public class RuntimeRegionStatus {
   @Column(name = "last_committed_tick_batch_id", length = 64)
   private String lastCommittedTickBatchId;
 
+  @Column(name = "last_committed_tick_id", nullable = false)
+  private long lastCommittedTickId;
+
   @Column(name = "updated_at", nullable = false)
   private Instant updatedAt;
 }

@@ -17,6 +17,9 @@ import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemStackRepository;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
+import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -36,7 +39,7 @@ public class ContainerServiceImpl implements ContainerService {
       justification = "Spring repositories are framework-managed singletons and only stored")
   private final ItemInstanceRepository itemInstanceRepository;
 
-  private final CharacterRepository characterRepository;
+  private final ScopedCharacterResolver scopedCharacterResolver;
   private final ItemRepository itemRepository;
 
   @SuppressFBWarnings(
@@ -54,7 +57,7 @@ public class ContainerServiceImpl implements ContainerService {
   public ContainerServiceImpl(
       ContainerInstanceRepository containerInstanceRepository,
       ItemInstanceRepository itemInstanceRepository,
-      CharacterRepository characterRepository,
+      ScopedCharacterResolver scopedCharacterResolver,
       ItemRepository itemRepository,
       ItemStackRepository itemStackRepository,
       ItemTransferSupport itemTransferSupport,
@@ -64,7 +67,7 @@ public class ContainerServiceImpl implements ContainerService {
       StackableItemSupport stackableItemSupport) {
     this.containerInstanceRepository = containerInstanceRepository;
     this.itemInstanceRepository = itemInstanceRepository;
-    this.characterRepository = characterRepository;
+    this.scopedCharacterResolver = scopedCharacterResolver;
     this.itemRepository = itemRepository;
     this.itemStackRepository = itemStackRepository;
     this.itemTransferSupport = itemTransferSupport;
@@ -85,14 +88,11 @@ public class ContainerServiceImpl implements ContainerService {
     this(
         containerInstanceRepository,
         itemInstanceRepository,
-        characterRepository,
+        new ScopedCharacterResolver(characterRepository, new PlayableStateKeyResolver()),
         itemRepository,
         itemStackRepository,
         itemTransferSupport,
-        new NoOpItemTransferAuditWriter(),
-        containerHolderSyncSupport,
-        new ContainerHolderPolicySupport(containerInstanceRepository),
-        new StackableItemSupport());
+        containerHolderSyncSupport);
   }
 
   ContainerServiceImpl(
@@ -107,7 +107,48 @@ public class ContainerServiceImpl implements ContainerService {
     this(
         containerInstanceRepository,
         itemInstanceRepository,
-        characterRepository,
+        new ScopedCharacterResolver(characterRepository, new PlayableStateKeyResolver()),
+        itemRepository,
+        itemStackRepository,
+        itemTransferSupport,
+        itemTransferAuditWriter,
+        containerHolderSyncSupport);
+  }
+
+  ContainerServiceImpl(
+      ContainerInstanceRepository containerInstanceRepository,
+      ItemInstanceRepository itemInstanceRepository,
+      ScopedCharacterResolver scopedCharacterResolver,
+      ItemRepository itemRepository,
+      ItemStackRepository itemStackRepository,
+      ItemTransferSupport itemTransferSupport,
+      ContainerHolderSyncSupport containerHolderSyncSupport) {
+    this(
+        containerInstanceRepository,
+        itemInstanceRepository,
+        scopedCharacterResolver,
+        itemRepository,
+        itemStackRepository,
+        itemTransferSupport,
+        new NoOpItemTransferAuditWriter(),
+        containerHolderSyncSupport,
+        new ContainerHolderPolicySupport(containerInstanceRepository),
+        new StackableItemSupport());
+  }
+
+  ContainerServiceImpl(
+      ContainerInstanceRepository containerInstanceRepository,
+      ItemInstanceRepository itemInstanceRepository,
+      ScopedCharacterResolver scopedCharacterResolver,
+      ItemRepository itemRepository,
+      ItemStackRepository itemStackRepository,
+      ItemTransferSupport itemTransferSupport,
+      ItemTransferAuditWriter itemTransferAuditWriter,
+      ContainerHolderSyncSupport containerHolderSyncSupport) {
+    this(
+        containerInstanceRepository,
+        itemInstanceRepository,
+        scopedCharacterResolver,
         itemRepository,
         itemStackRepository,
         itemTransferSupport,
@@ -121,21 +162,15 @@ public class ContainerServiceImpl implements ContainerService {
   @Transactional(readOnly = true)
   @Timed(value = "container.list")
   public Page<ContainerContentEntryDto> listContainerContents(
-      Long tenantId, Long characterId, Long containerInstanceId, Pageable pageable) {
-    return listContainerContents(tenantId, characterId, containerInstanceId, null, null, pageable);
-  }
-
-  @Override
-  @Transactional(readOnly = true)
-  @Timed(value = "container.list")
-  public Page<ContainerContentEntryDto> listContainerContents(
       Long tenantId,
       Long characterId,
       Long containerInstanceId,
       String gameInstanceId,
+      PlayableStateScope playableStateScope,
       String roomInstanceId,
       Pageable pageable) {
-    Character character = requireCharacter(tenantId, characterId);
+    Character character =
+        requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     ContainerInstance containerInstance =
         containerHolderPolicySupport.requireAccessibleContainer(
             tenantId, character.getId(), containerInstanceId, gameInstanceId, roomInstanceId);
@@ -162,34 +197,8 @@ public class ContainerServiceImpl implements ContainerService {
       Long tenantId,
       Long characterId,
       Long containerInstanceId,
-      Long itemId,
-      Long itemInstanceId,
-      String stackFamilyKey,
-      int quantity,
-      String effectId,
-      String sessionId) {
-    return putItemIntoContainer(
-        tenantId,
-        characterId,
-        containerInstanceId,
-        null,
-        null,
-        itemId,
-        itemInstanceId,
-        stackFamilyKey,
-        quantity,
-        effectId,
-        sessionId);
-  }
-
-  @Override
-  @Transactional
-  @Timed(value = "container.put")
-  public ContainerContentEntryDto putItemIntoContainer(
-      Long tenantId,
-      Long characterId,
-      Long containerInstanceId,
       String gameInstanceId,
+      PlayableStateScope playableStateScope,
       String roomInstanceId,
       Long itemId,
       Long itemInstanceId,
@@ -198,7 +207,8 @@ public class ContainerServiceImpl implements ContainerService {
       String effectId,
       String sessionId) {
     requirePositiveQuantity(quantity);
-    Character character = requireCharacter(tenantId, characterId);
+    Character character =
+        requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     ContainerInstance containerInstance =
         containerHolderPolicySupport.requireAccessibleContainer(
             tenantId, character.getId(), containerInstanceId, gameInstanceId, roomInstanceId);
@@ -245,34 +255,8 @@ public class ContainerServiceImpl implements ContainerService {
       Long tenantId,
       Long characterId,
       Long containerInstanceId,
-      Long itemId,
-      Long itemInstanceId,
-      String stackFamilyKey,
-      int quantity,
-      String effectId,
-      String sessionId) {
-    return takeItemFromContainer(
-        tenantId,
-        characterId,
-        containerInstanceId,
-        null,
-        null,
-        itemId,
-        itemInstanceId,
-        stackFamilyKey,
-        quantity,
-        effectId,
-        sessionId);
-  }
-
-  @Override
-  @Transactional
-  @Timed(value = "container.take")
-  public InventoryEntryDto takeItemFromContainer(
-      Long tenantId,
-      Long characterId,
-      Long containerInstanceId,
       String gameInstanceId,
+      PlayableStateScope playableStateScope,
       String roomInstanceId,
       Long itemId,
       Long itemInstanceId,
@@ -281,7 +265,8 @@ public class ContainerServiceImpl implements ContainerService {
       String effectId,
       String sessionId) {
     requirePositiveQuantity(quantity);
-    Character character = requireCharacter(tenantId, characterId);
+    Character character =
+        requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     ContainerInstance containerInstance =
         containerHolderPolicySupport.requireAccessibleContainer(
             tenantId, character.getId(), containerInstanceId, gameInstanceId, roomInstanceId);
@@ -356,10 +341,13 @@ public class ContainerServiceImpl implements ContainerService {
     return carried.subList(0, quantity);
   }
 
-  private Character requireCharacter(Long tenantId, Long characterId) {
-    return characterRepository
-        .findByIdAndTenantId(characterId, tenantId)
-        .orElseThrow(() -> new IllegalArgumentException("Character not found for tenant"));
+  private Character requireCharacter(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope) {
+    return scopedCharacterResolver.requireScopedCharacter(
+        tenantId, characterId, gameInstanceId, playableStateScope);
   }
 
   private Item requireItem(Long tenantId, Long itemId) {

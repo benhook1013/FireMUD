@@ -4,7 +4,7 @@
 
 set -e
 
-psql -h localhost -U postgres -d firemud <<'SQL'
+psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d firemud <<'SQL'
 INSERT INTO factions (id, tenant_id, name, description) VALUES
   (1, '11111111-1111-1111-1111-111111111111', 'Guardians', 'Default faction for testing')
   ON CONFLICT DO NOTHING;

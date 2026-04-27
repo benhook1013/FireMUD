@@ -43,5 +43,8 @@ public class Item {
   @Column(name = "stack_variant_key", length = 128)
   private String stackVariantKey;
 
+  @Column(name = "effect_payload_json", columnDefinition = "TEXT")
+  private String effectPayloadJson;
+
   @Version private int version;
 }

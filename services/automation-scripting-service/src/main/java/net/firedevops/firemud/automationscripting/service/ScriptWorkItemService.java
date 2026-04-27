@@ -3,12 +3,17 @@ package net.firedevops.firemud.automationscripting.service;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 
 public interface ScriptWorkItemService {
   long cancelPendingForPatch(CancelPendingForPatchCommand command);
 
+  long cancelPendingForPluginVersion(CancelPendingForPluginVersionCommand command);
+
   List<ScriptWorkItem> claimPendingForEvaluation(int maxItems);
+
+  List<ScriptWorkItem> claimPendingForEvaluation(List<Long> workItemIds, int maxItems);
 
   TerminalCleanupResult cleanupTerminalWorkItems();
 
@@ -16,6 +21,39 @@ public interface ScriptWorkItemService {
 
   List<PatchStatusSummary> listPatchStatuses(
       String tenantId, ScriptPatchStatus status, long changedAfterMs, long changedBeforeMs);
+
+  AutomationDrainStatusSummary getAutomationDrainStatus(
+      String tenantId, String gameInstanceId, String regionId);
+
+  Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
+      String tenantId, String gameInstanceId, String scriptPatchVersion);
+
+  List<PatchInstanceRolloutSummary> listPatchInstanceRollouts(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      long changedAfterMs,
+      long changedBeforeMs);
+
+  List<PatchInstanceRolloutEventSummary> listPatchInstanceRolloutEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit);
+
+  List<HandoffEventSummary> listHandoffEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String workItemId,
+      String handoffOutcome,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit);
 
   List<DeadLetterSummary> listDeadLetters(
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit);
@@ -25,6 +63,16 @@ public interface ScriptWorkItemService {
   record CancelPendingForPatchCommand(
       String tenantId,
       String scriptPatchVersion,
+      String gameInstanceId,
+      String regionId,
+      String controlPlaneRequestId,
+      String actorPrincipal,
+      String reason) {}
+
+  record CancelPendingForPluginVersionCommand(
+      String tenantId,
+      String pluginId,
+      String pluginVersionId,
       String gameInstanceId,
       String regionId,
       String controlPlaneRequestId,
@@ -42,7 +90,59 @@ public interface ScriptWorkItemService {
       String scriptPatchVersion,
       ScriptPatchStatus status,
       String statusReason,
-      long lastChangedAtMs) {}
+      long lastChangedAtMs,
+      long baseVersionId,
+      String abilitySchemaDigest) {}
+
+  record AutomationDrainStatusSummary(
+      String tenantId,
+      String gameInstanceId,
+      String regionId,
+      String admissionMode,
+      long admissionEpoch,
+      long activeExecutionCount,
+      long oldestActiveExecutionStartedAtMs,
+      long pendingCancelableWorkItemCount,
+      long observedAtMs) {}
+
+  record PatchInstanceRolloutSummary(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      String statusReason,
+      long lastChangedAtMs,
+      long projectionAsOfMs,
+      long projectionLagMs,
+      boolean projectionStale) {}
+
+  record PatchInstanceRolloutEventSummary(
+      String eventId,
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      String statusReason,
+      long observedAtMs,
+      long projectionAsOfMs) {}
+
+  record HandoffEventSummary(
+      String eventId,
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String scriptId,
+      String pluginId,
+      String pluginVersionId,
+      String workItemId,
+      int commandOrdinal,
+      String automationDispatchId,
+      String gameSessionCommandId,
+      String targetEntityId,
+      String emittedCommandText,
+      String handoffOutcome,
+      String handoffReason,
+      long observedAtMs) {}
 
   record DeadLetterSummary(
       String workItemId,

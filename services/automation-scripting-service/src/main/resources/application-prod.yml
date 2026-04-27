@@ -47,7 +47,20 @@ management:
 script:
   quota:
     limit: ${SCRIPT_QUOTA_LIMIT:50}
-    windowSeconds: ${SCRIPT_QUOTA_WINDOWSECONDS:60}
+    window-seconds: ${SCRIPT_QUOTA_WINDOW_SECONDS:60}
+  tenant-budget:
+    high-runs-per-minute: ${SCRIPT_TENANT_BUDGET_HIGH_RUNS_PER_MINUTE:120}
+    normal-runs-per-minute: ${SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE:60}
+    background-runs-per-minute: ${SCRIPT_TENANT_BUDGET_BACKGROUND_RUNS_PER_MINUTE:30}
+  test:
+    max-runs-per-minute: ${SCRIPT_TEST_MAX_RUNS_PER_MINUTE:60}
+    max-runs-per-minute-per-principal: ${SCRIPT_TEST_MAX_RUNS_PER_MINUTE_PER_PRINCIPAL:30}
+    max-concurrency: ${SCRIPT_TEST_MAX_CONCURRENCY:10}
+    max-cluster-concurrency: ${SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY:50}
+  runtime:
+    plugin-policy-reconcile-interval-seconds: ${SCRIPT_PLUGIN_POLICY_RECONCILE_INTERVAL_SECONDS:60}
+    plugin-policy-reconcile-batch-size: ${SCRIPT_PLUGIN_POLICY_RECONCILE_BATCH_SIZE:100}
+    plugin-policy-stale-threshold-seconds: ${SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS:300}
 automation:
   tick-duration-ms: ${AUTOMATION_TICK_DURATION_MS:1000}
   tick-max-events: ${AUTOMATION_TICK_MAX_EVENTS:50}

@@ -215,12 +215,13 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Removes (or moves to a bounded dead-letter store) any queued tick commands whose embedded `scriptPatchVersion` matches the supplied value for the scope.
+- Removes matching Redis queue payloads for not-yet-drained automation commands and terminal-marks the durable Game Session command ledger rows as `PURGED` / `NOT_APPLIED` with `ROLLBACK_PURGED`.
+- Commands already drained into durable tick effects are not purged through this hook; those require effect-ledger remediation or rollback recovery because they have crossed the tick-batch boundary.
 - Emits an operator-visible metric for purge activity and for version-fence drops (exact metric names and label sets follow the observability contract, including separate script and plugin version-fence metric families).
 
 Outputs:
 
-- `purgedCount` (best-effort count; may be approximate for large batches)
+- `purgedCount` (count of durable command rows terminal-marked by the operation)
 
 #### `PurgeQueuedTickCommandsForPluginVersion`
 
@@ -235,7 +236,7 @@ Inputs:
 - `actor`
 - `reason`
 
-Semantics and outputs: same as `PurgeQueuedTickCommandsForScriptPatch`, scoped to plugin-produced commands.
+Semantics and outputs: same as `PurgeQueuedTickCommandsForScriptPatch`, scoped to plugin-produced commands by the `pluginId` and `pluginVersionId` provenance carried from Automation into Game Session during handoff.
 
 ### Automation & Scripting: Drain/Purge Hooks (Rollback Support)
 

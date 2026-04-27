@@ -54,7 +54,7 @@ The documents linked from this overview describe the target-state design, but th
 
 All external admin and creator tools access the platform through the **Spring Cloud Gateway**; Logging & Admin Service is never exposed directly at the network edge.
 
-The architecture uses three canonical traffic surfaces:
+The architecture uses four canonical traffic surfaces:
 
 - **Player traffic plane** – player-facing Telnet, HTTP, and WebSocket traffic, including `/ws/game/**`.
 - **External admin/creator API plane** – Gateway-routed HTTP(S) APIs used by operator and creator tools on explicitly allowlisted `/api/{service}/**` routes.
@@ -466,7 +466,7 @@ If a future architecture introduces explicit edge shard routing or client-visibl
 
 Clients authenticate using the `LOGIN` command, processed by the **Game Session Service**.
 On initial login, Game Session delegates full credential verification (including lockout and MFA rules) to the **Account Service**.
-On disconnect, clients reconnect by issuing `LOGIN` again with credentials (and OTP when required), then re-binding gameplay scope with `PLAY` (`PLAY <world> [character]`) before gameplay commands are accepted. Game Session uses Coordination Redis to decide whether to resume an existing gameplay session for the selected `{tenantId, gameInstanceId, characterId}` binding (for example, when the previous session binding is still valid and not revoked) or start a fresh session when keys or auth state no longer permit resumption.
+On disconnect, clients reconnect by issuing `LOGIN` again, then re-binding gameplay scope with `PLAY <world> [realm] [character]` before gameplay commands are accepted. For Telnet and other credential-bearing transports this means `LOGIN <username> <password> [otp]`; for first-party `/ws/game/**` clients that already completed the bootstrap/connect-token handshake, this means bare `LOGIN` backed by the verified connect context. Game Session uses Coordination Redis to decide whether to resume an existing gameplay session for the selected `{tenantId, gameInstanceId, characterId}` binding (for example, when the previous session binding is still valid and not revoked) or start a fresh session when keys or auth state no longer permit resumption.
 Session state is stored in Coordination Redis and reused for recovery when the Redis-backed gameplay session and auth token allowlist entries are still valid.
 
 > 🔗 See [Authentication & Authorization](./system-architecture-authentication.md) and [Reconnection Strategy](./system-architecture-reconnection.md) for detailed JWT format and session flow.

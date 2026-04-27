@@ -32,6 +32,8 @@ service GameSessionService {
 service GameSessionControlPlaneService {
   rpc GetPinnedScriptPatchVersion(GetPinnedScriptPatchVersionRequest)
       returns (GetPinnedScriptPatchVersionResponse);
+  rpc GetGameSessionPinConvergence(GetGameSessionPinConvergenceRequest)
+      returns (GetGameSessionPinConvergenceResponse);
   rpc GetGameInstanceRuntimeState(GetGameInstanceRuntimeStateRequest)
       returns (GetGameInstanceRuntimeStateResponse);
   rpc ListAdmissionPointers(ListAdmissionPointersRequest)
@@ -194,6 +196,7 @@ message GameplayRealm {
   bool visible = 8;
   string state_scope = 9;
   string character_creation_policy = 10;
+  bool public_production_realm = 11;
 }
 
 message ListGameplayRealmsResponse {
@@ -218,6 +221,7 @@ message GameplayAdmissionPointer {
   bool visible = 9;
   string state_scope = 10;
   string character_creation_policy = 11;
+  bool public_production_realm = 12;
 }
 
 message GetAdmissionPointerResponse {
@@ -285,7 +289,22 @@ message GetPinnedScriptPatchVersionResponse {
   string pinned_script_patch_version = 1;
   int64 pinned_at_ms = 2;
   string pinned_by = 3;
-  shared.v1.ErrorDetail error = 4;
+  string control_plane_request_id = 4;
+  shared.v1.ErrorDetail error = 5;
+}
+
+message GetGameSessionPinConvergenceRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+}
+
+message GetGameSessionPinConvergenceResponse {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string observed_pinned_script_patch_version = 3;
+  string last_observed_control_plane_request_id = 4;
+  int64 observed_at_ms = 5;
+  shared.v1.ErrorDetail error = 6;
 }
 
 message GetGameInstanceRuntimeStateRequest {
@@ -306,6 +325,7 @@ message GameInstanceRuntimeState {
   int64 script_patch_pinned_at_ms = 10;
   string script_patch_pinned_by = 11;
   string script_patch_pinned_reason = 12;
+  string script_patch_pinned_control_plane_request_id = 13;
 }
 
 message GetGameInstanceRuntimeStateResponse {
@@ -330,6 +350,7 @@ message AdmissionPointerControlPlaneEntry {
   string control_plane_request_id = 14;
   int64 occurred_at_ms = 15;
   string prepared_version_upgrade_id = 16;
+  bool public_production_realm = 17;
 }
 
 message ListAdmissionPointersRequest {}
@@ -351,6 +372,11 @@ message ListAdmissionPointerAuditResponse {
 
 message GetGameplayCommandStatusRequest {
   string command_id = 1;
+  string tenant_id = 2;
+  string game_instance_id = 3;
+  string region_id = 4;
+  int64 region_epoch = 5;
+  string automation_dispatch_id = 6;
 }
 
 message GameplayCommandStatus {
@@ -381,6 +407,7 @@ message GameplayCommandStatus {
   string region_id = 25;
   int64 region_epoch = 26;
   int64 due_tick_id = 27;
+  int64 enqueue_seq = 28;
 }
 
 message GetGameplayCommandStatusResponse {
@@ -403,6 +430,7 @@ message RuntimeOwnershipStatus {
   bool paused = 7;
   string last_committed_tick_batch_id = 8;
   int64 updated_at_ms = 9;
+  int64 last_committed_tick_id = 10;
 }
 
 message GetRuntimeOwnershipStatusResponse {
@@ -426,6 +454,7 @@ message SetAdmissionPointerRequest {
   string control_plane_request_id = 13;
   optional int64 expected_pointer_version = 14;
   string prepared_version_upgrade_id = 15;
+  bool public_production_realm = 16;
 }
 
 message SetAdmissionPointerResponse {
@@ -611,6 +640,8 @@ message EnqueueAutomationCommandIfAbsentRequest {
   string target_entity_id = 10;
   string command = 11;
   bool requires_solo_tick = 12;
+  string plugin_id = 13;
+  string plugin_version_id = 14;
 }
 
 message EnqueueAutomationCommandIfAbsentResponse {

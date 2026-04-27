@@ -12,13 +12,16 @@ import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetPurgeWorkflow;
+import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionAssetPurgeWorkflowStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPurgeWorkflowRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
@@ -32,6 +35,8 @@ class VersionAssetArtifactServiceImplTest {
   @Mock private VersionAssetPurgeWorkflowRepository purgeWorkflowRepository;
   @Mock private VersionRepository versionRepository;
   @Mock private PublishedReleaseBundleRepository publishedReleaseBundleRepository;
+  @Mock private LaunchDescriptorRepository launchDescriptorRepository;
+  @Mock private VersionTemplateRemapSetRepository remapSetRepository;
   @Mock private AssetExportService assetExportService;
   @Mock private PublishedReleaseBundleService publishedReleaseBundleService;
 
@@ -46,6 +51,8 @@ class VersionAssetArtifactServiceImplTest {
             purgeWorkflowRepository,
             versionRepository,
             publishedReleaseBundleRepository,
+            launchDescriptorRepository,
+            remapSetRepository,
             assetExportService,
             publishedReleaseBundleService,
             new tools.jackson.databind.ObjectMapper());
@@ -90,6 +97,13 @@ class VersionAssetArtifactServiceImplTest {
     version.setVersionNumber(8);
     version.setVersionState(VersionLifecycleState.RETIRED);
     when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
+    when(launchDescriptorRepository.existsByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(false);
+    when(remapSetRepository.existsByTenantIdAndSourceVersionIdAndStatus(
+            "tenant-1", 7L, TemplateRemapSetStatus.APPROVED))
+        .thenReturn(false);
+    when(remapSetRepository.existsByTenantIdAndTargetVersionIdAndStatus(
+            "tenant-1", 7L, TemplateRemapSetStatus.APPROVED))
+        .thenReturn(false);
     when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
         .thenReturn(
             new PublishedReleaseBundleDto(
@@ -221,6 +235,13 @@ class VersionAssetArtifactServiceImplTest {
     when(versionRepository.findById(7L)).thenReturn(Optional.empty());
     when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("tenant-1", 7L))
         .thenReturn(Optional.empty());
+    when(launchDescriptorRepository.existsByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(false);
+    when(remapSetRepository.existsByTenantIdAndSourceVersionIdAndStatus(
+            "tenant-1", 7L, TemplateRemapSetStatus.APPROVED))
+        .thenReturn(false);
+    when(remapSetRepository.existsByTenantIdAndTargetVersionIdAndStatus(
+            "tenant-1", 7L, TemplateRemapSetStatus.APPROVED))
+        .thenReturn(false);
 
     var started = service.beginPurgeVersionAssets("tenant-1", 7L, 5L);
 
@@ -257,6 +278,13 @@ class VersionAssetArtifactServiceImplTest {
     version.setTenantId("tenant-1");
     version.setVersionState(VersionLifecycleState.PUBLISHED);
     when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
+    when(launchDescriptorRepository.existsByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(false);
+    when(remapSetRepository.existsByTenantIdAndSourceVersionIdAndStatus(
+            "tenant-1", 7L, TemplateRemapSetStatus.APPROVED))
+        .thenReturn(false);
+    when(remapSetRepository.existsByTenantIdAndTargetVersionIdAndStatus(
+            "tenant-1", 7L, TemplateRemapSetStatus.APPROVED))
+        .thenReturn(false);
 
     var eligibility = service.canDeleteVersionAssets("tenant-1", 7L);
 
@@ -277,5 +305,42 @@ class VersionAssetArtifactServiceImplTest {
 
     assertEquals(false, eligibility.deletable());
     assertEquals("VERSION_ASSET_EXPORT_PROOF_MISSING", eligibility.failureCode());
+  }
+
+  @Test
+  void canDeleteFailsClosedWhenLaunchDescriptorStillReferencesVersion() {
+    VersionAssetArtifact artifact = new VersionAssetArtifact();
+    artifact.setTenantId("tenant-1");
+    artifact.setVersionId(7L);
+    artifact.setExportedVersionNumber(8);
+    artifact.setArtifactState(VersionAssetArtifactState.TOMBSTONED);
+    artifact.setStateEpoch(5L);
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(artifact));
+    when(launchDescriptorRepository.existsByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(true);
+
+    var eligibility = service.canDeleteVersionAssets("tenant-1", 7L);
+
+    assertEquals(false, eligibility.deletable());
+    assertEquals("VERSION_ASSET_LAUNCH_REFERENCE_EXISTS", eligibility.failureCode());
+  }
+
+  @Test
+  void canDeleteFailsClosedWhenApprovedRemapSetStillReferencesVersion() {
+    VersionAssetArtifact artifact = new VersionAssetArtifact();
+    artifact.setTenantId("tenant-1");
+    artifact.setVersionId(7L);
+    artifact.setExportedVersionNumber(8);
+    artifact.setArtifactState(VersionAssetArtifactState.TOMBSTONED);
+    artifact.setStateEpoch(5L);
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(artifact));
+    when(launchDescriptorRepository.existsByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(false);
+    when(remapSetRepository.existsByTenantIdAndSourceVersionIdAndStatus(
+            "tenant-1", 7L, TemplateRemapSetStatus.APPROVED))
+        .thenReturn(true);
+
+    var eligibility = service.canDeleteVersionAssets("tenant-1", 7L);
+
+    assertEquals(false, eligibility.deletable());
+    assertEquals("VERSION_ASSET_TEMPLATE_REMAP_REFERENCE_EXISTS", eligibility.failureCode());
   }
 }

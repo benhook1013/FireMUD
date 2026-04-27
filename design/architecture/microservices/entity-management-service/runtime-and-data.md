@@ -54,8 +54,8 @@ Entity Management must classify its runtime persistence surface for cutover and 
 
 Initial-slice row-family inventory:
 
-- `character` rows are `S1`.
-- Player progression/currency/account-ownership rows attached to `character` and not requiring template remap are `S1`.
+- `character` rows are `S1` only within the resolved playable-state namespace. Shared-state realms use the tenant-live namespace, while isolated-state realms use the selected `gameInstanceId` namespace.
+- Player progression/currency/account-ownership rows attached to `character` and not requiring template remap are `S1` only after the caller proves the same resolved `{tenantId, gameInstanceId, playableStateScope}` target as the character row. Mutation APIs must not update progression/resource-style state by global `characterId` alone.
 - Inventory membership / containment rows for durable player-owned containers remain `S1` when every referenced item template is still valid against the target version.
 - `equipment_bindings` rows are `S2`.
 - Durable learned-ability, class/archetype, starter-loadout, or similar template-reference rows are `S2`.
@@ -195,6 +195,8 @@ See [Versioning & Runtime Configuration](../../system-architecture-versioning-ru
 - `character` and `npc` tables share a base entity for stats and inventory slots.
 - `item` table stores equipment, consumables, and quest objects.
 - Many-to-many tables define inventory and equipment relationships, including container contents and room/ground inventory. Room/ground inventory is modeled as items whose container references a synthetic room-ground container entity keyed by `(tenantId, gameInstanceId, roomInstanceId)` so limits such as max items on the ground or special container rules can be enforced consistently without cross-instance collisions.
+- Actor gameplay state is persisted separately from the legacy character stat columns. `actor_resource_states` stores current/base/max resource values with source provenance, while `actor_active_conditions` stores active condition keys, stack counts, source provenance, start/expiry timestamps, and effect payload JSON. Reads merge baseline character stat fields with persisted resource rows so later mutation/effect slices can converge on the new state model without removing the bootstrap character fields first.
+- The first shared effect-evaluation seam is an in-process Entity Management service that evaluates typed resource modifiers and granted states deterministically. Active condition payloads and equipped item-template payloads are now wired through it for actor-state reads, and gameplay-attested `ApplyActorCondition` calls can create active condition/action-state rows through the same internal mutation service. A scheduled Entity Management job also expires elapsed active-condition rows on a bounded cadence. Player command wiring remains future work.
 - Character location and instance membership are stored by the World Management Service rather than this service, but all item instances and inventories remain owned and persisted here.
 - Entity graphs cache inventory relationships for fast lookups.
 

@@ -41,6 +41,9 @@ Illustrative retained evidence shape for a prod-like observability smoke or hobb
     "playerflow_canary_success": [
       {"flow": "login", "path": "websocket", "target": "staging-web-gateway", "value": 1},
       {"flow": "command", "path": "websocket", "target": "staging-web-gateway", "value": 1}
+    ],
+    "playerflow_canary_latency_ms": [
+      {"flow": "command", "path": "websocket", "target": "staging-web-gateway", "value": 184}
     ]
   },
   "canaryAlerts": [
@@ -58,6 +61,8 @@ Illustrative retained evidence shape for a prod-like observability smoke or hobb
 ```
 
 This example is illustrative rather than exhaustive. Equivalent retained evidence is acceptable as long as it preserves the same canonical checks and operator accountability.
+
+Use `python3 dev-tools/observability/validate-player-experience-smoke-evidence.py <evidence.json>` to validate retained evidence against the repo's current canonical smoke-evidence contract before attaching it to a traffic-open or recovery record.
 
 ---
 

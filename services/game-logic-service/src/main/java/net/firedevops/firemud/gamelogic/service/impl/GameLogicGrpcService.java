@@ -9,6 +9,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsRequest;
@@ -319,6 +321,15 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   public void dropItemToRoom(
       DropItemToRoomRequest request, StreamObserver<DropItemToRoomResponse> responseObserver) {
     responseObserver.onNext(itemRuntimeService.dropItemToRoom(request));
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamelogicGrpc.applyActorCondition")
+  public void applyActorCondition(
+      ApplyActorConditionRequest request,
+      StreamObserver<ApplyActorConditionResponse> responseObserver) {
+    responseObserver.onNext(itemRuntimeService.applyActorCondition(request));
     responseObserver.onCompleted();
   }
 

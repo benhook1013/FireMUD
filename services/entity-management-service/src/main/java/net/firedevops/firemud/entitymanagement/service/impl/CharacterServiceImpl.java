@@ -12,6 +12,7 @@ import net.firedevops.firemud.entitymanagement.mapper.CharacterMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
@@ -32,6 +33,7 @@ public class CharacterServiceImpl implements CharacterService {
   private final CacheManager cacheManager;
   private final MeterRegistry meterRegistry;
   private final PlayableStateKeyResolver playableStateKeyResolver;
+  private final ScopedCharacterResolver scopedCharacterResolver;
 
   private Counter cacheHitCounter;
   private Counter cacheMissCounter;
@@ -68,7 +70,7 @@ public class CharacterServiceImpl implements CharacterService {
     entity.setHealth(100);
     entity.setMana(50);
     entity = characterRepository.save(entity);
-    return characterMapper.toDto(entity);
+    return toDto(entity);
   }
 
   @Override
@@ -85,7 +87,7 @@ public class CharacterServiceImpl implements CharacterService {
     }
     cacheMissCounter.increment();
     Character character = characterRepository.findWithInventoryById(characterId).orElseThrow();
-    CharacterDto dto = characterMapper.toDto(character);
+    CharacterDto dto = toDto(character);
     if (cache != null) {
       cache.put(characterId, dto);
     }
@@ -95,22 +97,35 @@ public class CharacterServiceImpl implements CharacterService {
   @Override
   @Transactional
   @Timed(value = "character.gainExperience")
-  public CharacterDto gainExperience(Long characterId, int amount) {
-    Character character = characterRepository.findById(characterId).orElseThrow();
+  public CharacterDto gainExperience(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      int amount) {
+    Character character =
+        scopedCharacterResolver.requireScopedCharacter(
+            tenantId, characterId, gameInstanceId, playableStateScope);
     character.setExperience(character.getExperience() + amount);
     while (character.getExperience() >= character.getLevel() * EXP_PER_LEVEL) {
       character.setExperience(character.getExperience() - character.getLevel() * EXP_PER_LEVEL);
       character.setLevel(character.getLevel() + 1);
     }
     characterRepository.save(character);
-    return characterMapper.toDto(character);
+    return toDto(character);
   }
 
   @Override
   @Transactional
   @Timed(value = "character.update")
-  public boolean updateEntity(Long characterId) {
-    Character character = characterRepository.findById(characterId).orElseThrow();
+  public boolean updateEntity(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope) {
+    Character character =
+        scopedCharacterResolver.requireScopedCharacter(
+            tenantId, characterId, gameInstanceId, playableStateScope);
     character.setLastLoginAt(java.time.Instant.now());
     characterRepository.save(character);
     return true;
@@ -131,7 +146,7 @@ public class CharacterServiceImpl implements CharacterService {
             accountId,
             playableStateKeyResolver.resolve(gameInstanceId, playableStateScope),
             pageable)
-        .map(characterMapper::toDto);
+        .map(this::toDto);
   }
 
   @Override
@@ -147,6 +162,24 @@ public class CharacterServiceImpl implements CharacterService {
             tenantId,
             playableStateKeyResolver.resolve(gameInstanceId, playableStateScope),
             name.trim())
-        .map(characterMapper::toDto);
+        .map(this::toDto);
+  }
+
+  private CharacterDto toDto(Character character) {
+    CharacterDto dto = characterMapper.toDto(character);
+    return new CharacterDto(
+        dto.id(),
+        dto.tenantId(),
+        dto.accountId(),
+        dto.name(),
+        playableStateKeyResolver.resolveScope(character.getPlayableStateKey()),
+        dto.level(),
+        dto.experience(),
+        dto.strength(),
+        dto.agility(),
+        dto.intelligence(),
+        dto.stamina(),
+        dto.health(),
+        dto.mana());
   }
 }

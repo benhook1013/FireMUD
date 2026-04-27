@@ -12,7 +12,7 @@ This document describes the target execution model. The current live runtime is 
 
 - the durable owner/status surface is currently `{tenantId, gameInstanceId}`-scoped rather than true region-scoped;
 - the live command-status API is `GetGameplayCommandStatus`, not the fuller target-state `GetCommandStatus` shape described below;
-- the live batch/effect substrate exists, but selected-work manifests, cross-region result-return plumbing, and some richer command-status fields are still target-state follow-through.
+- the live batch/effect substrate exists with the current gameplay-command selected-work manifest on `tick_batch`, but timer/retry/remote-follow-up source-claim manifests, cross-region result-return plumbing, and some richer command-status fields are still target-state follow-through.
 
 ## What This Covers
 

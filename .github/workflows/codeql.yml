@@ -13,6 +13,9 @@ permissions:
   contents: read
   security-events: write
 
+env:
+  CODEQL_ACTION_FILE_COVERAGE_ON_PRS: "true"
+
 concurrency:
   group: codeql-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: true
@@ -23,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.compute.outputs.matrix }}
+      should_run: ${{ steps.compute.outputs.should_run }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -35,6 +39,7 @@ jobs:
         with:
           script: |
             if (context.eventName !== "pull_request") {
+              core.setOutput("should_run", "true");
               core.setOutput(
                 "matrix",
                 JSON.stringify([
@@ -96,10 +101,12 @@ jobs:
             }
 
             core.setOutput("matrix", JSON.stringify(matrix));
+            core.setOutput("should_run", matrix.length > 0 ? "true" : "false");
 
   analyze:
     name: CodeQL Analysis (${{ matrix.language }})
     needs: [changes]
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:

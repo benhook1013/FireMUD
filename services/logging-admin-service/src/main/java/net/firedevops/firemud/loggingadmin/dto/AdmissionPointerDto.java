@@ -11,6 +11,7 @@ public record AdmissionPointerDto(
     Long gameInstanceId,
     long pointerVersion,
     boolean visible,
+    boolean publicProductionRealm,
     boolean requiresCharacterSelection,
     String stateScope,
     String characterCreationPolicy,

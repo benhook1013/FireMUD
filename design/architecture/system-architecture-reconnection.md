@@ -187,6 +187,7 @@ For clarity, Telnet clients never receive a hidden transport-preserving recovery
 Clients must also treat pre-disconnect output as non-resumable transport state. FireMUD does not replay raw transport bytes, prior WebSocket frames, or unsent Telnet output onto a newly opened connection. Instead, reconnect restores player-visible context in two distinct ways:
 
 - a bounded per-player screen buffer keyed to gameplay identity may replay the most recent narrative/system transcript lines for that player after successful `LOGIN` + `PLAY`;
+- new screen-buffer entries retain structured player-output metadata alongside rendered protocol text when the output came from the structured `PlayerOutput` path, so first-party clients can receive typed replay entries while classic clients continue to receive text;
 - then FireMUD emits fresh state-derived reconstruction output such as `LOOK` and prompt/status information.
 
 This screen buffer is context restoration, not a transport delivery guarantee. It exists to help players understand what just happened around a disconnect; it does not promise exact delivery of every missed output line.

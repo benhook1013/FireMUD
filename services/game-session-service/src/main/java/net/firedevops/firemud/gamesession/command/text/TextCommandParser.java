@@ -52,6 +52,8 @@ public class TextCommandParser {
           case CHARS -> parseChars(tokens);
           case LOGOUT -> new ParsedCommandData(List.of(), new TextCommandPayload.None());
           case AFK -> parseAfk(tokens);
+          case BLOCK ->
+              new ParsedCommandData(parseRemainingTokens(tokens), new TextCommandPayload.None());
           case HELP -> parseHelp(tokens);
           case WHO -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WHO"));
           case FRIENDS ->

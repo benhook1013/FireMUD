@@ -20,7 +20,8 @@ public interface ScriptEventRegistryService {
       String replaySemantics,
       List<String> allowedBindingScopes,
       boolean dryRunSupport,
-      String deprecationStatus) {
+      String deprecationStatus,
+      String payloadSchemaRef) {
     public EventDefinition {
       allowedProducerPrincipals = List.copyOf(allowedProducerPrincipals);
       requiredTriggerIdentityFields = List.copyOf(requiredTriggerIdentityFields);

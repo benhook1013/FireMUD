@@ -37,7 +37,8 @@ class AutomationScriptEventPublisherTest {
     when(client.triggerScriptEvent(Mockito.any()))
         .thenReturn(TriggerScriptEventResponse.newBuilder().setAdmitted(true).build());
     ScriptEventPublisher publisher =
-        new AutomationScriptEventPublisher(client, statusRepository, gameInstanceRepository);
+        new AutomationScriptEventPublisher(
+            client, statusRepository, gameInstanceRepository, Runnable::run);
 
     publisher.publishCommandEvent(
         new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room", "jwt"),
@@ -70,13 +71,55 @@ class AutomationScriptEventPublisherTest {
     when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
     when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.empty());
     ScriptEventPublisher publisher =
-        new AutomationScriptEventPublisher(client, statusRepository, gameInstanceRepository);
+        new AutomationScriptEventPublisher(
+            client, statusRepository, gameInstanceRepository, Runnable::run);
 
     publisher.publishCommandEvent(
         new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room", "jwt"),
         command("cmd-1", "LOOK"));
 
     verify(client, never()).triggerScriptEvent(Mockito.any());
+  }
+
+  @Test
+  void publishesRegionTransitionEventsWithDeterministicIds() {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    when(client.triggerScriptEvent(Mockito.any()))
+        .thenReturn(TriggerScriptEventResponse.newBuilder().setAdmitted(true).build());
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client, statusRepository, gameInstanceRepository, Runnable::run);
+
+    publisher.publishRegionTransitionEvents(
+        new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room-a", "jwt"),
+        new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room-b", "jwt"),
+        "effect-1");
+
+    ArgumentCaptor<TriggerScriptEventRequest> captor =
+        ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
+    verify(client, Mockito.times(2)).triggerScriptEvent(captor.capture());
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getEventType)
+        .containsExactly("onLeaveRegion", "onEnterRegion");
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getScriptEventId)
+        .containsExactly("effect-1:leave", "effect-1:enter");
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getPayloadJson)
+        .allSatisfy(
+            payload -> {
+              assertThat(payload).contains("\"fromRegionId\":\"room-a\"");
+              assertThat(payload).contains("\"toRegionId\":\"room-b\"");
+            });
   }
 
   private static GameplayCommand command(String commandId, String commandName) {

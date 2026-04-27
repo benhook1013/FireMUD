@@ -29,13 +29,22 @@ resource "helm_release" "postgresql" {
   values     = [file("${path.module}/postgres-values.yaml")]
 }
 
-resource "helm_release" "redis" {
-  name       = "firemud-redis"
+resource "helm_release" "redis_coord" {
+  name       = "redis-coord"
   repository = "https://charts.bitnami.com/bitnami"
   chart      = "redis"
   version    = "20.13.4"
   namespace  = var.namespace
-  values     = [file("${path.module}/redis-values.yaml")]
+  values     = [file("${path.module}/redis-coord-values.yaml")]
+}
+
+resource "helm_release" "redis_cache" {
+  name       = "redis-cache"
+  repository = "https://charts.bitnami.com/bitnami"
+  chart      = "redis"
+  version    = "20.13.4"
+  namespace  = var.namespace
+  values     = [file("${path.module}/redis-cache-values.yaml")]
 }
 
 resource "helm_release" "velero" {

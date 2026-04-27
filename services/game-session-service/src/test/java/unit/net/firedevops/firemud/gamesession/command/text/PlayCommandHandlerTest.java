@@ -147,7 +147,12 @@ class PlayCommandHandlerTest {
                 1L,
                 gameLogicProperties.getDefaultRoomId(),
                 "jwt-token",
-                0L));
+                null,
+                0L,
+                "demo",
+                "production",
+                1L,
+                "SHARED"));
     Mockito.verify(gameplayPresenceLifecycleService)
         .registerConnected(
             new SessionContext(
@@ -160,7 +165,12 @@ class PlayCommandHandlerTest {
                 1L,
                 gameLogicProperties.getDefaultRoomId(),
                 "jwt-token",
-                0L));
+                null,
+                0L,
+                "demo",
+                "production",
+                1L,
+                "SHARED"));
   }
 
   @Test
@@ -229,7 +239,12 @@ class PlayCommandHandlerTest {
                 2L,
                 gameLogicProperties.getDefaultRoomId(),
                 "jwt-token",
-                0L));
+                null,
+                0L,
+                "sandbox",
+                "production",
+                1L,
+                "SHARED"));
   }
 
   @Test
@@ -587,7 +602,13 @@ class PlayCommandHandlerTest {
                 "demo",
                 1L,
                 gameLogicProperties.getDefaultRoomId(),
-                "jwt-token"));
+                "jwt-token",
+                null,
+                1L,
+                "demo",
+                "production",
+                1L,
+                "SHARED"));
     assertThat(
             meterRegistry
                 .counter(
@@ -628,6 +649,7 @@ class PlayCommandHandlerTest {
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(visible);
+    realm.setPublicProductionRealm("production".equalsIgnoreCase(slug));
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);

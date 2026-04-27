@@ -136,6 +136,28 @@ Contract rules:
 - A plugin version that is not `PUBLISHED` must be rejected by runtime activation APIs with deterministic application errors rather than being partially loaded and then downgraded later.
 - `distributionManifestHash` and `distributionManifestPath` describe the plugin-version-scoped asset distribution manifest owned by Game Design. They must not point into or mutate the base version's `published_release_bundle`.
 
+#### `ListPluginVersionStatuses`
+
+Implementation note: the current Game Design proto/service path now exposes this broader publication listing read over the same immutable plugin publication rows used by `GetPublishedPluginVersion`, with optional filtering by `pluginId`, `publicationState`, `changedAfterMs`, and `changedBeforeMs`.
+
+Inputs:
+
+- `tenantId`
+- Optional `pluginId`
+- Optional `publicationState`
+- Optional `changedAfterMs` / `changedBeforeMs`
+- Optional bounded `limit`
+
+Outputs:
+
+- ordered `PublishedPluginVersion` rows containing `tenantId`, `pluginId`, `pluginVersionId`, `publicationId`, `baseVersionId`, `publicationState`, `abilitySchemaDigest`, `bundleDigest`, distribution-manifest metadata, signer metadata, and `lastChangedAtMs`
+
+Contract rules:
+
+- This read remains design-time publication truth only. Tooling that needs runtime activation or drain state must join it with Automation & Scripting reads such as `GetPluginStatus` and `ListPluginRuntimeEvents`.
+- Ordering is newest-first by publication change time so operator tooling can poll recent design-time publication changes without reconstructing chronology from runtime rows.
+- This API must not collapse design-time publication and instance runtime activation into one synthetic lifecycle enum.
+
 ### Game Session: Patch Pinning
 
 #### `GetPinnedScriptPatchVersion`
@@ -151,6 +173,28 @@ Outputs:
 - `pinnedScriptPatchVersion`
 - `pinnedAt` (timestamp)
 - `pinnedBy` (actor principal, optional)
+- `controlPlaneRequestId` (nullable; the idempotent request that last changed the pin)
+
+#### `GetGameSessionPinConvergence`
+
+Implementation note: the current Game Session implementation now exposes this convergence read directly from the persisted game-instance pin record. That means the live service returns the observed pinned patch, observed timestamp, and the actual persisted `controlPlaneRequestId` that last changed the pin instead of leaving convergence identity implicit in actor/reason text.
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`
+- `observedPinnedScriptPatchVersion`
+- `lastObservedControlPlaneRequestId`
+- `observedAt`
+
+Contract rules:
+
+- This is the canonical Game Session-side convergence read for rollback/promotion orchestration.
+- The response must be derived from the same persisted pin mutation that `SetPinnedScriptPatchVersion` / `RollbackScriptPatchVersion` commit, not reconstructed from logs or operator events.
 
 #### `SetPinnedScriptPatchVersion`
 
@@ -202,7 +246,7 @@ Outputs: same as `SetPinnedScriptPatchVersion`.
 
 #### `GetScriptPatchStatus`
 
-Implementation note: the current Automation & Scripting API exposes the runtime-readiness subset of this contract from durable `script_work_items`: `status`, `statusReason`, and `lastChangedAt`. The richer design-time compatibility fields such as `baseVersionId`, `abilitySchemaDigest`, and `supersededByScriptPatchVersion` remain target-state companion data from the publication/control-plane model rather than current response fields.
+Implementation note: the current Automation & Scripting API exposes these reads from durable `script_work_items` and now enriches them with Game Design publication metadata. The live response includes the current runtime-readiness summary plus the published script patch `baseVersionId` and the current Automation participant `abilitySchemaDigest` derived from the published release bundle for that base version. `supersededByScriptPatchVersion` still remains target-state follow-through rather than a shipped field.
 
 Inputs:
 
@@ -216,7 +260,6 @@ Outputs:
 - `statusReason` (optional)
 - `baseVersionId` (required)
 - `abilitySchemaDigest` (required for compatibility/audit surfaces)
-- `supersededByScriptPatchVersion` (nullable; required when `status=SUPERSEDED`)
 - `lastChangedAt`
 
 Boundary rule:
@@ -232,7 +275,147 @@ Inputs:
 
 Outputs:
 
-- A list of `GetScriptPatchStatus` records.
+- A list of `GetScriptPatchStatus` records, including `baseVersionId` and `abilitySchemaDigest`.
+
+#### `GetAutomationDrainStatus`
+
+Implementation note: the current Automation & Scripting implementation now persists a scope-local `automation_admission_states` record keyed by `(tenantId, gameInstanceId, regionId)`, exposes `SetAutomationAdmissionMode`, stamps admitted `script_work_items` with the current `admissionEpoch`, and serves `GetAutomationDrainStatus` from that durable admission state plus durable work-item truth. While paused for rollback, drain counts are scoped to pre-pause work (`workItem.admissionEpoch < current admissionEpoch`) rather than all work items in the scope.
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- Optional narrower scope: `regionId`
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`
+- Optional `regionId`
+- `admissionMode`
+- `admissionEpoch`
+- `activeExecutionCount`
+- `oldestActiveExecutionStartedAt` (nullable/zero when no active work exists)
+- `pendingCancelableWorkItemCount`
+- `observedAt`
+
+Contract rules:
+
+- This is a read-only operator surface for rollback/promotion drain checks; it must not mutate work-item state.
+- The live response is backed by durable Automation-owned admission mode/epoch state plus durable work-item truth already owned by Automation & Scripting.
+- Operators may use `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` as the current drain-empty condition for the active rollback epoch in that scope.
+
+#### `ListScriptPatchInstanceRolloutEvents`
+
+Inputs:
+
+- `tenantId`
+- Optional `gameInstanceId`
+- Optional `scriptPatchVersion`
+- Optional `rolloutStatus`
+- Optional `changedAfter` / `changedBefore`
+- Optional bounded `limit`
+
+Outputs:
+
+- ordered event rows containing `eventId`, `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `rolloutStatus`, `statusReason`, `observedAt`, and `projectionAsOf`
+
+Contract rules:
+
+- This is the append-only history companion to the current-state `GetScriptPatchInstanceRolloutStatus` and `ListScriptPatchInstanceRollouts` reads.
+- Automation appends a new event only when the derived rollout status or reason changes for an instance/patch projection, so repeated freshness refreshes do not create noisy duplicate history.
+- Operators use this API to distinguish a first pin from a rollback and a later repin; current-state projection rows remain the canonical latest truth.
+
+#### `ListScriptHandoffEvents`
+
+Inputs:
+
+- `tenantId`
+- Optional `gameInstanceId`
+- Optional `scriptPatchVersion`
+- Optional `workItemId`
+- Optional `handoffOutcome`
+- Optional `changedAfter` / `changedBefore`
+- Optional bounded `limit`
+
+Outputs:
+
+- ordered event rows containing `eventId`, `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `scriptId`, optional plugin identity, `workItemId`, `commandOrdinal`, `automationDispatchId`, optional `gameSessionCommandId`, `targetEntityId`, rendered `emittedCommandText`, `handoffOutcome`, `handoffReason`, and `observedAt`
+
+Contract rules:
+
+- This is the per-command observability companion to work-item-level audit and dead-letter reads. Multi-command work items must not collapse handoff chronology into one row.
+- Automation must persist one durable handoff event per attempted emitted command, including pre-handoff rollback fencing and Game Session acceptance/rejection outcomes.
+- `automationDispatchId` is the canonical low-cardinality correlation key between Automation handoff history and the Game Session gameplay-command ledger; metrics still must not label by it. Operator/debug reads can resolve the Game Session side either from the returned `gameSessionCommandId` or from the full automation identity tuple `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)` when the command id is not yet known to the caller.
+- Operators use this read to answer which emitted command ordinal reached Game Session, which rendered command text and target entity it addressed, and whether the failure happened before handoff, at Game Session admission, or after later gameplay-side execution disposition.
+
+#### `CancelPendingWorkItemsForPluginVersion`
+
+Inputs:
+
+- `tenantId`
+- `pluginId`
+- `pluginVersionId`
+- Optional `gameInstanceId`
+- Optional `regionId`
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Outputs:
+
+- `canceledCount`
+
+Contract rules:
+
+- This is the plugin-version companion to `CancelPendingWorkItemsForPatch`.
+- It cancels only Automation-owned work items that have not started evaluation or handoff yet. Work already evaluating must converge through drain status, and work already handed to Game Session must be handled by Game Session queue purge or tick/effect remediation.
+- Cancellation updates handler audit with `finalStage=ADMISSION`, `finalOutcome=canceled`, and the bounded reason used for the operation.
+
+#### `GetAutomationPinConvergence`
+
+Implementation note: the current Automation & Scripting implementation now persists a durable `script_patch_pin_projections` view keyed by `(tenantId, gameInstanceId)`. Automation refreshes that projection opportunistically from the same shared Game Session runtime-state surface already used by admission and replay checks, then serves `GetAutomationPinConvergence` from the persisted projection so freshness and temporary Game Session read failures do not force operator reads to be raw pass-through calls. Projection stale flags use the `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` runtime knob.
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`
+- `observedPinnedScriptPatchVersion`
+- `lastObservedControlPlaneRequestId`
+- `observedAt`
+- `projectionAsOfMs`
+- `projectionLagMs`
+- `isProjectionStale`
+
+Contract rules:
+
+- This is a read-only operator surface for the latest pin observation currently visible to Automation-side admission and replay logic.
+- The live implementation is a durable Automation-owned projection refreshed from authoritative Game Session runtime state, not a raw pass-through query.
+- If refresh from Game Session fails but Automation still has a stored observation, the API must continue returning that stored observation with freshness flags set from the projection timestamp instead of failing closed for operator visibility.
+
+#### `ListScriptScheduleInstances`
+
+Implementation note: the current Automation & Scripting implementation now exposes the first durable instance-scoped timer materialization read from `script_schedule_instances`. Those rows are refreshed from the same observed Game Session pin state used by admission and rollout reads, and they project the currently pinned patch's durable schedule definitions into one `(tenantId, gameInstanceId)` scope. Materialization is now per matching event binding rather than per raw script definition only, so each row carries target-scope identity and binding priority alongside schedule definition identity. Wall-clock timers already compute `nextDueAt`; tick-aligned schedules are persisted explicitly as `PENDING_RUNTIME_PROGRESS` until heartbeat-driven `nextTick` materialization lands.
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- Optional filter: `scriptPatchVersion`
+- `limit` (bounded by the service)
+
+Outputs:
+
+- Instance-scoped schedule entries containing `scriptPatchVersion`, `scriptId`, plugin owner metadata, `scheduleDefinitionId`, event type, cadence, scheduler priority tag, target-scope identity (`targetScopeType`, `targetScopeId`), binding priority/exclusivity flags, materialization status, due-point fields, observed runtime version id, observed pin request id, pin observation time, and row timestamps.
+
+Contract rules:
+
+- This is a read-only operator/debugging surface for the first durable scheduler substrate below Redis timer indexes.
+- The live implementation must report tick-aligned schedules honestly as not-yet-advanced when no heartbeat-derived due point exists; it must not invent synthetic tick coordinates.
+- Reconciliation across repins is keyed by stable `scheduleDefinitionId` plus plugin owner metadata and binding target identity, not by inferred semantic similarity.
 
 #### `ListScriptDeadLetters`
 
@@ -280,6 +463,8 @@ Contract rules:
 
 #### `GetScriptPatchInstanceRolloutStatus`
 
+Implementation note: the current Automation & Scripting implementation now exposes these rollout reads from a durable local `script_patch_instance_rollout_projections` read model rather than a raw shared-runtime query. That projection is refreshed from the Automation-owned pin projection plus durable work-item transitions, sets freshness fields explicitly from the local projection timestamp, and currently emits the bounded rollout vocabulary provable from the current substrate (`PINNED`, `ROLLED_BACK`, and first `REPINNED` when a previously rolled-back patch becomes pinned again). Richer event-projected convergence history still remains later follow-through rather than already-live behavior.
+
 Inputs:
 
 - `tenantId`
@@ -299,7 +484,7 @@ Outputs:
 Read-model ownership:
 
 - The authoritative source for rollout transitions is Game Session pin mutations and committed `ScriptPatchPinChanged` events.
-- If Automation & Scripting serves this API, it does so as a projection that is replayable from control-plane events and keyed by `(tenantId, gameInstanceId, scriptPatchVersion, controlPlaneRequestId)` for idempotent updates.
+- The current Automation & Scripting implementation persists an Automation-owned rollout projection keyed by `(tenantId, gameInstanceId, scriptPatchVersion)`. Projection refresh is driven by observed pin state plus durable work-item transitions until fuller event-replay history lands.
 
 #### `ListScriptPatchInstanceRollouts`
 
@@ -314,7 +499,7 @@ Outputs:
 - The read model must publish and enforce explicit freshness SLOs:
   - P95 `projectionLagMs <= 5000`
   - P99 `projectionLagMs <= 30000`
-- Responses that breach the published SLO must set `isProjectionStale=true` and include a bounded stale reason code in `statusReason` (for example `projection_lag_exceeded`) so operators can distinguish stale read models from failed rollouts.
+- Responses that breach the published SLO, currently configured by `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS`, must set `isProjectionStale=true` and include a bounded stale reason code in `statusReason` (for example `projection_lag_exceeded`) so operators can distinguish stale read models from failed rollouts.
 
 ### Automation & Scripting: Plugin Lifecycle Management
 
@@ -322,7 +507,7 @@ Plugins are controlled by operators via Logging & Admin, but the runtime registr
 
 #### `GetPluginStatus`
 
-Implementation note: the current Automation & Scripting implementation persists and serves the runtime registry for `(tenantId, gameInstanceId, pluginId)`, and `SetPluginActiveVersion` now consults the live Game Design `GetPublishedPluginVersion` read surface plus the shared Game Session runtime-state read for runtime version, launch descriptor, version/release identifiers, and script-patch pin metadata before mutating that registry. That means design-time publication eligibility and `baseVersionId` compatibility are now enforced in the live control-plane path. Signature-policy enforcement, richer component-policy gating, and `abilitySchemaDigest` comparison against the running instance remain follow-up work rather than already-proven runtime checks.
+Implementation note: the current Automation & Scripting implementation persists and serves the runtime registry for `(tenantId, gameInstanceId, pluginId)`, and `SetPluginActiveVersion` now consults the live Game Design `GetPublishedPluginVersion` read surface plus the shared Game Session runtime-state read for runtime version, launch descriptor, version/release identifiers, and script-patch pin metadata before mutating that registry. That means design-time publication eligibility, signer revocation, component-policy decisions, `baseVersionId` compatibility, and `abilitySchemaDigest` compatibility are now enforced in the live control-plane path. Enabled plugin runtime states are also rechecked on a bounded scheduled cadence so already-active plugins are disabled if their publication state, signer metadata, or component-policy decision becomes fail-closed after activation. Plugin-trigger ingress uses the persisted `lastPolicyCheckedAt` evidence and fails closed with `signer_policy_unavailable` when that check is older than `SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS`, and `GetPluginStatus` now exposes both `lastPolicyCheckedAtMs` and `policyCheckStale` so operators can see that freshness directly.
 
 Inputs:
 
@@ -345,6 +530,54 @@ Boundary rule:
 
 - This API reports runtime state for one `(tenantId, gameInstanceId, pluginId)` only. It must not be overloaded to synthesize design-time publication status or signer-verification history from Game Design.
 
+#### `ListPluginRuntimeEvents`
+
+Purpose: provide append-only runtime lifecycle history for one tenant's plugin activations, drains, disables, and policy-reconcile fail-closed transitions so tooling does not reconstruct operator history from the latest registry row.
+
+Request fields:
+
+- `tenantId`
+- optional `gameInstanceId`
+- optional `pluginId`
+- optional `pluginState`
+- optional `activePluginVersionId`
+- optional `changedAfterMs`
+- optional `changedBeforeMs`
+- optional `limit`
+
+Response fields:
+
+- repeated `events[]` with `eventId`, `tenantId`, `gameInstanceId`, `pluginId`, `previousPluginVersionId`, `activePluginVersionId`, `pluginState`, `statusReason`, `controlPlaneRequestId`, `actor`, and `observedAtMs`
+- `error`
+
+Contract rules:
+
+- This is append-only runtime lifecycle history, not a projection of design-time publication events.
+- `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`, and scheduled policy reconciliation must append one event only when they materially change runtime plugin state or the active version.
+- Idempotent no-op retries against an already-applied target must not append duplicate events or advance the latest-row `lastChangedAt`.
+- Operators that need the current runtime truth still use `GetPluginStatus`; operators that need transition history use this read rather than inferring chronology from row timestamps.
+
+#### `GetPluginPolicyConvergence`
+
+Purpose: provide an operator-visible signer/component-policy convergence read for enabled plugin runtime states so scheduled reconciliation is not an invisible background process.
+
+Request fields:
+
+- `tenantId`
+- optional `gameInstanceId`
+- optional `maxResults`
+
+Response fields:
+
+- `inspectedCount`
+- `failClosedCount`
+- `converged`
+- `evaluatedAtMs`
+- repeated `violations[]` with `gameInstanceId`, `pluginId`, `activePluginVersionId`, `reason`, and `lastChangedAtMs`
+- `error`
+
+Current implementation note: Automation evaluates enabled runtime states against current Game Design publication metadata on demand. Reasons match the scheduled reconciler's fail-closed reasons, including `signer_policy_unavailable`, `signer_revoked`, `plugin_component_policy_blocked`, `component_policy_unavailable`, and `plugin_version_not_published`.
+
 #### `SetPluginActiveVersion`
 
 Inputs:
@@ -366,7 +599,7 @@ Semantics:
   - `plugin.baseVersionId` must equal the instance `runtimeVersionId`.
   - `plugin.abilitySchemaDigest` must match the immutable digest recorded for the same base version used by the running instance.
   - Any mismatch fails deterministically with an application error (for example `PLUGIN_BASE_VERSION_MISMATCH` or `PLUGIN_ABILITY_SCHEMA_MISMATCH`) and must not mutate active plugin state.
-- Current implementation note: the live control-plane path now enforces `PUBLISHED` design-time state and `plugin.baseVersionId == runtimeVersionId` before updating the runtime registry. The `abilitySchemaDigest` comparison and the richer signer/component-policy gates remain target-state follow-through.
+- Current implementation note: the live control-plane path now enforces `PUBLISHED` design-time state, non-revoked signer metadata, non-blocking component-policy decisions, `plugin.baseVersionId == runtimeVersionId`, and `plugin.abilitySchemaDigest` matching the Automation participant digest in the running published release bundle before updating the runtime registry.
 - On success, updates the registry for `(tenantId, gameInstanceId, pluginId)`, reconciles any durable plugin-owned schedules/timers so the displaced `pluginVersionId` cannot keep minting new triggers, and emits `PluginVersionActivated` (or `PluginVersionDisabled` as appropriate if this operation also transitions state).
 
 Outputs:
@@ -425,7 +658,7 @@ Required enum values:
 
 - `TRIGGER_ADMISSION_OUTCOME_ADMITTED`
 - `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING`
-- `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK_PAUSE`
+- `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK`
 - `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE`
 - `TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE`
 - `TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED`
@@ -440,6 +673,7 @@ Contract rules:
 - Handler-scoped denials such as `quota_denied`, `script_disabled`, `plugin_disabled`, and `plugin_component_blocked` remain handler/audit outcomes after binding resolution. They are not valid event-scope ingress `admissionOutcome` values in the general fan-out contract.
 - Admission failures are application-level outcomes and must not be surfaced as transport errors.
 - Current ingress enforces `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` before durable work-item persistence and rejects oversized payloads with `TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED` / `work_item_size_exceeded`.
+- Current plugin-trigger ingress requires the request `(pluginId, pluginVersionId)` to match Automation's enabled runtime registry state for `(tenantId, gameInstanceId, pluginId)` before handler work is materialized. Missing, disabled, or displaced plugin versions are rejected at ingress with `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` and a bounded reason such as `plugin_not_active`, `plugin_disabled`, or `plugin_version_unavailable`.
 - For events that fan out to multiple handlers:
   - `admitted=true` means the request passed ingress-time fences and was accepted for handler resolution.
   - Per-handler Trigger Identities and outcomes are recorded asynchronously in `script_event_audit` (one row per resolved handler).

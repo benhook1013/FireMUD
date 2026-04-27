@@ -56,8 +56,8 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Economy logic (trading, shops, pricing) | | | | | | ✔ | | | | | |
 | AI-driven actions and behaviors | | | | | | | ✔ | | | | |
 | Triggered script execution | | | | | | | ✔ | | | | |
-| Redis-backed automation tick coordination (`automation:tick:*` keys) | | | | | | | ✔ | | | | |
-| Coordination Redis participation via shared helpers (locks, automation tick prefixes) | | | | ✔ | ✔ | | ✔ | | | | |
+| Redis-backed automation queue projection and timer coordination (`automation:queue:*`, `automation:timer:*`, `script-scheduler:*`) | | | | | | | ✔ | | | | |
+| Coordination Redis participation via shared helpers (locks and documented automation/tick prefix rules) | | | | ✔ | ✔ | | ✔ | | | | |
 | Cache/Rate-Limit Redis usage (caches, quotas, rate limiting) | | ✔ | | | ✔ | | ✔ | ✔ | | ✔ | ✔ |
 | Chat and private messaging | | | | | | | | ✔ | | | |
 | Guilds and group discovery | | | | | | | | ✔ | | | |
@@ -106,8 +106,8 @@ Route-review example:
 - **Authoritative owner: Coordination Redis gameplay coordination keys (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`)** – Game Session Service owns gameplay coordination schema and lifecycle for these prefixes. Other services participate only through documented shared helper libraries and key contracts; they do not introduce new gameplay coordination prefixes or modify TTLs/payload semantics without Game Session ownership and Redis design review.
 - **Authoritative owner: Coordination Redis auth keyspace (`session:auth:*`)** – Account Service owns JWT allowlist and revocation watermark semantics, including lifecycle, revocation, and scope contracts consumed by downstream services.
 - **Redis-backed automation ownership split** – Automation & Scripting Service owns:
-  - Coordination Redis `automation:tick:*` keyspace and Lua scripts that drive automation ticks.
-  - Cache/Rate-Limit Redis `automation:queue:*` and `automation:quota:*` best-effort queues/counters.
+  - Coordination Redis scheduler/timer keys such as `automation:timer:*` and `script-scheduler:*`.
+  - Cache/Rate-Limit Redis `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, and `automation:test:capacity:*` best-effort queues/counters.
   Game Session and other services interact with automation via gRPC APIs, not by writing `automation:*` keys directly.
 - **Cache/Rate-Limit Redis usage (caches, quotas, rate limiting)** – World Management Service, TCP Proxy Service, Spring Cloud Gateway, Entity Management Service, Automation & Scripting Service, and Social & Groups Service all use shared cache and rate‑limit helpers backed by Redis (for example, `cache:*` and `ratelimit:*` prefixes). World Management is authoritative for invalidation semantics of `room:*` and `world-dynamic:*` world caches; the schema, TTL policies, and correctness guarantees for these prefixes are defined in the shared cache/rate-limit library and in the Redis Cache & Rate Limiting design.
 

@@ -16,9 +16,15 @@ service GameDesignService {
       returns (PublishScriptPatchVersionResponse);
   rpc GetPublishedScriptPatchVersion(GetPublishedScriptPatchVersionRequest)
       returns (GetPublishedScriptPatchVersionResponse);
+  rpc UploadPluginBundle(UploadPluginBundleRequest) returns (UploadPluginBundleResponse);
   rpc PublishPluginVersion(PublishPluginVersionRequest) returns (PublishPluginVersionResponse);
   rpc GetPublishedPluginVersion(GetPublishedPluginVersionRequest)
       returns (GetPublishedPluginVersionResponse);
+  rpc RevokePluginVersion(RevokePluginVersionRequest) returns (RevokePluginVersionResponse);
+  rpc ListPluginVersionStatuses(ListPluginVersionStatusesRequest)
+      returns (ListPluginVersionStatusesResponse);
+  rpc ListPluginVersionStatusEvents(ListPluginVersionStatusEventsRequest)
+      returns (ListPluginVersionStatusEventsResponse);
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
   rpc GetDesignControlPlaneDigest(GetDesignControlPlaneDigestRequest)
       returns (GetDesignControlPlaneDigestResponse);
@@ -90,6 +96,7 @@ message WorldDesignMutationRevision {
     world_management.v1.RoomExitDesignMutation room_exit = 23;
     world_management.v1.GenerationRuleDesignMutation generation_rule = 24;
     world_management.v1.WorldEntitySpawnBindingDesignMutation world_entity_spawn_binding = 25;
+    world_management.v1.WorldGenerationSubtreeDesignMutation world_generation_subtree = 26;
   }
 }
 
@@ -132,6 +139,17 @@ message GetPublishedScriptPatchVersionResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
+message UploadPluginBundleRequest {
+  string tenant_id = 1;
+  bytes bundle_bytes = 2;
+  string notes = 3;
+}
+
+message UploadPluginBundleResponse {
+  int64 publication_id = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
 message PublishPluginVersionRequest {
   string tenant_id = 1;
   string plugin_id = 2;
@@ -143,6 +161,9 @@ message PublishPluginVersionRequest {
   string distribution_manifest_hash = 8;
   string distribution_manifest_path = 9;
   string notes = 10;
+  string signer_key_id = 11;
+  bool signer_revoked = 12;
+  PluginComponentPolicyDecision component_policy_decision = 13;
 }
 
 message PublishPluginVersionResponse {
@@ -158,6 +179,47 @@ message GetPublishedPluginVersionRequest {
 
 message GetPublishedPluginVersionResponse {
   PublishedPluginVersion plugin_version = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message RevokePluginVersionRequest {
+  string tenant_id = 1;
+  string plugin_id = 2;
+  string plugin_version_id = 3;
+  string reason = 4;
+}
+
+message RevokePluginVersionResponse {
+  int64 publication_id = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListPluginVersionStatusesRequest {
+  string tenant_id = 1;
+  string plugin_id = 2;
+  VersionLifecycleState publication_state = 3;
+  int64 changed_after_ms = 4;
+  int64 changed_before_ms = 5;
+  int32 limit = 6;
+}
+
+message ListPluginVersionStatusesResponse {
+  repeated PublishedPluginVersion plugin_versions = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListPluginVersionStatusEventsRequest {
+  string tenant_id = 1;
+  string plugin_id = 2;
+  string plugin_version_id = 3;
+  VersionLifecycleState publication_state = 4;
+  int64 changed_after_ms = 5;
+  int64 changed_before_ms = 6;
+  int32 limit = 7;
+}
+
+message ListPluginVersionStatusEventsResponse {
+  repeated PluginVersionStatusEventEntry events = 1;
   shared.v1.ErrorDetail error = 2;
 }
 
@@ -185,6 +247,28 @@ message PublishedPluginVersion {
   string distribution_manifest_hash = 10;
   string distribution_manifest_path = 11;
   int64 last_changed_at_ms = 12;
+  string signer_key_id = 13;
+  bool signer_revoked = 14;
+  PluginComponentPolicyDecision component_policy_decision = 15;
+  string status_reason = 16;
+}
+
+message PluginVersionStatusEventEntry {
+  string event_id = 1;
+  string tenant_id = 2;
+  string plugin_id = 3;
+  string plugin_version_id = 4;
+  VersionLifecycleState previous_publication_state = 5;
+  VersionLifecycleState new_publication_state = 6;
+  string status_reason = 7;
+  int64 observed_at_ms = 8;
+}
+
+enum PluginComponentPolicyDecision {
+  PLUGIN_COMPONENT_POLICY_DECISION_UNSPECIFIED = 0;
+  PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED = 1;
+  PLUGIN_COMPONENT_POLICY_DECISION_REPORT_ONLY = 2;
+  PLUGIN_COMPONENT_POLICY_DECISION_BLOCKED = 3;
 }
 
 message ListVersionsRequest {
@@ -468,6 +552,11 @@ enum VersionLifecycleState {
   VERSION_LIFECYCLE_STATE_ACTIVE = 3;
   VERSION_LIFECYCLE_STATE_FAILED = 4;
   VERSION_LIFECYCLE_STATE_RETIRED = 5;
+  VERSION_LIFECYCLE_STATE_UPLOAD_REJECTED = 6;
+  VERSION_LIFECYCLE_STATE_SIGNATURE_VERIFIED = 7;
+  VERSION_LIFECYCLE_STATE_VALIDATION_FAILED_DESIGN = 8;
+  VERSION_LIFECYCLE_STATE_SUPERSEDED = 9;
+  VERSION_LIFECYCLE_STATE_REVOKED_DESIGN = 10;
 }
 
 enum ArtifactState {

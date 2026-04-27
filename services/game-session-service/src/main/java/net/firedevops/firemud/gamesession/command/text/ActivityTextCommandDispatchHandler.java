@@ -19,7 +19,7 @@ final class ActivityTextCommandDispatchHandler implements TextCommandDispatchHan
   @Override
   public TextCommandInterpretationResult handle(TextCommandDispatchRequest request) {
     return switch (request.command().type()) {
-      case AFK ->
+      case AFK, BLOCK ->
           new TextCommandInterpretationResult(
               commandService.enqueue(
                   request.sessionId(), request.command().rawLine(), request.requiresSoloTick()));

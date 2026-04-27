@@ -283,6 +283,7 @@ Implementation notes:
 - `GetVersionAssetArtifactState`, `RepairPublishedVersionAssets`, `TombstoneVersionAssets`, `CanDeleteVersionAssets`, `BeginPurgeVersionAssets`, `FinalizePurgeVersionAssets`, and `GetVersionAssetPurgeStatus` are now live in `game-design-service`.
 - `version_asset_artifact` is now a persisted control-plane row and full-version publish updates it through `EXPORTED_UNATTESTED` and `PUBLISHED`.
 - the persisted artifact row now stores the exact exported version number plus manifest asset keys so cleanup, repair, and purge use exported proof rather than current draft-asset listings or mutable version rows.
+- `CanDeleteVersionAssets` now also fails closed on live launch-descriptor references and on approved template remap sets that still name the source or target version, so purge cannot silently remove bytes still needed by current launch and replacement-cutover control-plane truth.
 - `version_asset_purge_workflow` is now the retained workflow-status surface for purge start/finalization outcomes.
 
 A basic repository (`GameAssetRepository`) and service implementation
@@ -422,6 +423,8 @@ Deletion-eligibility authority:
 - The check must validate all of the following before returning deletable:
   - if the target version row still exists, it is already in `RETIRED` state,
   - there is no dangling `published_release_bundle` attestation with no corresponding version-state row,
+  - no launch descriptor still resolves to the version,
+  - no approved template remap set still names the version as its source or target,
   - no non-Retired `version_asset` references remain,
   - no reachable `revision_asset` / branch references require retained bytes,
   - no normalized template or launch metadata still references the version prefix.

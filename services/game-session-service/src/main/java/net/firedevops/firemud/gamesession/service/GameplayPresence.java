@@ -7,6 +7,8 @@ public record GameplayPresence(
     long sessionId,
     long tenantId,
     long gameInstanceId,
+    String worldSlug,
+    String realmSlug,
     long accountId,
     long characterId,
     String characterName,

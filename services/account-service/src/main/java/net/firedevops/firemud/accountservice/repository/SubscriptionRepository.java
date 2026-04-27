@@ -13,9 +13,16 @@ import org.springframework.transaction.annotation.Transactional;
 public interface SubscriptionRepository extends JpaRepository<Subscription, Long> {
   List<Subscription> findByTenantId(Long tenantId);
 
+  List<Subscription> findByAccountId(Long accountId);
+
   @Modifying
   @Transactional
   @Query(
       "delete from Subscription s " + "where s.account.id = :accountId and s.tenantId = :tenantId")
   void deleteByAccountId(@Param("accountId") Long accountId, @Param("tenantId") Long tenantId);
+
+  @Modifying
+  @Transactional
+  @Query("delete from Subscription s where s.account.id = :accountId")
+  void deleteByAccountId(@Param("accountId") Long accountId);
 }

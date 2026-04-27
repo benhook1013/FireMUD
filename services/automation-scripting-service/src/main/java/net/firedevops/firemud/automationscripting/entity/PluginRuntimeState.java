@@ -55,6 +55,9 @@ public class PluginRuntimeState {
   @Column(nullable = false)
   private Instant lastChangedAt = Instant.now();
 
+  @Column(nullable = false)
+  private Instant lastPolicyCheckedAt = Instant.EPOCH;
+
   @Version
   @Column(name = "row_version")
   private int rowVersion;

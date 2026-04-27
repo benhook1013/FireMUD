@@ -48,6 +48,7 @@ public class GameplayCatalogProperties {
     realm.setGameInstanceId(gameInstanceId);
     realm.setPointerVersion(1L);
     realm.setVisible(true);
+    realm.setPublicProductionRealm(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     realm.setStateScope(RealmStateScope.SHARED);
     realm.setCharacterCreationPolicy(CharacterCreationPolicy.ALLOW_NEW);
@@ -80,6 +81,7 @@ public class GameplayCatalogProperties {
     private long gameInstanceId;
     private long pointerVersion = 1L;
     private boolean visible = true;
+    private boolean publicProductionRealm;
     private boolean requiresCharacterSelection;
     private RealmStateScope stateScope = RealmStateScope.SHARED;
     private CharacterCreationPolicy characterCreationPolicy = CharacterCreationPolicy.ALLOW_NEW;

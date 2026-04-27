@@ -12,6 +12,7 @@ import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemStackRepository;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +39,8 @@ class ContainerInstanceLocationIntegrationTest {
   private static final Long TENANT_ID = 1L;
   private static final String GAME_INSTANCE_ID = "GI-1";
   private static final String ROOM_INSTANCE_ID = "R-1";
+  private static final PlayableStateScope PLAYABLE_STATE_SCOPE =
+      PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -81,10 +84,14 @@ class ContainerInstanceLocationIntegrationTest {
     Item backpack = itemRepository.save(containerItem("Backpack"));
     Item torch = itemRepository.save(ordinaryItem("Torch"));
 
-    inventoryService.addItem(TENANT_ID, alice.getId(), backpack.getId(), 1);
-    inventoryService.addItem(TENANT_ID, alice.getId(), torch.getId(), 1);
+    inventoryService.addItem(
+        TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, backpack.getId(), 1);
+    inventoryService.addItem(
+        TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, torch.getId(), 1);
 
-    var inventory = inventoryService.listInventory(TENANT_ID, alice.getId(), Pageable.unpaged());
+    var inventory =
+        inventoryService.listInventory(
+            TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, Pageable.unpaged());
     var backpackEntry =
         inventory.getContent().stream()
             .filter(entry -> entry.itemId().equals(backpack.getId()))
@@ -100,6 +107,9 @@ class ContainerInstanceLocationIntegrationTest {
         TENANT_ID,
         alice.getId(),
         backpackEntry.containerInstanceId(),
+        GAME_INSTANCE_ID,
+        PLAYABLE_STATE_SCOPE,
+        null,
         torch.getId(),
         torchEntry.itemInstanceId(),
         null,
@@ -111,6 +121,7 @@ class ContainerInstanceLocationIntegrationTest {
         TENANT_ID,
         alice.getId(),
         GAME_INSTANCE_ID,
+        PLAYABLE_STATE_SCOPE,
         ROOM_INSTANCE_ID,
         backpack.getId(),
         backpackEntry.itemInstanceId(),
@@ -138,6 +149,7 @@ class ContainerInstanceLocationIntegrationTest {
             alice.getId(),
             backpackEntry.containerInstanceId(),
             GAME_INSTANCE_ID,
+            PLAYABLE_STATE_SCOPE,
             ROOM_INSTANCE_ID,
             Pageable.unpaged());
     assertThat(roomContents.getContent())
@@ -148,6 +160,7 @@ class ContainerInstanceLocationIntegrationTest {
         TENANT_ID,
         bob.getId(),
         GAME_INSTANCE_ID,
+        PLAYABLE_STATE_SCOPE,
         ROOM_INSTANCE_ID,
         backpack.getId(),
         droppedBackpack.itemInstanceId(),
@@ -159,7 +172,13 @@ class ContainerInstanceLocationIntegrationTest {
 
     var bobContents =
         containerService.listContainerContents(
-            TENANT_ID, bob.getId(), backpackEntry.containerInstanceId(), Pageable.unpaged());
+            TENANT_ID,
+            bob.getId(),
+            backpackEntry.containerInstanceId(),
+            GAME_INSTANCE_ID,
+            PLAYABLE_STATE_SCOPE,
+            null,
+            Pageable.unpaged());
     assertThat(bobContents.getContent())
         .singleElement()
         .satisfies(item -> assertThat(item.itemName()).isEqualTo("Torch"));
@@ -172,11 +191,16 @@ class ContainerInstanceLocationIntegrationTest {
     Item torch = itemRepository.save(ordinaryItem("Torch"));
     Item ration = itemRepository.save(ordinaryItem("Ration"));
 
-    inventoryService.addItem(TENANT_ID, alice.getId(), backpack.getId(), 2);
-    inventoryService.addItem(TENANT_ID, alice.getId(), torch.getId(), 1);
-    inventoryService.addItem(TENANT_ID, alice.getId(), ration.getId(), 1);
+    inventoryService.addItem(
+        TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, backpack.getId(), 2);
+    inventoryService.addItem(
+        TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, torch.getId(), 1);
+    inventoryService.addItem(
+        TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, ration.getId(), 1);
 
-    var inventory = inventoryService.listInventory(TENANT_ID, alice.getId(), Pageable.unpaged());
+    var inventory =
+        inventoryService.listInventory(
+            TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, Pageable.unpaged());
     var backpacks =
         inventory.getContent().stream()
             .filter(entry -> entry.itemId().equals(backpack.getId()))
@@ -200,6 +224,9 @@ class ContainerInstanceLocationIntegrationTest {
         TENANT_ID,
         alice.getId(),
         backpacks.get(0).containerInstanceId(),
+        GAME_INSTANCE_ID,
+        PLAYABLE_STATE_SCOPE,
+        null,
         torch.getId(),
         torchEntry.itemInstanceId(),
         null,
@@ -210,6 +237,9 @@ class ContainerInstanceLocationIntegrationTest {
         TENANT_ID,
         alice.getId(),
         backpacks.get(1).containerInstanceId(),
+        GAME_INSTANCE_ID,
+        PLAYABLE_STATE_SCOPE,
+        null,
         ration.getId(),
         rationEntry.itemInstanceId(),
         null,
@@ -219,10 +249,22 @@ class ContainerInstanceLocationIntegrationTest {
 
     var firstContents =
         containerService.listContainerContents(
-            TENANT_ID, alice.getId(), backpacks.get(0).containerInstanceId(), Pageable.unpaged());
+            TENANT_ID,
+            alice.getId(),
+            backpacks.get(0).containerInstanceId(),
+            GAME_INSTANCE_ID,
+            PLAYABLE_STATE_SCOPE,
+            null,
+            Pageable.unpaged());
     var secondContents =
         containerService.listContainerContents(
-            TENANT_ID, alice.getId(), backpacks.get(1).containerInstanceId(), Pageable.unpaged());
+            TENANT_ID,
+            alice.getId(),
+            backpacks.get(1).containerInstanceId(),
+            GAME_INSTANCE_ID,
+            PLAYABLE_STATE_SCOPE,
+            null,
+            Pageable.unpaged());
 
     assertThat(firstContents.getContent())
         .singleElement()

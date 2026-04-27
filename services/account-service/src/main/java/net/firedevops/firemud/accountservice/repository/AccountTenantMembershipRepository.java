@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.repository;
 
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -14,5 +15,9 @@ public interface AccountTenantMembershipRepository
 
   boolean existsByAccountId(Long accountId);
 
+  List<AccountTenantMembership> findByAccountId(Long accountId);
+
   void deleteByAccountIdAndTenantId(Long accountId, Long tenantId);
+
+  void deleteByAccountId(Long accountId);
 }

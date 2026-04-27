@@ -1,6 +1,6 @@
 # Mud Client Protocol (MCP) Support
 
-This document outlines how FireMUD incorporates the Mud Client Protocol (MCP) to enable richer client experiences over Telnet, such as auxiliary status panels, background notifications, and structured updates. The protocol reference can be found at <https://www.moo.mud.org/mcp/mcp2.html>.
+This document outlines how FireMUD incorporates the Mud Client Protocol (MCP) to enable richer client experiences over Telnet, such as auxiliary status panels, background notifications, and structured updates. The protocol reference can be found at <https://mudstandards.org/mud/mcp2/>.
 
 ## Goals
 

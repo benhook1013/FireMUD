@@ -85,15 +85,23 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
           gameplayWorldCatalog
               .resolveRuntimeTarget(tenantId, presence.gameInstanceId())
               .orElse(null);
+      String worldSlug =
+          presence.worldSlug() != null
+              ? presence.worldSlug()
+              : runtimeTarget == null ? null : runtimeTarget.worldSlug();
+      String realmSlug =
+          presence.realmSlug() != null
+              ? presence.realmSlug()
+              : runtimeTarget == null ? null : runtimeTarget.realmSlug();
       results.put(
           instance.getOwnerAccountId(),
           new AccountPresenceSnapshot(
               instance.getOwnerAccountId(),
               true,
               presence.gameInstanceId(),
-              runtimeTarget == null ? null : runtimeTarget.worldSlug(),
+              worldSlug,
               runtimeTarget == null ? null : runtimeTarget.worldDisplayName(),
-              runtimeTarget == null ? null : runtimeTarget.realmSlug(),
+              realmSlug,
               runtimeTarget == null ? null : runtimeTarget.realmDisplayName(),
               presence.characterId(),
               presence.characterName(),

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.client;
 
 import jakarta.annotation.PostConstruct;
+import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
@@ -8,6 +9,8 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsRequest;
@@ -18,6 +21,7 @@ import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRequest
 import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
@@ -41,6 +45,7 @@ import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -57,15 +62,18 @@ public class GameLogicClient
   private static final long READINESS_DEADLINE_SECONDS = 2L;
 
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
+  private final GameplayWorldCatalog gameplayWorldCatalog;
 
   public GameLogicClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties grpcClientProperties,
       GrpcChannelFactory channelFactory,
       BlockingGrpcStubCustomizer stubCustomizer,
-      GameplaySessionAttestationService gameplaySessionAttestationService) {
+      GameplaySessionAttestationService gameplaySessionAttestationService,
+      GameplayWorldCatalog gameplayWorldCatalog) {
     super(endpoints, grpcClientProperties, channelFactory, stubCustomizer);
     this.gameplaySessionAttestationService = gameplaySessionAttestationService;
+    this.gameplayWorldCatalog = gameplayWorldCatalog;
   }
 
   @PostConstruct
@@ -218,6 +226,8 @@ public class GameLogicClient
         QueryInventoryRequest.newBuilder()
             .setTenantId(Long.toString(context.tenantId()))
             .setCharacterId(Long.toString(context.characterId()))
+            .setGameInstanceId(Long.toString(context.gameInstanceId()))
+            .setPlayableStateScope(resolvePlayableStateScope(context))
             .setSessionAttestation(sessionAttestation(context, context.roomInstanceId()))
             .build();
     try {
@@ -286,6 +296,7 @@ public class GameLogicClient
             .setTenantId(tenantId)
             .setCharacterId(Long.toString(context.characterId()))
             .setGameInstanceId(gameInstanceId)
+            .setPlayableStateScope(resolvePlayableStateScope(context))
             .setRoomInstanceId(roomInstanceId)
             .setItemId(itemId)
             .setQuantity(quantity)
@@ -335,6 +346,7 @@ public class GameLogicClient
             .setRoomInstanceId(roomInstanceId)
             .setItemReference(itemReference)
             .setQuantity(quantity)
+            .setPlayableStateScope(resolvePlayableStateScope(context))
             .setSessionAttestation(sessionAttestation(context, roomInstanceId));
     if (StringUtils.hasText(effectId)) {
       request.setEffectId(effectId);
@@ -384,6 +396,7 @@ public class GameLogicClient
             .setTenantId(tenantId)
             .setCharacterId(Long.toString(context.characterId()))
             .setGameInstanceId(gameInstanceId)
+            .setPlayableStateScope(resolvePlayableStateScope(context))
             .setRoomInstanceId(roomInstanceId)
             .setItemId(itemId)
             .setQuantity(quantity)
@@ -433,6 +446,7 @@ public class GameLogicClient
             .setRoomInstanceId(roomInstanceId)
             .setItemReference(itemReference)
             .setQuantity(quantity)
+            .setPlayableStateScope(resolvePlayableStateScope(context))
             .setSessionAttestation(sessionAttestation(context, roomInstanceId));
     if (StringUtils.hasText(effectId)) {
       request.setEffectId(effectId);
@@ -452,6 +466,8 @@ public class GameLogicClient
         ListEquipmentRequest.newBuilder()
             .setTenantId(Long.toString(context.tenantId()))
             .setCharacterId(Long.toString(context.characterId()))
+            .setGameInstanceId(Long.toString(context.gameInstanceId()))
+            .setPlayableStateScope(resolvePlayableStateScope(context))
             .setSessionAttestation(sessionAttestation(context, context.roomInstanceId()))
             .build();
     try {
@@ -475,6 +491,8 @@ public class GameLogicClient
         WearEquipmentItemRequest.newBuilder()
             .setTenantId(Long.toString(context.tenantId()))
             .setCharacterId(Long.toString(context.characterId()))
+            .setGameInstanceId(Long.toString(context.gameInstanceId()))
+            .setPlayableStateScope(resolvePlayableStateScope(context))
             .setItemId(itemId)
             .setSessionAttestation(sessionAttestation(context, context.roomInstanceId()));
     if (StringUtils.hasText(itemInstanceId)) {
@@ -503,6 +521,8 @@ public class GameLogicClient
         RemoveEquipmentRequest.newBuilder()
             .setTenantId(Long.toString(context.tenantId()))
             .setCharacterId(Long.toString(context.characterId()))
+            .setGameInstanceId(Long.toString(context.gameInstanceId()))
+            .setPlayableStateScope(resolvePlayableStateScope(context))
             .setSlot(slot)
             .setSessionAttestation(sessionAttestation(context, context.roomInstanceId()));
     if (StringUtils.hasText(effectId)) {
@@ -525,6 +545,8 @@ public class GameLogicClient
             .setTenantId(Long.toString(context.tenantId()))
             .setCharacterId(Long.toString(context.characterId()))
             .setContainerInstanceId(containerInstanceId)
+            .setGameInstanceId(Long.toString(context.gameInstanceId()))
+            .setPlayableStateScope(resolvePlayableStateScope(context))
             .setSessionAttestation(sessionAttestation(context, context.roomInstanceId()))
             .build();
     try {
@@ -561,6 +583,8 @@ public class GameLogicClient
             .setTenantId(Long.toString(context.tenantId()))
             .setCharacterId(Long.toString(context.characterId()))
             .setContainerInstanceId(containerInstanceId)
+            .setGameInstanceId(Long.toString(context.gameInstanceId()))
+            .setPlayableStateScope(resolvePlayableStateScope(context))
             .setItemId(itemId)
             .setQuantity(quantity)
             .setSessionAttestation(sessionAttestation(context, context.roomInstanceId()));
@@ -607,6 +631,8 @@ public class GameLogicClient
             .setTenantId(Long.toString(context.tenantId()))
             .setCharacterId(Long.toString(context.characterId()))
             .setContainerInstanceId(containerInstanceId)
+            .setGameInstanceId(Long.toString(context.gameInstanceId()))
+            .setPlayableStateScope(resolvePlayableStateScope(context))
             .setItemId(itemId)
             .setQuantity(quantity)
             .setSessionAttestation(sessionAttestation(context, context.roomInstanceId()));
@@ -629,6 +655,41 @@ public class GameLogicClient
     }
   }
 
+  public ApplyActorConditionResponse applyActorCondition(
+      SessionContext context,
+      String conditionKey,
+      String sourceType,
+      String sourceId,
+      Instant expiresAt,
+      String effectPayloadJson) {
+    ApplyActorConditionRequest.Builder request =
+        ApplyActorConditionRequest.newBuilder()
+            .setTenantId(Long.toString(context.tenantId()))
+            .setCharacterId(Long.toString(context.characterId()))
+            .setGameInstanceId(Long.toString(context.gameInstanceId()))
+            .setPlayableStateScope(resolvePlayableStateScope(context))
+            .setSessionAttestation(sessionAttestation(context, context.roomInstanceId()))
+            .setConditionKey(conditionKey)
+            .setSourceType(sourceType);
+    if (StringUtils.hasText(sourceId)) {
+      request.setSourceId(sourceId);
+    }
+    if (expiresAt != null) {
+      request.setExpiresAt(expiresAt.toString());
+    }
+    if (StringUtils.hasText(effectPayloadJson)) {
+      request.setEffectPayloadJson(effectPayloadJson);
+    }
+    try {
+      return callStub().applyActorCondition(request.build());
+    } catch (RuntimeException ex) {
+      LOG.warn("Game Logic actor condition apply failed", ex);
+      return ApplyActorConditionResponse.newBuilder()
+          .setError(error("ACTOR_STATE_UNAVAILABLE", "Actor state service unavailable"))
+          .build();
+    }
+  }
+
   public PingResponse ping() {
     return callStub().ping(PingRequest.getDefaultInstance());
   }
@@ -645,6 +706,33 @@ public class GameLogicClient
 
   private ErrorDetail error(String code, String message) {
     return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
+  }
+
+  private PlayableStateScope resolvePlayableStateScope(SessionContext context) {
+    if (StringUtils.hasText(context.playableStateScope())) {
+      return switch (context.playableStateScope()) {
+        case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+        case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+        default ->
+            throw new IllegalStateException(
+                "Unsupported playableStateScope=" + context.playableStateScope());
+      };
+    }
+    return gameplayWorldCatalog
+        .resolveRealmByRuntimeTarget(context.tenantId(), context.gameInstanceId())
+        .map(
+            realm ->
+                switch (realm.getStateScope()) {
+                  case SHARED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+                  case ISOLATED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+                })
+        .orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "No gameplay realm found for tenantId="
+                        + context.tenantId()
+                        + " gameInstanceId="
+                        + context.gameInstanceId()));
   }
 
   private GameLogicServiceGrpc.GameLogicServiceBlockingStub callStub() {

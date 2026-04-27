@@ -155,7 +155,7 @@ The platform performs **extensive validation** at design time and at publish tim
 
 - **Runtime outcomes you may see**
   - When a script misbehaves at runtime, the Automation & Scripting Service records stage-aware outcome fields in `script_event_audit` (`finalStage`, `finalOutcome`, `finalReason`) so you can distinguish “rejected before evaluation” from “failed during evaluation” from “never accepted into tick queues”.
-  - Common outcomes surfaced via tooling include `quota_denied`, `sandbox_error`, `disabled_due_to_errors`, `skipped_reloading`, `skipped_rollback_pause`, and `version_unavailable`.
+  - Common outcomes surfaced via tooling include `quota_denied`, `sandbox_error`, `disabled_due_to_errors`, `skipped_reloading`, `rollback_paused`, and `version_unavailable`.
   - Use the canonical outcome taxonomy in `design/architecture/system-architecture-scripting-normative-contract-tables.md#canonical-finaloutcome-values-normative` as the source of truth for names and meanings.
   - Administrative disables and throttling (for example, `runtimeStatus=DISABLED` or `DISABLE_AFTER_DRAIN`) are reflected in script metadata and surfaced through the Game Design and Logging & Admin tools so you can see which scripts are paused, why they were disabled, and when they can be safely re-enabled.
 

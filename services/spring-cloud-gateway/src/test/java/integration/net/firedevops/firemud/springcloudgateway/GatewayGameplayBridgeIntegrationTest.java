@@ -265,7 +265,16 @@ class GatewayGameplayBridgeIntegrationTest {
                   "server.port=" + port,
                   "server.shutdown=immediate",
                   "spring.main.web-application-type=reactive",
-                  "spring.main.allow-bean-definition-overriding=true")
+                  "spring.main.allow-bean-definition-overriding=true",
+                  "spring.flyway.enabled=false",
+                  "firemud.database.enabled=false",
+                  GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT,
+                  GatewayTestProperties.SPRING_GRPC_SERVER_SSL_DISABLED,
+                  GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH,
+                  GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH,
+                  GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH,
+                  "firemud.grpc.plaintext=true",
+                  GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER)
               .run();
       return new UpstreamHolder(context, port);
     }
@@ -297,7 +306,16 @@ class GatewayGameplayBridgeIntegrationTest {
                   "server.port=" + port,
                   "server.shutdown=immediate",
                   "spring.main.web-application-type=reactive",
-                  "spring.main.allow-bean-definition-overriding=true")
+                  "spring.main.allow-bean-definition-overriding=true",
+                  "spring.flyway.enabled=false",
+                  "firemud.database.enabled=false",
+                  GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT,
+                  GatewayTestProperties.SPRING_GRPC_SERVER_SSL_DISABLED,
+                  GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH,
+                  GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH,
+                  GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH,
+                  "firemud.grpc.plaintext=true",
+                  GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER)
               .run();
     }
 
@@ -361,7 +379,7 @@ class GatewayGameplayBridgeIntegrationTest {
     @Bean
     @Primary
     GameplayWebSocketBridgeProperties gameplayWebSocketBridgeProperties() {
-      return new GameplayWebSocketBridgeProperties(TEST_UPSTREAM_URL.get(), 40, 250L, 256);
+      return new GameplayWebSocketBridgeProperties(TEST_UPSTREAM_URL.get(), 160, 250L, 256);
     }
   }
 

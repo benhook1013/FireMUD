@@ -56,16 +56,32 @@ management:
 
 script:
   quota:
-    limit: 50
-    windowSeconds: 60
+    limit: ${SCRIPT_QUOTA_LIMIT:50}
+    window-seconds: ${SCRIPT_QUOTA_WINDOW_SECONDS:60}
+  tenant-budget:
+    high-runs-per-minute: ${SCRIPT_TENANT_BUDGET_HIGH_RUNS_PER_MINUTE:120}
+    normal-runs-per-minute: ${SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE:60}
+    background-runs-per-minute: ${SCRIPT_TENANT_BUDGET_BACKGROUND_RUNS_PER_MINUTE:30}
+  test:
+    max-runs-per-minute: ${SCRIPT_TEST_MAX_RUNS_PER_MINUTE:60}
+    max-runs-per-minute-per-principal: ${SCRIPT_TEST_MAX_RUNS_PER_MINUTE_PER_PRINCIPAL:30}
+    max-concurrency: ${SCRIPT_TEST_MAX_CONCURRENCY:10}
+    max-cluster-concurrency: ${SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY:50}
   output:
     max-commands-per-run: ${SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN:64}
     max-commands-per-entity-per-trigger: ${SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER:8}
     max-serialized-work-item-bytes: ${SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES:32768}
+  runtime:
+    pin-projection-stale-threshold-ms: ${SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS:5000}
+    plugin-policy-reconcile-interval-seconds: ${SCRIPT_PLUGIN_POLICY_RECONCILE_INTERVAL_SECONDS:60}
+    plugin-policy-reconcile-batch-size: ${SCRIPT_PLUGIN_POLICY_RECONCILE_BATCH_SIZE:100}
+    plugin-policy-stale-threshold-seconds: ${SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS:300}
   outbox:
     handed-off-retention-days: ${SCRIPT_OUTBOX_HANDED_OFF_RETENTION_DAYS:7}
     canceled-retention-days: ${SCRIPT_OUTBOX_CANCELED_RETENTION_DAYS:7}
     terminal-cleanup-interval-seconds: ${SCRIPT_OUTBOX_TERMINAL_CLEANUP_INTERVAL_SECONDS:300}
+    queue-rebuild-interval-seconds: ${SCRIPT_OUTBOX_QUEUE_REBUILD_INTERVAL_SECONDS:60}
+    queue-rebuild-batch-size: ${SCRIPT_OUTBOX_QUEUE_REBUILD_BATCH_SIZE:200}
     dead-letter-max-rows: ${SCRIPT_DEAD_LETTER_MAX_ROWS:100000}
     dead-letter-max-age-seconds: ${SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS:604800}
 automation:

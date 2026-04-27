@@ -9,6 +9,7 @@ public record GameplayAdmissionPointerSnapshot(
     long gameInstanceId,
     long pointerVersion,
     boolean visible,
+    boolean publicProductionRealm,
     boolean requiresCharacterSelection,
     String stateScope,
     String characterCreationPolicy) {}

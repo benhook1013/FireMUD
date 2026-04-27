@@ -1,7 +1,20 @@
 package net.firedevops.firemud.automationscripting.service;
 
-public interface FactionService {
-  int adjustReputation(Long tenantId, Long characterId, Long factionId, int delta);
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 
-  int getReputation(Long tenantId, Long characterId, Long factionId);
+public interface FactionService {
+  int adjustReputation(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      Long factionId,
+      int delta);
+
+  int getReputation(
+      Long tenantId,
+      Long characterId,
+      String gameInstanceId,
+      PlayableStateScope playableStateScope,
+      Long factionId);
 }

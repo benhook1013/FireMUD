@@ -18,4 +18,10 @@ public interface VersionTemplateRemapSetRepository
           Long sourceVersionId,
           Long targetVersionId,
           TemplateRemapSetStatus status);
+
+  boolean existsByTenantIdAndSourceVersionIdAndStatus(
+      String tenantId, Long sourceVersionId, TemplateRemapSetStatus status);
+
+  boolean existsByTenantIdAndTargetVersionIdAndStatus(
+      String tenantId, Long targetVersionId, TemplateRemapSetStatus status);
 }

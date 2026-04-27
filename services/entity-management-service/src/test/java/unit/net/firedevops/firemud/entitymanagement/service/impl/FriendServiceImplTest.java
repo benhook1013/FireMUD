@@ -11,6 +11,9 @@ import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.CharacterFriend;
 import net.firedevops.firemud.entitymanagement.mapper.CharacterFriendMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterFriendRepository;
+import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
@@ -28,19 +31,21 @@ class FriendServiceImplTest {
     characterRepository =
         Mockito.mock(net.firedevops.firemud.entitymanagement.repository.CharacterRepository.class);
     CharacterFriendMapper mapper = Mappers.getMapper(CharacterFriendMapper.class);
-    service = new FriendServiceImpl(repository, characterRepository, mapper);
+    service =
+        new FriendServiceImpl(
+            repository,
+            mapper,
+            new ScopedCharacterResolver(characterRepository, new PlayableStateKeyResolver()));
   }
 
   @Test
   void addFriendReturnsDto() {
-    Character character = new Character();
-    character.setId(2L);
-    character.setTenantId(1L);
-    Character friend = new Character();
-    friend.setId(3L);
-    friend.setTenantId(1L);
-    when(characterRepository.findById(2L)).thenReturn(Optional.of(character));
-    when(characterRepository.findById(3L)).thenReturn(Optional.of(friend));
+    Character character = character(2L, 1L, "tenant:1:shared");
+    Character friend = character(3L, 1L, "tenant:1:shared");
+    when(characterRepository.findByIdAndTenantIdAndPlayableStateKey(2L, 1L, "shared-live"))
+        .thenReturn(Optional.of(character));
+    when(characterRepository.findByIdAndTenantIdAndPlayableStateKey(3L, 1L, "shared-live"))
+        .thenReturn(Optional.of(friend));
 
     CharacterFriend saved = new CharacterFriend();
     net.firedevops.firemud.entitymanagement.entity.CharacterFriendKey key =
@@ -53,36 +58,75 @@ class FriendServiceImplTest {
     when(repository.findById(Mockito.any())).thenReturn(Optional.empty());
     when(repository.save(Mockito.any(CharacterFriend.class))).thenReturn(saved);
 
-    CharacterFriendDto result = service.addFriend(1L, 2L, 3L);
+    CharacterFriendDto result =
+        service.addFriend(1L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 3L);
     assertEquals(2L, result.characterId());
     assertEquals(3L, result.friendId());
   }
 
   @Test
   void addFriendRejectsCrossTenantOwnership() {
-    Character character = new Character();
-    character.setId(2L);
-    character.setTenantId(1L);
-    Character friend = new Character();
-    friend.setId(3L);
-    friend.setTenantId(2L);
-    when(characterRepository.findById(2L)).thenReturn(Optional.of(character));
-    when(characterRepository.findById(3L)).thenReturn(Optional.of(friend));
+    Character character = character(2L, 1L, "tenant:1:shared");
+    when(characterRepository.findByIdAndTenantIdAndPlayableStateKey(2L, 1L, "shared-live"))
+        .thenReturn(Optional.of(character));
+    when(characterRepository.findByIdAndTenantIdAndPlayableStateKey(3L, 1L, "shared-live"))
+        .thenReturn(Optional.empty());
 
-    assertThrows(IllegalArgumentException.class, () -> service.addFriend(1L, 2L, 3L));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.addFriend(1L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 3L));
   }
 
   @Test
   void removeFriendRejectsCrossTenantOwnership() {
-    Character character = new Character();
-    character.setId(2L);
-    character.setTenantId(1L);
-    Character friend = new Character();
-    friend.setId(3L);
-    friend.setTenantId(2L);
-    when(characterRepository.findById(2L)).thenReturn(Optional.of(character));
-    when(characterRepository.findById(3L)).thenReturn(Optional.of(friend));
+    Character character = character(2L, 1L, "tenant:1:shared");
+    when(characterRepository.findByIdAndTenantIdAndPlayableStateKey(2L, 1L, "shared-live"))
+        .thenReturn(Optional.of(character));
+    when(characterRepository.findByIdAndTenantIdAndPlayableStateKey(3L, 1L, "shared-live"))
+        .thenReturn(Optional.empty());
 
-    assertThrows(IllegalArgumentException.class, () -> service.removeFriend(1L, 2L, 3L));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.removeFriend(
+                1L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 3L));
+  }
+
+  @Test
+  void addFriendRejectsCrossPlayableStateOwnership() {
+    Character character = character(2L, 1L, "tenant:1:shared");
+    when(characterRepository.findByIdAndTenantIdAndPlayableStateKey(2L, 1L, "shared-live"))
+        .thenReturn(Optional.of(character));
+    when(characterRepository.findByIdAndTenantIdAndPlayableStateKey(3L, 1L, "shared-live"))
+        .thenReturn(Optional.empty());
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.addFriend(1L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 3L));
+  }
+
+  @Test
+  void removeFriendRejectsCrossPlayableStateOwnership() {
+    Character character = character(2L, 1L, "tenant:1:shared");
+    when(characterRepository.findByIdAndTenantIdAndPlayableStateKey(2L, 1L, "shared-live"))
+        .thenReturn(Optional.of(character));
+    when(characterRepository.findByIdAndTenantIdAndPlayableStateKey(3L, 1L, "shared-live"))
+        .thenReturn(Optional.empty());
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.removeFriend(
+                1L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 3L));
+  }
+
+  private Character character(Long id, Long tenantId, String playableStateKey) {
+    Character character = new Character();
+    character.setId(id);
+    character.setTenantId(tenantId);
+    character.setPlayableStateKey(playableStateKey);
+    return character;
   }
 }

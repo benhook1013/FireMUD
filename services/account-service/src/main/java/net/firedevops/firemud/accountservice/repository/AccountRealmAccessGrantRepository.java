@@ -14,4 +14,6 @@ public interface AccountRealmAccessGrantRepository
 
   void deleteByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
       Long accountId, Long tenantId, String worldSlug, String realmSlug);
+
+  void deleteByAccountId(Long accountId);
 }

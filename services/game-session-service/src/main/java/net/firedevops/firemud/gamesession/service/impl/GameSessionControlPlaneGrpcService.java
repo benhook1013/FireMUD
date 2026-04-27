@@ -5,6 +5,7 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
@@ -37,6 +38,8 @@ import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GameplayCommandStatus;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceRequest;
+import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
@@ -54,6 +57,10 @@ import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.PreparedVersionUpgrade;
+import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionRequest;
+import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionResponse;
+import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchRequest;
+import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchResponse;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionRequest;
@@ -227,13 +234,7 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<GetGameplayCommandStatusResponse> responseObserver) {
     try {
       requireAdminRole();
-      if (request.getCommandId().isBlank()) {
-        throw new IllegalArgumentException("command_id is required");
-      }
-      GameplayCommand command =
-          gameplayCommandRepository
-              .findByCommandId(request.getCommandId())
-              .orElseThrow(() -> new IllegalArgumentException("Gameplay command not found"));
+      GameplayCommand command = findGameplayCommandStatus(request);
       GetGameplayCommandStatusResponse response =
           GetGameplayCommandStatusResponse.newBuilder().setCommand(toStatus(command)).build();
       responseObserver.onNext(response);
@@ -261,6 +262,29 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  private GameplayCommand findGameplayCommandStatus(GetGameplayCommandStatusRequest request) {
+    if (!request.getCommandId().isBlank()) {
+      return gameplayCommandRepository
+          .findByCommandId(request.getCommandId())
+          .orElseThrow(() -> new IllegalArgumentException("Gameplay command not found"));
+    }
+    long tenantId = parseTenantId(request.getTenantId());
+    long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+    requireText(request.getRegionId(), "region_id is required");
+    if (request.getRegionEpoch() <= 0) {
+      throw new IllegalArgumentException("region_epoch must be positive");
+    }
+    requireText(request.getAutomationDispatchId(), "automation_dispatch_id is required");
+    return gameplayCommandRepository
+        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+            tenantId,
+            gameInstanceId,
+            request.getRegionId(),
+            request.getRegionEpoch(),
+            request.getAutomationDispatchId())
+        .orElseThrow(() -> new IllegalArgumentException("Gameplay command not found"));
   }
 
   @Override
@@ -324,6 +348,7 @@ public final class GameSessionControlPlaneGrpcService
               tenantId,
               gameInstanceId,
               request.getVisible(),
+              request.getPublicProductionRealm(),
               request.getRequiresCharacterSelection(),
               request.getStateScope(),
               request.getCharacterCreationPolicy(),
@@ -437,6 +462,7 @@ public final class GameSessionControlPlaneGrpcService
               tenantId,
               targetGameInstanceId,
               currentPointer.visible(),
+              currentPointer.publicProductionRealm(),
               currentPointer.requiresCharacterSelection(),
               currentPointer.stateScope(),
               currentPointer.characterCreationPolicy(),
@@ -529,6 +555,10 @@ public final class GameSessionControlPlaneGrpcService
                   instance.getScriptPatchPinnedBy() == null
                       ? ""
                       : instance.getScriptPatchPinnedBy())
+              .setControlPlaneRequestId(
+                  instance.getScriptPatchPinnedControlPlaneRequestId() == null
+                      ? ""
+                      : instance.getScriptPatchPinnedControlPlaneRequestId())
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -550,6 +580,61 @@ public final class GameSessionControlPlaneGrpcService
       logger.error("GetPinnedScriptPatchVersion failed", ex);
       GetPinnedScriptPatchVersionResponse response =
           GetPinnedScriptPatchVersionResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getGameSessionPinConvergence")
+  public void getGameSessionPinConvergence(
+      GetGameSessionPinConvergenceRequest request,
+      StreamObserver<GetGameSessionPinConvergenceResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      GameInstance instance = getInstanceOrThrow(gameInstanceId);
+      if (instance.getTenantId() != tenantId) {
+        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+      }
+      GetGameSessionPinConvergenceResponse response =
+          GetGameSessionPinConvergenceResponse.newBuilder()
+              .setTenantId(Long.toString(instance.getTenantId()))
+              .setGameInstanceId(Long.toString(instance.getId()))
+              .setObservedPinnedScriptPatchVersion(
+                  instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
+              .setLastObservedControlPlaneRequestId(
+                  instance.getScriptPatchPinnedControlPlaneRequestId() == null
+                      ? ""
+                      : instance.getScriptPatchPinnedControlPlaneRequestId())
+              .setObservedAtMs(
+                  instance.getScriptPatchPinnedAt() == null
+                      ? 0L
+                      : instance.getScriptPatchPinnedAt().toEpochMilli())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      GetGameSessionPinConvergenceResponse response =
+          GetGameSessionPinConvergenceResponse.newBuilder()
+              .setError(authorizationError("GetGameSessionPinConvergence", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      GetGameSessionPinConvergenceResponse response =
+          GetGameSessionPinConvergenceResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("GetGameSessionPinConvergence failed", ex);
+      GetGameSessionPinConvergenceResponse response =
+          GetGameSessionPinConvergenceResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build();
       responseObserver.onNext(response);
@@ -610,6 +695,10 @@ public final class GameSessionControlPlaneGrpcService
                           instance.getScriptPatchPinnedReason() == null
                               ? ""
                               : instance.getScriptPatchPinnedReason())
+                      .setScriptPatchPinnedControlPlaneRequestId(
+                          instance.getScriptPatchPinnedControlPlaneRequestId() == null
+                              ? ""
+                              : instance.getScriptPatchPinnedControlPlaneRequestId())
                       .build())
               .build();
       responseObserver.onNext(response);
@@ -658,6 +747,7 @@ public final class GameSessionControlPlaneGrpcService
       instance.setScriptPatchPinnedAt(Instant.now());
       instance.setScriptPatchPinnedBy(request.getActorPrincipal());
       instance.setScriptPatchPinnedReason(request.getReason());
+      instance.setScriptPatchPinnedControlPlaneRequestId(request.getControlPlaneRequestId());
       gameInstanceRepository.save(instance);
 
       SetPinnedScriptPatchVersionResponse response =
@@ -713,6 +803,7 @@ public final class GameSessionControlPlaneGrpcService
       instance.setScriptPatchPinnedAt(Instant.now());
       instance.setScriptPatchPinnedBy(request.getActorPrincipal());
       instance.setScriptPatchPinnedReason(request.getReason());
+      instance.setScriptPatchPinnedControlPlaneRequestId(request.getControlPlaneRequestId());
       gameInstanceRepository.save(instance);
 
       RollbackScriptPatchVersionResponse response =
@@ -923,9 +1014,6 @@ public final class GameSessionControlPlaneGrpcService
     if (request.getRegionEpoch() <= 0) {
       throw new IllegalArgumentException("region_epoch must be positive");
     }
-    if (request.getDueTickId() <= 0) {
-      throw new IllegalArgumentException("due_tick_id must be positive");
-    }
     requireText(request.getAutomationDispatchId(), "automation_dispatch_id is required");
     requireText(request.getAutomationWorkItemId(), "automation_work_item_id is required");
     requireText(request.getScriptId(), "script_id is required");
@@ -960,8 +1048,12 @@ public final class GameSessionControlPlaneGrpcService
 
   private EnqueueAutomationCommandIfAbsentResponse enqueueNewAutomationCommand(
       EnqueueAutomationCommandIfAbsentRequest request, long tenantId, long gameInstanceId) {
+    Optional<EnqueueAutomationCommandIfAbsentResponse> rejected =
+        rejectIfAutomationOwnershipClosed(request, tenantId, gameInstanceId);
+    if (rejected.isPresent()) {
+      return rejected.get();
+    }
     GameplayCommand command = acceptedAutomationCommand(request, tenantId, gameInstanceId);
-    gameplayCommandRepository.save(command);
     try {
       tickService.enqueueCommand(
           tenantId,
@@ -987,6 +1079,42 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private Optional<EnqueueAutomationCommandIfAbsentResponse> rejectIfAutomationOwnershipClosed(
+      EnqueueAutomationCommandIfAbsentRequest request, long tenantId, long gameInstanceId) {
+    Optional<RuntimeRegionStatus> maybeStatus =
+        runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+    if (maybeStatus.isEmpty()) {
+      return Optional.of(
+          rejectedAutomationCommand(
+              "OWNERSHIP_UNAVAILABLE",
+              "runtime_ownership_not_found",
+              "Runtime ownership not found"));
+    }
+    RuntimeRegionStatus status = maybeStatus.get();
+    if (status.getRegionEpoch() != request.getRegionEpoch()) {
+      return Optional.of(
+          rejectedAutomationCommand(
+              "STALE_TIMELINE",
+              "stale_region_epoch",
+              "region_epoch does not match current runtime ownership"));
+    }
+    if (status.isPaused()) {
+      return Optional.of(
+          rejectedAutomationCommand(
+              "RUNTIME_PAUSED", "runtime_paused", "Runtime ownership is paused"));
+    }
+    return Optional.empty();
+  }
+
+  private EnqueueAutomationCommandIfAbsentResponse rejectedAutomationCommand(
+      String admissionOutcome, String errorCode, String message) {
+    return EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+        .setAccepted(false)
+        .setAdmissionOutcome(admissionOutcome)
+        .setError(GrpcAppErrors.error(meterRegistry, errorCode, message))
+        .build();
+  }
+
   private GameplayCommand acceptedAutomationCommand(
       EnqueueAutomationCommandIfAbsentRequest request, long tenantId, long gameInstanceId) {
     Instant now = Instant.now();
@@ -1009,11 +1137,13 @@ public final class GameSessionControlPlaneGrpcService
     command.setAutomationWorkItemId(request.getAutomationWorkItemId());
     command.setScriptId(request.getScriptId());
     command.setScriptPatchVersion(request.getScriptPatchVersion());
+    command.setPluginId(normalizeBlank(request.getPluginId()));
+    command.setPluginVersionId(normalizeBlank(request.getPluginVersionId()));
     command.setTargetEntityId(request.getTargetEntityId());
     command.setRegionId(request.getRegionId());
     command.setRegionEpoch(request.getRegionEpoch());
-    command.setDueTickId(request.getDueTickId());
-    return command;
+    command.setDueTickId(request.getDueTickId() > 0 ? request.getDueTickId() : null);
+    return gameplayCommandRepository.save(command);
   }
 
   private void markAutomationStaged(GameplayCommand command) {
@@ -1068,6 +1198,7 @@ public final class GameSessionControlPlaneGrpcService
             .setGameInstanceId(Long.toString(entry.gameInstanceId()))
             .setPointerVersion(entry.pointerVersion())
             .setVisible(entry.visible())
+            .setPublicProductionRealm(entry.publicProductionRealm())
             .setRequiresCharacterSelection(entry.requiresCharacterSelection())
             .setStateScope(entry.stateScope())
             .setCharacterCreationPolicy(entry.characterCreationPolicy())
@@ -1191,6 +1322,115 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.purgeQueuedTickCommandsForScriptPatch")
+  public void purgeQueuedTickCommandsForScriptPatch(
+      PurgeQueuedTickCommandsForScriptPatchRequest request,
+      StreamObserver<PurgeQueuedTickCommandsForScriptPatchResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      requireText(request.getScriptPatchVersion(), "script_patch_version is required");
+      requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
+      requireText(request.getActorPrincipal(), "actor_principal is required");
+      requireInstanceOwner(tenantId, gameInstanceId);
+      long purged =
+          tickService.purgeQueuedAutomationCommandsForScriptPatch(
+              tenantId,
+              gameInstanceId,
+              normalizeBlank(request.getRegionId()),
+              request.getScriptPatchVersion(),
+              request.getReason());
+      PurgeQueuedTickCommandsForScriptPatchResponse response =
+          PurgeQueuedTickCommandsForScriptPatchResponse.newBuilder().setPurgedCount(purged).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      PurgeQueuedTickCommandsForScriptPatchResponse response =
+          PurgeQueuedTickCommandsForScriptPatchResponse.newBuilder()
+              .setError(authorizationError("PurgeQueuedTickCommandsForScriptPatch", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      PurgeQueuedTickCommandsForScriptPatchResponse response =
+          PurgeQueuedTickCommandsForScriptPatchResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("PurgeQueuedTickCommandsForScriptPatch failed", ex);
+      PurgeQueuedTickCommandsForScriptPatchResponse response =
+          PurgeQueuedTickCommandsForScriptPatchResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.purgeQueuedTickCommandsForPluginVersion")
+  public void purgeQueuedTickCommandsForPluginVersion(
+      PurgeQueuedTickCommandsForPluginVersionRequest request,
+      StreamObserver<PurgeQueuedTickCommandsForPluginVersionResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      requireText(request.getPluginId(), "plugin_id is required");
+      requireText(request.getPluginVersionId(), "plugin_version_id is required");
+      requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
+      requireText(request.getActorPrincipal(), "actor_principal is required");
+      requireInstanceOwner(tenantId, gameInstanceId);
+      long purged =
+          tickService.purgeQueuedAutomationCommandsForPluginVersion(
+              tenantId,
+              gameInstanceId,
+              normalizeBlank(request.getRegionId()),
+              request.getPluginId(),
+              request.getPluginVersionId(),
+              request.getReason());
+      PurgeQueuedTickCommandsForPluginVersionResponse response =
+          PurgeQueuedTickCommandsForPluginVersionResponse.newBuilder()
+              .setPurgedCount(purged)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      PurgeQueuedTickCommandsForPluginVersionResponse response =
+          PurgeQueuedTickCommandsForPluginVersionResponse.newBuilder()
+              .setError(authorizationError("PurgeQueuedTickCommandsForPluginVersion", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      PurgeQueuedTickCommandsForPluginVersionResponse response =
+          PurgeQueuedTickCommandsForPluginVersionResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("PurgeQueuedTickCommandsForPluginVersion failed", ex);
+      PurgeQueuedTickCommandsForPluginVersionResponse response =
+          PurgeQueuedTickCommandsForPluginVersionResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  private void requireInstanceOwner(long tenantId, long gameInstanceId) {
+    GameInstance instance = getInstanceOrThrow(gameInstanceId);
+    if (instance.getTenantId() != tenantId) {
+      throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+    }
+  }
+
   private RuntimeOwnershipStatus toStatus(RuntimeRegionStatus status) {
     return RuntimeOwnershipStatus.newBuilder()
         .setTenantId(Long.toString(status.getTenantId()))
@@ -1204,6 +1444,7 @@ public final class GameSessionControlPlaneGrpcService
             status.getLastCommittedTickBatchId() == null
                 ? ""
                 : status.getLastCommittedTickBatchId())
+        .setLastCommittedTickId(status.getLastCommittedTickId())
         .setUpdatedAtMs(status.getUpdatedAt() == null ? 0L : status.getUpdatedAt().toEpochMilli())
         .build();
   }
@@ -1324,6 +1565,9 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (command.getDueTickId() != null) {
       builder.setDueTickId(command.getDueTickId());
+    }
+    if (command.getEnqueueSeq() != null) {
+      builder.setEnqueueSeq(command.getEnqueueSeq());
     }
     return builder.build();
   }

@@ -50,6 +50,7 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
                 realm.getTenantId(),
                 realm.getGameInstanceId(),
                 realm.isVisible(),
+                realm.isPublicProductionRealm(),
                 realm.isRequiresCharacterSelection(),
                 realm.getStateScope().name(),
                 realm.getCharacterCreationPolicy().name(),

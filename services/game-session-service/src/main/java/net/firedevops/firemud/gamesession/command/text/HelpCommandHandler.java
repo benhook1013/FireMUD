@@ -131,6 +131,10 @@ public class HelpCommandHandler {
               "DROP <item>\n"
                   + "Place a carried item on the room ground and refresh your inventory.\n"
                   + "DROP <count> <item> drops that many carried items.");
+      case "BLOCK" ->
+          success(
+              "BLOCK\n"
+                  + "Brace briefly and apply the blocking action state for the next defensive window.");
       case "MOVEMENT" ->
           success(
               "Movement commands: NORTH, SOUTH, EAST, WEST, UP, DOWN\n"
@@ -190,6 +194,7 @@ public class HelpCommandHandler {
           case "TAKE" -> "TAKE";
           case "GET" -> "GET";
           case "DROP" -> "DROP";
+          case "BLOCK", "GUARD" -> "BLOCK";
           case "MOVEMENT", "MOVE", "WALK", "GO" -> "MOVEMENT";
           case "LOOK", "QUICKLOOK", "QLOOK" -> "LOOK";
           case "SAY" -> "SAY";
@@ -224,6 +229,7 @@ public class HelpCommandHandler {
                 "- HELP REMOVE",
                 "- HELP GET",
                 "- HELP DROP",
+                "- HELP BLOCK",
                 "- HELP MOVEMENT",
                 "- HELP LOOK",
                 "- HELP SAY",

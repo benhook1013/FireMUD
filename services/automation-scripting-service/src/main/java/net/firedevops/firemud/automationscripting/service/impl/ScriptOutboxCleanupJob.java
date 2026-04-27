@@ -13,9 +13,12 @@ public class ScriptOutboxCleanupJob {
   private static final Logger LOGGER = LoggerFactory.getLogger(ScriptOutboxCleanupJob.class);
 
   private final ScriptWorkItemService workItemService;
+  private final ScheduledJobReadinessGuard readinessGuard;
 
-  public ScriptOutboxCleanupJob(ScriptWorkItemService workItemService) {
+  public ScriptOutboxCleanupJob(
+      ScriptWorkItemService workItemService, ScheduledJobReadinessGuard readinessGuard) {
     this.workItemService = workItemService;
+    this.readinessGuard = readinessGuard;
   }
 
   @Timed(value = "scriptOutbox.cleanup")
@@ -23,6 +26,9 @@ public class ScriptOutboxCleanupJob {
       fixedDelayString = "${script.outbox.terminal-cleanup-interval-seconds:300}",
       timeUnit = TimeUnit.SECONDS)
   public void cleanupTerminalWorkItems() {
+    if (!readinessGuard.canRun()) {
+      return;
+    }
     ScriptWorkItemService.TerminalCleanupResult result = workItemService.cleanupTerminalWorkItems();
     if (result.totalDeleted() > 0) {
       LOGGER.info(

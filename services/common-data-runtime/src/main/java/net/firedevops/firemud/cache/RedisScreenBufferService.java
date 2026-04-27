@@ -152,6 +152,11 @@ public class RedisScreenBufferService implements ScreenBufferService {
     public int lineCount;
     public int byteSize;
     public long appendedAtMs;
+    public String outputKind;
+    public String replayPolicy;
+    public String briefRenderPolicy;
+    public String payloadType;
+    public String payloadJson;
 
     static EntryPayload from(BufferedEntry entry) {
       EntryPayload payload = new EntryPayload();
@@ -159,11 +164,25 @@ public class RedisScreenBufferService implements ScreenBufferService {
       payload.lineCount = entry.lineCount();
       payload.byteSize = entry.byteSize();
       payload.appendedAtMs = entry.appendedAtMs();
+      payload.outputKind = entry.outputKind();
+      payload.replayPolicy = entry.replayPolicy();
+      payload.briefRenderPolicy = entry.briefRenderPolicy();
+      payload.payloadType = entry.payloadType();
+      payload.payloadJson = entry.payloadJson();
       return payload;
     }
 
     BufferedEntry toPublicEntry() {
-      return new BufferedEntry(protocolText, lineCount, byteSize, appendedAtMs);
+      return new BufferedEntry(
+          protocolText,
+          lineCount,
+          byteSize,
+          appendedAtMs,
+          outputKind,
+          replayPolicy,
+          briefRenderPolicy,
+          payloadType,
+          payloadJson);
     }
   }
 }

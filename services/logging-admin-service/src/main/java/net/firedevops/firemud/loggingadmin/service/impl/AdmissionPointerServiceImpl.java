@@ -79,6 +79,7 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
             .setTenantId(Long.toString(request.tenantId()))
             .setGameInstanceId(Long.toString(request.gameInstanceId()))
             .setVisible(request.visible())
+            .setPublicProductionRealm(request.publicProductionRealm())
             .setRequiresCharacterSelection(request.requiresCharacterSelection())
             .setStateScope(request.stateScope())
             .setCharacterCreationPolicy(request.characterCreationPolicy())
@@ -188,6 +189,7 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         parseLong(entry.getGameInstanceId(), "game_instance_id"),
         entry.getPointerVersion(),
         entry.getVisible(),
+        entry.getPublicProductionRealm(),
         entry.getRequiresCharacterSelection(),
         entry.getStateScope(),
         entry.getCharacterCreationPolicy(),

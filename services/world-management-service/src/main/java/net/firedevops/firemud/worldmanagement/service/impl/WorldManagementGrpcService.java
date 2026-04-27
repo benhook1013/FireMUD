@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
@@ -27,6 +28,9 @@ import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationRequest
 import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationResponse;
 import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.GeneratedRoomDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.GeneratedRoomExitDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.GeneratedWorldEntitySpawnBindingDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.GenerationRuleDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestResponse;
@@ -52,6 +56,7 @@ import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsReq
 import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
 import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldGenerationSubtreeDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
@@ -744,7 +749,8 @@ public class WorldManagementGrpcService
         request.hasRoom() ? toDto(request.getRoom()) : null,
         request.hasRoomExit() ? toDto(request.getRoomExit()) : null,
         request.hasGenerationRule() ? toDto(request.getGenerationRule()) : null,
-        request.hasWorldEntitySpawnBinding() ? toDto(request.getWorldEntitySpawnBinding()) : null);
+        request.hasWorldEntitySpawnBinding() ? toDto(request.getWorldEntitySpawnBinding()) : null,
+        request.hasWorldGenerationSubtree() ? toDto(request.getWorldGenerationSubtree()) : null);
   }
 
   private String operationName(ApplyWorldDesignMutationRequest request) {
@@ -763,6 +769,7 @@ public class WorldManagementGrpcService
       case WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT -> "ROOM_EXIT";
       case WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE -> "GENERATION_RULE";
       case WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING -> "WORLD_ENTITY_SPAWN_BINDING";
+      case WORLD_DESIGN_AGGREGATE_TYPE_WORLD_GENERATION_SUBTREE -> "WORLD_GENERATION_SUBTREE";
       default -> "";
     };
   }
@@ -810,6 +817,50 @@ public class WorldManagementGrpcService
       WorldEntitySpawnBindingDesignMutation mutation) {
     return new WorldDesignMutationRequestDto.WorldEntitySpawnBindingMutationDto(
         mutation.getRoomId(),
+        mutation.getEntityTemplateType().name().replace("ENTITY_TEMPLATE_REFERENCE_TYPE_", ""),
+        mutation.getEntityTemplateId(),
+        mutation.getSpawnCount(),
+        mutation.getRespawnDelaySeconds());
+  }
+
+  private WorldDesignMutationRequestDto.WorldGenerationSubtreeMutationDto toDto(
+      WorldGenerationSubtreeDesignMutation mutation) {
+    List<WorldDesignMutationRequestDto.GenerationRuleMutationDto> generationRules =
+        mutation.getGenerationRulesList().stream().map(this::toDto).toList();
+    List<WorldDesignMutationRequestDto.GeneratedRoomMutationDto> rooms =
+        mutation.getRoomsList().stream().map(this::toDto).toList();
+    List<WorldDesignMutationRequestDto.GeneratedRoomExitMutationDto> roomExits =
+        mutation.getRoomExitsList().stream().map(this::toDto).toList();
+    List<WorldDesignMutationRequestDto.GeneratedWorldEntitySpawnBindingMutationDto> spawnBindings =
+        mutation.getWorldEntitySpawnBindingsList().stream().map(this::toDto).toList();
+    return new WorldDesignMutationRequestDto.WorldGenerationSubtreeMutationDto(
+        generationRules, rooms, roomExits, spawnBindings);
+  }
+
+  private WorldDesignMutationRequestDto.GeneratedRoomMutationDto toDto(
+      GeneratedRoomDesignMutation mutation) {
+    return new WorldDesignMutationRequestDto.GeneratedRoomMutationDto(
+        mutation.getClientRef(),
+        mutation.getName(),
+        mutation.getDescription(),
+        mutation.getZoneId(),
+        mutation.getNameLocalizedVariantsJson(),
+        mutation.getDescriptionLocalizedVariantsJson());
+  }
+
+  private WorldDesignMutationRequestDto.GeneratedRoomExitMutationDto toDto(
+      GeneratedRoomExitDesignMutation mutation) {
+    return new WorldDesignMutationRequestDto.GeneratedRoomExitMutationDto(
+        mutation.getFromRoomRef(),
+        mutation.getToRoomRef(),
+        mutation.getDirection(),
+        mutation.getCost());
+  }
+
+  private WorldDesignMutationRequestDto.GeneratedWorldEntitySpawnBindingMutationDto toDto(
+      GeneratedWorldEntitySpawnBindingDesignMutation mutation) {
+    return new WorldDesignMutationRequestDto.GeneratedWorldEntitySpawnBindingMutationDto(
+        mutation.getRoomRef(),
         mutation.getEntityTemplateType().name().replace("ENTITY_TEMPLATE_REFERENCE_TYPE_", ""),
         mutation.getEntityTemplateId(),
         mutation.getSpawnCount(),

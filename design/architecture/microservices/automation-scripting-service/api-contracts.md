@@ -56,7 +56,7 @@ Admission must also enforce pin consistency for `<tenantId, gameInstanceId>`:
 Canonical event-registry contract for ingress:
 
 - Each registry entry is keyed by `eventType` plus `eventSchemaVersion`.
-- The registry entry must define the owning producer service, allowed producer principal classes, payload schema/version, replay semantics, quota class, snapshot authority, consistency class, and whether `GLOBAL` bindings are legal.
+- The registry entry must define the owning producer service, allowed producer principal classes, payload schema/version, payload schema reference, replay semantics, quota class, snapshot authority, consistency class, and whether `GLOBAL` bindings are legal.
 - For authoritative gameplay-affecting events, the registry entry must state that `readSnapshotToken` is required and must define the required scope encoded by that token.
 - For non-authoritative or synthetic events, the registry entry must explicitly mark `readSnapshotToken` forbidden so callers cannot imply stronger consistency than the event contract provides.
 - Registry rejection is an event-scope ingress failure and must use `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED` with a bounded `admissionReason` such as `unknown_event_type`, `schema_version_unsupported`, `producer_not_authorized`, `snapshot_token_required`, or `snapshot_token_forbidden`.
@@ -115,7 +115,7 @@ The service must also record the event-scope ingress decision in the ingress aud
 
 During operator rollback pause (`PAUSED_FOR_ROLLBACK`), ingress must return an explicit rollback backpressure outcome and ingress audit record:
 
-- `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK_PAUSE`
+- `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK`
 - `admissionReason=rollback_pause`
 - event-scope identity fields from the request, without inventing a synthetic `scriptId`
 
@@ -133,20 +133,25 @@ For retry behavior:
 
 The service exposes control-plane read and lifecycle surfaces for script patch visibility and plugin runtime lifecycle management:
 
-- `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns tenant-readiness lifecycle state (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `SUPERSEDED`), `baseVersionId`, `abilitySchemaDigest`, timestamps, and any last-error details.
-- `ListScriptPatchStatuses(tenantId, status?, changedAfter?, changedBefore?)` – lists known tenant patch statuses.
+- `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns the current runtime-readiness lifecycle state plus the published script patch `baseVersionId`, the current Automation participant `abilitySchemaDigest` for that base version, timestamps, and any last-error details.
+- `ListScriptPatchStatuses(tenantId, status?, changedAfter?, changedBefore?)` – lists known tenant patch statuses with the same publication metadata fields used by the single-patch read.
 - `ScriptPatchTenantStatusChanged` – emitted whenever `<tenantId, scriptPatchVersion>` transitions between tenant readiness lifecycle states.
 - `ScriptPatchInstanceRolloutChanged` – consumed as the authoritative instance rollout history stream produced by Game Session (`PINNED`, `ROLLED_BACK`, `REPINNED`) and projected into read APIs.
 - `GetScriptPatchInstanceRolloutStatus(tenantId, gameInstanceId, scriptPatchVersion)` and `ListScriptPatchInstanceRollouts(...)` – read APIs for instance-scoped rollout history and correlation.
+- `ListScriptHandoffEvents(tenantId, gameInstanceId?, scriptPatchVersion?, workItemId?, handoffOutcome?, changedAfterMs?, changedBeforeMs?, limit?)` – returns durable per-command handoff history, including `automationDispatchId`, target entity, rendered emitted command text, Game Session command id, and handoff outcome/reason for one emitted gameplay command attempt.
 - `GetScriptEventDefinition(eventType, eventSchemaVersion)` and `ListScriptEventDefinitions(ownerService?)` – expose the canonical event registry used by ingress admission. These reads include allowed producers, required Trigger Identity fields, snapshot authority, consistency class, quota class, replay semantics, allowed binding scopes, dry-run support, and deprecation status.
 - `CancelPendingWorkItemsForPatch(tenantId, scriptPatchVersion, gameInstanceId?, regionId?, controlPlaneRequestId, actorPrincipal, reason)` – cancels pending durable `script_work_items` for a script patch so rollback/drain workflows can prove displaced work will not be evaluated later. The operation transitions only pending work to `CANCELED`, records `cancelReason`, and updates the corresponding handler-scoped `script_event_audit` row with `finalStage=ADMISSION`, `finalOutcome=canceled`, and the bounded cancellation reason.
 - `ListScriptDeadLetters(tenantId, gameInstanceId?, scriptPatchVersion?, limit?)` – returns bounded, newest-first `DEAD_LETTERED` work-item rows with trigger identity, script patch, event identity, reason, and timestamps so operators can inspect failed scripting work without raw table access.
 - `ReplayDeadLetteredWorkItems(tenantId, gameInstanceId?, regionId?, workItemIds?, scriptPatchVersion?, createdAfterMs?, createdBeforeMs?, limit?, controlPlaneRequestId, actorPrincipal, reason)` – requeues eligible `DEAD_LETTERED` work items back to `PENDING_EVALUATION` after validating that the current instance still pins the same `scriptPatchVersion` and, when the original ingress was plugin-backed, that the currently active plugin version still matches the recorded ingress audit.
-- `GetAutomationPinConvergence(tenantId, gameInstanceId)` – reports the latest pinned patch observation (`observedPinnedScriptPatchVersion`, `lastObservedControlPlaneRequestId`, `observedAt`) used by admission and scheduler logic.
-- `GetSignerPolicyConvergence(...)` – reports observed signer-policy version, refresh lag, and enforcement mode.
-- `GetPluginStatus(tenantId, gameInstanceId, pluginId)` – returns plugin runtime state (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`), active and pending version IDs, the last control-plane request id, and the last recorded actor principal for the runtime row.
+- `SetAutomationAdmissionMode(tenantId, gameInstanceId, regionId?, mode, controlPlaneRequestId, actorPrincipal, reason)` – mutates the durable Automation-owned rollback admission barrier for one scope and advances `admissionEpoch` when entering `PAUSED_FOR_ROLLBACK`.
+- `GetAutomationDrainStatus(tenantId, gameInstanceId, regionId?)` – reports current drain truth for one scope from durable `automation_admission_states` plus durable `script_work_items`: `admissionMode`, `admissionEpoch`, `activeExecutionCount`, `oldestActiveExecutionStartedAt`, `pendingCancelableWorkItemCount`, and `observedAt`.
+- `GetAutomationPinConvergence(tenantId, gameInstanceId)` – reports the latest pinned patch observation (`observedPinnedScriptPatchVersion`, `lastObservedControlPlaneRequestId`, `observedAt`) used by admission and scheduler logic. The live implementation now serves this from a durable Automation-owned `script_patch_pin_projections` view keyed by `(tenantId, gameInstanceId)` and also returns freshness flags (`projectionAsOfMs`, `projectionLagMs`, `isProjectionStale`) so temporary Game Session read failures do not collapse operator visibility into raw pass-through coupling.
+- `GetPluginStatus(tenantId, gameInstanceId, pluginId)` – returns plugin runtime state (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`), active and pending version IDs, the last control-plane request id, the last recorded actor principal for the runtime row, and current policy-check freshness (`lastPolicyCheckedAtMs`, `policyCheckStale`).
+- `ListPluginRuntimeEvents(tenantId, gameInstanceId?, pluginId?, pluginState?, activePluginVersionId?, changedAfterMs?, changedBeforeMs?, limit?)` – returns append-only instance-scoped plugin lifecycle history for activation, drain, disable, and policy-reconcile fail-closed transitions so operator tooling does not infer chronology from the latest runtime row.
+- `GetPluginPolicyConvergence(tenantId, gameInstanceId?, maxResults?)` – reports enabled plugin runtime states whose current Game Design publication, signer, or component-policy metadata would now fail closed.
 - `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin` – idempotent plugin lifecycle operations used by Logging & Admin to promote, disable, or drain plugin versions per runtime scope.
-- `SignerPolicyVersionObserved` and `SignerRevocationApplied` – signer-policy propagation and revocation-enforcement events for operator visibility.
+
+Implementation note: signer/component-policy enforcement is now live on the Automation runtime side. The current control-plane surface exposes `GetPluginStatus`, `ListPluginRuntimeEvents`, and `GetPluginPolicyConvergence`, and scheduled reconciliation disables enabled plugins when current publication metadata becomes fail-closed. The separate propagation-event families `SignerPolicyVersionObserved` and `SignerRevocationApplied` remain target-state follow-through rather than a shipped API family.
 
 Consumption rules:
 
@@ -154,7 +159,7 @@ Consumption rules:
 - Use `ScriptPatchInstanceRolloutChanged` for instance rollout progression and rollback history.
 - Read-model ownership for rollout status is Game Session pin mutations projected into query APIs via idempotent, replayable events keyed by `controlPlaneRequestId`.
 
-Game Session and Logging & Admin use script patch visibility APIs and events to decide which `scriptPatchVersion` values may be passed to runtime. Mutating operations that change the pinned patch for a running game instance are defined on the Game Session control-plane surface and must follow the contracts in [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md). The Automation & Scripting Service uses pin-change events plus the shared Game Session runtime-state read for visibility and admission alignment, but it is not the source of truth for the pin. Pinning must also satisfy base-version cohesion (`patch.baseVersionId == runtimeVersionId` for the instance).
+Game Session and Logging & Admin use script patch visibility APIs and events to decide which `scriptPatchVersion` values may be passed to runtime. Mutating operations that change the pinned patch for a running game instance are defined on the Game Session control-plane surface and must follow the contracts in [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md). The Automation & Scripting Service uses the shared Game Session runtime-state read as the authoritative refresh source for its local pin projection and for admission alignment, but it is not the source of truth for the pin. Pinning must also satisfy base-version cohesion (`patch.baseVersionId == runtimeVersionId` for the instance).
 
 ## Pinned Version Visibility Consistency
 

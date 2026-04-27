@@ -7,7 +7,6 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -15,6 +14,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -34,7 +34,7 @@ public final class LoginCommandHandler {
   private final AccountClient accountClient;
   private final CommandService commandService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
-  private final GameplayWorldCatalog gameplayWorldCatalog;
+  private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
 
   @Autowired
   public LoginCommandHandler(
@@ -43,7 +43,7 @@ public final class LoginCommandHandler {
       AccountClient accountClient,
       CommandService commandService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
-      GameplayWorldCatalog gameplayWorldCatalog,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       MeterRegistry meterRegistry) {
     this.gameInstanceRepository =
         Objects.requireNonNull(gameInstanceRepository, "gameInstanceRepository must not be null");
@@ -54,8 +54,10 @@ public final class LoginCommandHandler {
     this.firstPartyConnectContextRegistry =
         Objects.requireNonNull(
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
-    this.gameplayWorldCatalog =
-        Objects.requireNonNull(gameplayWorldCatalog, "gameplayWorldCatalog must not be null");
+    this.gameplayAdmissionPointerAuthorityService =
+        Objects.requireNonNull(
+            gameplayAdmissionPointerAuthorityService,
+            "gameplayAdmissionPointerAuthorityService must not be null");
     Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
   }
 
@@ -216,7 +218,11 @@ public final class LoginCommandHandler {
                 existing.localeTag(),
                 existing.bootstrapGameInstanceId() > 0
                     ? existing.bootstrapGameInstanceId()
-                    : bootstrapGameInstanceId);
+                    : bootstrapGameInstanceId,
+                existing.worldSlug(),
+                existing.realmSlug(),
+                existing.pointerVersion(),
+                existing.playableStateScope());
     sessionContextService.save(context);
     logger.debug(
         "Updated login context for tenant {} session {} account {}",
@@ -243,16 +249,11 @@ public final class LoginCommandHandler {
         || !StringUtils.hasText(verifiedContext.realmSlug())) {
       return false;
     }
-    Optional<GameplayCatalogProperties.World> world =
-        gameplayWorldCatalog.resolveWorld(verifiedContext.worldSlug());
-    if (world.isEmpty()) {
-      return false;
-    }
-    return gameplayWorldCatalog
-        .resolveRealm(world.orElseThrow(), verifiedContext.realmSlug())
-        .filter(realm -> realm.getTenantId() == verifiedContext.tenantId())
-        .filter(realm -> realm.getGameInstanceId() == verifiedContext.gameInstanceId())
-        .filter(realm -> realm.getPointerVersion() == verifiedContext.pointerVersion())
+    return gameplayAdmissionPointerAuthorityService
+        .findPointer(verifiedContext.worldSlug(), verifiedContext.realmSlug())
+        .filter(pointer -> pointer.tenantId() == verifiedContext.tenantId())
+        .filter(pointer -> pointer.gameInstanceId() == verifiedContext.gameInstanceId())
+        .filter(pointer -> pointer.pointerVersion() == verifiedContext.pointerVersion())
         .isPresent();
   }
 

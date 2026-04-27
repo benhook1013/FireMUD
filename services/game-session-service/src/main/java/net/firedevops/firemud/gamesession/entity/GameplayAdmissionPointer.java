@@ -42,6 +42,9 @@ public class GameplayAdmissionPointer {
   @Column(name = "visible", nullable = false)
   private boolean visible;
 
+  @Column(name = "public_production_realm", nullable = false)
+  private boolean publicProductionRealm;
+
   @Column(name = "requires_character_selection", nullable = false)
   private boolean requiresCharacterSelection;
 
