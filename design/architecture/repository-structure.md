@@ -53,7 +53,6 @@ root
 ├── codex-maintenance.sh
 ├── codex-setup.sh
 ├── CONTRIBUTING.md
-├── copilot-instructions.md
 ├── DEVELOPER_SETUP.md
 ├── FAQ.md
 ├── gradle.properties
@@ -93,7 +92,6 @@ root
 - `CODE_OF_CONDUCT.md` – Community conduct expectations.
 - `codex-maintenance.sh` and `codex-setup.sh` – Setup and maintenance helpers for Codex CLI workflows and AI tooling.
 - `CONTRIBUTING.md` – Developer onboarding and contribution workflow.
-- `copilot-instructions.md` – Usage notes and conventions for GitHub Copilot in this project.
 - `DEVELOPER_SETUP.md` – Step-by-step project setup instructions.
 - `FAQ.md` – Frequently asked questions for contributors.
 - `gradle.properties` – Shared Gradle settings.
