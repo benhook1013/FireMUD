@@ -30,3 +30,23 @@ Entry format:
   - Context: checking monetization/account-lifecycle review findings against `02.1.6` showed the slice marks account export/delete/recovery as account-owned, while current Account Service REST, gRPC, and service methods still pass `tenantId` through export/delete and delete tenant-scoped billing records.
   - Observation: a checklist can drift from implementation when a broad slice lands adjacent auth/model work but leaves one claimed seam only partially changed.
   - Expected pattern: before marking a slice task complete, verify the public API schema, proto contracts, service implementation, and focused tests for that exact seam, not only the related architecture direction.
+
+- `2026-04-27`: WSL helpers should avoid broad recursive scans on `/mnt/c` when exact-name `find` is enough
+  - Context: building a Codex account-switching helper that needed to discover `auth.json`, session indexes, and Codex Switch metadata across WSL and Windows-mounted user folders.
+  - Observation: Python `Path.rglob()` over broad Windows-mounted trees like `AppData` is noticeably slower and less predictable than shelling out to `find` with a tight filename set and bounded roots.
+  - Expected pattern: for WSL automation that inspects Windows-mounted developer state, prefer exact-name `find` scans over broad recursive language-runtime walkers, especially under `AppData`-style trees.
+
+- `2026-04-27`: Broad local proof catches repo-wide migration drift that service-local checks will miss
+  - Context: after landing `game-design-service` and `game-session-service` work, `./gradlew :game-design-service:check -PfullCheck :game-session-service:check -PfullCheck` passed but the broader `./gradlew check` failed immediately on duplicate Flyway versioning in `entity-management-service`.
+  - Observation: slice-local validation can look clean while unrelated migration numbering drift elsewhere on the branch still guarantees CI failure.
+  - Expected pattern: when multiple branch lanes have been moving, run the repo-wide `./gradlew check` before or alongside push, and treat Flyway version sanity as shared branch hygiene rather than service-local ownership.
+
+- `2026-04-27`: T3 checkpoint cleanup should inspect local Codex/T3 metadata before treating checkpoint thread IDs as active or archived
+  - Context: extending the repo maintenance script for `refs/t3/checkpoints/<thread-id>/turn/<turn>` cleanup and comparing those checkpoint IDs with local Codex state under `~/.codex`.
+  - Observation: checkpoint thread IDs are base64-encoded UUIDs, but they do not necessarily line up with Codex `threads.id` values in `state_5.sqlite`, so deleting "inactive" checkpoints from Git refs alone risks false assumptions about session state.
+  - Expected pattern: classification-based checkpoint cleanup should start with a reporting mode that inspects the actual local metadata layout, reports active/archived/orphaned candidates, and only enables destructive cleanup after the mapping is confirmed.
+
+- `2026-04-27`: Docker Desktop compose teardown is safer from Codex without a PTY, and smoke proofs should not parallelize shared-session clients
+  - Context: running `dev-tools/verify-fresh-bootstrap.sh` from WSL against the source-built Docker stack while validating `account-service`, `spring-cloud-gateway`, and `tcp-proxy-service` follow-up fixes.
+  - Observation: the canonical smoke script hung in `docker compose ... down` when launched through a PTY-backed Codex exec session, while the same compose commands completed immediately in plain-output mode. Separately, running the WebSocket and Telnet smoke scripts in parallel against the same demo account/session produced a false failure on the Telnet path even though the underlying gameplay commands succeeded.
+  - Expected pattern: AI-driven Docker smoke proofs should invoke compose in noninteractive/plain mode, and the gameplay smoke clients should be treated as sequential shared-state checks unless they use isolated accounts or session ids.

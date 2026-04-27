@@ -455,8 +455,6 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(
             meterRegistry
                 .get("automation_script_timer_runtime_fence_dropped_total")
-                .tag("tenantId", "1")
-                .tag("scriptId", "npc-guard")
                 .tag("eventType", "onTimerExpire")
                 .tag("reason", "runtime_scope_changed")
                 .counter()
@@ -502,8 +500,6 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(
             meterRegistry
                 .get("automation_script_timer_catchup_truncated_total")
-                .tag("tenantId", "1")
-                .tag("scriptId", "npc-scout")
                 .tag("eventType", "onInterval")
                 .tag("reason", "catch_up_truncated")
                 .counter()

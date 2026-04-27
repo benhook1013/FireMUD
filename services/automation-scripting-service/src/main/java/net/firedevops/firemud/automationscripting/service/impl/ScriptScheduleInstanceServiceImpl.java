@@ -551,8 +551,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       ScriptScheduleInstance instance = candidate.instance();
       io.micrometer.core.instrument.Counter.Builder builder =
           io.micrometer.core.instrument.Counter.builder(metricName)
-              .tag("tenantId", instance.getTenantId())
-              .tag("scriptId", instance.getScriptId())
               .tag("eventType", instance.getEventType());
       if (reason != null) {
         builder.tag("reason", reason);
