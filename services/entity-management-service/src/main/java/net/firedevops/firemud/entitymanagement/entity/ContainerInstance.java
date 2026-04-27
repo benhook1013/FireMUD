@@ -76,6 +76,7 @@ public class ContainerInstance {
     copy.setStackable(item.isStackable());
     copy.setStackCompatibilityMode(item.getStackCompatibilityMode());
     copy.setStackVariantKey(item.getStackVariantKey());
+    copy.setEffectPayloadJson(item.getEffectPayloadJson());
     return copy;
   }
 
@@ -93,6 +94,7 @@ public class ContainerInstance {
       copy.setStackable(item.isStackable());
       copy.setStackCompatibilityMode(item.getStackCompatibilityMode());
       copy.setStackVariantKey(item.getStackVariantKey());
+      copy.setEffectPayloadJson(item.getEffectPayloadJson());
       this.item = copy;
     }
   }

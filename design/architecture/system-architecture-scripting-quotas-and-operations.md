@@ -69,12 +69,14 @@ Dry-run and test execution paths exposed by the Automation & Scripting Service s
 
 - They execute handlers through the same engine with the same CPU/iteration and memory budgets.
 - They record `sandbox_error` and `infrastructure_error` outcomes in `script_event_audit` so failure modes are observable.
-- By default they do **not** consume per-script quotas or per-tenant budgets enforced by `ScriptQuotaService`; instead, they are restricted to privileged principals (for example, designers and operators) and should be further protected by separate rate limits or ACLs at the API gateway or Logging & Admin layer.
+- By default they do **not** consume per-script quotas or per-tenant budgets enforced by live runtime budget services; instead, they are restricted to privileged principals (for example, designers and operators) and should be further protected by separate rate limits or ACLs at the API gateway or Logging & Admin layer.
+- Current Automation execution honors that split by skipping live `ScriptQuotaService` and tenant-budget acquisition for dry-run `script_work_items`; dry-run capacity is controlled by the dedicated test/dry-run limiters rather than by consuming live gameplay automation quota.
   - Dry-run/test executions must not increment live-traffic error counters. Sandbox failures observed during tests are emitted via dry-run/test-only metric families (for example `automation_script_test_sandbox_failures_total`) so production SLO dashboards do not conflate privileged tooling with live automation reliability.
 - Dry-run/test traffic must not be allowed to consume the same last-resort execution capacity reserved for live automation:
   - Implementations should use separate executor pools or explicit worker reservations for `isDryRun=true`.
   - When the cluster is under pressure, live traffic must be admitted ahead of dry-run/test traffic even if dry-run quotas have not been exceeded.
   - Queue limits and concurrency ceilings for dry-run/test work must be enforced independently from live execution queues.
+  - Current Automation execution reserves both cluster-wide and tenant-local dry-run capacity through `ScriptDryRunCapacityService` before evaluating dry-run work items. Capacity-denied dry-runs are terminally canceled with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=dry_run_capacity_exhausted`.
 
 ---
 
@@ -106,7 +108,7 @@ Plugins executed via the modding framework share the same underlying quota and s
   - Per-tenant budgets, including priority tiers (for example, `high`, `normal`, `background`).
   - Cluster-wide ceilings and automation tick budgets.
 - From an observability perspective, plugin executions are recorded in `script_event_audit` alongside other script runs, with additional tags such as `pluginId` and `pluginVersionId` so operators can distinguish plugin activity from core automation.
-- Plugin enforcement also respects a centrally managed component policy. When a plugin references a component that is disallowed by the current environment policy, its triggers are rejected at admission with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` that identifies the blocked component/policy, and corresponding metrics (for example, `automation_plugin_policy_violations_total`) so operators can distinguish policy violations from quota or sandbox failures.
+- Plugin enforcement also respects a centrally managed component policy. When a plugin references a component that is disallowed by the current environment policy, its triggers are rejected at admission with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` that identifies the blocked component/policy, and corresponding metrics (for example, `automation_plugin_policy_violations_total`) so operators can distinguish policy violations from quota or sandbox failures. Current Automation runtime also records `lastPolicyCheckedAt` for enabled plugin states and rejects plugin triggers with `signer_policy_unavailable` when signer/component-policy evidence is older than `SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS`.
 
 This alignment ensures that plugin code cannot bypass or weaken the resource-isolation guarantees of the scripting system; operational tooling and metrics apply uniformly to both plugins and regular scripts. For the structural lifecycle of plugins (versioning, enable/disable states, and rollback), see `design/architecture/microservices/game-design-service/modding-framework.md`; Logging & Admin APIs provide the control plane for changing `pluginState` and `activeVersionId` while the Automation & Scripting Service enforces quotas, budgets, sandbox rules, and component policy at runtime.
 
@@ -149,10 +151,12 @@ Quota and budget policy must be applied at fixed charge points so operators can 
   - Charged once per resolved handler-scoped Trigger Identity at handler admission time.
   - Handlers admitted into a bounded `queue_until_free` backlog consume quota immediately and are not re-charged when they later start.
   - Duplicate deliveries of the same handler-scoped Trigger Identity must not consume additional quota.
+  - Current Automation ingress enforces this by acquiring `ScriptQuotaService` before durable `script_work_items` are materialized. Quota-denied handlers write handler audit rows with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=script_quota_denied`, but do not create outbox work items.
 - **Per-tenant tier budgets**
   - Charged when a handler-scoped run is reserved onto live sandbox execution capacity.
   - Event-scope ingress acceptance alone does not charge tenant runtime budget.
   - Mixed fan-out therefore consumes tenant runtime budget only for handlers that actually leave admission and reserve execution capacity.
+  - Current Automation execution persists the binding `priorityTag` onto durable work items and enforces the matching tier with `ScriptTenantBudgetService` before live durable work items evaluate script definitions. Budget-denied work items are terminally canceled with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded`, and `finalReason=tenant_budget_exceeded`.
 - **Cluster-wide execution ceilings**
   - Applied at the same execution-reservation point as tenant runtime budgets.
   - Admission rejections due purely to cluster exhaustion must remain `ADMISSION` outcomes and must not burn sandbox CPU/memory budget.
@@ -181,7 +185,7 @@ Budgets operate at three main levels:
   - Concurrency and queue policies cap how many runs may be active or buffered at a time.
 
 - **Per-tenant**:
-  - Budgets per tenant and priority tier are tracked via metrics such as `automation_script_tenant_budget_seconds{tenantId, tier}`.
+  - Budgets per tenant and priority tier are tracked through the live reservation counters `automation:tenant-budget:<tenantId>:tier:<tier>` and metrics such as `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}`.
   - When a tenant exhausts its budget for a tier, lower-priority work for that tenant is skipped (`automation_script_skips_total{reason="tenant_budget_exceeded"}`) while other tenants continue to make progress.
 
 - **Cluster-wide**:
@@ -196,10 +200,10 @@ The table below summarizes the major quota and budget types that apply to script
 
 | Type | Scope | Governing settings / sources | Primary metrics |
 | --- | --- | --- | --- |
-| **Per-script quota** | Per script (`tenantId`, `scriptId`) | `SCRIPT_QUOTA_LIMIT`, `SCRIPT_QUOTA_WINDOWSECONDS`, evaluated by `ScriptQuotaService` before a run starts. | Quota-allow/deny and drop metrics for individual scripts; see the Automation & Scripting Service README for exact meter names and labels. |
+| **Per-script quota** | Per script (`tenantId`, `scriptId`) | `SCRIPT_QUOTA_LIMIT`, `SCRIPT_QUOTA_WINDOW_SECONDS`, evaluated by `ScriptQuotaService` before a run starts. | Quota-allow/deny and drop metrics for individual scripts; see the Automation & Scripting Service README for exact meter names and labels. |
 | **Per-script cadence & concurrency** | Per script | `intervalTicks`, `concurrencyPolicy` (`drop_new` / `queue_until_free`), `maxConcurrent`. Stored in script metadata and used by the scheduler when deciding which triggers to admit. | Queue delay and drop metrics plus stage-aware audit fields (`finalStage`, `finalOutcome`, `finalReason`) such as `finalStage=ADMISSION` with `finalOutcome=quota_denied`. |
 | **Per-script priority** | Per script | `priorityTag` (`high`, `normal`, `background`) and per-tier enqueue budgets (for example, `high=8/min`, `normal=4/min`, `background=2/min`). | Tiered trigger/skip metrics that show how often high/normal/background work is admitted or throttled. |
-| **Per-tenant tier budgets** | Per tenant and priority tier | Tenant-scoped automation budgets per tier, tracked as aggregates such as `automation_script_tenant_budget_seconds{tenantId, tier}`. | Budget consumption and skip metrics per tenant/tier, plus matching audit entries with `finalStage=ADMISSION` and `finalOutcome=tenant_budget_exceeded`. |
+| **Per-tenant tier budgets** | Per tenant and priority tier | `SCRIPT_TENANT_BUDGET_HIGH_RUNS_PER_MINUTE`, `SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE`, and `SCRIPT_TENANT_BUDGET_BACKGROUND_RUNS_PER_MINUTE`, evaluated by `ScriptTenantBudgetService` when live work reserves execution capacity. | Budget allow/deny metrics per tenant/tier, plus matching audit entries with `finalStage=ADMISSION` and `finalOutcome=tenant_budget_exceeded`. |
 | **Cluster-wide safety limits** | Entire Automation & Scripting cluster | Global ceilings on automation work, including `AUTOMATION_TICK_MAX_EVENTS` and cluster-level CPU/time budgets. | Cluster-level throughput and drop metrics that indicate when global ceilings are hit. |
 
 Per-trigger output is also part of the quota model even when the run itself was admitted successfully:
@@ -280,21 +284,22 @@ are updated throughout the scripting pipeline so operators can monitor how often
 
 Additional queue-health metrics help detect automation backlogs that are not draining into ticks as expected:
 
-- `automation_queue_orphaned_entries_total` – counts work items that have remained in `automation:queue:{tenantInstanceTag}:<entityId>` beyond a bounded age window (for example, N ticks or seconds) without corresponding staging in `automation:tick:{tenantInstanceScriptTag}:...` or entries in the tick effect ledger.
+- `automation_queue_orphaned_entries_total` – counts work items that have remained in `automation:queue:{tenantInstanceTag}:<entityId>` beyond a bounded age window (for example, N ticks or seconds) without corresponding durable-executor progress or entries in the tick effect ledger.
 - `automation_queue_oldest_entry_age_seconds` – records the age of the oldest sampled queue item per tenant/script so operators can see when automation queues are falling behind.
 
-A small, bounded inspector loop in `ScriptTickService` periodically samples a subset of queues to update these metrics; it does not attempt to repair or delete items itself, but surfaces misalignment between automation and tick processing for investigation.
+A small, bounded Automation-owned inspector loop periodically samples a subset of queues to update these metrics; it does not attempt to repair or delete items itself, but surfaces misalignment between queue projection, durable executor progress, and tick processing for investigation.
 
 For scripting and automation, these metrics follow shared naming and labeling conventions so dashboards and alerts remain consistent across services:
 
 - `automation_script_triggers_total{tenantId, scriptId, pluginId, pluginVersionId, eventType, outcome, priorityTag}` – counts all observed triggers (admitted and non-admitted), tagged with final stage-aware `outcome` (must match `script_event_audit.finalOutcome`).
 - `automation_script_skips_total{tenantId, scriptId, pluginId, reason, priorityTag}` – counts triggers that were intentionally skipped before sandbox execution (for example, `reason="reloading"`, `reason="disabled"`, `reason="priority_throttled"`).
 - `automation_script_triggers_dropped_total{tenantId, scriptId, pluginId, reason, priorityTag}` – counts triggers that could not be processed to tick acceptance (for example, `reason="quota"`, `reason="cluster_limit_reached"`, `reason="version_unavailable"`).
+- `automation_script_work_item_outcomes_total{stage, outcome, dryRun, priorityTag, sourceService}` – counts terminal durable work-item execution outcomes using the same `finalStage` / `finalOutcome` vocabulary written to `script_event_audit`, so quota, output-budget, dry-run, source-specific, and handoff outcomes can be compared without parsing audit rows.
 - `script_quota_allowed_total{tenantId, scriptId}` / `script_quota_denied_total{tenantId, scriptId, reason}` – per-script quota decisions before sandbox work begins.
 - `automation_script_sandbox_failures_total{tenantId, scriptId, pluginId, reason}` – sandbox-level failures such as `reason="cpu_budget_exceeded"` or `reason="memory_budget_exceeded"`.
 - `automation_script_errors_total{tenantId, scriptId, pluginId, reason}` – higher-level error classification, including downstream failures.
 - `automation_script_output_budget_exceeded_total{tenantId, scriptId, pluginId, reason}` – counts runs rejected because emitted work exceeded bounded output ceilings such as `command_count_exceeded` or `work_item_size_exceeded`.
-- `automation_script_tenant_budget_seconds{tenantId, tier}` – per-tenant, per-priority-tier budget consumption.
+- `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}` – per-tenant, per-priority-tier live execution reservation decisions.
 - `automation_script_runtime_seconds{tenantId, scriptId, pluginId, eventType}` – distribution of sandbox runtime per script/plugin and event type.
 - `automation_plugin_policy_violations_total{tenantId, pluginId, pluginVersionId, componentId, reason}` – counts plugin triggers rejected due to component policy; each violation should correspond to a `script_event_audit` entry with `finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` indicating the blocked component/policy decision.
 - `automation_script_timer_catchup_truncated_total{tenantId, scriptId, eventType, reason}` – counts timer catch-up firings intentionally truncated by resume-window limits.
@@ -339,7 +344,7 @@ Dry-run and test executions share the same sandbox engine and guards as live tra
 - By default, dry-run/test executions must not contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`); if dry-run failures are used for gating, they must be isolated (separate breaker or explicit opt-in).
 - To prevent abuse, the Automation & Scripting Service enforces additional dry-run ceilings, such as:
   - Per-tenant and per-principal maximum runs per window (for example, `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`).
-  - Maximum concurrent dry-runs per tenant or cluster-wide (for example, `SCRIPT_TEST_MAX_CONCURRENCY`).
+  - Maximum concurrent dry-runs per tenant and cluster-wide (for example, `SCRIPT_TEST_MAX_CONCURRENCY` and `SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY`).
 - Dry-run/test executions must also have isolated execution capacity:
   - Separate queues or worker reservations are required so privileged test traffic cannot starve live automation workers.
   - When shared infrastructure is saturated, dry-run/test work must be shed before live gameplay automation for the same scope/tier.
@@ -348,7 +353,8 @@ Dry-run and test executions share the same sandbox engine and guards as live tra
   - Reject missing principal identity for endpoints configured with per-principal enforcement.
 - Dry-run activity is surfaced via dedicated metrics (for example, `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, `automation_script_test_sandbox_failures_total`) so operators can distinguish test traffic from live automation.
 - Logging & Admin and Game Design tools are responsible for exposing dry-run entry points only to privileged users and for applying complementary API gateway limits; test endpoints must not be wired into game traffic or public-facing flows.
-- When a dry-run request exceeds `SCRIPT_TEST_MAX_RUNS_PER_MINUTE` or `SCRIPT_TEST_MAX_CONCURRENCY` ceilings, the Automation & Scripting Service rejects it with `finalOutcome=quota_denied` and `finalReason=dry_run_budget_exceeded` in `script_event_audit`, and increments `automation_script_test_runs_total` with a label (for example, `result="denied_quota"`) so operators can see overuse of test facilities.
+- When a dry-run request exceeds `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`, Automation rejects it at event scope with `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` / `dry_run_budget_exceeded` before handler resolution. When a materialized dry-run exceeds `SCRIPT_TEST_MAX_CONCURRENCY` or `SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY`, Automation cancels it before evaluation with `finalOutcome=quota_denied` and `finalReason=dry_run_capacity_exhausted` in `script_event_audit`. Both paths increment dry-run/test metrics so operators can see overuse of test facilities.
+- Current Automation ingress enforces the per-minute tenant and principal dry-run ceilings before handler resolution. Requests over those limits return event-scope admission outcome `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` with `admissionReason=dry_run_budget_exceeded` and do not create handler work.
 
 ### Outcome-to-Metric Mapping
 
@@ -391,7 +397,7 @@ The steady-state quota, budget, and observability contracts stay in this parent 
 The **authoritative, up-to-date list of environment variables and defaults** lives in the Automation & Scripting Service README (`design/architecture/microservices/automation-scripting-service/README.md#environment-variables`). This section only calls out conceptual categories so it remains stable as new settings are added:
 
 - **Quota knobs** – control per-script and per-tenant quota windows and budgets used by `ScriptQuotaService` and the multi-level budgeting model (for example, limits on how many triggers a script or tenant may execute per window).
-- **Tick batch knobs** – bound how much automation work `ScriptTickService` performs per automation tick, including batch sizes, per-tick budgets, and cluster-wide ceilings on automation events.
+- **Execution batch knobs** – bound how much automation work the durable executor performs per scheduling window, including batch sizes, per-window budgets, and cluster-wide ceilings on automation events.
 - **Timer and scheduling knobs** – influence `onInterval` / `onTimerExpire` behavior, including cadence, maximum timers per tenant or region, and any backoff or delay settings applied when regions are degraded.
 - **Audit and retention knobs** – govern how long `script_event_audit` and related records remain available for troubleshooting, and how large those tables are allowed to grow before automated cleanup; retention is typically controlled via `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS`, with exact defaults and semantics documented in the Automation & Scripting Service README.
 

@@ -7,9 +7,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.firedevops.firemud.automationscripting.config.ScriptQuotaProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -31,9 +31,10 @@ class ScriptQuotaServiceImplTest {
               }
               return null;
             });
-    service = new ScriptQuotaServiceImpl(redisTemplate, new SimpleMeterRegistry());
-    setField(service, "limit", 2L);
-    setField(service, "windowSeconds", 60L);
+    ScriptQuotaProperties properties = new ScriptQuotaProperties();
+    properties.setLimit(2L);
+    properties.setWindowSeconds(60L);
+    service = new ScriptQuotaServiceImpl(redisTemplate, new SimpleMeterRegistry(), properties);
     service.init();
   }
 
@@ -47,15 +48,5 @@ class ScriptQuotaServiceImplTest {
         .expire(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.any(Duration.class));
-  }
-
-  private static void setField(Object target, String fieldName, Object value) {
-    try {
-      Field field = target.getClass().getDeclaredField(fieldName);
-      field.setAccessible(true);
-      field.set(target, value);
-    } catch (ReflectiveOperationException e) {
-      throw new IllegalStateException("Failed to set field " + fieldName, e);
-    }
   }
 }

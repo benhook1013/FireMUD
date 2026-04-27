@@ -10,13 +10,16 @@ import net.firedevops.firemud.gamedesign.dto.VersionAssetPurgeWorkflowStatusDto;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetPurgeWorkflow;
+import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionAssetPurgeWorkflowStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPurgeWorkflowRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
@@ -31,6 +34,8 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
   private final VersionAssetPurgeWorkflowRepository purgeWorkflowRepository;
   private final VersionRepository versionRepository;
   private final PublishedReleaseBundleRepository publishedReleaseBundleRepository;
+  private final LaunchDescriptorRepository launchDescriptorRepository;
+  private final VersionTemplateRemapSetRepository remapSetRepository;
   private final AssetExportService assetExportService;
   private final PublishedReleaseBundleService publishedReleaseBundleService;
   private final ObjectMapper objectMapper;
@@ -40,6 +45,8 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
       VersionAssetPurgeWorkflowRepository purgeWorkflowRepository,
       VersionRepository versionRepository,
       PublishedReleaseBundleRepository publishedReleaseBundleRepository,
+      LaunchDescriptorRepository launchDescriptorRepository,
+      VersionTemplateRemapSetRepository remapSetRepository,
       AssetExportService assetExportService,
       PublishedReleaseBundleService publishedReleaseBundleService,
       ObjectMapper objectMapper) {
@@ -47,6 +54,8 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
     this.purgeWorkflowRepository = purgeWorkflowRepository;
     this.versionRepository = versionRepository;
     this.publishedReleaseBundleRepository = publishedReleaseBundleRepository;
+    this.launchDescriptorRepository = launchDescriptorRepository;
+    this.remapSetRepository = remapSetRepository;
     this.assetExportService = assetExportService;
     this.publishedReleaseBundleService = publishedReleaseBundleService;
     this.objectMapper = objectMapper;
@@ -184,6 +193,29 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
           artifact.getStateEpoch(),
           "VERSION_ASSET_EXPORT_PROOF_MISSING",
           "version asset artifact proof is missing the exported version number");
+    }
+    if (launchDescriptorRepository.existsByTenantIdAndVersionId(tenantId, versionId)) {
+      return new VersionAssetDeletionEligibilityDto(
+          artifact.getTenantId(),
+          artifact.getVersionId(),
+          false,
+          artifact.getArtifactState().name(),
+          artifact.getStateEpoch(),
+          "VERSION_ASSET_LAUNCH_REFERENCE_EXISTS",
+          "version assets cannot be purged while launch descriptors still reference the version");
+    }
+    if (remapSetRepository.existsByTenantIdAndSourceVersionIdAndStatus(
+            tenantId, versionId, TemplateRemapSetStatus.APPROVED)
+        || remapSetRepository.existsByTenantIdAndTargetVersionIdAndStatus(
+            tenantId, versionId, TemplateRemapSetStatus.APPROVED)) {
+      return new VersionAssetDeletionEligibilityDto(
+          artifact.getTenantId(),
+          artifact.getVersionId(),
+          false,
+          artifact.getArtifactState().name(),
+          artifact.getStateEpoch(),
+          "VERSION_ASSET_TEMPLATE_REMAP_REFERENCE_EXISTS",
+          "version assets cannot be purged while approved template remap sets still reference the version");
     }
     if (version.isPresent() && version.get().getVersionState() != VersionLifecycleState.RETIRED) {
       return new VersionAssetDeletionEligibilityDto(

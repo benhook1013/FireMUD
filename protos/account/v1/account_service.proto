@@ -18,6 +18,7 @@ service AccountService {
   rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
   rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
   rpc ExportAccount(ExportAccountRequest) returns (ExportAccountResponse);
+  rpc ExportTenantData(ExportTenantDataRequest) returns (ExportTenantDataResponse);
   rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse);
   rpc RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse);
   rpc CompletePasswordReset(CompletePasswordResetRequest) returns (CompletePasswordResetResponse);
@@ -158,19 +159,29 @@ message UpdateProfileResponse {
 }
 
 message ExportAccountRequest {
-  string tenant_id = 1;
-  string account_id = 2;
+  string account_id = 1;
 }
 
 message ExportAccountResponse {
   string account_json = 1;
-  string profile_json = 2;
+  string profiles_json = 2;
   shared.v1.ErrorDetail error = 3;
 }
 
-message DeleteAccountRequest {
+message ExportTenantDataRequest {
   string tenant_id = 1;
   string account_id = 2;
+}
+
+message ExportTenantDataResponse {
+  string tenant_id = 1;
+  string account_json = 2;
+  string profile_json = 3;
+  shared.v1.ErrorDetail error = 4;
+}
+
+message DeleteAccountRequest {
+  string account_id = 1;
 }
 
 message DeleteAccountResponse {
@@ -179,8 +190,7 @@ message DeleteAccountResponse {
 }
 
 message RequestPasswordResetRequest {
-  string tenant_id = 1;
-  string email = 2;
+  string email = 1;
 }
 
 message RequestPasswordResetResponse {
@@ -189,9 +199,8 @@ message RequestPasswordResetResponse {
 }
 
 message CompletePasswordResetRequest {
-  string tenant_id = 1;
-  string token = 2;
-  string new_password = 3;
+  string token = 1;
+  string new_password = 2;
 }
 
 message CompletePasswordResetResponse {
@@ -212,8 +221,7 @@ message LinkExternalAccountResponse {
 }
 
 message RequestEmailVerificationRequest {
-  string tenant_id = 1;
-  string account_id = 2;
+  string account_id = 1;
 }
 
 message RequestEmailVerificationResponse {
@@ -222,8 +230,7 @@ message RequestEmailVerificationResponse {
 }
 
 message VerifyEmailRequest {
-  string tenant_id = 1;
-  string token = 2;
+  string token = 1;
 }
 
 message VerifyEmailResponse {

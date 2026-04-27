@@ -175,29 +175,23 @@ components:
     PasswordResetRequest:
       type: object
       properties:
-        tenantId:
-          type: string
         email:
           type: string
-      required: [tenantId, email]
+      required: [email]
     CompletePasswordResetRequest:
       type: object
       properties:
-        tenantId:
-          type: string
         token:
           type: string
         newPassword:
           type: string
-      required: [tenantId, token, newPassword]
+      required: [token, newPassword]
     UsernameRecoveryRequest:
       type: object
       properties:
-        tenantId:
-          type: string
         email:
           type: string
-      required: [tenantId, email]
+      required: [email]
     LinkExternalAccountRequest:
       type: object
       properties:
@@ -208,22 +202,18 @@ components:
         externalId:
           type: string
       required: [tenantId, provider, externalId]
-    AccountRefRequest:
+    AccountIdRequest:
       type: object
       properties:
-        tenantId:
-          type: string
         accountId:
           type: string
-      required: [tenantId, accountId]
+      required: [accountId]
     VerifyEmailRequest:
       type: object
       properties:
-        tenantId:
-          type: string
         token:
           type: string
-      required: [tenantId, token]
+      required: [token]
 paths:
   /ping:
     get:
@@ -451,7 +441,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AccountRefRequest'
+              $ref: '#/components/schemas/AccountIdRequest'
       responses:
         '200':
           description: Request accepted
@@ -508,8 +498,23 @@ paths:
           description: Invalid account data
   /accounts/{accountId}/export:
     get:
-      summary: Export account data
+      summary: Export full account data across tenants
       operationId: exportAccount
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Exported data
+        '400':
+          description: Invalid account ID
+  /accounts/{accountId}/tenant-export:
+    get:
+      summary: Export tenant-scoped account data
+      operationId: exportTenantData
       parameters:
         - name: accountId
           in: path
@@ -523,9 +528,9 @@ paths:
             type: string
       responses:
         '200':
-          description: Exported data
+          description: Exported tenant data
         '400':
-          description: Invalid account ID
+          description: Invalid account or tenant ID
   /accounts/{accountId}/external:
     post:
       summary: Link external account
@@ -549,7 +554,7 @@ paths:
           description: Invalid account or external data
   /accounts/{accountId}:
     delete:
-      summary: Delete account
+      summary: Delete global account after billing preconditions pass
       operationId: deleteAccount
       parameters:
         - name: accountId
@@ -557,11 +562,6 @@ paths:
           required: true
           schema:
             type: integer
-        - name: tenantId
-          in: query
-          required: true
-          schema:
-            type: string
       responses:
         '200':
           description: Deletion success

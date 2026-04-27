@@ -1,0 +1,732 @@
+openapi: 3.0.3
+info:
+  title: Logging & Admin Service API
+  description: Operator-facing moderation, reporting, cutover, and runtime-control APIs
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: https://api.firemud.com
+security: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ResultStatus:
+      type: string
+      enum: [SUCCESS, ERROR]
+    ErrorDetail:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    ApiResponseString:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/ResultStatus'
+        data:
+          type: string
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+    ApplyModerationActionRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        accountId:
+          type: integer
+        sessionId:
+          type: integer
+        action:
+          type: string
+        reason:
+          type: string
+      required: [tenantId, accountId, sessionId, action]
+    ModerationActionDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        accountId:
+          type: integer
+        action:
+          type: string
+        reason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+    CreateReportRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        reporterAccountId:
+          type: integer
+        targetAccountId:
+          type: integer
+          nullable: true
+        type:
+          type: string
+        description:
+          type: string
+      required: [tenantId, reporterAccountId, type, description]
+    ReportDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        reporterAccountId:
+          type: integer
+        targetAccountId:
+          type: integer
+          nullable: true
+        type:
+          type: string
+        description:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    ToggleFeatureFlagRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        name:
+          type: string
+        enabled:
+          type: boolean
+      required: [tenantId, name, enabled]
+    FeatureFlagDto:
+      type: object
+      properties:
+        id:
+          type: integer
+          nullable: true
+        tenantId:
+          type: integer
+        name:
+          type: string
+        enabled:
+          type: boolean
+    QueryLogsRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        filter:
+          type: string
+      required: [tenantId]
+    SagaInstanceDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        sagaName:
+          type: string
+        state:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    SagaStepDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        instanceId:
+          type: integer
+        name:
+          type: string
+        status:
+          type: string
+        attempt:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AdmissionPointerDto:
+      type: object
+      properties:
+        worldSlug:
+          type: string
+        worldDisplayName:
+          type: string
+        realmSlug:
+          type: string
+        realmDisplayName:
+          type: string
+        tenantId:
+          type: integer
+        gameInstanceId:
+          type: integer
+        pointerVersion:
+          type: integer
+        visible:
+          type: boolean
+        requiresCharacterSelection:
+          type: boolean
+        stateScope:
+          type: string
+        characterCreationPolicy:
+          type: string
+        actorPrincipal:
+          type: string
+        reason:
+          type: string
+        controlPlaneRequestId:
+          type: string
+        preparedVersionUpgradeId:
+          type: string
+          nullable: true
+        occurredAt:
+          type: string
+          format: date-time
+          nullable: true
+    SetAdmissionPointerRequest:
+      type: object
+      properties:
+        worldSlug:
+          type: string
+        worldDisplayName:
+          type: string
+        realmSlug:
+          type: string
+        realmDisplayName:
+          type: string
+        tenantId:
+          type: integer
+        gameInstanceId:
+          type: integer
+        visible:
+          type: boolean
+        requiresCharacterSelection:
+          type: boolean
+        stateScope:
+          type: string
+        characterCreationPolicy:
+          type: string
+        reason:
+          type: string
+        controlPlaneRequestId:
+          type: string
+        expectedPointerVersion:
+          type: integer
+          nullable: true
+        preparedVersionUpgradeId:
+          type: string
+          nullable: true
+      required:
+        [worldSlug, worldDisplayName, realmSlug, realmDisplayName, tenantId, gameInstanceId, stateScope, characterCreationPolicy]
+    PrepareVersionUpgradeRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        sourceGameInstanceId:
+          type: integer
+        targetVersionId:
+          type: integer
+        controlPlaneRequestId:
+          type: string
+      required: [tenantId, sourceGameInstanceId, targetVersionId, controlPlaneRequestId]
+    ExecutePreparedVersionCutoverRequest:
+      type: object
+      properties:
+        worldSlug:
+          type: string
+        realmSlug:
+          type: string
+        tenantId:
+          type: integer
+        targetGameInstanceId:
+          type: integer
+        preparedVersionUpgradeId:
+          type: string
+        reason:
+          type: string
+        controlPlaneRequestId:
+          type: string
+        expectedPointerVersion:
+          type: integer
+          nullable: true
+      required: [worldSlug, realmSlug, tenantId, targetGameInstanceId, preparedVersionUpgradeId]
+    CutoverParticipantResultDto:
+      type: object
+      properties:
+        participant:
+          type: string
+        result:
+          type: string
+        reasons:
+          type: array
+          items:
+            type: string
+        stateClassesChecked:
+          type: array
+          items:
+            type: string
+        checkedFamilies:
+          type: array
+          items:
+            type: string
+        hasS2Rows:
+          type: boolean
+    PreparedVersionUpgradeDto:
+      type: object
+      properties:
+        preparationId:
+          type: string
+        tenantId:
+          type: integer
+        sourceGameInstanceId:
+          type: integer
+        sourceVersionId:
+          type: integer
+        targetVersionId:
+          type: integer
+        targetLaunchDescriptorId:
+          type: integer
+        remapSetId:
+          type: string
+          nullable: true
+        result:
+          type: string
+        reasons:
+          type: array
+          items:
+            type: string
+        checkedParticipants:
+          type: array
+          items:
+            type: string
+        checkedAt:
+          type: string
+          format: date-time
+          nullable: true
+        participantResults:
+          type: array
+          items:
+            $ref: '#/components/schemas/CutoverParticipantResultDto'
+        controlPlaneRequestId:
+          type: string
+        executedTargetGameInstanceId:
+          type: integer
+          nullable: true
+        executedPointerVersion:
+          type: integer
+          nullable: true
+        executedAt:
+          type: string
+          format: date-time
+          nullable: true
+        executionControlPlaneRequestId:
+          type: string
+          nullable: true
+    TickRemediationRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        gameInstanceId:
+          type: string
+          nullable: true
+        regionId:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+      required: [tenantId]
+    TickRemediationActionDto:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        scopeType:
+          type: string
+        scopeId:
+          type: string
+        action:
+          type: string
+        actorPrincipal:
+          type: string
+        reason:
+          type: string
+paths:
+  /ping:
+    get:
+      summary: Health check endpoint
+      operationId: ping
+      responses:
+        '200':
+          description: Pong response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseString'
+  /reports:
+    post:
+      summary: Create a player report
+      operationId: createReport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReportRequest'
+      responses:
+        '200':
+          description: Created report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/ReportDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /feature-flags/toggle:
+    post:
+      summary: Toggle a runtime feature flag
+      operationId: toggleFeatureFlag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToggleFeatureFlagRequest'
+      responses:
+        '200':
+          description: Updated feature flag
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/FeatureFlagDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /logs/query:
+    post:
+      summary: Query log events
+      operationId: queryLogs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryLogsRequest'
+      responses:
+        '200':
+          description: Matching log lines
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    type: array
+                    items:
+                      type: string
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /moderation/actions:
+    post:
+      summary: Apply a moderation action
+      operationId: applyModerationAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplyModerationActionRequest'
+      responses:
+        '200':
+          description: Applied moderation action
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/ModerationActionDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /sagas:
+    get:
+      summary: List saga instances
+      operationId: listSagas
+      responses:
+        '200':
+          description: Saga instance list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SagaInstanceDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /sagas/{id}/steps:
+    get:
+      summary: List saga steps for an instance
+      operationId: listSagaSteps
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Saga step list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SagaStepDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /admission-pointers:
+    get:
+      summary: List visible gameplay admission pointers
+      operationId: listAdmissionPointers
+      responses:
+        '200':
+          description: Admission pointer list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AdmissionPointerDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+    post:
+      summary: Update a gameplay admission pointer
+      operationId: setAdmissionPointer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetAdmissionPointerRequest'
+      responses:
+        '200':
+          description: Updated admission pointer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/AdmissionPointerDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /admission-pointers/{worldSlug}/{realmSlug}/audit:
+    get:
+      summary: Read admission-pointer audit history
+      operationId: listAdmissionPointerAudit
+      parameters:
+        - name: worldSlug
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: realmSlug
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Admission pointer audit history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AdmissionPointerDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /admission-pointers/cutover:
+    post:
+      summary: Execute a prepared version cutover
+      operationId: executePreparedVersionCutover
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecutePreparedVersionCutoverRequest'
+      responses:
+        '200':
+          description: Updated admission pointer after cutover
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/AdmissionPointerDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /admission-pointers/version-upgrades:
+    post:
+      summary: Prepare a version-upgrade compatibility proof
+      operationId: prepareVersionUpgrade
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrepareVersionUpgradeRequest'
+      responses:
+        '200':
+          description: Prepared version-upgrade proof
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/PreparedVersionUpgradeDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /admission-pointers/version-upgrades/{tenantId}/{preparationId}:
+    get:
+      summary: Read a prepared version-upgrade proof
+      operationId: getPreparedVersionUpgrade
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: preparationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Prepared version-upgrade proof
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/PreparedVersionUpgradeDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /tick-remediation/pause:
+    post:
+      summary: Pause ticks for one scoped runtime target
+      operationId: pauseTicksForScope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TickRemediationRequest'
+      responses:
+        '200':
+          description: Tick pause request accepted and forwarded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/TickRemediationActionDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /tick-remediation/resume:
+    post:
+      summary: Resume ticks for one scoped runtime target
+      operationId: resumeTicksForScope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TickRemediationRequest'
+      responses:
+        '200':
+          description: Tick resume request accepted and forwarded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/TickRemediationActionDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'

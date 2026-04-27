@@ -23,6 +23,11 @@ public interface ItemInstanceRepository extends JpaRepository<ItemInstance, Long
           Long tenantId, Long characterId, Pageable pageable);
 
   @EntityGraph(attributePaths = {"character", "item"})
+  List<ItemInstance>
+      findByTenantIdAndCharacter_IdAndEquipmentSlotIsNotNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByEquipmentSlotAscIdAsc(
+          Long tenantId, Long characterId);
+
+  @EntityGraph(attributePaths = {"character", "item"})
   Page<ItemInstance>
       findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
           Long tenantId, String gameInstanceId, String roomInstanceId, Pageable pageable);

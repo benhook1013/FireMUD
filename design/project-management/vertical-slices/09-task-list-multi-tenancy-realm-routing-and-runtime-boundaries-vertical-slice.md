@@ -16,9 +16,11 @@ The first implementation cut is now real:
 - account-to-tenant membership is now an explicit runtime substrate instead of piggybacking on `accounts.tenant_id`;
 - bootstrap discovery and in-band lobby discovery now share one canonical gameplay world/realm catalog model backed by persisted Game Session admission-pointer state;
 - first-party connect-token issuance and text-client `PLAY` now resolve tenant authority from the selected realm rather than from the initial login tenant;
+- active gameplay session context now carries the admitted `worldSlug`, `realmSlug`, `pointerVersion`, and resolved playable-state scope instead of forcing later consumers to reconstruct that bundle from only `{tenantId, gameInstanceId}`;
 - public-production first join now exists as a concrete `EnsurePublicProductionPlayerMembership(...)` boundary in `account-service`;
 - public-production membership checks now consume the same Game Session routing authority as bootstrap/connect-token issuance instead of local config copies;
-- `CHARS`, `PLAY`, bootstrap character discovery, and `TELL` now resolve character lookup through a scope-aware gameplay roster contract, with shared-state realms reusing one tenant-live namespace and isolated-state realms using an instance-local roster namespace.
+- `CHARS`, `PLAY`, bootstrap character discovery, and `TELL` now resolve character lookup through a scope-aware gameplay roster contract, with shared-state realms reusing one tenant-live namespace and isolated-state realms using an instance-local roster namespace;
+- live gameplay presence now also preserves admitted world/realm slugs, so account-presence and related reads do not have to reverse-map that identity from runtime ids alone when the session already knows the canonical routing choice.
 
 The remaining work is to finish the deeper runtime/control-plane follow-through instead of leaving the new family as design-only.
 
@@ -40,6 +42,14 @@ This family makes the multi-tenant gameplay boundary explicit before more system
 - public-production admission, explicit non-production access, and membership creation rules are bounded and auditable.
 - runtime systems consistently distinguish tenant-scoped identity from realm- or instance-scoped playable state.
 - first-party bootstrap and connect-token issuance use the same realm-routing truth as text-client `PLAY` and reconnect flows.
+
+## Locked Direction
+
+- Canonical gameplay admission/routing identity remains an explicit bundle rather than collapsing into a two-slot shortcut payload.
+- Where routing freshness matters, callers should preserve `worldSlug`, `realmSlug`, resolved `gameInstanceId`, and `pointerVersion` together instead of replacing them with a narrower local surrogate.
+- Downstream gameplay APIs may derive narrower scoped identities after admission, but they must derive them from the canonical routing bundle rather than redefining admission truth.
+- Realm/world discovery and admission-pointer resolution must come from one canonical authority; no service may grow an independent local catalog as authority for player-facing routing decisions.
+- Read-through or cached copies of routing data are acceptable only as explicit caches of the canonical Game Session authority and must fail closed when stale or unavailable.
 
 ## Child Slices
 

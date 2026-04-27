@@ -85,10 +85,10 @@ class ChatServiceImplTest {
     ChatMessageDto dto = service.sendMessage(req);
 
     assertEquals(1L, dto.id());
-    verify(listOps).leftPush("say:1:2", "hello");
+    verify(listOps).leftPush("chat:say:1:2", "hello");
     verify(redisTemplate)
-        .expire("say:1:2", Duration.ofSeconds(props.getSays().historyTtlSeconds()));
-    verify(listOps).trim("say:1:2", 0, props.getSays().maxMessages() - 1);
+        .expire("chat:say:1:2", Duration.ofSeconds(props.getSays().historyTtlSeconds()));
+    verify(listOps).trim("chat:say:1:2", 0, props.getSays().maxMessages() - 1);
     assertEquals(1.0, meterRegistry.get("chat_messages_published_total").counter().count(), 0.001);
     assertEquals(0.0, meterRegistry.get("chat_redis_errors_total").counter().count(), 0.001);
   }
@@ -112,10 +112,10 @@ class ChatServiceImplTest {
         synchronization.afterCommit();
       }
 
-      verify(listOps).leftPush("say:1:2", "hello");
+      verify(listOps).leftPush("chat:say:1:2", "hello");
       verify(redisTemplate)
-          .expire("say:1:2", Duration.ofSeconds(props.getSays().historyTtlSeconds()));
-      verify(listOps).trim("say:1:2", 0, props.getSays().maxMessages() - 1);
+          .expire("chat:say:1:2", Duration.ofSeconds(props.getSays().historyTtlSeconds()));
+      verify(listOps).trim("chat:say:1:2", 0, props.getSays().maxMessages() - 1);
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
@@ -168,9 +168,9 @@ class ChatServiceImplTest {
 
     service.sendMessage(req);
 
-    verify(listOps).leftPush("whisper:1:7", "quiet");
+    verify(listOps).leftPush("chat:whisper:1:7", "quiet");
     verify(redisTemplate)
-        .expire("whisper:1:7", Duration.ofSeconds(props.getWhispers().historyTtlSeconds()));
+        .expire("chat:whisper:1:7", Duration.ofSeconds(props.getWhispers().historyTtlSeconds()));
   }
 
   @Test

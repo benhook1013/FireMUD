@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.gamedesign.dto.AppliedWorldDesignMutationDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
@@ -46,14 +47,23 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
+import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusEventsRequest;
+import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusEventsResponse;
+import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusesRequest;
+import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusesResponse;
+import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
+import net.firedevops.firemud.gamedesign.v1.RevokePluginVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.RevokePluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionResponse;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.TombstoneVersionAssetsResponse;
+import net.firedevops.firemud.gamedesign.v1.UploadPluginBundleRequest;
+import net.firedevops.firemud.gamedesign.v1.UploadPluginBundleResponse;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
@@ -215,6 +225,46 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void uploadPluginBundleReturnsPublicationId() {
+    Mockito.when(
+            versionService.uploadPluginBundle(
+                Mockito.eq("tenant-1"), Mockito.any(byte[].class), Mockito.eq("notes")))
+        .thenReturn(
+            new PublishedPluginVersionDto(
+                14L,
+                "tenant-1",
+                "plugin-1",
+                "plugin-v1",
+                7L,
+                VersionLifecycleState.SIGNATURE_VERIFIED,
+                "ability-1",
+                "bundle-1",
+                1,
+                "",
+                "",
+                "signer-1",
+                false,
+                "UNSPECIFIED",
+                "notes",
+                "",
+                LocalDateTime.parse("2026-04-22T12:00:00")));
+
+    AtomicReference<UploadPluginBundleResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.uploadPluginBundle(
+          UploadPluginBundleRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBundleBytes(com.google.protobuf.ByteString.copyFrom(new byte[] {1, 2, 3}))
+              .setNotes("notes")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals(14L, ref.get().getPublicationId());
+  }
+
+  @Test
   void publishPluginVersionReturnsPublicationId() {
     Mockito.when(
             versionService.publishPluginVersion(
@@ -227,6 +277,9 @@ class GameDesignGrpcServiceTest {
                 1,
                 "dist-hash",
                 "dist-path",
+                "signer-1",
+                false,
+                "ALLOWED",
                 "notes"))
         .thenReturn(
             new PublishedPluginVersionDto(
@@ -241,7 +294,11 @@ class GameDesignGrpcServiceTest {
                 1,
                 "dist-hash",
                 "dist-path",
+                "signer-1",
+                false,
+                "ALLOWED",
                 "notes",
+                "",
                 LocalDateTime.parse("2026-04-22T12:00:00")));
 
     AtomicReference<PublishPluginVersionResponse> ref = new AtomicReference<>();
@@ -257,6 +314,9 @@ class GameDesignGrpcServiceTest {
               .setManifestSchemaVersion(1)
               .setDistributionManifestHash("dist-hash")
               .setDistributionManifestPath("dist-path")
+              .setSignerKeyId("signer-1")
+              .setComponentPolicyDecision(
+                  PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
               .setNotes("notes")
               .build(),
           observerFor(ref));
@@ -282,7 +342,11 @@ class GameDesignGrpcServiceTest {
                 1,
                 "dist-hash",
                 "dist-path",
+                "signer-1",
+                false,
+                "ALLOWED",
                 "notes",
+                "",
                 LocalDateTime.parse("2026-04-22T12:00:00")));
 
     AtomicReference<GetPublishedPluginVersionResponse> ref = new AtomicReference<>();
@@ -301,6 +365,185 @@ class GameDesignGrpcServiceTest {
     assertEquals("plugin-v1", ref.get().getPluginVersion().getPluginVersionId());
     assertEquals(7L, ref.get().getPluginVersion().getBaseVersionId());
     assertEquals("ability-1", ref.get().getPluginVersion().getAbilitySchemaDigest());
+    assertEquals("signer-1", ref.get().getPluginVersion().getSignerKeyId());
+    assertEquals(
+        PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED,
+        ref.get().getPluginVersion().getComponentPolicyDecision());
+  }
+
+  @Test
+  void revokePluginVersionReturnsPublicationId() {
+    Mockito.when(versionService.revokePluginVersion("tenant-1", "plugin-1", "plugin-v1", "reason"))
+        .thenReturn(
+            new PublishedPluginVersionDto(
+                15L,
+                "tenant-1",
+                "plugin-1",
+                "plugin-v1",
+                7L,
+                VersionLifecycleState.REVOKED_DESIGN,
+                "ability-1",
+                "bundle-1",
+                1,
+                "dist-hash",
+                "dist-path",
+                "signer-1",
+                false,
+                "ALLOWED",
+                "notes",
+                "reason",
+                LocalDateTime.parse("2026-04-22T12:00:00")));
+
+    AtomicReference<RevokePluginVersionResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.revokePluginVersion(
+          RevokePluginVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setPluginId("plugin-1")
+              .setPluginVersionId("plugin-v1")
+              .setReason("reason")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals(15L, ref.get().getPublicationId());
+  }
+
+  @Test
+  void listPluginVersionStatusesReturnsFilteredPublicationRows() {
+    Mockito.when(
+            versionService.listPublishedPluginVersions(
+                Mockito.eq("tenant-1"),
+                Mockito.eq("plugin-1"),
+                Mockito.eq(VersionLifecycleState.PUBLISHED),
+                Mockito.eq(LocalDateTime.parse("2026-04-20T10:00:00")),
+                Mockito.eq(LocalDateTime.parse("2026-04-22T10:00:00")),
+                Mockito.eq(25)))
+        .thenReturn(
+            List.of(
+                new PublishedPluginVersionDto(
+                    15L,
+                    "tenant-1",
+                    "plugin-1",
+                    "plugin-v2",
+                    7L,
+                    VersionLifecycleState.PUBLISHED,
+                    "ability-2",
+                    "bundle-2",
+                    1,
+                    "dist-hash-2",
+                    "dist-path-2",
+                    "signer-2",
+                    false,
+                    "REPORT_ONLY",
+                    "notes",
+                    "",
+                    LocalDateTime.parse("2026-04-22T09:00:00")),
+                new PublishedPluginVersionDto(
+                    14L,
+                    "tenant-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    7L,
+                    VersionLifecycleState.PUBLISHED,
+                    "ability-1",
+                    "bundle-1",
+                    1,
+                    "",
+                    "",
+                    "signer-1",
+                    true,
+                    "ALLOWED",
+                    "",
+                    "signer_revoked",
+                    LocalDateTime.parse("2026-04-21T09:00:00"))));
+
+    AtomicReference<ListPluginVersionStatusesResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.listPluginVersionStatuses(
+          ListPluginVersionStatusesRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setPluginId("plugin-1")
+              .setPublicationState(
+                  net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                      .VERSION_LIFECYCLE_STATE_PUBLISHED)
+              .setChangedAfterMs(
+                  LocalDateTime.parse("2026-04-20T10:00:00")
+                      .toInstant(java.time.ZoneOffset.UTC)
+                      .toEpochMilli())
+              .setChangedBeforeMs(
+                  LocalDateTime.parse("2026-04-22T10:00:00")
+                      .toInstant(java.time.ZoneOffset.UTC)
+                      .toEpochMilli())
+              .setLimit(25)
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals(2, ref.get().getPluginVersionsCount());
+    assertEquals("plugin-v2", ref.get().getPluginVersions(0).getPluginVersionId());
+    assertEquals(
+        PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_REPORT_ONLY,
+        ref.get().getPluginVersions(0).getComponentPolicyDecision());
+    assertEquals("plugin-v1", ref.get().getPluginVersions(1).getPluginVersionId());
+    assertEquals(true, ref.get().getPluginVersions(1).getSignerRevoked());
+  }
+
+  @Test
+  void listPluginVersionStatusEventsReturnsFilteredEventRows() {
+    Mockito.when(
+            versionService.listPluginVersionStatusEvents(
+                Mockito.eq("tenant-1"),
+                Mockito.eq("plugin-1"),
+                Mockito.eq("plugin-v1"),
+                Mockito.eq(VersionLifecycleState.PUBLISHED),
+                Mockito.eq(LocalDateTime.parse("2026-04-20T10:00:00")),
+                Mockito.eq(LocalDateTime.parse("2026-04-22T10:00:00")),
+                Mockito.eq(25)))
+        .thenReturn(
+            List.of(
+                new PluginVersionStatusEventDto(
+                    "ppse-1",
+                    "tenant-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    VersionLifecycleState.SIGNATURE_VERIFIED,
+                    VersionLifecycleState.PUBLISHED,
+                    "published",
+                    java.time.Instant.parse("2026-04-22T09:00:00Z"))));
+
+    AtomicReference<ListPluginVersionStatusEventsResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.listPluginVersionStatusEvents(
+          ListPluginVersionStatusEventsRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setPluginId("plugin-1")
+              .setPluginVersionId("plugin-v1")
+              .setPublicationState(
+                  net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                      .VERSION_LIFECYCLE_STATE_PUBLISHED)
+              .setChangedAfterMs(
+                  LocalDateTime.parse("2026-04-20T10:00:00")
+                      .toInstant(java.time.ZoneOffset.UTC)
+                      .toEpochMilli())
+              .setChangedBeforeMs(
+                  LocalDateTime.parse("2026-04-22T10:00:00")
+                      .toInstant(java.time.ZoneOffset.UTC)
+                      .toEpochMilli())
+              .setLimit(25)
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals(1, ref.get().getEventsCount());
+    assertEquals("ppse-1", ref.get().getEvents(0).getEventId());
+    assertEquals(
+        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+        ref.get().getEvents(0).getNewPublicationState());
   }
 
   @Test

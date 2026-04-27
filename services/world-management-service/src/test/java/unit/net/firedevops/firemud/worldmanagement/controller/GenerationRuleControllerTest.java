@@ -44,7 +44,9 @@ class GenerationRuleControllerTest {
   @Test
   void listEnforcesTenantScopedAccess() throws Exception {
     when(generationRuleService.listRules(eq(1L), any(Pageable.class)))
-        .thenReturn(new PageImpl<>(List.of(new GenerationRuleDto(7L, 1L, "room", "{}"))));
+        .thenReturn(
+            new PageImpl<>(
+                List.of(new GenerationRuleDto(7L, 1L, "room", "ZONE_SUBTREE", "12", "{}"))));
 
     mockMvc
         .perform(get("/generation/rules").param("tenantId", "1"))

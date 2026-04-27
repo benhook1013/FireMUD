@@ -11,20 +11,6 @@ public final class AutomationRedisKeys {
         + requirePart("entityId", entityId);
   }
 
-  public static String automationTickQueue(
-      String tenantId, String gameInstanceId, String scriptId) {
-    return automationTickKey(tenantId, gameInstanceId, scriptId, "queue");
-  }
-
-  public static String automationTickLock(String tenantId, String gameInstanceId, String scriptId) {
-    return automationTickKey(tenantId, gameInstanceId, scriptId, "lock");
-  }
-
-  public static String automationTickPending(
-      String tenantId, String gameInstanceId, String scriptId) {
-    return automationTickKey(tenantId, gameInstanceId, scriptId, "pending");
-  }
-
   public static String automationQuota(String tenantId, String scriptId) {
     return "automation:quota:"
         + requirePart("tenantId", tenantId)
@@ -32,14 +18,51 @@ public final class AutomationRedisKeys {
         + requirePart("scriptId", scriptId);
   }
 
-  private static String automationTickKey(
-      String tenantId, String gameInstanceId, String scriptId, String suffix) {
-    return "automation:tick:{"
-        + tenantInstanceTag(tenantId, gameInstanceId)
+  public static String automationTenantBudget(String tenantId, String priorityTier) {
+    return "automation:tenant-budget:"
+        + requirePart("tenantId", tenantId)
+        + ":tier:"
+        + requirePart("priorityTier", priorityTier);
+  }
+
+  public static String automationDryRunTenantQuota(String tenantId, String scriptId) {
+    return "automation:test:quota:"
+        + requirePart("tenantId", tenantId)
         + ":script:"
         + requirePart("scriptId", scriptId)
-        + "}:"
-        + suffix;
+        + ":tenant";
+  }
+
+  public static String automationDryRunPrincipalQuota(
+      String tenantId, String scriptId, String principalKey) {
+    return "automation:test:quota:"
+        + requirePart("tenantId", tenantId)
+        + ":script:"
+        + requirePart("scriptId", scriptId)
+        + ":principal:"
+        + requirePart("principalKey", principalKey);
+  }
+
+  public static String automationDryRunCapacityCounter(String tenantId) {
+    return "automation:test:capacity:" + requirePart("tenantId", tenantId) + ":tenant";
+  }
+
+  public static String automationDryRunCapacityLease(String tenantId, String workItemId) {
+    return "automation:test:capacity:"
+        + requirePart("tenantId", tenantId)
+        + ":lease:"
+        + requirePart("workItemId", workItemId);
+  }
+
+  public static String automationDryRunClusterCapacityCounter() {
+    return "automation:test:capacity:cluster";
+  }
+
+  public static String automationDryRunClusterCapacityLease(String tenantId, String workItemId) {
+    return "automation:test:capacity:cluster:lease:"
+        + requirePart("tenantId", tenantId)
+        + ":"
+        + requirePart("workItemId", workItemId);
   }
 
   private static String tenantInstanceTag(String tenantId, String gameInstanceId) {

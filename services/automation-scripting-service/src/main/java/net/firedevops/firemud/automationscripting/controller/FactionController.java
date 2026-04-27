@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.controller;
 
 import net.firedevops.firemud.automationscripting.service.FactionService;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,9 +23,13 @@ public class FactionController {
   public ResponseEntity<ApiResponse<Integer>> adjustReputation(
       @PathVariable Long id,
       @RequestParam Long characterId,
+      @RequestParam String gameInstanceId,
+      @RequestParam PlayableStateScope playableStateScope,
       @RequestParam int delta,
       @RequestParam Long tenantId) {
-    int result = factionService.adjustReputation(tenantId, characterId, id, delta);
+    int result =
+        factionService.adjustReputation(
+            tenantId, characterId, gameInstanceId, playableStateScope, id, delta);
     return ResponseEntity.ok(ApiResponse.success(result));
   }
 }

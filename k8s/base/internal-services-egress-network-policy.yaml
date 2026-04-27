@@ -39,7 +39,10 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: firemud-redis
+              app: redis-coord
+        - podSelector:
+            matchLabels:
+              app: redis-cache
       ports:
         - protocol: TCP
           port: 6379

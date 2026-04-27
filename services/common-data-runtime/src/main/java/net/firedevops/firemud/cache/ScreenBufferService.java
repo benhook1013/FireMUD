@@ -11,18 +11,55 @@ public interface ScreenBufferService {
 
   void clear(long tenantId, long gameInstanceId, long characterId);
 
-  record BufferedEntry(String text, int lineCount, int byteSize, long appendedAtMs) {
+  record BufferedEntry(
+      String text,
+      int lineCount,
+      int byteSize,
+      long appendedAtMs,
+      String outputKind,
+      String replayPolicy,
+      String briefRenderPolicy,
+      String payloadType,
+      String payloadJson) {
     public BufferedEntry {
       text = text == null ? "" : text;
     }
 
+    public BufferedEntry(String text, int lineCount, int byteSize, long appendedAtMs) {
+      this(text, lineCount, byteSize, appendedAtMs, null, null, null, null, null);
+    }
+
     public static BufferedEntry fromText(String text) {
+      return fromStructuredOutput(text, null, null, null, null, null);
+    }
+
+    public static BufferedEntry fromStructuredOutput(
+        String text,
+        String outputKind,
+        String replayPolicy,
+        String briefRenderPolicy,
+        String payloadType,
+        String payloadJson) {
       String safeText = text == null ? "" : text;
       return new BufferedEntry(
           safeText,
           (int) safeText.lines().filter(line -> !line.isBlank()).count(),
           safeText.getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
-          System.currentTimeMillis());
+          System.currentTimeMillis(),
+          outputKind,
+          replayPolicy,
+          briefRenderPolicy,
+          payloadType,
+          payloadJson);
+    }
+
+    public boolean hasStructuredOutput() {
+      return outputKind != null
+          && !outputKind.isBlank()
+          && payloadType != null
+          && !payloadType.isBlank()
+          && payloadJson != null
+          && !payloadJson.isBlank();
     }
   }
 

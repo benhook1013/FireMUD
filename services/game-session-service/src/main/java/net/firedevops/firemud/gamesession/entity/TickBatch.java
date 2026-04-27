@@ -52,6 +52,15 @@ public class TickBatch {
   @Column(name = "command_count", nullable = false)
   private int commandCount;
 
+  @Column(name = "expected_effect_count", nullable = false)
+  private int expectedEffectCount;
+
+  @Column(name = "selected_work_manifest_digest", length = 64)
+  private String selectedWorkManifestDigest;
+
+  @Column(name = "selected_work_manifest_json", columnDefinition = "TEXT")
+  private String selectedWorkManifestJson;
+
   @Column(name = "staged_at", nullable = false)
   private Instant stagedAt;
 

@@ -12,3 +12,4 @@ Current contents include:
 - [`look-instrumentation.md`](./look-instrumentation.md) – Metrics, logs, and tracing references for the LOOK/SAY work.
 - [`look-smoke-tests.md`](./look-smoke-tests.md) – Manual smoke steps and expected outputs for the LOOK slice.
 - [`playtesting-feedback.md`](./playtesting-feedback.md) – Playtesting and feedback collection support material.
+- [`slice-completion-proof-checklist.md`](./slice-completion-proof-checklist.md) – Required verification checklist before a slice is marked complete.

@@ -15,7 +15,11 @@ public record SessionContext(
     String roomInstanceId,
     String jwt,
     String localeTag,
-    long bootstrapGameInstanceId)
+    long bootstrapGameInstanceId,
+    String worldSlug,
+    String realmSlug,
+    long pointerVersion,
+    String playableStateScope)
     implements Serializable {
   private static final long serialVersionUID = 1L;
 
@@ -23,6 +27,9 @@ public record SessionContext(
     loginName = loginName == null ? null : loginName.trim();
     characterName = characterName == null ? null : characterName.trim();
     localeTag = normalizeLocaleTag(localeTag);
+    worldSlug = normalizeSlug(worldSlug);
+    realmSlug = normalizeSlug(realmSlug);
+    playableStateScope = normalizeScope(playableStateScope);
   }
 
   public SessionContext(
@@ -47,7 +54,41 @@ public record SessionContext(
         roomInstanceId,
         jwt,
         null,
-        bootstrapGameInstanceId);
+        bootstrapGameInstanceId,
+        null,
+        null,
+        0L,
+        null);
+  }
+
+  public SessionContext(
+      long sessionId,
+      long tenantId,
+      long accountId,
+      String loginName,
+      long characterId,
+      String characterName,
+      long gameInstanceId,
+      String roomInstanceId,
+      String jwt,
+      String localeTag,
+      long bootstrapGameInstanceId) {
+    this(
+        sessionId,
+        tenantId,
+        accountId,
+        loginName,
+        characterId,
+        characterName,
+        gameInstanceId,
+        roomInstanceId,
+        jwt,
+        localeTag,
+        bootstrapGameInstanceId,
+        null,
+        null,
+        0L,
+        null);
   }
 
   public SessionContext(
@@ -69,7 +110,11 @@ public record SessionContext(
         roomInstanceId,
         jwt,
         null,
-        gameInstanceId);
+        gameInstanceId,
+        null,
+        null,
+        0L,
+        null);
   }
 
   public SessionContext(
@@ -90,7 +135,11 @@ public record SessionContext(
         null,
         jwt,
         null,
-        gameInstanceId);
+        gameInstanceId,
+        null,
+        null,
+        0L,
+        null);
   }
 
   public SessionContext(
@@ -113,7 +162,11 @@ public record SessionContext(
         null,
         jwt,
         null,
-        gameInstanceId);
+        gameInstanceId,
+        null,
+        null,
+        0L,
+        null);
   }
 
   public SessionContext(
@@ -137,7 +190,11 @@ public record SessionContext(
         roomInstanceId,
         jwt,
         null,
-        gameInstanceId);
+        gameInstanceId,
+        null,
+        null,
+        0L,
+        null);
   }
 
   private static String normalizeLocaleTag(String localeTag) {
@@ -146,5 +203,19 @@ public record SessionContext(
     }
     String normalized = Locale.forLanguageTag(localeTag.trim()).toLanguageTag();
     return "und".equals(normalized) ? null : normalized;
+  }
+
+  private static String normalizeSlug(String slug) {
+    if (slug == null || slug.isBlank()) {
+      return null;
+    }
+    return slug.trim();
+  }
+
+  private static String normalizeScope(String scope) {
+    if (scope == null || scope.isBlank()) {
+      return null;
+    }
+    return scope.trim().toUpperCase(Locale.ROOT);
   }
 }

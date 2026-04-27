@@ -97,7 +97,17 @@ class RedisScreenBufferServiceTest {
             .trim());
 
     cacheService.append(
-        22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("SECOND\n")));
+        22L,
+        1L,
+        123L,
+        List.of(
+            ScreenBufferService.BufferedEntry.fromStructuredOutput(
+                "SECOND\n",
+                "MESSAGE",
+                "BUFFERABLE",
+                "DEFAULT",
+                "text_message",
+                "{\"text\":\"SECOND\"}")));
 
     ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
     verify(valueOperations, times(2))
@@ -112,7 +122,13 @@ class RedisScreenBufferServiceTest {
     assertThat(result.orElseThrow().lineCount()).isEqualTo(2);
     assertThat(result.orElseThrow().protocolText()).contains("FIRST");
     assertThat(result.orElseThrow().protocolText()).contains("SECOND");
+    ScreenBufferService.BufferedEntry second = result.orElseThrow().entries().get(1);
+    assertThat(second.hasStructuredOutput()).isTrue();
+    assertThat(second.outputKind()).isEqualTo("MESSAGE");
+    assertThat(second.payloadType()).isEqualTo("text_message");
+    assertThat(second.payloadJson()).contains("SECOND");
     assertThat(valueCaptor.getAllValues()).hasSize(2);
     assertThat(valueCaptor.getAllValues().get(1)).contains("\"SECOND");
+    assertThat(valueCaptor.getAllValues().get(1)).contains("\"payloadType\":\"text_message\"");
   }
 }

@@ -56,7 +56,7 @@ For designer-oriented guidance on building and debugging scripts in the visual e
 ## Terminology Glossary
 
 - **Game tick** – a region-scoped tick in the Game Session Service. Each `<tenantId, regionId>` advances through a monotonic `tickId` stream; game ticks are authoritative for gameplay state changes and use `tick:{tenantRegionTag}:...` keys and locks as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
-- **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains **script work items** from Redis-backed queues such as `automation:queue:{tenantInstanceTag}:<entityId>`, stages them under `automation:tick:{tenantInstanceScriptTag}:...`, and hands the resulting commands to the Game Session Service so Game Session can enqueue **tick commands** into per-entity tick queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
+- **Automation execution loop** – the durable executor path inside the Automation & Scripting Service. It claims persisted **script work items** from the outbox, evaluates the current command-emission format, and hands resulting commands to the Game Session Service so Game Session can enqueue **tick commands** into per-entity tick queues for later execution by game ticks. `automation:queue:{tenantInstanceTag}:<entityId>` remains a reset-tolerant derived pointer index for visibility and rebuildable coordination, not an authoritative execution log.
 - **Automation queue** – an instance-aware, per-entity Redis queue (`automation:queue:{tenantInstanceTag}:<entityId>`) that holds **derived work-item indexes/pointers** after sandboxed DSL execution and durable persistence. It is reset-tolerant and rebuildable from the durable outbox; it must not be treated as an authoritative log of pending work.
 - **Tick heartbeat** – a **gRPC streaming feed** produced by the Game Session Service that reports `(regionEpoch, tickId)` progression per `<tenantId, regionId>`. The script scheduler consumes this heartbeat over a long-lived gRPC stream to count “every N ticks” intervals and align `onInterval` triggers with the canonical game tick timeline without owning tick execution itself. See [Tick Events & Heartbeat Stream](./system-architecture-ticks.md#tick-events--heartbeat-stream) for transport details and the `(regionEpoch, tickId)` coordination timeline.
 
@@ -82,10 +82,10 @@ Normative Trigger Identity required fields (including `gameInstanceId` and when 
 | --- | --- | --- | --- |
 | 1 | **Trigger** | A concrete event such as `onEnterRegion`, `onCommand`, or a custom event emitted by a service. | gRPC `TriggerScriptEvent` call, tick heartbeat, or internal scheduler event. |
 | 2 | **DSL run** | Execution of a script handler in the sandboxed DSL for a single trigger. Produces domain commands, not direct state changes. | In-memory execution in the Automation & Scripting Service; results summarized as script work items. |
-| 3 | **Script work item** | A post-DSL, per-entity descriptor of what should happen (domain commands + `scriptEventId`, `scriptId`, version metadata) persisted durably (outbox). | Indexed via `automation:queue:{tenantInstanceTag}:<entityId>` and staged under `automation:tick:{tenantInstanceScriptTag}:...`. |
+| 3 | **Script work item** | A post-DSL, per-entity descriptor of what should happen (domain commands + `scriptEventId`, `scriptId`, version metadata) persisted durably (outbox). | Indexed via `automation:queue:{tenantInstanceTag}:<entityId>` and later claimed by Automation's durable executor for Game Session handoff. |
 | 4 | **Tick command** | A concrete command that the Game Session Service executes during game ticks under its normal locking and idempotency rules. | Enqueued into `tick:{tenantRegionTag}:queue:<entityId>` for consumption by the tick loop. |
 
-Triggers lead to DSL runs, which produce script work items in the automation queues, which automation ticks turn into tick commands for the Game Session Service.
+Triggers lead to DSL runs, which produce durable script work items plus queue-pointer projection entries, and Automation's execution loop turns those work items into tick commands for the Game Session Service.
 
 ---
 
@@ -276,7 +276,7 @@ Two services collaborate to deliver scripting and automation:
 
 - **Automation & Scripting Service**
   - Owns the **compiled graph schema and runtime registry**: it stores compiled DSL graphs, per-tenant script metadata, and runtime flags (`runtimeStatus`, quotas, priorities) in its own database.
-  - Enforces **runtime behavior**: sandbox execution, loop safety, per-script and per-tenant quotas (`ScriptQuotaService`), tick integration, and leadership leases over automation ticks.
+  - Enforces **runtime behavior**: sandbox execution, loop safety, per-script and per-tenant quotas (`ScriptQuotaService`), durable work-item execution, and scheduler/timer leadership.
   - Maintains **auditability and observability** for script execution via the `script_event_audit` feed and automation metrics (for example, `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`).
   - Implements **hot reload and failure handling** for script patches, including `activePatchVersion`, `pendingPatchVersion`, and `reloadState` as described in [Scripting Scheduler and Timer Lifecycle](./system-architecture-scripting-scheduler-and-timers.md#hot-reload--resume-behavior).
 

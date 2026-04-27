@@ -11,6 +11,9 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.entitymanagement.v1.ActorConditionState;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
@@ -341,5 +344,58 @@ class GameLogicGrpcServiceTest {
         });
 
     assertEquals("Torch", holder.get().getItems(0).getItemName());
+  }
+
+  @Test
+  void applyActorConditionDelegatesToItemRuntimeService() {
+    PingService pingService = new PingServiceImpl();
+    var dispatcher = new EventDispatcher();
+    var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
+    var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
+    ItemRuntimeService itemRuntimeService = Mockito.mock(ItemRuntimeService.class);
+    ApplyActorConditionRequest request =
+        ApplyActorConditionRequest.newBuilder()
+            .setTenantId("22")
+            .setCharacterId("911")
+            .setConditionKey("blocking")
+            .setSessionAttestation("attestation")
+            .build();
+    Mockito.when(itemRuntimeService.applyActorCondition(request))
+        .thenReturn(
+            ApplyActorConditionResponse.newBuilder()
+                .setActiveCondition(
+                    ActorConditionState.newBuilder().setConditionKey("blocking").build())
+                .build());
+    GameLogicGrpcService service =
+        new GameLogicGrpcService(
+            pingService,
+            commandService,
+            Mockito.mock(LookAggregationService.class),
+            Mockito.mock(CommunicationAggregationService.class),
+            Mockito.mock(MoveAggregationService.class),
+            itemRuntimeService,
+            mockDigestService(),
+            mockAttestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ApplyActorConditionResponse> holder = new AtomicReference<>();
+    service.applyActorCondition(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyActorConditionResponse value) {
+            holder.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("blocking", holder.get().getActiveCondition().getConditionKey());
   }
 }

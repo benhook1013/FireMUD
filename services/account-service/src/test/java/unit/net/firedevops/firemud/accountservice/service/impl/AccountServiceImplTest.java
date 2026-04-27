@@ -45,6 +45,7 @@ import net.firedevops.firemud.accountservice.repository.ProfileRepository;
 import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
+import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.session.SessionService;
 import net.firedevops.firemud.common.saga.SagaRunner;
@@ -113,6 +114,7 @@ class AccountServiceImplTest {
                     .setGameInstanceId("44")
                     .setPointerVersion(17L)
                     .setVisible(true)
+                    .setPublicProductionRealm(true)
                     .setRequiresCharacterSelection(false)
                     .setStateScope("SHARED")
                     .setCharacterCreationPolicy("ALLOW_NEW")
@@ -128,6 +130,7 @@ class AccountServiceImplTest {
                 .setGameInstanceId("44")
                 .setPointerVersion(17L)
                 .setVisible(true)
+                .setPublicProductionRealm(true)
                 .setRequiresCharacterSelection(false)
                 .setStateScope("SHARED")
                 .setCharacterCreationPolicy("ALLOW_NEW")
@@ -448,6 +451,7 @@ class AccountServiceImplTest {
                 .setGameInstanceId("99")
                 .setPointerVersion(18L)
                 .setVisible(true)
+                .setPublicProductionRealm(true)
                 .setRequiresCharacterSelection(false)
                 .setStateScope("SHARED")
                 .setCharacterCreationPolicy("ALLOW_NEW")
@@ -632,6 +636,7 @@ class AccountServiceImplTest {
                     .setGameInstanceId("91")
                     .setPointerVersion(17L)
                     .setVisible(true)
+                    .setPublicProductionRealm(true)
                     .setRequiresCharacterSelection(false)
                     .setStateScope("ISOLATED")
                     .setCharacterCreationPolicy("COPIED_ONLY")
@@ -647,6 +652,7 @@ class AccountServiceImplTest {
                 .setGameInstanceId("91")
                 .setPointerVersion(17L)
                 .setVisible(true)
+                .setPublicProductionRealm(true)
                 .setRequiresCharacterSelection(false)
                 .setStateScope("ISOLATED")
                 .setCharacterCreationPolicy("COPIED_ONLY")
@@ -863,13 +869,92 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void exportAccountDataIncludesProfilesAcrossTenants() {
+    Account account = new Account();
+    account.setId(2L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    Profile tenantOne = profile(account, 1L, "one");
+    Profile tenantTwo = profile(account, 2L, "two");
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+    when(profileRepository.findByAccountId(2L)).thenReturn(java.util.List.of(tenantOne, tenantTwo));
+    when(profileMapper.toDto(tenantOne))
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                10L, 1L, 2L, "one", null, ProfilePresenceVisibilityPolicy.FRIENDS_ONLY));
+    when(profileMapper.toDto(tenantTwo))
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                20L, 2L, 2L, "two", null, ProfilePresenceVisibilityPolicy.FRIENDS_ONLY));
+
+    var export = service.exportAccountData(2L);
+
+    assertEquals(2L, export.account().id());
+    assertEquals(2, export.profiles().size());
+  }
+
+  @Test
+  void exportTenantDataRequiresTenantMembershipOrProfile() {
+    Account account = new Account();
+    account.setId(2L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+    when(profileRepository.findByAccountIdAndTenantId(2L, 7L)).thenReturn(Optional.empty());
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 7L)).thenReturn(false);
+
+    assertThrows(IllegalArgumentException.class, () -> service.exportTenantData(7L, 2L));
+  }
+
+  @Test
+  void deleteAccountRefusesNonterminalSubscription() {
+    Account account = new Account();
+    account.setId(2L);
+    Subscription subscription = new Subscription();
+    subscription.setStatus("active");
+    subscription.setAccount(account);
+    subscription.setTenantId(7L);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+    when(subscriptionRepository.findByAccountId(2L)).thenReturn(java.util.List.of(subscription));
+
+    AccountLifecycleException ex =
+        assertThrows(AccountLifecycleException.class, () -> service.deleteAccount(2L));
+    assertEquals("ACCOUNT_DELETE_ACTIVE_BILLING_OWNER", ex.getCode());
+  }
+
+  @Test
+  void deleteAccountRemovesAccountOwnedRowsAfterTerminalSubscriptions() {
+    Account account = new Account();
+    account.setId(2L);
+    Subscription subscription = new Subscription();
+    subscription.setStatus("canceled");
+    subscription.setEndedAt(java.time.LocalDateTime.now());
+    subscription.setAccount(account);
+    subscription.setTenantId(7L);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+    when(subscriptionRepository.findByAccountId(2L)).thenReturn(java.util.List.of(subscription));
+
+    service.deleteAccount(2L);
+
+    org.mockito.Mockito.verify(emailVerificationTokenRepository).deleteByAccountId(2L);
+    org.mockito.Mockito.verify(passwordResetTokenRepository).deleteByAccountId(2L);
+    org.mockito.Mockito.verify(accountRealmAccessGrantRepository).deleteByAccountId(2L);
+    org.mockito.Mockito.verify(externalAccountRepository).deleteByAccountId(2L);
+    org.mockito.Mockito.verify(paymentTransactionRepository).deleteByAccountId(2L);
+    org.mockito.Mockito.verify(subscriptionRepository).deleteByAccountId(2L);
+    org.mockito.Mockito.verify(profileRepository).deleteByAccountId(2L);
+    org.mockito.Mockito.verify(accountTenantMembershipRepository).deleteByAccountId(2L);
+    org.mockito.Mockito.verify(accountRepository).delete(account);
+  }
+
+  @Test
   void requestPasswordResetCreatesToken() {
     Account account = new Account();
     account.setId(1L);
     account.setEmail("demo@example.com");
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
 
-    service.requestPasswordReset(new PasswordResetRequest(1L, "demo@example.com"));
+    service.requestPasswordReset(new PasswordResetRequest("demo@example.com"));
 
     org.mockito.Mockito.verify(passwordResetTokenRepository)
         .save(org.mockito.ArgumentMatchers.any());
@@ -878,8 +963,7 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("demo@example.com"),
             org.mockito.ArgumentMatchers.eq("Password Reset"),
             org.mockito.ArgumentMatchers.anyString());
-    org.mockito.Mockito.verify(notificationService)
-        .sendNotification(1L, 1L, "Password reset requested");
+    org.mockito.Mockito.verifyNoInteractions(notificationService);
   }
 
   @Test
@@ -891,16 +975,14 @@ class AccountServiceImplTest {
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
 
     service.sendUsernameReminder(
-        new net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest(
-            1L, "demo@example.com"));
+        new net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest("demo@example.com"));
 
     org.mockito.Mockito.verify(emailService)
         .sendEmail(
             org.mockito.ArgumentMatchers.eq("demo@example.com"),
             org.mockito.ArgumentMatchers.eq("Username Reminder"),
             org.mockito.ArgumentMatchers.anyString());
-    org.mockito.Mockito.verify(notificationService)
-        .sendNotification(1L, 1L, "Username reminder requested");
+    org.mockito.Mockito.verifyNoInteractions(notificationService);
   }
 
   @Test
@@ -930,7 +1012,7 @@ class AccountServiceImplTest {
     account.setEmail("demo@example.com");
     when(accountRepository.findById(6L)).thenReturn(Optional.of(account));
 
-    service.requestEmailVerification(1L, 6L);
+    service.requestEmailVerification(6L);
 
     org.mockito.Mockito.verify(emailVerificationTokenRepository)
         .save(org.mockito.ArgumentMatchers.any());
@@ -939,8 +1021,7 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.eq("Email Verification"),
             org.mockito.ArgumentMatchers.anyString());
-    org.mockito.Mockito.verify(notificationService)
-        .sendNotification(1L, 6L, "Email verification requested");
+    org.mockito.Mockito.verifyNoInteractions(notificationService);
   }
 
   @Test
@@ -948,13 +1029,10 @@ class AccountServiceImplTest {
     Account account = new Account();
     EmailVerificationToken token = new EmailVerificationToken();
     token.setAccount(account);
-    token.setTenantId(1L);
     token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
-    when(emailVerificationTokenRepository.findByTokenAndTenantId("tok", 1L))
-        .thenReturn(Optional.of(token));
+    when(emailVerificationTokenRepository.findByToken("tok")).thenReturn(Optional.of(token));
 
-    service.verifyEmail(
-        new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest(1L, "tok"));
+    service.verifyEmail(new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest("tok"));
 
     assertTrue(account.isEmailVerified());
     org.mockito.Mockito.verify(emailVerificationTokenRepository).delete(token);
@@ -977,5 +1055,14 @@ class AccountServiceImplTest {
     membership.setTenantId(tenantId);
     membership.setGameplayAdmissionAllowed(true);
     return membership;
+  }
+
+  private static Profile profile(Account account, long tenantId, String displayName) {
+    Profile profile = new Profile();
+    profile.setAccount(account);
+    profile.setTenantId(tenantId);
+    profile.setDisplayName(displayName);
+    profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
+    return profile;
   }
 }

@@ -137,7 +137,7 @@ For cross-service invariants, see [Scripting Contracts](../../system-architectur
 Game Session now has a real current-boundary durable gameplay execution seam instead of stopping at queue staging:
 
 - accepted gameplay commands persist a durable command ledger row with both a human-safe sanitized text projection and the canonical raw command payload used for later execution;
-- the tick runtime stages Redis queue work into durable `tick_batch` / `tick_effect` rows before drain commit;
+- the tick runtime stages Redis queue work into durable `tick_batch` / `tick_effect` rows before drain commit, including the current-boundary selected-work manifest, expected effect count, and manifest digest on the batch row;
 - after drain commit, Game Session resumes from any durable `DRAINED` effects for that queue boundary and executes the supported command families from the ledger itself rather than assuming Redis drain already implies terminal gameplay work;
 - drained effects re-check the durable runtime owner row before application. If the batch fence is stale, unapplied drained effects are marked `ABANDONED`, their durable commands are requeued for a fresh fenced batch, and the old executor does not invoke the effect handler.
 
@@ -149,6 +149,7 @@ The first migrated command families are movement plus the first item/equipment/c
 - player-visible movement output is delivered asynchronously through the same active-websocket plus screen-buffer-aware delivery path used for runtime recipient delivery;
 - item/equipment/container mutation commands, currently `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE`, enqueue durably from the player-facing command path and execute from the durable post-drain effect executor before their player-visible outputs are delivered;
 - Game Session passes the durable `tick_effect.effectId` to Entity Management for those item/equipment/container mutations so duplicate downstream delivery can replay the stored domain response instead of applying the mutation again;
+- `BLOCK` is the first transient action-state command on the same durable execution seam: Game Session stores/replays the durable effect, Game Logic routes `ApplyActorCondition`, and Entity Management persists the short-lived `blocking` active condition.
 - read-only item views such as `INVENTORY`, `EQUIPMENT`, and `CONTAINER` remain direct view commands because they do not mutate authoritative gameplay state.
 
 Other command families still need to migrate onto this same durable seam. Pure view/meta commands may remain direct until there is a concrete reason to queue them, but state-changing gameplay families should not introduce new synchronous bypasses. The next durability gap is pushing the same effect-idempotent replay/no-op pattern through later domain mutation boundaries, not merely routing more commands through the Game Session ledger.
@@ -157,8 +158,8 @@ Other command families still need to migrate onto this same durable seam. Pure v
 
 Fairness-critical automation enters gameplay through the same durable command/admission boundary as player commands, not through direct Automation & Scripting writes to `tick:*` Redis keys.
 
-- Automation & Scripting calls Game Session with a stable `automationDispatchId`, target `(tenantId, gameInstanceId, regionId, regionEpoch, dueTickId)`, target `entityId`, and deterministic command payload.
-- Game Session records or reads a durable `gameplay_command` admission row through `EnqueueAutomationCommandIfAbsent`, keyed by `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)`, before mutating Redis. The row stores `dueTickId`, target entity, script/work-item correlation fields, command payload, and current execution outcome.
+- Automation & Scripting calls Game Session with a stable `automationDispatchId`, target `(tenantId, gameInstanceId, regionId, regionEpoch)`, optional `dueTickId` for due-point-aware automation, target `entityId`, and deterministic command payload.
+- Game Session records or reads a durable `gameplay_command` admission row through `EnqueueAutomationCommandIfAbsent`, keyed by `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)`, before mutating Redis. Existing dispatches return duplicate/no-op from that durable key. New dispatches are fenced against the current durable runtime owner row before Redis mutation: missing ownership, paused ownership, or mismatched `regionEpoch` returns a non-mutating rejection. The row stores optional `dueTickId`, target entity, script/work-item correlation fields, command payload, and current execution outcome.
 - Duplicate requests for the same key return replay/no-op outcomes from the durable row. Conflicting payloads for the same key are validation failures and must not enqueue.
 - Only after durable admission succeeds does Game Session invoke the region-lease Redis script that materializes the command into `tick:{tenantRegionTag}:queue:<entityId>`.
 - If Redis enqueue fails after durable admission, Game Session retries materialization from the durable row or converges the row to a terminal non-applied outcome under the command-status rules. Redis queue contents are never the sole proof that the automation action existed.

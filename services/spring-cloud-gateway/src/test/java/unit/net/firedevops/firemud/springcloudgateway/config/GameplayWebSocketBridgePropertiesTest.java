@@ -12,7 +12,7 @@ class GameplayWebSocketBridgePropertiesTest {
         new GameplayWebSocketBridgeProperties(" ", 0, 0L, 0);
 
     assertEquals("ws://game-session-service:8080/ws/game", properties.upstreamUrl());
-    assertEquals(40, properties.reconnectAttempts());
+    assertEquals(160, properties.reconnectAttempts());
     assertEquals(250L, properties.reconnectDelayMs());
     assertEquals(256, properties.bufferCapacity());
   }

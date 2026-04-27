@@ -128,14 +128,8 @@ The following Redis-focused incident flows build on the general recovery steps a
         4. The replay controller converges lingering epoch-13 `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `region_epoch`, and command records converge to the canonical terminal vocabulary.
         5. If pending age and stalled signals recover within one emitted budget window, the region stays on epoch `13`; otherwise the operator escalates to `reset_first`.
    2. If the chosen mode is `reset_first`:
-      - Execute the canonical coordination reset workflow for the same scope via `coordination-maintenance`:
-        - `pause`
-        - `reset`
-        - `reconcile-ledger`
-        - `converge-commands`
-        - `init-meta`
-        - `smoke-check`
-        - `resume`
+      - Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) for the same scope.
+      - Keep only the incident-specific choices local to this runbook: scope selection, whether replay-first was exhausted first, whether gameplay sessions are preserved, and what evidence justified escalation.
    3. Verify region health returns to `RUNNING` or bounded `DEGRADED` and `redis_coordination_tail_loss_ms` drops back into the SLO envelope after the chosen recovery mode completes.
 
 Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions in `design/observability/grafana/redis-alerts-snippets.md` so they carry `owner` and `runbook` annotations that point back to this section.

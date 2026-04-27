@@ -11,4 +11,6 @@ public interface ExternalAccountRepository extends JpaRepository<ExternalAccount
       Long tenantId, String provider, String externalId);
 
   boolean existsByTenantIdAndAccountIdAndProvider(Long tenantId, Long accountId, String provider);
+
+  void deleteByAccountId(Long accountId);
 }

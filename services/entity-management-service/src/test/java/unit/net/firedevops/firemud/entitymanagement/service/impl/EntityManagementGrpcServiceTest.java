@@ -6,13 +6,19 @@ import static org.mockito.Mockito.verify;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationClaims;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
+import net.firedevops.firemud.entitymanagement.dto.ActorResourceStateDto;
+import net.firedevops.firemud.entitymanagement.dto.ActorStateDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
+import net.firedevops.firemud.entitymanagement.service.ActorConditionMutationService;
+import net.firedevops.firemud.entitymanagement.service.ActorStateService;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
@@ -21,6 +27,8 @@ import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
@@ -41,6 +49,8 @@ import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateRequest;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.ReloadHint;
@@ -335,7 +345,15 @@ class EntityManagementGrpcServiceTest {
         .thenReturn(counter);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     Mockito.when(
-            containerService.listContainerContents(1L, 7L, 10L, "GI-1", "R-1", Pageable.unpaged()))
+            containerService.listContainerContents(
+                1L,
+                7L,
+                10L,
+                "GI-1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                "R-1",
+                Pageable.unpaged()))
         .thenReturn(
             new org.springframework.data.domain.PageImpl<>(
                 java.util.List.of(
@@ -357,6 +375,10 @@ class EntityManagementGrpcServiceTest {
             .setTenantId("1")
             .setCharacterId("7")
             .setContainerInstanceId("10")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
             .build(),
         new StreamObserver<>() {
           @Override
@@ -446,7 +468,19 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     Mockito.when(
             containerService.putItemIntoContainer(
-                1L, 7L, 10L, "GI-1", "R-1", 11L, null, null, 2, null, "41"))
+                1L,
+                7L,
+                10L,
+                "GI-1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                "R-1",
+                11L,
+                null,
+                null,
+                2,
+                null,
+                "41"))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto(
                 1L, 7L, 10L, 11L, "Torch", "A small torch", 2, null, null));
@@ -466,6 +500,10 @@ class EntityManagementGrpcServiceTest {
             .setTenantId("1")
             .setCharacterId("7")
             .setContainerInstanceId("10")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
             .setItemId("11")
             .setQuantity(2)
             .build(),
@@ -504,7 +542,19 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     Mockito.when(
             containerService.putItemIntoContainer(
-                1L, 7L, 10L, "GI-1", "R-1", 11L, 44L, null, 1, null, "41"))
+                1L,
+                7L,
+                10L,
+                "GI-1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                "R-1",
+                11L,
+                44L,
+                null,
+                1,
+                null,
+                "41"))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto(
                 1L, 7L, 10L, 11L, "Torch", "A small torch", 1, 44L, "torch44"));
@@ -524,6 +574,10 @@ class EntityManagementGrpcServiceTest {
             .setTenantId("1")
             .setCharacterId("7")
             .setContainerInstanceId("10")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
             .setItemId("11")
             .setQuantity(1)
             .setItemInstanceId("44")
@@ -563,7 +617,19 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     Mockito.when(
             containerService.takeItemFromContainer(
-                1L, 7L, 10L, "GI-1", "R-1", 11L, null, null, 1, null, "41"))
+                1L,
+                7L,
+                10L,
+                "GI-1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                "R-1",
+                11L,
+                null,
+                null,
+                1,
+                null,
+                "41"))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
                 1L, 7L, 11L, "Torch", "A small torch", 1, null, null, null));
@@ -583,6 +649,10 @@ class EntityManagementGrpcServiceTest {
             .setTenantId("1")
             .setCharacterId("7")
             .setContainerInstanceId("10")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
             .setItemId("11")
             .setQuantity(1)
             .build(),
@@ -618,7 +688,19 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     Mockito.when(
             containerService.takeItemFromContainer(
-                1L, 7L, 10L, "GI-1", "R-1", 11L, 44L, null, 1, null, "41"))
+                1L,
+                7L,
+                10L,
+                "GI-1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                "R-1",
+                11L,
+                44L,
+                null,
+                1,
+                null,
+                "41"))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
                 1L, 7L, 11L, "Torch", "A small torch", 1, 44L, null, "torch44"));
@@ -638,6 +720,10 @@ class EntityManagementGrpcServiceTest {
             .setTenantId("1")
             .setCharacterId("7")
             .setContainerInstanceId("10")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
             .setItemId("11")
             .setItemInstanceId("44")
             .setQuantity(1)
@@ -1025,6 +1111,66 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void updateEntityRequiresResolvedPlayableStateScope() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    Mockito.when(
+            characterService.updateEntity(
+                1L,
+                7L,
+                "44",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED))
+        .thenReturn(true);
+    EntityManagementGrpcService service =
+        newService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse> ref =
+        new AtomicReference<>();
+    service.updateEntity(
+        net.firedevops.firemud.entitymanagement.v1.UpdateEntityRequest.newBuilder()
+            .setTenantId("1")
+            .setEntityId("7")
+            .setGameInstanceId("44")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(
+              net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(true, ref.get().getSuccess());
+    verify(characterService)
+        .updateEntity(
+            1L,
+            7L,
+            "44",
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_ISOLATED);
+  }
+
+  @Test
   void queryInventoryReturnsItemsWithMetadata() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
@@ -1033,7 +1179,14 @@ class EntityManagementGrpcServiceTest {
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
             1L, 7L, 99L, "Torch", "A small torch", 2, 55L, 55L, "torch12");
-    Mockito.when(inventoryService.listInventory(1L, 7L, Pageable.unpaged()))
+    Mockito.when(
+            inventoryService.listInventory(
+                1L,
+                7L,
+                "GI-1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                Pageable.unpaged()))
         .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(dto)));
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -1053,7 +1206,14 @@ class EntityManagementGrpcServiceTest {
 
     AtomicReference<QueryInventoryResponse> ref = new AtomicReference<>();
     service.queryInventory(
-        QueryInventoryRequest.newBuilder().setTenantId("1").setCharacterId("7").build(),
+        QueryInventoryRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .build(),
         new StreamObserver<>() {
           @Override
           public void onNext(QueryInventoryResponse value) {
@@ -1074,6 +1234,195 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void queryActorStateReturnsResourcesAndActiveConditions() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    ActorStateService actorStateService = Mockito.mock(ActorStateService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    var actorState =
+        new ActorStateDto(
+            1L,
+            "99",
+            7L,
+            List.of(new ActorResourceStateDto("health", 65L, 90L, 80L, "INTEGER", "EFFECT", "e1")),
+            List.of(
+                new ActorConditionStateDto(
+                    "poisoned",
+                    2,
+                    "EFFECT",
+                    "e1",
+                    Instant.parse("2026-04-24T00:00:00Z"),
+                    Instant.parse("2026-04-24T00:00:30Z"),
+                    "{\"damage_per_tick\":3}")));
+    Mockito.when(
+            actorStateService.queryActorState(
+                1L,
+                7L,
+                "99",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED))
+        .thenReturn(actorState);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry =
+        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+    io.micrometer.core.instrument.Counter counter =
+        Mockito.mock(io.micrometer.core.instrument.Counter.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(counter);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            actorStateService,
+            digestService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            meterRegistry);
+
+    AtomicReference<QueryActorStateResponse> ref = new AtomicReference<>();
+    service.queryActorState(
+        QueryActorStateRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("99")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED)
+            .setSessionAttestation("attestation")
+            .build(),
+        new StreamObserver<QueryActorStateResponse>() {
+          @Override
+          public void onNext(QueryActorStateResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("99", ref.get().getGameInstanceId());
+    assertEquals("health", ref.get().getResources(0).getStatKey());
+    assertEquals(65L, ref.get().getResources(0).getCurrentValue());
+    assertEquals(90L, ref.get().getResources(0).getMaxValue());
+    assertEquals("poisoned", ref.get().getActiveConditions(0).getConditionKey());
+    assertEquals("2026-04-24T00:00:30Z", ref.get().getActiveConditions(0).getExpiresAt());
+  }
+
+  @Test
+  void applyActorConditionPersistsGameplayAttestedCondition() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    ActorStateService actorStateService = Mockito.mock(ActorStateService.class);
+    ActorConditionMutationService conditionMutationService =
+        Mockito.mock(ActorConditionMutationService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    Mockito.when(
+            conditionMutationService.applyCondition(
+                1L,
+                7L,
+                "99",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED,
+                "blocking",
+                1,
+                "ACTION_STATE",
+                "effect-1",
+                Instant.parse("2026-04-24T00:00:05Z"),
+                "{\"modifiers\":[]}"))
+        .thenReturn(
+            new ActorConditionStateDto(
+                "blocking",
+                1,
+                "ACTION_STATE",
+                "effect-1",
+                Instant.parse("2026-04-24T00:00:00Z"),
+                Instant.parse("2026-04-24T00:00:05Z"),
+                "{\"modifiers\":[]}"));
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            actorStateService,
+            conditionMutationService,
+            digestService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ApplyActorConditionResponse> ref = new AtomicReference<>();
+    service.applyActorCondition(
+        ApplyActorConditionRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("99")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED)
+            .setSessionAttestation("attestation")
+            .setConditionKey("blocking")
+            .setStackCount(1)
+            .setSourceType("ACTION_STATE")
+            .setSourceId("effect-1")
+            .setExpiresAt("2026-04-24T00:00:05Z")
+            .setEffectPayloadJson("{\"modifiers\":[]}")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyActorConditionResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("blocking", ref.get().getActiveCondition().getConditionKey());
+    assertEquals("2026-04-24T00:00:05Z", ref.get().getActiveCondition().getExpiresAt());
+    verify(conditionMutationService)
+        .applyCondition(
+            1L,
+            7L,
+            "99",
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_ISOLATED,
+            "blocking",
+            1,
+            "ACTION_STATE",
+            "effect-1",
+            Instant.parse("2026-04-24T00:00:05Z"),
+            "{\"modifiers\":[]}");
+  }
+
+  @Test
   void listEquipmentReturnsEquipmentItems() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
@@ -1082,7 +1431,14 @@ class EntityManagementGrpcServiceTest {
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto(
             1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap", 66L, 66L, "leathercap4");
-    Mockito.when(equipmentService.listEquipment(1L, 7L, Pageable.unpaged()))
+    Mockito.when(
+            equipmentService.listEquipment(
+                1L,
+                7L,
+                "GI-1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                Pageable.unpaged()))
         .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(dto)));
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -1102,7 +1458,14 @@ class EntityManagementGrpcServiceTest {
 
     AtomicReference<ListEquipmentResponse> ref = new AtomicReference<>();
     service.listEquipment(
-        ListEquipmentRequest.newBuilder().setTenantId("1").setCharacterId("7").build(),
+        ListEquipmentRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .build(),
         new StreamObserver<>() {
           @Override
           public void onNext(ListEquipmentResponse value) {
@@ -1131,7 +1494,18 @@ class EntityManagementGrpcServiceTest {
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto(
             1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap", 66L, 66L, "leathercap4");
-    Mockito.when(equipmentService.wearItem(1L, 7L, 99L, null, null, "41")).thenReturn(dto);
+    Mockito.when(
+            equipmentService.wearItem(
+                1L,
+                7L,
+                "GI-1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                99L,
+                null,
+                null,
+                "41"))
+        .thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
     io.micrometer.core.instrument.Counter counter =
@@ -1153,6 +1527,10 @@ class EntityManagementGrpcServiceTest {
         WearEquipmentItemRequest.newBuilder()
             .setTenantId("1")
             .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
             .setItemId("99")
             .build(),
         new StreamObserver<>() {
@@ -1182,7 +1560,17 @@ class EntityManagementGrpcServiceTest {
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto(
             1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap", 66L, 66L, "leathercap4");
-    Mockito.when(equipmentService.removeWornItem(1L, 7L, "HEAD", null, "41")).thenReturn(dto);
+    Mockito.when(
+            equipmentService.removeWornItem(
+                1L,
+                7L,
+                "GI-1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                "HEAD",
+                null,
+                "41"))
+        .thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
     io.micrometer.core.instrument.Counter counter =
@@ -1204,6 +1592,10 @@ class EntityManagementGrpcServiceTest {
         RemoveEquipmentRequest.newBuilder()
             .setTenantId("1")
             .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
             .setSlot("HEAD")
             .build(),
         new StreamObserver<>() {
@@ -1235,7 +1627,19 @@ class EntityManagementGrpcServiceTest {
             1L, 7L, 99L, "Torch", "A small torch", 2, null, null, null);
     Mockito.when(
             inventoryService.pickupItemFromRoom(
-                1L, 7L, "GI-1", "R-1", 99L, null, "", null, 1, null, "41"))
+                1L,
+                7L,
+                "GI-1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                "R-1",
+                99L,
+                null,
+                "",
+                null,
+                1,
+                null,
+                "41"))
         .thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -1259,6 +1663,9 @@ class EntityManagementGrpcServiceTest {
             .setTenantId("1")
             .setCharacterId("7")
             .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
             .setRoomInstanceId("R-1")
             .setItemId("99")
             .setQuantity(1)
@@ -1292,7 +1699,19 @@ class EntityManagementGrpcServiceTest {
             1L, "GI-1", "R-1", 99L, "Torch", "A small torch", 1, null, null, null);
     Mockito.when(
             inventoryService.dropItemToRoom(
-                1L, 7L, "GI-1", "R-1", 99L, null, "", null, 1, null, "41"))
+                1L,
+                7L,
+                "GI-1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                "R-1",
+                99L,
+                null,
+                "",
+                null,
+                1,
+                null,
+                "41"))
         .thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -1316,6 +1735,9 @@ class EntityManagementGrpcServiceTest {
             .setTenantId("1")
             .setCharacterId("7")
             .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
             .setRoomInstanceId("R-1")
             .setItemId("99")
             .setQuantity(1)
@@ -1349,7 +1771,19 @@ class EntityManagementGrpcServiceTest {
             1L, "GI-1", "R-1", 99L, "Torch", "A small torch", 1, null, null, null);
     Mockito.when(
             inventoryService.dropItemToRoom(
-                1L, 7L, "GI-1", "R-1", 99L, null, "", null, 1, "effect-1", "41"))
+                1L,
+                7L,
+                "GI-1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                "R-1",
+                99L,
+                null,
+                "",
+                null,
+                1,
+                "effect-1",
+                "41"))
         .thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -1372,6 +1806,9 @@ class EntityManagementGrpcServiceTest {
             .setTenantId("1")
             .setCharacterId("7")
             .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
             .setRoomInstanceId("R-1")
             .setItemId("99")
             .setQuantity(1)
@@ -1390,6 +1827,19 @@ class EntityManagementGrpcServiceTest {
         });
 
     verify(inventoryService)
-        .dropItemToRoom(1L, 7L, "GI-1", "R-1", 99L, null, "", null, 1, "effect-1", "41");
+        .dropItemToRoom(
+            1L,
+            7L,
+            "GI-1",
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_SHARED,
+            "R-1",
+            99L,
+            null,
+            "",
+            null,
+            1,
+            "effect-1",
+            "41");
   }
 }

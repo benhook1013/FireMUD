@@ -21,4 +21,15 @@ public class AsyncConfig {
     executor.initialize();
     return executor;
   }
+
+  @Bean(name = "scriptEventExecutor")
+  public Executor scriptEventExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(2);
+    executor.setMaxPoolSize(4);
+    executor.setQueueCapacity(200);
+    executor.setThreadNamePrefix("script-event-");
+    executor.initialize();
+    return executor;
+  }
 }

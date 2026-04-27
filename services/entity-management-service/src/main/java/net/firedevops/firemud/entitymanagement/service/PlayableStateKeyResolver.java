@@ -20,4 +20,18 @@ public class PlayableStateKeyResolver {
           throw new IllegalArgumentException("playableStateScope must be specified");
     };
   }
+
+  public PlayableStateScope resolveScope(String playableStateKey) {
+    if (!StringUtils.hasText(playableStateKey)) {
+      throw new IllegalArgumentException("playableStateKey must not be blank");
+    }
+    String normalized = playableStateKey.trim();
+    if (SHARED_LIVE_KEY.equals(normalized)) {
+      return PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+    }
+    if (normalized.startsWith(INSTANCE_PREFIX)) {
+      return PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+    }
+    throw new IllegalArgumentException("Unsupported playableStateKey: " + playableStateKey);
+  }
 }

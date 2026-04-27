@@ -127,7 +127,7 @@ Minimum requirements:
   - When a signer is revoked, subsequent loads/activations of bundles signed by that key must fail, and already-enabled plugins must transition to `pluginState=DISABLED` with mandatory `statusReason=signer_revoked`; triggers are rejected and the reason is recorded in `script_event_audit`.
 - **Propagation (required)**:
   - The allowlist and revocation list must be distributed to runtime services as a signed configuration artifact with a bounded refresh interval.
-  - Automation & Scripting must refresh signer policy on a bounded cadence (for example every 60 seconds) and must disable affected plugins within a fixed operator SLO (for example “revocation disables affected plugins within 5 minutes”).
+- Automation & Scripting must refresh signer policy on a bounded cadence (for example every 60 seconds) and must disable affected plugins within a fixed operator SLO (for example “revocation disables affected plugins within 5 minutes”). The current Automation runtime includes a scheduled plugin-policy reconciliation sweep over enabled plugin runtime states; it disables active plugins when Game Design publication metadata reports signer revocation, blocked/missing component policy, unavailable policy metadata, or a no-longer-published plugin version.
   - Disablement due to revocation must emit an operator-visible control-plane event and be visible in audit tooling so operators can prove when revocation took effect.
   - Runtime signer-policy visibility must be queryable via control-plane read APIs (for example `GetSignerPolicyConvergence`) so operators can verify policy propagation before and after revocation. Before resuming normal admission after a revocation or policy repair, operators should use those read surfaces together with the scripting control-plane convergence/drain reads for the affected scope to confirm that policy propagation, plugin disablement, and any required draining have all converged.
   - If signer policy cannot be refreshed/verified for a scope beyond max-age, plugin admission must fail closed with `finalOutcome=signer_policy_unavailable` until policy converges.
@@ -403,7 +403,7 @@ Operationally, Logging & Admin acts as the operator-facing orchestration and aud
 
 To roll back a misbehaving plugin, operators must publish a new trusted `pluginVersionId` that reintroduces the desired logic, then promote that newly published version to `activeVersionId` for the affected `<tenantId, gameInstanceId, pluginId>` via Logging & Admin. Historical `SUPERSEDED` versions remain immutable audit records and are not reactivated. The Automation & Scripting Service then resumes admitting triggers for the restored logic version while continuing to enforce quotas, budgets, and sandbox limits as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
 
-Plugin rollback/disable/revocation flows must also cancel pending outbox work for the displaced plugin version (for example via `CancelPendingWorkItemsForPluginVersion`) before or alongside queue purges, so stale plugin-version work cannot continue to hand off after control-plane changes.
+Plugin rollback/disable/revocation flows must also cancel pending outbox work for the displaced plugin version via `CancelPendingWorkItemsForPluginVersion` before or alongside queue purges, so stale plugin-version work cannot continue to hand off after control-plane changes.
 
 Rollback/disable/revocation flows must also reconcile durable plugin-owned timers:
 

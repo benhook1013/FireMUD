@@ -1,3 +1,9 @@
 package net.firedevops.firemud.accountservice.dto;
 
-public record AccountDataExportDto(AccountDto account, ProfileDto profile) {}
+import java.util.List;
+
+public record AccountDataExportDto(AccountDto account, List<ProfileDto> profiles) {
+  public AccountDataExportDto {
+    profiles = profiles == null ? List.of() : List.copyOf(profiles);
+  }
+}

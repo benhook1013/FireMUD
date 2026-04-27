@@ -149,7 +149,7 @@ Every restore that rewinds PostgreSQL must select one explicit Coordination Redi
   - requires proof of empty coordination state and the same post-restore hardening, external credential validation, and smoke-verification evidence required for player-facing reopen
 - `scoped_reset_restore`
   - use when Coordination Redis state may survive while PostgreSQL has been rewound
-  - requires proof of the canonical reset handshake and reset-sensitive session/auth handling
+  - requires proof of the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) and reset-sensitive session/auth handling
 
 Ambiguous restore behavior is not allowed:
 

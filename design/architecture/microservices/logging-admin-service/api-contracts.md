@@ -2,6 +2,12 @@
 
 This document defines the Logging & Admin Service REST and gRPC surfaces, authentication classes, and endpoint availability expectations.
 
+## Implementation Notes
+
+- Admission-pointer workflows, feature-flag toggles, and scoped tick-remediation pause/resume forwarding are live in the current service.
+- Quota-override ingress remains target-state until Account exposes the canonical owner-side override mutation contract.
+- Broader tick-remediation `remediate` remains target-state until Game Session exposes the canonical owner-side remediation RPC.
+
 ## REST
 
 - `GET /ping` – basic health check returning `"pong"`.
@@ -11,17 +17,17 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 - `POST /moderation/actions` – apply a moderation action.
 - `GET /sagas` – list saga instances.
 - `GET /sagas/{id}/steps` – inspect steps for a saga instance.
-- `GET /admission-pointers` – list the caller-visible gameplay admission pointers exposed by Game Session control-plane.
-- `GET /admission-pointers/{worldSlug}/{realmSlug}/audit` – read the append-only cutover audit history for one gameplay realm pointer, including the `preparedVersionUpgradeId` when a pointer move consumed a durable cutover-preparation artifact.
-- `POST /admission-pointers` – operator-facing cutover mutation that forwards to Game Session compare-and-set admission-pointer control plane, derives the actor from the authenticated session rather than trusting caller-supplied actor identity, and now requires `preparedVersionUpgradeId` whenever the pointer is moved to a different `gameInstanceId`.
+- `GET /admission-pointers` – list the caller-visible gameplay admission pointers exposed by Game Session control-plane, including the explicit `publicProductionRealm` flag used by admission and first-join membership creation.
+- `GET /admission-pointers/{worldSlug}/{realmSlug}/audit` – read the append-only cutover audit history for one gameplay realm pointer, including `publicProductionRealm` and the `preparedVersionUpgradeId` when a pointer move consumed a durable cutover-preparation artifact.
+- `POST /admission-pointers` – operator-facing cutover mutation that forwards to Game Session compare-and-set admission-pointer control plane, derives the actor from the authenticated session rather than trusting caller-supplied actor identity, preserves explicit public-production metadata, and now requires `preparedVersionUpgradeId` whenever the pointer is moved to a different `gameInstanceId`.
 - `POST /admission-pointers/cutover` – operator-facing canonical prepared-cutover operation that forwards one prepared-upgrade id, replacement instance id, and pointer CAS guard to Game Session so proof revalidation and pointer swap happen in one control-plane call.
 - `POST /admission-pointers/version-upgrades` – operator-facing preparation call that persists the Game Session `PrepareVersionUpgrade` compatibility proof for a source instance and target version under a caller-supplied idempotency key.
 - `GET /admission-pointers/version-upgrades/{tenantId}/{preparationId}` – read one durable prepared-version-upgrade proof, including participant attestations and execution state after a cutover has consumed the preparation.
-- `POST /quota-overrides` – operator-facing quota override write ingress. Logging & Admin validates actor/session context, records the audit trail, and forwards the domain mutation to the owning service rather than defining quota truth locally.
-- `DELETE /quota-overrides/{scopeType}/{scopeId}/{quotaKey}` – operator-facing quota override removal using the same audit and forwarding rules as creation/update.
+- `POST /quota-overrides` – reserved future operator-facing quota override write ingress. This remains deferred until Account exposes the canonical owner-side override mutation contract.
+- `DELETE /quota-overrides/{scopeType}/{scopeId}/{quotaKey}` – reserved future operator-facing quota override removal using the same owner-side contract as creation/update.
 - `POST /tick-remediation/pause` – operator-facing scoped tick pause request that forwards to Game Session control-plane, records actor identity and reason, and never mutates Redis directly.
 - `POST /tick-remediation/resume` – operator-facing scoped tick resume request that forwards to Game Session control-plane with the same audit requirements.
-- `POST /tick-remediation/remediate` – operator-facing scoped remediation request for coordination/tick recovery. Logging & Admin owns request validation, operator intent, and audit; Game Session remains the only runtime state-mutation owner.
+- `POST /tick-remediation/remediate` – reserved future operator-facing scoped remediation request for coordination/tick recovery. This remains deferred until Game Session exposes a canonical owner-side remediation RPC; Logging & Admin must not invent direct Redis mutation or a fake remediation contract in the meantime.
 
 ```bash
 curl http://localhost:8080/ping

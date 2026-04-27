@@ -16,9 +16,11 @@ curl http://localhost:8080/ping
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `entity_management_service.proto`.
 - `CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse)` – builds a new player character from a template.
-- `UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse)` – updates stats or equipment for a character or NPC.
+- `UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse)` – updates mutable character state for the requested `{tenantId, gameInstanceId, playableStateScope, characterId}` target. The service must reject missing or mismatched playable-state scope instead of updating by global character id alone.
 - `QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse)` – lists items for an entity with pagination. Current responses include `item_instance_id` and `visible_ref` for concrete item instances; quantity is present in the proto for forward compatibility, but stack merge behavior is still a later `06.3.2` follow-up.
-- `ListCharactersByAccount` – returns all characters owned by an account across tenants.
+- `ListCharactersByAccount` – returns all characters owned by an account for the requested `{tenantId, gameInstanceId, playableStateScope}` gameplay target. Each returned `Character` now echoes the resolved `playableStateScope` so later consumers do not have to infer realm policy from the request or from hidden storage-key conventions.
+- `QueryActorState` – returns gameplay-attested actor resources and active conditions for a scoped character.
+- `ApplyActorCondition` – applies a gameplay-attested active condition or transient action state for a scoped character. The first contract accepts source provenance, optional expiry, and the same internal effect payload JSON shape consumed by `QueryActorState`.
 - `ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse)` – returns players, NPCs, and visible items present in a room, scoped by `RoomInstanceRef`.
 - `GetDraftDesignDigest` – returns publish-gating digest for Draft entity templates using typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. Entity Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}`. `appliedCommitId` means the highest Game Design commit whose full revision set has been durably applied to the target Draft entity scope. `contentDigest` must cover only version-scoped entity template/binding rows and must exclude live runtime entities and audit/history metadata.
 
@@ -129,6 +131,16 @@ Concrete per-effect required writes and reconciliation rules live in [`system-ar
 Cross-service retry orchestration is owned by the Game Session Service reconciliation backlog described in [Transaction Strategies](../../system-architecture-transactions.md#reconciliation-owner-of-record-spatialambient-effects). Entity Management must expose participant acknowledgements for each `EffectId`; it is not the owner of cross-service retry scheduling.
 
 Only entities approved by the `EntityVisibilityPolicy` are returned; hidden NPCs, private inventory, or offstage summons are filtered out so `LOOK` always aligns with the player’s perspective. The response deliberately omits detailed stats to keep the text output focused on presence rather than numbers.
+
+## Actor State Query
+
+`QueryActorState` is the gameplay-facing read contract for current actor resources and active conditions. Callers must present gameplay session attestation, tenant id, character id, game instance id, and the resolved playable-state scope. Entity Management validates the attestation and scope, reads the scoped character, emits baseline character stat resources, overlays persisted `actor_resource_states` rows, applies active condition and equipped-item `effect_payload_json` modifiers through the shared effect evaluator, and returns active `actor_active_conditions` rows whose expiry has not passed. The response is transport-neutral state data for Game Logic and Game Session consumers; presentation layers must not infer authoritative gameplay state from transcript text.
+
+`ApplyActorCondition` is the first mutation contract for the same actor-state table. It validates gameplay session attestation and playable-state scope before creating an `actor_active_conditions` row with `conditionKey`, `stackCount`, `sourceType`, optional `sourceId`, optional `expiresAt`, and optional `effectPayloadJson`. This is intended for gameplay-owned actions such as the first transient `blocking` state as well as later spells, consumables, and scripted effects. Reads ignore expired rows and the scheduled expiry sweep removes elapsed rows; callers must still treat the mutation response as the authoritative applied state for that request.
+
+Condition and item-template effect payloads are an internal persisted contract in this first slice. They may contain a top-level `modifiers` array whose entries include `operation`, `target_key`, `value`, optional `scope_kind`, optional `scope_key`, and optional `priority`; supported operations currently match the shared evaluator primitives: `ADD`, `MULTIPLY`, `CLAMP_MIN`, `CLAMP_MAX`, `GRANT_FLAG`, and `GRANT_CONDITION`.
+
+The current contract still leaves player command orchestration, authored stat/condition definitions, richer action-state policies, and combat resolution to later stats/effect slices.
 
 ## Implementation Status (LOOK Slice)
 

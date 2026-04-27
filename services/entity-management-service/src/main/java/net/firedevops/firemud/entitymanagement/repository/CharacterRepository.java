@@ -16,6 +16,9 @@ public interface CharacterRepository extends JpaRepository<Character, Long> {
 
   Optional<Character> findByIdAndTenantId(Long id, Long tenantId);
 
+  Optional<Character> findByIdAndTenantIdAndPlayableStateKey(
+      Long id, Long tenantId, String playableStateKey);
+
   Page<Character> findByTenantIdAndAccountIdAndPlayableStateKey(
       Long tenantId, Long accountId, String playableStateKey, Pageable pageable);
 

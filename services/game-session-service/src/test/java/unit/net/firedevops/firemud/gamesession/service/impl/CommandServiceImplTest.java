@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -93,6 +94,7 @@ class CommandServiceImplTest {
     assertEquals("PENDING", staged.getGameplayResult());
     assertEquals("LOOK", staged.getCommandName());
     assertEquals("look", staged.getSanitizedCommandText());
+    assertEquals(1L, staged.getEnqueueSeq());
   }
 
   @Test
@@ -246,8 +248,18 @@ class CommandServiceImplTest {
 
   private GameplayCommandRepository commandRepositorySavingArgument() {
     GameplayCommandRepository repository = Mockito.mock(GameplayCommandRepository.class);
+    AtomicLong idSequence = new AtomicLong();
     Mockito.when(repository.save(Mockito.any(GameplayCommand.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              GameplayCommand command = invocation.getArgument(0);
+              if (command.getId() == null) {
+                long id = idSequence.incrementAndGet();
+                command.setId(id);
+                command.setEnqueueSeq(id);
+              }
+              return command;
+            });
     return repository;
   }
 }

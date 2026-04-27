@@ -1,7 +1,9 @@
 package net.firedevops.firemud.automationscripting.repository;
 
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -9,4 +11,21 @@ import org.springframework.stereotype.Repository;
 public interface PluginRuntimeStateRepository extends JpaRepository<PluginRuntimeState, Long> {
   Optional<PluginRuntimeState> findByTenantIdAndGameInstanceIdAndPluginId(
       String tenantId, String gameInstanceId, String pluginId);
+
+  List<PluginRuntimeState> findByTenantIdAndGameInstanceId(String tenantId, String gameInstanceId);
+
+  List<PluginRuntimeState> findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+      String pluginState, String activePluginVersionId, Pageable pageable);
+
+  List<PluginRuntimeState>
+      findByTenantIdAndPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+          String tenantId, String pluginState, String activePluginVersionId, Pageable pageable);
+
+  List<PluginRuntimeState>
+      findByTenantIdAndGameInstanceIdAndPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+          String tenantId,
+          String gameInstanceId,
+          String pluginState,
+          String activePluginVersionId,
+          Pageable pageable);
 }

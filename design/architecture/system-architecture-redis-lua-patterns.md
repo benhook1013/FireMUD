@@ -222,17 +222,14 @@ Scripts that do not clearly fit one of these categories should be refactored unt
 
 ### Automation Scripts and Cluster Slotting
 
-Automation-related Lua scripts follow stricter cluster slotting rules to avoid `CROSSSLOT` errors and keep coordination boundaries clear:
+Automation-related Redis operations follow stricter slotting rules to avoid `CROSSSLOT` errors and keep coordination boundaries clear:
 
-- Scripts that operate on `automation:tick:{tenantInstanceScriptTag}:*` keys are registered as **single-hash-slot** scripts:
-  - They may include multiple `automation:tick:{tenantInstanceScriptTag}:*` keys for the **same** `<tenantId>` + `<gameInstanceId>` + `<scriptId>` in `KEYS`, but they must not mix different `{tenantInstanceScriptTag}` values.
-  - They must not include any `tick:{tenantRegionTag}:*` keys in the same invocation.
 - Scripts that operate on `automation:queue:{tenantInstanceTag}:*` keys:
   - Use only `automation:queue:{tenantInstanceTag}:*` keys for a single runtime instance scope in `KEYS`.
-  - Must not include `automation:tick:*` or `tick:*` keys in the same invocation.
+  - Must not include `tick:*` keys in the same invocation.
 - Cross-boundary rules:
   - Automation scripts **never** perform multi-key operations that span both `automation:*` and `tick:*` prefixes in one `EVAL`/`EVALSHA` call.
-  - Automation work is staged under `automation:queue:*` and `automation:tick:*` and handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes.
+  - Automation work is projected under `automation:queue:*` and handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes.
   - Fairness-critical automation handoff is idempotent on a durable dispatch identity (for example `(scheduleId, gameInstanceId, regionEpoch, dueTickId, entityId, commandKind)` or an equivalent derived `automationDispatchId`) and must not depend on Redis queue contents as the sole dedupe record.
   - Before invoking the Redis enqueue script, Game Session must insert or confirm a durable admission row keyed by `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)` in its command/admission ledger. Redis enqueue scripts may treat the dispatch identity as an idempotent member key for hot-path dedupe, but the durable admission row is the authority used after resets, gRPC retries, and failover.
 

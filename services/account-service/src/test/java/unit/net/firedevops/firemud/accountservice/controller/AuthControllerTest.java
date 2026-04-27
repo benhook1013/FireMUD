@@ -161,7 +161,7 @@ class AuthControllerTest {
 
   @Test
   void requestPasswordResetReturnsSuccess() throws Exception {
-    PasswordResetRequest req = new PasswordResetRequest(1L, "demo@example.com");
+    PasswordResetRequest req = new PasswordResetRequest("demo@example.com");
 
     mockMvc
         .perform(
@@ -174,8 +174,8 @@ class AuthControllerTest {
 
   @Test
   void requestEmailVerificationReturnsSuccess() throws Exception {
-    net.firedevops.firemud.accountservice.dto.AccountRefRequest req =
-        new net.firedevops.firemud.accountservice.dto.AccountRefRequest(1L, 2L);
+    net.firedevops.firemud.accountservice.dto.AccountIdRequest req =
+        new net.firedevops.firemud.accountservice.dto.AccountIdRequest(2L);
 
     mockMvc
         .perform(
@@ -189,7 +189,7 @@ class AuthControllerTest {
   @Test
   void verifyEmailReturnsSuccess() throws Exception {
     net.firedevops.firemud.accountservice.dto.VerifyEmailRequest req =
-        new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest(1L, "tok");
+        new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest("tok");
 
     mockMvc
         .perform(

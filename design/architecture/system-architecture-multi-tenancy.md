@@ -16,7 +16,7 @@ FireMUD separates **global identity** from **per-game state** so that one person
 - **Tenant slug (`tenantSlug`)** – A stable, human-friendly identifier owned by the Game Design Service. Slugs are used only as **player-facing selectors** in the post-login lobby flow (`WORLDS` / `REALMS` / `CHARS` / `PLAY`) and are resolved server-side to `tenantId`; services and persistence models continue to use `tenantId` as the authoritative tenant identifier. See [ADR 0005: Tenant Identifiers in Gameplay Protocol](./decisions/adr-0005-tenant-identifiers-in-gameplay-protocol.md) for the required slug stability rules.
 - **Game instance (`gameInstanceId`)** – A specific running instance of a tenant’s world, keyed as described in [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#version-activation--rollback). Persistence models, APIs, and key formats must include `gameInstanceId` explicitly rather than overloading `tenantId`.
   - A tenant may expose one or more **player-addressable realms**. Each realm resolves to exactly one admissible `gameInstanceId` at a time through the authoritative realm-routing contract owned by Game Session.
-  - One realm may be marked as the default public production realm. In v1, that production realm is the only realm that may be publicly discoverable to authenticated accounts that do not already hold tenant membership.
+  - One visible realm may be flagged as the public-production realm in the Game Session admission-pointer record. In v1, that flagged realm is the only realm that may be publicly discoverable to authenticated accounts that do not already hold tenant membership. The initial catalog uses the configured `production` realm as the bootstrap default, but callers must consume the explicit pointer flag rather than infer public-production behavior from a slug.
   - Additional realms are explicitly authorized non-production realms such as playtest forks. They are never public-discovery realms in v1 and require explicit access grants owned by Account Service and evaluated through the same runtime grant authority across bootstrap discovery and gameplay admission.
   - Additional running instances may still exist for operational workflows, but only realms surfaced through the authenticated lobby contract are player-addressable.
 - **Account–tenant membership and roles** – For each tenant a platform account participates in, the platform records membership and roles (for example, `player`, `designer`, `tenantAdmin`) that appear in JWT `scopedRoles[tenantId]` claims. Membership is many-to-many: one account can join many tenants, and each tenant can host many accounts.
@@ -75,7 +75,7 @@ This model underpins both authentication and authorization:
 - Gameplay admission is stricter: player-facing `WORLDS` / `REALMS` / `CHARS` / `PLAY` selection uses caller-bound tenant membership, public-production admission policy, and entitlement checks, and global roles alone do not grant gameplay admission.
 - Player-facing world visibility in v1 has two sources:
   - existing caller-bound tenant membership for any visible realm the caller is allowed to enter, and
-  - public-production discovery for tenants whose default production realm is live and gameplay-admissible.
+  - public-production discovery for tenants whose explicit public-production realm is live and gameplay-admissible.
   Worlds that fail both visibility sources, or fail entitlement checks, must not appear in discovery responses.
 
 ### Realm Catalog and Admission-Pointer Contract
@@ -93,8 +93,8 @@ Minimum realm-catalog facts for one visible realm are:
 - `tenantSlug`
 - `realmSlug`
 - bounded player-facing display metadata
-- whether the realm is the default public production realm
-- whether the realm is public-production or explicit-grant-only
+- whether the realm is visible
+- whether the realm is the explicit public-production realm or explicit-grant-only
 - whether the realm uses shared-state or isolated-state gameplay policy
 
 Minimum admission-pointer facts for one resolved realm are:
@@ -103,6 +103,8 @@ Minimum admission-pointer facts for one resolved realm are:
 - `realmSlug`
 - `admissibleGameInstanceId`
 - `pointerVersion`
+- `visible`
+- `publicProductionRealm`
 - `updatedAt`
 
 Contract rules:
@@ -110,6 +112,7 @@ Contract rules:
 - `REALMS`, `CHARS`, `PLAY`, bootstrap discovery, connect-token issuance, and reconnect validation must all consume the same realm-catalog and admission-pointer truth.
 - Clients never select raw `gameInstanceId` values directly. They select a world and optional realm, and the server resolves that choice to the current admissible runtime target.
 - Each player-addressable realm resolves to exactly one admissible `gameInstanceId` at a time.
+- Public-production onboarding and first-join membership creation are controlled by the persisted `publicProductionRealm` flag plus visibility and entitlement checks, not by comparing `realmSlug` with a reserved string.
 - If no admissible target exists for a realm, the realm may remain visible for operator/debug surfaces, but ordinary gameplay admission must fail closed rather than guessing a replacement target.
 
 Required read contract:

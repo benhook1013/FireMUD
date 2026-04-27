@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
@@ -20,6 +21,7 @@ import net.firedevops.firemud.gamesession.service.DurableGameplayReplayService;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyResult;
 import net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.stereotype.Service;
@@ -37,9 +39,11 @@ public final class DefaultDurableGameplayCommandExecutionService
   private final ItemCommandHandler itemCommandHandler;
   private final CommunicationCommandHandler communicationCommandHandler;
   private final AfkCommandHandler afkCommandHandler;
+  private final ActionStateCommandHandler actionStateCommandHandler;
   private final DurableGameplayReplayService durableGameplayReplayService;
   private final MovementEffectIdempotencyService movementEffectIdempotencyService;
   private final PlayerOutputDeliveryService playerOutputDeliveryService;
+  private final ScriptEventPublisher scriptEventPublisher;
 
   public DefaultDurableGameplayCommandExecutionService(
       MeterRegistry meterRegistry,
@@ -49,9 +53,11 @@ public final class DefaultDurableGameplayCommandExecutionService
       ItemCommandHandler itemCommandHandler,
       CommunicationCommandHandler communicationCommandHandler,
       AfkCommandHandler afkCommandHandler,
+      ActionStateCommandHandler actionStateCommandHandler,
       DurableGameplayReplayService durableGameplayReplayService,
       MovementEffectIdempotencyService movementEffectIdempotencyService,
-      PlayerOutputDeliveryService playerOutputDeliveryService) {
+      PlayerOutputDeliveryService playerOutputDeliveryService,
+      ScriptEventPublisher scriptEventPublisher) {
     this.meterRegistry = meterRegistry;
     this.textCommandParser = textCommandParser;
     this.sessionContextService = sessionContextService;
@@ -59,9 +65,11 @@ public final class DefaultDurableGameplayCommandExecutionService
     this.itemCommandHandler = itemCommandHandler;
     this.communicationCommandHandler = communicationCommandHandler;
     this.afkCommandHandler = afkCommandHandler;
+    this.actionStateCommandHandler = actionStateCommandHandler;
     this.durableGameplayReplayService = durableGameplayReplayService;
     this.movementEffectIdempotencyService = movementEffectIdempotencyService;
     this.playerOutputDeliveryService = playerOutputDeliveryService;
+    this.scriptEventPublisher = scriptEventPublisher;
   }
 
   @Override
@@ -95,6 +103,10 @@ public final class DefaultDurableGameplayCommandExecutionService
     if (parsed.type() == TextCommandType.AFK) {
       return Optional.of(executeAfkMutation(context, parsed, command, effect.getEffectId()));
     }
+    if (parsed.type() == TextCommandType.BLOCK) {
+      return Optional.of(
+          executeActionStateMutation(context, parsed, command, effect.getEffectId()));
+    }
     PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, parsed);
     if (!prepared.commandResult().accepted()) {
       if (prepared.responseOutput() != null) {
@@ -113,7 +125,9 @@ public final class DefaultDurableGameplayCommandExecutionService
     MoveEffectApplyResult applyResult =
         movementEffectIdempotencyService.apply(
             effect.getEffectId(), context, prepared.updatedContext().roomInstanceId());
-    return Optional.of(recordResult(command, resultForApply(applyResult, prepared)));
+    return Optional.of(
+        recordResult(
+            command, resultForApply(applyResult, prepared, context, effect.getEffectId())));
   }
 
   private DurableGameplayCommandExecutionResult executeItemMutation(
@@ -189,6 +203,32 @@ public final class DefaultDurableGameplayCommandExecutionService
     return recordResult(command, resultForCommandResult(result.commandResult()));
   }
 
+  private DurableGameplayCommandExecutionResult executeActionStateMutation(
+      SessionContext context, TextCommand parsed, GameplayCommand command, String effectId) {
+    Optional<DurableGameplayReplayService.ReplayRecord> replay =
+        durableGameplayReplayService.find(context.tenantId(), context.sessionId(), effectId);
+    if (replay.isPresent()) {
+      DurableGameplayReplayService.ReplayRecord record = replay.orElseThrow();
+      if (!record.actorOutputs().isEmpty()) {
+        playerOutputDeliveryService.deliver(context, record.actorOutputs(), true);
+      }
+      return recordResult(command, replayResult(record));
+    }
+    var result = actionStateCommandHandler.handle(context, parsed, effectId);
+    durableGameplayReplayService.save(
+        context.tenantId(),
+        context.sessionId(),
+        effectId,
+        result.commandResult().accepted(),
+        result.commandResult().errorCode(),
+        result.commandResult().errorMessage(),
+        result.outputs());
+    if (!result.outputs().isEmpty()) {
+      playerOutputDeliveryService.deliver(context, result.outputs(), true);
+    }
+    return recordResult(command, resultForCommandResult(result.commandResult()));
+  }
+
   private DurableGameplayCommandExecutionResult resultForCommandResult(
       net.firedevops.firemud.gamesession.dto.CommandEnqueueResult commandResult) {
     if (commandResult.accepted()) {
@@ -217,15 +257,20 @@ public final class DefaultDurableGameplayCommandExecutionService
   }
 
   private DurableGameplayCommandExecutionResult resultForApply(
-      MoveEffectApplyResult applyResult, PreparedMoveCommandResult prepared) {
+      MoveEffectApplyResult applyResult,
+      PreparedMoveCommandResult prepared,
+      SessionContext originalContext,
+      String effectId) {
     return switch (applyResult.status()) {
       case APPLIED -> {
         deliverPreparedOutputs(applyResult.context(), prepared);
+        publishRegionTransitionEvents(originalContext, applyResult.context(), effectId);
         yield new DurableGameplayCommandExecutionResult(
             "APPLIED", "APPLIED", "APPLIED", null, null);
       }
       case REPLAYED -> {
         deliverPreparedOutputs(applyResult.context(), prepared);
+        publishRegionTransitionEvents(originalContext, applyResult.context(), effectId);
         yield new DurableGameplayCommandExecutionResult(
             "REPLAY_NOOP", "APPLIED", "REPLAY_NOOP", null, null);
       }
@@ -253,6 +298,11 @@ public final class DefaultDurableGameplayCommandExecutionService
     playerOutputDeliveryService.deliver(context, List.of(prepared.responseOutput()), true);
   }
 
+  private void publishRegionTransitionEvents(
+      SessionContext originalContext, SessionContext updatedContext, String effectId) {
+    scriptEventPublisher.publishRegionTransitionEvents(originalContext, updatedContext, effectId);
+  }
+
   private boolean isDurableItemMutation(TextCommandType type) {
     return switch (type) {
       case GET, DROP, PUT, TAKE, WEAR, REMOVE -> true;
@@ -270,6 +320,7 @@ public final class DefaultDurableGameplayCommandExecutionService
   private boolean isDurableCommand(TextCommandType type) {
     return type == TextCommandType.MOVE
         || type == TextCommandType.AFK
+        || type == TextCommandType.BLOCK
         || isDurableItemMutation(type)
         || isDurableCommunication(type);
   }

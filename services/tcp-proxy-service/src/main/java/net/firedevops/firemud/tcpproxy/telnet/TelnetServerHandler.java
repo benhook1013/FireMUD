@@ -53,6 +53,10 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final String OK = "OK";
   private static final String STARTUP_UNAVAILABLE_MESSAGE =
       "DISCONNECT startup_unavailable Gameplay path starting; please reconnect\n";
+  private static final String DISCONNECT_NOTIFY_TRANSPORT_FAILURE_METRIC =
+      "tcpproxy.disconnect.notify.transport_failure";
+  private static final String EXPECTED_SHUTDOWN_DISCONNECT_NOTIFY_FAILURE_METRIC =
+      "tcpproxy.disconnect.notify.expected_shutdown_transport_failure";
   private static final String INITIAL_GUIDANCE_MESSAGE =
       "OK CONNECTED\n"
           + "Type WORLDS to list available worlds.\n"
@@ -722,15 +726,29 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         .exceptionally(
             failure -> {
               try (CombinedLoggingContext ignored = openLoggingContext()) {
+                Status.Code status = Status.fromThrowable(failure).getCode();
+                if (isExpectedShutdownDisconnectFailure(status)) {
+                  logger.debug(
+                      "Suppressing expected shutdown-path disconnect notification failure for session {} tenant {} status={}",
+                      sessionContext.gameInstanceId(),
+                      sessionContext.tenantId(),
+                      status,
+                      failure);
+                  meterRegistry
+                      .counter(
+                          EXPECTED_SHUTDOWN_DISCONNECT_NOTIFY_FAILURE_METRIC,
+                          "status",
+                          status.name())
+                      .increment();
+                  return null;
+                }
                 logger.warn(
                     "Failed to notify Game Session Service about disconnect for session {} tenant {}",
                     sessionContext.gameInstanceId(),
                     sessionContext.tenantId(),
                     failure);
-                Status.Code status = Status.fromThrowable(failure).getCode();
                 meterRegistry
-                    .counter(
-                        "tcpproxy.disconnect.notify.transport_failure", "status", status.name())
+                    .counter(DISCONNECT_NOTIFY_TRANSPORT_FAILURE_METRIC, "status", status.name())
                     .increment();
               }
               return null;
@@ -746,7 +764,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
             sessionId,
             tenantId);
         meterRegistry
-            .counter("tcpproxy.disconnect.notify.transport_failure", "status", "UNKNOWN")
+            .counter(DISCONNECT_NOTIFY_TRANSPORT_FAILURE_METRIC, "status", "UNKNOWN")
             .increment();
         return;
       }
@@ -764,6 +782,17 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
           .counter("tcpproxy.disconnect.notify.app_error", "code", detail.getCode())
           .increment();
     }
+  }
+
+  private boolean isExpectedShutdownDisconnectFailure(Status.Code status) {
+    if (status != Status.Code.CANCELLED && status != Status.Code.UNAVAILABLE) {
+      return false;
+    }
+    ChannelHandlerContext currentContext = context;
+    return closing
+        && currentContext != null
+        && currentContext.executor() != null
+        && currentContext.executor().isShuttingDown();
   }
 
   private void logTelnetInput(String sanitized) {

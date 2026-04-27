@@ -7,6 +7,8 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
+import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandlingResult;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
@@ -26,6 +28,7 @@ import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyServi
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyResult;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyStatus;
 import net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,12 +44,16 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   private final CommunicationCommandHandler communicationCommandHandler =
       Mockito.mock(CommunicationCommandHandler.class);
   private final AfkCommandHandler afkCommandHandler = Mockito.mock(AfkCommandHandler.class);
+  private final ActionStateCommandHandler actionStateCommandHandler =
+      Mockito.mock(ActionStateCommandHandler.class);
   private final DurableGameplayReplayService durableGameplayReplayService =
       Mockito.mock(DurableGameplayReplayService.class);
   private final MovementEffectIdempotencyService movementEffectIdempotencyService =
       Mockito.mock(MovementEffectIdempotencyService.class);
   private final PlayerOutputDeliveryService playerOutputDeliveryService =
       Mockito.mock(PlayerOutputDeliveryService.class);
+  private final ScriptEventPublisher scriptEventPublisher =
+      Mockito.mock(ScriptEventPublisher.class);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
   private DefaultDurableGameplayCommandExecutionService service;
@@ -62,9 +69,11 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             itemCommandHandler,
             communicationCommandHandler,
             afkCommandHandler,
+            actionStateCommandHandler,
             durableGameplayReplayService,
             movementEffectIdempotencyService,
-            playerOutputDeliveryService);
+            playerOutputDeliveryService,
+            scriptEventPublisher);
   }
 
   @Test
@@ -112,6 +121,31 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
                 .count())
         .isEqualTo(1.0);
     verify(playerOutputDeliveryService).deliver(moved, java.util.List.of(output), true);
+    verify(scriptEventPublisher).publishRegionTransitionEvents(context, moved, "tfx-1");
+  }
+
+  @Test
+  void executePublishesMovementLifecycleEventsAfterFirstApply() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext moved =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-2", "jwt-token");
+    GameplayCommand command = gameplayCommand("MOVE", "north");
+    TickEffect effect = tickEffect("tfx-9", "cmd-9");
+    when(parser.parse("north"))
+        .thenReturn(new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
+    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(moveCommandHandler.prepare(Mockito.eq(context), Mockito.any()))
+        .thenReturn(
+            new PreparedMoveCommandResult(
+                CommandEnqueueResult.success(), PlayerOutput.message("moved"), moved));
+    when(movementEffectIdempotencyService.apply("tfx-9", context, "R-2"))
+        .thenReturn(new MoveEffectApplyResult(MoveEffectApplyStatus.APPLIED, moved));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("APPLIED");
+    verify(scriptEventPublisher).publishRegionTransitionEvents(context, moved, "tfx-9");
   }
 
   @Test
@@ -249,6 +283,32 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     assertThat(result.gameplayResult()).isEqualTo("APPLIED");
     verify(durableGameplayReplayService)
         .save(22L, 42L, "tfx-5", true, null, null, java.util.List.of(output));
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+  }
+
+  @Test
+  void executeAppliesDurableBlockAndStoresReplay() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("BLOCK", "BLOCK");
+    TickEffect effect = tickEffect("tfx-6", "cmd-6");
+    TextCommand parsed = new TextCommand(TextCommandType.BLOCK, java.util.List.of(), "BLOCK");
+    PlayerOutput output = PlayerOutput.notice("You brace for the next blow.");
+    when(parser.parse("BLOCK")).thenReturn(parsed);
+    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-6")).thenReturn(Optional.empty());
+    when(actionStateCommandHandler.handle(context, parsed, "tfx-6"))
+        .thenReturn(
+            new ActionStateCommandHandlingResult(
+                CommandEnqueueResult.success(), java.util.List.of(output)));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("APPLIED");
+    assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
+    assertThat(result.gameplayResult()).isEqualTo("APPLIED");
+    verify(durableGameplayReplayService)
+        .save(22L, 42L, "tfx-6", true, null, null, java.util.List.of(output));
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
   }
 

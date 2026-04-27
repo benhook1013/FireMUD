@@ -6,7 +6,7 @@ The authoritative REST schema source lives in [../../../../services/account-serv
 
 ## Implementation Notes
 
-The account lifecycle, full-account export, tenant-scoped export, and deletion precondition contracts below are the canonical target design. The current REST/OpenAPI, gRPC proto, and service implementation still need follow-through to remove tenant-keyed `ExportAccount` / `DeleteAccount` behavior and add the separate `ExportTenantData` billing-safe route.
+The account lifecycle, full-account export, tenant-scoped export, and deletion precondition contracts below are implemented at the current Account Service boundary. `ExportAccount` and `DeleteAccount` are account-scoped and no longer accept a caller-selected `tenantId`; `ExportTenantData` is the separate tenant-scoped recovery/export surface. Password reset, username reminder, and email-verification tokens are account-scoped rather than tenant-keyed.
 
 ## gRPC APIs
 
@@ -59,16 +59,16 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 | `POST` | `/auth/login` | Authenticate and establish a control-plane session for first-party UIs by returning a Browser JWT; the token is allowlisted server-side via `session:auth:*` entries for revocation |
 | `POST` | `/auth/logout` | Revoke the currently presented control-plane token (`session:auth:*:<tokenHash>` delete for that token) |
 | `POST` | `/auth/logout-all` | Revoke all active control-plane tokens for the authenticated account by advancing `session:auth:revoked_after:account:<accountId>`; the account watermark is the immediate revocation authority and existing tenant/global allowlist keys may be cleaned up asynchronously |
-| `POST` | `/auth/request-password-reset` | Request password reset |
-| `POST` | `/auth/complete-password-reset` | Complete password reset |
-| `POST` | `/auth/request-email-verification` | Send verification email |
-| `POST` | `/auth/verify-email` | Verify email token |
-| `POST` | `/auth/recover-username` | Send username reminder |
+| `POST` | `/auth/request-password-reset` | Request account-scoped password reset |
+| `POST` | `/auth/complete-password-reset` | Complete account-scoped password reset |
+| `POST` | `/auth/request-email-verification` | Send account-scoped verification email |
+| `POST` | `/auth/verify-email` | Verify account-scoped email token |
+| `POST` | `/auth/recover-username` | Send account-scoped username reminder |
 | `POST` | `/accounts` | Create a new user account |
-| `GET` | `/accounts/{accountId}/export` | Export account data |
-| `DELETE` | `/accounts/{accountId}` | Delete an account |
+| `GET` | `/accounts/{accountId}/export` | Export full account data across tenants |
+| `GET` | `/accounts/{accountId}/tenant-export?tenantId={tenantId}` | Tenant-scoped billing-safe export for the authenticated subject or tenant operator |
+| `DELETE` | `/accounts/{accountId}` | Delete the global account after billing-owner preconditions pass |
 | `POST` | `/accounts/{accountId}/external` | Link external account |
-| `GET` | `/tenants/{tenantId}/export` | Tenant-scoped billing-safe export for the authenticated tenant admin |
 | `POST` | `/auth/player-bootstrap` | Authenticate a first-party player account and return a short-lived `player-bootstrap` token for gameplay bootstrap only |
 | `GET` | `/auth/bootstrap/worlds` | List caller-visible worlds for first-party gameplay bootstrap |
 | `GET` | `/auth/bootstrap/worlds/{world}/realms` | List caller-visible realms for a selected world during first-party gameplay bootstrap |
@@ -203,7 +203,7 @@ Required semantics:
   - Exception: cross-account access is allowed only for explicitly authorized global roles (`platformAdmin`) on routes that explicitly document this override.
   - On mismatch without eligible role, return canonical authorization failure (`AUTH_FORBIDDEN_SUBJECT_MISMATCH` or service-equivalent).
 - `GET /accounts/{accountId}/export` is the full account export route. It must not require a caller-selected `tenantId`, and it must not be treated as the billing-safe recovery export for a suspended tenant.
-- `GET /tenants/{tenantId}/export` is the tenant-scoped billing-safe export route. It requires caller-bound `tenantAdmin` membership via `GetCallerTenantMembership(tenantId)`, remains reachable when the tenant is `suspended` or `canceled`, and returns only data scoped to that tenant.
+- `GET /accounts/{accountId}/tenant-export?tenantId={tenantId}` is the tenant-scoped billing-safe export route. It requires either the authenticated subject itself or caller-bound tenant operator access via the canonical tenant-access check, remains reachable when the tenant is `suspended` or `canceled`, and returns only data scoped to that `{tenantId, accountId}` pair.
 - `DELETE /accounts/{accountId}` is global account deletion. It must reject deletion with canonical error `ACCOUNT_DELETE_ACTIVE_BILLING_OWNER` if the account owns any nonterminal subscription (`trialing`, `active`, `past_due`, `grace`, or `suspended`) in any tenant, and the response should include the affected tenant IDs when safe to disclose to the caller. Platform-admin deletion uses the same billing-owner precondition unless an explicit break-glass compliance workflow is documented separately.
 - `GET /tenants/{tenantId}/memberships/me` must ignore any caller-supplied account identifier and always bind subject from authenticated caller context.
 - `GET /tenants/{tenantId}/memberships/{accountId}` is cross-subject by design and is restricted to `billingAdmin`/`platformAdmin`; every call must be audit-logged with caller identity and target `{tenantId, accountId}`.
