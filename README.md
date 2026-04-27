@@ -207,6 +207,7 @@ Common helper commands:
 - `./gradlew lintMarkdown` – lint Markdown docs; see [Developer Setup](DEVELOPER_SETUP.md#-markdown-linting-via-gradle) for details.
 - `npm --prefix config/openapi run openapi:lint` – lint OpenAPI specs.
 - `./dev-tools/docs/link-check.sh` – run the link checker over Markdown docs.
+- `scripts/maintenance/prune-t3-checkpoints.sh` – inspect old T3 Code checkpoint refs under `refs/t3/checkpoints`, including local Codex-state candidate classification when available; add `--keep N` to change retention and `--apply` when you are ready to prune.
 
 The `.pre-commit-config.yaml` and `.editorconfig` files live at the repository root so editors and pre-commit hooks can pick them up automatically. See [Developer Setup](DEVELOPER_SETUP.md) and [Contributing Guidelines](CONTRIBUTING.md) for more tooling and workflow details.
 

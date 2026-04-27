@@ -43,6 +43,7 @@ For a non-interactive Telnet smoke check that performs `LOGIN` + `LOOK` via the 
 
 - Store any ad hoc transcripts in your local workspace or attach them to the relevant investigation/PR notes; do not treat committed transcript artifacts as canonical repo content.
 - Reference the `dev-tools/verify-fresh-bootstrap.sh`, `dev-tools/verify-restart-state.sh`, or `SMOKE_IMAGE_TAG=<tag> dev-tools/verify-smoke-images.sh` workflows when documenting current end-to-end smoke proof.
+- The canonical WebSocket and Telnet smoke helpers currently reuse the same seeded demo account/runtime state and should be run sequentially unless the caller isolates account/session ids explicitly.
 - When replaying the scripts, capture `gamesession.command.look.invocations`/`gamesession.command.look.failures` counters (via `/actuator/prometheus` or the Micrometer endpoint) and log output from Game Session to confirm the metrics/`ERROR <CODE>` mappings fire for both success and failure scenarios.
 - Keep an eye on Game Logic logs for the `Rendered LOOK text` entry emitted by `LookResultRenderer` so you can correlate the structured DTO with the textual transcript when diagnosing discrepancies.
 - Consult `design/project-management/slice-support/look-instrumentation.md` for a deeper dive into the meters/logs that should light up during these runs and how to correlate them back to tenants, error codes, and smoke transcripts.

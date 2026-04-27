@@ -16,6 +16,9 @@ WS_SMOKE_SCRIPT="$ROOT_DIR/services/game-session-service/websocket-login-look-sm
 HEALTH_CHECK_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
 COMPOSE_UP_ARGS=(up -d --remove-orphans)
 
+export TERM="${TERM:-dumb}"
+export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-plain}"
+
 if [[ -z "${SMOKE_IMAGE_TAG:-}" ]]; then
   echo "SMOKE_IMAGE_TAG is required" >&2
   exit 1
@@ -53,5 +56,7 @@ docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
 docker compose "${COMPOSE_FILES[@]}" "${COMPOSE_UP_ARGS[@]}"
 bash "$HEALTH_CHECK_SCRIPT" "${COMPOSE_FILES[@]}"
 
+# These smoke clients intentionally reuse the same seeded demo account/runtime
+# state and must stay sequential unless the caller isolates accounts/session ids.
 bash "$WS_SMOKE_SCRIPT"
 bash "$TCP_SMOKE_SCRIPT"
