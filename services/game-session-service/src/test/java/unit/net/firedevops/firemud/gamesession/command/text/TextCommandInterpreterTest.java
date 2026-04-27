@@ -309,6 +309,11 @@ class TextCommandInterpreterTest {
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
     GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(gameplayCatalogProperties);
+    net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService
+        pointerAuthorityService =
+            Mockito.mock(
+                net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService
+                    .class);
 
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
@@ -317,7 +322,7 @@ class TextCommandInterpreterTest {
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
-            worldCatalog,
+            pointerAuthorityService,
             meterRegistry);
     PlayCommandHandler playHandler =
         new PlayCommandHandler(

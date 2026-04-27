@@ -21,5 +21,6 @@ public record ScriptDefinitionDto(
       @NotNull String targetScopeType,
       String targetScopeId,
       int priority,
+      String priorityTag,
       boolean requiresExclusiveEvent) {}
 }

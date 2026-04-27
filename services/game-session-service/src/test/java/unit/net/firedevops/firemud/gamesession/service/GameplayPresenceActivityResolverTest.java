@@ -18,7 +18,19 @@ class GameplayPresenceActivityResolverTest {
 
     GameplayPresence presence =
         new GameplayPresence(
-            1L, 22L, 7L, 2L, 102L, "Ben", GameplayPresenceRole.PLAYER, 100L, 300L, 250L, 250L);
+            1L,
+            22L,
+            7L,
+            "demo",
+            "production",
+            2L,
+            102L,
+            "Ben",
+            GameplayPresenceRole.PLAYER,
+            100L,
+            300L,
+            250L,
+            250L);
 
     assertEquals(GameplayPresenceActivityState.EXPLICIT_AFK, resolver.resolve(presence));
   }
@@ -34,12 +46,36 @@ class GameplayPresenceActivityResolverTest {
 
     GameplayPresence activeFromAccepted =
         new GameplayPresence(
-            1L, 22L, 7L, 2L, 102L, "Ben", GameplayPresenceRole.PLAYER, 50L, null, 150L, null);
+            1L,
+            22L,
+            7L,
+            "demo",
+            "production",
+            2L,
+            102L,
+            "Ben",
+            GameplayPresenceRole.PLAYER,
+            50L,
+            null,
+            150L,
+            null);
     assertEquals(GameplayPresenceActivityState.ACTIVE, resolver.resolve(activeFromAccepted));
 
     GameplayPresence autoAfk =
         new GameplayPresence(
-            1L, 22L, 7L, 2L, 102L, "Ben", GameplayPresenceRole.PLAYER, 50L, null, 60L, 60L);
+            1L,
+            22L,
+            7L,
+            "demo",
+            "production",
+            2L,
+            102L,
+            "Ben",
+            GameplayPresenceRole.PLAYER,
+            50L,
+            null,
+            60L,
+            60L);
     assertEquals(GameplayPresenceActivityState.AUTO_AFK, resolver.resolve(autoAfk));
   }
 }

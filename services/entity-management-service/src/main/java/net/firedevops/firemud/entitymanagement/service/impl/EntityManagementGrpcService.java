@@ -1,19 +1,23 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Instant;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationClaims;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
+import net.firedevops.firemud.entitymanagement.dto.ActorResourceStateDto;
 import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
+import net.firedevops.firemud.entitymanagement.service.ActorConditionMutationService;
+import net.firedevops.firemud.entitymanagement.service.ActorStateService;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
@@ -25,6 +29,10 @@ import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
 import net.firedevops.firemud.entitymanagement.service.RuntimeInstanceCleanupService;
+import net.firedevops.firemud.entitymanagement.v1.ActorConditionState;
+import net.firedevops.firemud.entitymanagement.v1.ActorResourceValue;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceRequest;
 import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse;
@@ -58,6 +66,8 @@ import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateRequest;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
@@ -89,26 +99,16 @@ public class EntityManagementGrpcService
   private static final Logger logger = LoggerFactory.getLogger(EntityManagementGrpcService.class);
   private final PingService pingService;
   private final CharacterService characterService;
+  private final ActorStateService actorStateService;
+  private final ActorConditionMutationService actorConditionMutationService;
   private final EntityDraftDesignDigestService entityDraftDesignDigestService;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Injected EquipmentService is not exposed externally")
   private final EquipmentService equipmentService;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Injected InventoryService is not exposed externally")
   private final InventoryService inventoryService;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Injected ContainerService is not exposed externally")
   private final ContainerService containerService;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "MeterRegistry is thread-safe and stored as injected")
   private final MeterRegistry meterRegistry;
 
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
@@ -122,6 +122,8 @@ public class EntityManagementGrpcService
   EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
+      ActorStateService actorStateService,
+      ActorConditionMutationService actorConditionMutationService,
       EntityDraftDesignDigestService entityDraftDesignDigestService,
       EquipmentService equipmentService,
       InventoryService inventoryService,
@@ -135,6 +137,8 @@ public class EntityManagementGrpcService
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.characterService = characterService;
+    this.actorStateService = actorStateService;
+    this.actorConditionMutationService = actorConditionMutationService;
     this.entityDraftDesignDigestService = entityDraftDesignDigestService;
     this.equipmentService = equipmentService;
     this.inventoryService = inventoryService;
@@ -148,10 +152,69 @@ public class EntityManagementGrpcService
     this.meterRegistry = meterRegistry;
   }
 
+  public EntityManagementGrpcService(
+      PingService pingService,
+      CharacterService characterService,
+      EntityDraftDesignDigestService entityDraftDesignDigestService,
+      EquipmentService equipmentService,
+      InventoryService inventoryService,
+      ContainerService containerService,
+      RoomEntityService roomEntityService,
+      EntityMutationEffectReplayService entityMutationEffectReplayService,
+      EntityUpgradeValidationService entityUpgradeValidationService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
+      MeterRegistry meterRegistry) {
+    this(
+        pingService,
+        characterService,
+        unsupportedActorStateService(),
+        unsupportedActorConditionMutationService(),
+        entityDraftDesignDigestService,
+        equipmentService,
+        inventoryService,
+        containerService,
+        roomEntityService,
+        entityMutationEffectReplayService,
+        entityUpgradeValidationService,
+        gameplaySessionAttestationService,
+        meterRegistry);
+  }
+
   @Autowired
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
+      ActorStateService actorStateService,
+      EntityDraftDesignDigestService entityDraftDesignDigestService,
+      EquipmentService equipmentService,
+      InventoryService inventoryService,
+      ContainerService containerService,
+      RoomEntityService roomEntityService,
+      EntityMutationEffectReplayService entityMutationEffectReplayService,
+      EntityUpgradeValidationService entityUpgradeValidationService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
+      MeterRegistry meterRegistry) {
+    this(
+        pingService,
+        characterService,
+        actorStateService,
+        unsupportedActorConditionMutationService(),
+        entityDraftDesignDigestService,
+        equipmentService,
+        inventoryService,
+        containerService,
+        roomEntityService,
+        entityMutationEffectReplayService,
+        entityUpgradeValidationService,
+        gameplaySessionAttestationService,
+        meterRegistry);
+  }
+
+  public EntityManagementGrpcService(
+      PingService pingService,
+      CharacterService characterService,
+      ActorStateService actorStateService,
+      ActorConditionMutationService actorConditionMutationService,
       EntityDraftDesignDigestService entityDraftDesignDigestService,
       EquipmentService equipmentService,
       InventoryService inventoryService,
@@ -165,6 +228,8 @@ public class EntityManagementGrpcService
     this(
         pingService,
         characterService,
+        actorStateService,
+        actorConditionMutationService,
         entityDraftDesignDigestService,
         equipmentService,
         inventoryService,
@@ -183,6 +248,8 @@ public class EntityManagementGrpcService
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
+      ActorStateService actorStateService,
+      ActorConditionMutationService actorConditionMutationService,
       EntityDraftDesignDigestService entityDraftDesignDigestService,
       EquipmentService equipmentService,
       InventoryService inventoryService,
@@ -195,6 +262,8 @@ public class EntityManagementGrpcService
     this(
         pingService,
         characterService,
+        actorStateService,
+        actorConditionMutationService,
         entityDraftDesignDigestService,
         equipmentService,
         inventoryService,
@@ -585,12 +654,28 @@ public class EntityManagementGrpcService
   public void updateEntity(
       UpdateEntityRequest request, StreamObserver<UpdateEntityResponse> responseObserver) {
     try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      requireTenantAccessWhenPresent(tenantId);
       long entityId = Long.parseLong(request.getEntityId());
-      boolean result = characterService.updateEntity(entityId);
+      boolean result =
+          characterService.updateEntity(
+              tenantId,
+              entityId,
+              request.getGameInstanceId(),
+              requirePlayableStateScope(request.getPlayableStateScope()));
       UpdateEntityResponse response = UpdateEntityResponse.newBuilder().setSuccess(result).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {
+      UpdateEntityResponse response =
+          UpdateEntityResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "UpdateEntity", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
       UpdateEntityResponse response =
           UpdateEntityResponse.newBuilder()
               .setError(
@@ -619,13 +704,20 @@ public class EntityManagementGrpcService
               request.getSessionAttestation(),
               request.getTenantId(),
               request.getCharacterId(),
-              null,
+              request.getGameInstanceId(),
               null);
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       var entries =
-          inventoryService.listInventory(tenantId, characterId, Pageable.unpaged()).getContent();
+          inventoryService
+              .listInventory(
+                  tenantId,
+                  characterId,
+                  resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
+                  requirePlayableStateScope(request.getPlayableStateScope()),
+                  Pageable.unpaged())
+              .getContent();
       var items = entries.stream().map(this::toProto).toList();
       QueryInventoryResponse response =
           QueryInventoryResponse.newBuilder().addAllItems(items).build();
@@ -665,6 +757,168 @@ public class EntityManagementGrpcService
   }
 
   @Override
+  @Timed(value = "entityGrpc.queryActorState")
+  public void queryActorState(
+      QueryActorStateRequest request, StreamObserver<QueryActorStateResponse> responseObserver) {
+    try {
+      GameplaySessionAttestationClaims claims =
+          requireGameplaySessionAttestation(
+              request.getSessionAttestation(),
+              request.getTenantId(),
+              request.getCharacterId(),
+              request.getGameInstanceId(),
+              null);
+      long tenantId = Long.parseLong(request.getTenantId());
+      requireTenantAccessWhenPresent(tenantId);
+      long characterId = Long.parseLong(request.getCharacterId());
+      var actorState =
+          actorStateService.queryActorState(
+              tenantId,
+              characterId,
+              resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
+              requirePlayableStateScope(request.getPlayableStateScope()));
+      QueryActorStateResponse response =
+          QueryActorStateResponse.newBuilder()
+              .setTenantId(String.valueOf(actorState.tenantId()))
+              .setGameInstanceId(String.valueOf(actorState.gameInstanceId()))
+              .setCharacterId(String.valueOf(actorState.characterId()))
+              .addAllResources(actorState.resources().stream().map(this::toProto).toList())
+              .addAllActiveConditions(
+                  actorState.activeConditions().stream().map(this::toProto).toList())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      QueryActorStateResponse response =
+          QueryActorStateResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "QueryActorState",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      QueryActorStateResponse response =
+          QueryActorStateResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "QueryActorState", ex.getCode(), ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      QueryActorStateResponse response =
+          QueryActorStateResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "QueryActorState",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      QueryActorStateResponse response =
+          QueryActorStateResponse.newBuilder().setError(appError("QueryActorState", ex)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      QueryActorStateResponse response =
+          QueryActorStateResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "QueryActorState", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.applyActorCondition")
+  public void applyActorCondition(
+      ApplyActorConditionRequest request,
+      StreamObserver<ApplyActorConditionResponse> responseObserver) {
+    try {
+      GameplaySessionAttestationClaims claims =
+          requireGameplaySessionAttestation(
+              request.getSessionAttestation(),
+              request.getTenantId(),
+              request.getCharacterId(),
+              request.getGameInstanceId(),
+              null);
+      long tenantId = Long.parseLong(request.getTenantId());
+      requireTenantAccessWhenPresent(tenantId);
+      long characterId = Long.parseLong(request.getCharacterId());
+      ActorConditionStateDto activeCondition =
+          actorConditionMutationService.applyCondition(
+              tenantId,
+              characterId,
+              resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
+              requirePlayableStateScope(request.getPlayableStateScope()),
+              request.getConditionKey(),
+              request.getStackCount(),
+              request.getSourceType(),
+              request.getSourceId(),
+              parseOptionalInstant(request.getExpiresAt()),
+              request.getEffectPayloadJson());
+      responseObserver.onNext(
+          ApplyActorConditionResponse.newBuilder()
+              .setActiveCondition(toProto(activeCondition))
+              .build());
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      responseObserver.onNext(
+          ApplyActorConditionResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ApplyActorCondition",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      responseObserver.onNext(
+          ApplyActorConditionResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "ApplyActorCondition", ex.getCode(), ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          ApplyActorConditionResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ApplyActorCondition",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      responseObserver.onNext(
+          ApplyActorConditionResponse.newBuilder()
+              .setError(appError("ApplyActorCondition", ex))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onNext(
+          ApplyActorConditionResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "ApplyActorCondition", ex))
+              .build());
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
   @Timed(value = "entityGrpc.listEquipment")
   public void listEquipment(
       ListEquipmentRequest request, StreamObserver<ListEquipmentResponse> responseObserver) {
@@ -673,12 +927,18 @@ public class EntityManagementGrpcService
           request.getSessionAttestation(),
           request.getTenantId(),
           request.getCharacterId(),
-          null,
+          request.getGameInstanceId(),
           null);
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
-      var items = equipmentService.listEquipment(tenantId, characterId, Pageable.unpaged());
+      var items =
+          equipmentService.listEquipment(
+              tenantId,
+              characterId,
+              request.getGameInstanceId(),
+              requirePlayableStateScope(request.getPlayableStateScope()),
+              Pageable.unpaged());
       ListEquipmentResponse response =
           ListEquipmentResponse.newBuilder()
               .addAllItems(items.stream().map(this::toProto).toList())
@@ -729,7 +989,7 @@ public class EntityManagementGrpcService
               request.getSessionAttestation(),
               request.getTenantId(),
               request.getCharacterId(),
-              null,
+              request.getGameInstanceId(),
               null);
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
@@ -749,6 +1009,8 @@ public class EntityManagementGrpcService
                     equipmentService.wearItem(
                         tenantId,
                         characterId,
+                        resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
+                        requirePlayableStateScope(request.getPlayableStateScope()),
                         itemId,
                         itemInstanceId,
                         blankToNull(request.getEffectId()),
@@ -825,7 +1087,7 @@ public class EntityManagementGrpcService
               request.getSessionAttestation(),
               request.getTenantId(),
               request.getCharacterId(),
-              null,
+              request.getGameInstanceId(),
               null);
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
@@ -840,6 +1102,8 @@ public class EntityManagementGrpcService
                     equipmentService.removeWornItem(
                         tenantId,
                         characterId,
+                        resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
+                        requirePlayableStateScope(request.getPlayableStateScope()),
                         request.getSlot(),
                         blankToNull(request.getEffectId()),
                         blankToNull(claims.sessionId()));
@@ -909,7 +1173,7 @@ public class EntityManagementGrpcService
               request.getSessionAttestation(),
               request.getTenantId(),
               request.getCharacterId(),
-              null,
+              request.getGameInstanceId(),
               null);
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
@@ -920,7 +1184,8 @@ public class EntityManagementGrpcService
               tenantId,
               characterId,
               containerInstanceId,
-              blankToNull(claims.gameInstanceId()),
+              resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
+              requirePlayableStateScope(request.getPlayableStateScope()),
               blankToNull(claims.roomInstanceId()),
               Pageable.unpaged());
       ListContainerContentsResponse response =
@@ -996,7 +1261,7 @@ public class EntityManagementGrpcService
               request.getSessionAttestation(),
               request.getTenantId(),
               request.getCharacterId(),
-              null,
+              request.getGameInstanceId(),
               null);
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
@@ -1018,7 +1283,8 @@ public class EntityManagementGrpcService
                         tenantId,
                         characterId,
                         containerInstanceId,
-                        blankToNull(claims.gameInstanceId()),
+                        resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
+                        requirePlayableStateScope(request.getPlayableStateScope()),
                         blankToNull(claims.roomInstanceId()),
                         itemId,
                         itemInstanceId,
@@ -1096,7 +1362,7 @@ public class EntityManagementGrpcService
               request.getSessionAttestation(),
               request.getTenantId(),
               request.getCharacterId(),
-              null,
+              request.getGameInstanceId(),
               null);
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
@@ -1118,7 +1384,8 @@ public class EntityManagementGrpcService
                         tenantId,
                         characterId,
                         containerInstanceId,
-                        blankToNull(claims.gameInstanceId()),
+                        resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
+                        requirePlayableStateScope(request.getPlayableStateScope()),
                         blankToNull(claims.roomInstanceId()),
                         itemId,
                         itemInstanceId,
@@ -1300,6 +1567,7 @@ public class EntityManagementGrpcService
                         tenantId,
                         characterId,
                         request.getGameInstanceId(),
+                        requirePlayableStateScope(request.getPlayableStateScope()),
                         request.getRoomInstanceId(),
                         itemId,
                         request.getItemInstanceId().isBlank()
@@ -1397,6 +1665,7 @@ public class EntityManagementGrpcService
                         tenantId,
                         characterId,
                         request.getGameInstanceId(),
+                        requirePlayableStateScope(request.getPlayableStateScope()),
                         request.getRoomInstanceId(),
                         itemId,
                         request.getItemInstanceId().isBlank()
@@ -1613,8 +1882,58 @@ public class EntityManagementGrpcService
     return playableStateScope;
   }
 
+  private static ActorStateService unsupportedActorStateService() {
+    return (tenantId, characterId, gameInstanceId, playableStateScope) -> {
+      throw new UnsupportedOperationException("actor state service is not configured");
+    };
+  }
+
+  private static ActorConditionMutationService unsupportedActorConditionMutationService() {
+    return new ActorConditionMutationService() {
+      @Override
+      public ActorConditionStateDto applyCondition(
+          long tenantId,
+          long characterId,
+          String gameInstanceId,
+          PlayableStateScope playableStateScope,
+          String conditionKey,
+          int stackCount,
+          String sourceType,
+          String sourceId,
+          Instant expiresAt,
+          String effectPayloadJson) {
+        throw new UnsupportedOperationException(
+            "actor condition mutation service is not configured");
+      }
+
+      @Override
+      public int expireConditions(Instant now) {
+        throw new UnsupportedOperationException(
+            "actor condition mutation service is not configured");
+      }
+    };
+  }
+
+  private Instant parseOptionalInstant(String value) {
+    String text = blankToNull(value);
+    return text == null ? null : Instant.parse(text);
+  }
+
   private String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
+  }
+
+  private String resolveGameplayTargetGameInstanceId(
+      String requestGameInstanceId, GameplaySessionAttestationClaims claims) {
+    String resolved = blankToNull(requestGameInstanceId);
+    if (resolved != null) {
+      return resolved;
+    }
+    String attested = blankToNull(claims.gameInstanceId());
+    if (attested != null) {
+      return attested;
+    }
+    throw new IllegalArgumentException("gameInstanceId must be provided");
   }
 
   private UpgradeValidationResult toUpgradeValidationResult(String result) {
@@ -1633,6 +1952,7 @@ public class EntityManagementGrpcService
         .setTenantId(String.valueOf(dto.tenantId()))
         .setAccountId(String.valueOf(dto.accountId()))
         .setName(dto.name())
+        .setPlayableStateScope(dto.playableStateScope())
         .setLevel(dto.level())
         .setExperience(dto.experience())
         .setStrength(dto.strength())
@@ -1641,6 +1961,35 @@ public class EntityManagementGrpcService
         .setStamina(dto.stamina())
         .setHealth(dto.health())
         .setMana(dto.mana())
+        .build();
+  }
+
+  private ActorResourceValue toProto(ActorResourceStateDto dto) {
+    ActorResourceValue.Builder builder =
+        ActorResourceValue.newBuilder()
+            .setStatKey(dto.statKey())
+            .setCurrentValue(dto.currentValue())
+            .setPrimitiveKind(dto.primitiveKind())
+            .setSourceType(dto.sourceType() == null ? "" : dto.sourceType())
+            .setSourceId(dto.sourceId() == null ? "" : dto.sourceId());
+    if (dto.maxValue() != null) {
+      builder.setMaxValue(dto.maxValue());
+    }
+    if (dto.baseValue() != null) {
+      builder.setBaseValue(dto.baseValue());
+    }
+    return builder.build();
+  }
+
+  private ActorConditionState toProto(ActorConditionStateDto dto) {
+    return ActorConditionState.newBuilder()
+        .setConditionKey(dto.conditionKey())
+        .setStackCount(dto.stackCount())
+        .setSourceType(dto.sourceType() == null ? "" : dto.sourceType())
+        .setSourceId(dto.sourceId() == null ? "" : dto.sourceId())
+        .setStartedAt(dto.startedAt() == null ? "" : dto.startedAt().toString())
+        .setExpiresAt(dto.expiresAt() == null ? "" : dto.expiresAt().toString())
+        .setEffectPayloadJson(dto.effectPayloadJson() == null ? "" : dto.effectPayloadJson())
         .build();
   }
 

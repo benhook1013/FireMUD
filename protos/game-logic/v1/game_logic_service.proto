@@ -35,6 +35,8 @@ service GameLogicService {
       returns (entity_management.v1.PickupItemFromRoomResponse);
   rpc DropItemToRoom(entity_management.v1.DropItemToRoomRequest)
       returns (entity_management.v1.DropItemToRoomResponse);
+  rpc ApplyActorCondition(entity_management.v1.ApplyActorConditionRequest)
+      returns (entity_management.v1.ApplyActorConditionResponse);
   rpc PickupVisibleRoomItem(PickupVisibleRoomItemRequest)
       returns (entity_management.v1.PickupItemFromRoomResponse);
   rpc DropCarriedItem(DropCarriedItemRequest)
@@ -139,6 +141,7 @@ message PickupVisibleRoomItemRequest {
   int32 quantity = 8;
   string session_attestation = 9;
   string effect_id = 10;
+  entity_management.v1.PlayableStateScope playable_state_scope = 11;
 }
 
 message DropCarriedItemRequest {
@@ -152,6 +155,7 @@ message DropCarriedItemRequest {
   int32 quantity = 8;
   string session_attestation = 9;
   string effect_id = 10;
+  entity_management.v1.PlayableStateScope playable_state_scope = 11;
 }
 
 enum CommunicationType {

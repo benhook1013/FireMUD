@@ -7,4 +7,6 @@ public record GenerationRuleDto(
     Long id,
     @NotNull Long tenantId,
     @NotNull @Size(max = 100) String name,
+    @Size(max = 64) String scopeType,
+    @Size(max = 128) String scopeId,
     @Size(max = 255) String value) {}

@@ -41,7 +41,21 @@ class CharacterControllerTest {
 
   @Test
   void listReturnsCharacters() throws Exception {
-    CharacterDto dto = new CharacterDto(1L, 1L, 1L, "Hero", 1, 0, 1, 1, 1, 1, 10, 5);
+    CharacterDto dto =
+        new CharacterDto(
+            1L,
+            1L,
+            1L,
+            "Hero",
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            10,
+            5);
     when(characterService.listForGameplayScope(
             eq(1L),
             eq(1L),

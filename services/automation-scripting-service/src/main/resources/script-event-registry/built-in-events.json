@@ -1,0 +1,210 @@
+[
+  {
+    "eventType": "onLoad",
+    "eventSchemaVersion": "v1",
+    "ownerService": "automation-scripting-service",
+    "allowedProducerPrincipals": [
+      "automation-scripting-service"
+    ],
+    "requiredTriggerIdentityFields": [
+      "tenantId",
+      "scriptPatchVersion",
+      "scriptEventId",
+      "isDryRun"
+    ],
+    "snapshotAuthority": "NON_AUTHORITATIVE_NO_SNAPSHOT",
+    "consistencyClass": "BEST_EFFORT",
+    "quotaClass": "STANDARD_RUNTIME",
+    "replaySemantics": "IDEMPOTENT_BY_TRIGGER_IDENTITY",
+    "allowedBindingScopes": [
+      "GLOBAL"
+    ],
+    "dryRunSupport": true,
+    "deprecationStatus": "ACTIVE",
+    "payloadSchemaRef": "design/architecture/system-architecture-scripting-event-registry.md#onload-payload-v1"
+  },
+  {
+    "eventType": "onCommand",
+    "eventSchemaVersion": "v1",
+    "ownerService": "game-session-service",
+    "allowedProducerPrincipals": [
+      "game-session-service",
+      "game-logic-service"
+    ],
+    "requiredTriggerIdentityFields": [
+      "tenantId",
+      "gameInstanceId",
+      "regionId",
+      "regionEpoch",
+      "entityId",
+      "scriptPatchVersion",
+      "scriptEventId",
+      "isDryRun"
+    ],
+    "snapshotAuthority": "PRODUCER_SUPPLIED_TOKEN",
+    "consistencyClass": "AUTHORITATIVE_REGION_TIMELINE",
+    "quotaClass": "STANDARD_RUNTIME",
+    "replaySemantics": "IDEMPOTENT_BY_TRIGGER_IDENTITY",
+    "allowedBindingScopes": [
+      "ENTITY",
+      "REGION",
+      "GLOBAL"
+    ],
+    "dryRunSupport": true,
+    "deprecationStatus": "ACTIVE",
+    "payloadSchemaRef": "design/architecture/system-architecture-scripting-event-registry.md#oncommand-payload-v1"
+  },
+  {
+    "eventType": "onSpawn",
+    "eventSchemaVersion": "v1",
+    "ownerService": "game-session-service",
+    "allowedProducerPrincipals": [
+      "game-session-service",
+      "world-management-service"
+    ],
+    "requiredTriggerIdentityFields": [
+      "tenantId",
+      "gameInstanceId",
+      "regionId",
+      "regionEpoch",
+      "entityId",
+      "scriptPatchVersion",
+      "scriptEventId",
+      "isDryRun"
+    ],
+    "snapshotAuthority": "PRODUCER_SUPPLIED_TOKEN",
+    "consistencyClass": "AUTHORITATIVE_REGION_TIMELINE",
+    "quotaClass": "STANDARD_RUNTIME",
+    "replaySemantics": "IDEMPOTENT_BY_TRIGGER_IDENTITY",
+    "allowedBindingScopes": [
+      "ENTITY",
+      "REGION",
+      "GLOBAL"
+    ],
+    "dryRunSupport": true,
+    "deprecationStatus": "ACTIVE",
+    "payloadSchemaRef": "design/architecture/system-architecture-scripting-event-registry.md#onspawn-payload-v1"
+  },
+  {
+    "eventType": "onEnterRegion",
+    "eventSchemaVersion": "v1",
+    "ownerService": "game-session-service",
+    "allowedProducerPrincipals": [
+      "game-session-service",
+      "world-management-service"
+    ],
+    "requiredTriggerIdentityFields": [
+      "tenantId",
+      "gameInstanceId",
+      "regionId",
+      "regionEpoch",
+      "entityId",
+      "scriptPatchVersion",
+      "scriptEventId",
+      "isDryRun"
+    ],
+    "snapshotAuthority": "PRODUCER_SUPPLIED_TOKEN",
+    "consistencyClass": "AUTHORITATIVE_REGION_TIMELINE",
+    "quotaClass": "STANDARD_RUNTIME",
+    "replaySemantics": "IDEMPOTENT_BY_TRIGGER_IDENTITY",
+    "allowedBindingScopes": [
+      "ENTITY",
+      "REGION",
+      "GLOBAL"
+    ],
+    "dryRunSupport": true,
+    "deprecationStatus": "ACTIVE",
+    "payloadSchemaRef": "design/architecture/system-architecture-scripting-event-registry.md#onenterregion-payload-v1"
+  },
+  {
+    "eventType": "onLeaveRegion",
+    "eventSchemaVersion": "v1",
+    "ownerService": "game-session-service",
+    "allowedProducerPrincipals": [
+      "game-session-service",
+      "world-management-service"
+    ],
+    "requiredTriggerIdentityFields": [
+      "tenantId",
+      "gameInstanceId",
+      "regionId",
+      "regionEpoch",
+      "entityId",
+      "scriptPatchVersion",
+      "scriptEventId",
+      "isDryRun"
+    ],
+    "snapshotAuthority": "PRODUCER_SUPPLIED_TOKEN",
+    "consistencyClass": "AUTHORITATIVE_REGION_TIMELINE",
+    "quotaClass": "STANDARD_RUNTIME",
+    "replaySemantics": "IDEMPOTENT_BY_TRIGGER_IDENTITY",
+    "allowedBindingScopes": [
+      "ENTITY",
+      "REGION",
+      "GLOBAL"
+    ],
+    "dryRunSupport": true,
+    "deprecationStatus": "ACTIVE",
+    "payloadSchemaRef": "design/architecture/system-architecture-scripting-event-registry.md#onleaveregion-payload-v1"
+  },
+  {
+    "eventType": "onTimerExpire",
+    "eventSchemaVersion": "v1",
+    "ownerService": "automation-scripting-service",
+    "allowedProducerPrincipals": [
+      "automation-scripting-service"
+    ],
+    "requiredTriggerIdentityFields": [
+      "tenantId",
+      "gameInstanceId",
+      "regionId",
+      "regionEpoch",
+      "entityId",
+      "scriptPatchVersion",
+      "scriptEventId",
+      "isDryRun"
+    ],
+    "snapshotAuthority": "PRODUCER_SUPPLIED_TOKEN",
+    "consistencyClass": "AUTHORITATIVE_REGION_TIMELINE",
+    "quotaClass": "STANDARD_RUNTIME",
+    "replaySemantics": "IDEMPOTENT_BY_TRIGGER_IDENTITY",
+    "allowedBindingScopes": [
+      "ENTITY",
+      "REGION",
+      "GLOBAL"
+    ],
+    "dryRunSupport": true,
+    "deprecationStatus": "ACTIVE",
+    "payloadSchemaRef": "design/architecture/system-architecture-scripting-event-registry.md#ontimerexpire-payload-v1"
+  },
+  {
+    "eventType": "onInterval",
+    "eventSchemaVersion": "v1",
+    "ownerService": "automation-scripting-service",
+    "allowedProducerPrincipals": [
+      "automation-scripting-service"
+    ],
+    "requiredTriggerIdentityFields": [
+      "tenantId",
+      "gameInstanceId",
+      "regionId",
+      "regionEpoch",
+      "entityId",
+      "scriptPatchVersion",
+      "scriptEventId",
+      "isDryRun"
+    ],
+    "snapshotAuthority": "PRODUCER_SUPPLIED_TOKEN",
+    "consistencyClass": "AUTHORITATIVE_REGION_TIMELINE",
+    "quotaClass": "STANDARD_RUNTIME",
+    "replaySemantics": "IDEMPOTENT_BY_TRIGGER_IDENTITY",
+    "allowedBindingScopes": [
+      "ENTITY",
+      "REGION",
+      "GLOBAL"
+    ],
+    "dryRunSupport": true,
+    "deprecationStatus": "ACTIVE",
+    "payloadSchemaRef": "design/architecture/system-architecture-scripting-event-registry.md#oninterval-payload-v1"
+  }
+]

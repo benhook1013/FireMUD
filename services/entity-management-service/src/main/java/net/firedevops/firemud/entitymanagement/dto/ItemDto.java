@@ -14,4 +14,5 @@ public record ItemDto(
     boolean container,
     boolean stackable,
     ItemStackCompatibilityMode stackCompatibilityMode,
-    String stackVariantKey) {}
+    String stackVariantKey,
+    String effectPayloadJson) {}

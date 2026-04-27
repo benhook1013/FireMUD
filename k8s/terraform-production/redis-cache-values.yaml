@@ -1,0 +1,13 @@
+architecture: replication
+master:
+  persistence:
+    enabled: true
+    size: 8Gi
+replica:
+  persistence:
+    enabled: true
+    size: 8Gi
+commonConfiguration: |-
+  # Cache/Rate-Limit Redis remains reset-tolerant and does not use AOF.
+  appendonly no
+  save ""

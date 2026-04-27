@@ -8,6 +8,7 @@ This document collects Entity Management’s readiness model, tick-lock/tick-ide
 - `liveness` is process-local only.
 - `readiness` is truthful local readiness for the currently implemented entity-query slice and must fail when the service cannot safely answer room/entity lookup traffic with its required local persistence/cache/bootstrap state.
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
+- `entity.actor-condition.expiry-interval-seconds` controls the scheduled active-condition expiry sweep. The default is 30 seconds and removes rows whose `expires_at` has elapsed; gameplay reads also ignore expired rows, so the sweep is cleanup and convergence rather than the sole correctness guard.
 
 ## Tick Locking
 

@@ -3,33 +3,67 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
+import java.time.Instant;
+import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
+import net.firedevops.firemud.automationscripting.v1.AutomationAdmissionMode;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingControlPlaneServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchRequest;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchResponse;
+import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPluginVersionRequest;
+import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPluginVersionResponse;
 import net.firedevops.firemud.automationscripting.v1.DisablePluginRequest;
 import net.firedevops.firemud.automationscripting.v1.DisablePluginResponse;
 import net.firedevops.firemud.automationscripting.v1.DrainPluginRequest;
 import net.firedevops.firemud.automationscripting.v1.DrainPluginResponse;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusRequest;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationPinConvergenceRequest;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationPinConvergenceResponse;
+import net.firedevops.firemud.automationscripting.v1.GetPluginPolicyConvergenceRequest;
+import net.firedevops.firemud.automationscripting.v1.GetPluginPolicyConvergenceResponse;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionResponse;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchInstanceRolloutStatusRequest;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchInstanceRolloutStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.ListPluginRuntimeEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListPluginRuntimeEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptHandoffEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptHandoffEventsResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesResponse;
+import net.firedevops.firemud.automationscripting.v1.PluginPolicyViolation;
+import net.firedevops.firemud.automationscripting.v1.PluginRuntimeEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsRequest;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsResponse;
 import net.firedevops.firemud.automationscripting.v1.ScriptDeadLetterEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptEventDefinition;
+import net.firedevops.firemud.automationscripting.v1.ScriptHandoffEventEntry;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEntry;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatusEntry;
+import net.firedevops.firemud.automationscripting.v1.ScriptScheduleInstanceEntry;
+import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeRequest;
+import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeResponse;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionRequest;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
@@ -48,14 +82,44 @@ public final class AutomationScriptingControlPlaneGrpcService
   private final ScriptEventRegistryService eventRegistryService;
   private final ScriptWorkItemService workItemService;
   private final PluginRuntimeStateService pluginRuntimeStateService;
+  private final AutomationAdmissionStateService automationAdmissionStateService;
+  private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
+  private final ScriptScheduleInstanceService scriptScheduleInstanceService;
+  private final ScriptRuntimeProperties runtimeProperties;
 
   public AutomationScriptingControlPlaneGrpcService(
       ScriptEventRegistryService eventRegistryService,
       ScriptWorkItemService workItemService,
-      PluginRuntimeStateService pluginRuntimeStateService) {
+      PluginRuntimeStateService pluginRuntimeStateService,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptScheduleInstanceService scriptScheduleInstanceService) {
+    this(
+        eventRegistryService,
+        workItemService,
+        pluginRuntimeStateService,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        scriptScheduleInstanceService,
+        new ScriptRuntimeProperties());
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public AutomationScriptingControlPlaneGrpcService(
+      ScriptEventRegistryService eventRegistryService,
+      ScriptWorkItemService workItemService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      ScriptRuntimeProperties runtimeProperties) {
     this.eventRegistryService = eventRegistryService;
     this.workItemService = workItemService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
+    this.automationAdmissionStateService = automationAdmissionStateService;
+    this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
+    this.scriptScheduleInstanceService = scriptScheduleInstanceService;
+    this.runtimeProperties = runtimeProperties;
   }
 
   @Override
@@ -119,7 +183,9 @@ public final class AutomationScriptingControlPlaneGrpcService
                   response
                       .setStatus(summary.status())
                       .setStatusReason(summary.statusReason())
-                      .setLastChangedAtMs(summary.lastChangedAtMs()),
+                      .setLastChangedAtMs(summary.lastChangedAtMs())
+                      .setBaseVersionId(summary.baseVersionId())
+                      .setAbilitySchemaDigest(summary.abilitySchemaDigest()),
               () -> response.setError(notFound("GetScriptPatchStatus", "script_patch_not_found")));
     } catch (IllegalArgumentException ex) {
       response.setError(
@@ -148,6 +214,272 @@ public final class AutomationScriptingControlPlaneGrpcService
           .stream()
           .map(AutomationScriptingControlPlaneGrpcService::toProto)
           .forEach(response::addPatches);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.setAutomationAdmissionMode")
+  public void setAutomationAdmissionMode(
+      SetAutomationAdmissionModeRequest request,
+      StreamObserver<SetAutomationAdmissionModeResponse> responseObserver) {
+    SetAutomationAdmissionModeResponse.Builder response =
+        SetAutomationAdmissionModeResponse.newBuilder();
+    try {
+      requireAdminRole();
+      AutomationAdmissionStateService.AdmissionStateSummary summary =
+          automationAdmissionStateService.setMode(
+              new AutomationAdmissionStateService.SetAdmissionModeCommand(
+                  request.getTenantId(),
+                  request.getGameInstanceId(),
+                  request.getRegionId(),
+                  requireMode(request.getMode()),
+                  request.getControlPlaneRequestId(),
+                  request.getActorPrincipal(),
+                  request.getReason()));
+      response
+          .setTenantId(summary.tenantId())
+          .setGameInstanceId(summary.gameInstanceId())
+          .setRegionId(summary.regionId())
+          .setMode(toProtoMode(summary.mode()))
+          .setAdmissionEpoch(summary.admissionEpoch())
+          .setUpdatedAtMs(summary.updatedAtMs());
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.getAutomationDrainStatus")
+  public void getAutomationDrainStatus(
+      GetAutomationDrainStatusRequest request,
+      StreamObserver<GetAutomationDrainStatusResponse> responseObserver) {
+    GetAutomationDrainStatusResponse.Builder response =
+        GetAutomationDrainStatusResponse.newBuilder();
+    try {
+      requireAdminRole();
+      ScriptWorkItemService.AutomationDrainStatusSummary summary =
+          workItemService.getAutomationDrainStatus(
+              request.getTenantId(), request.getGameInstanceId(), request.getRegionId());
+      response
+          .setTenantId(summary.tenantId())
+          .setGameInstanceId(summary.gameInstanceId())
+          .setRegionId(summary.regionId())
+          .setAdmissionMode(toProtoMode(summary.admissionMode()))
+          .setAdmissionEpoch(summary.admissionEpoch())
+          .setActiveExecutionCount(summary.activeExecutionCount())
+          .setOldestActiveExecutionStartedAtMs(summary.oldestActiveExecutionStartedAtMs())
+          .setPendingCancelableWorkItemCount(summary.pendingCancelableWorkItemCount())
+          .setObservedAtMs(summary.observedAtMs());
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.getAutomationPinConvergence")
+  public void getAutomationPinConvergence(
+      GetAutomationPinConvergenceRequest request,
+      StreamObserver<GetAutomationPinConvergenceResponse> responseObserver) {
+    GetAutomationPinConvergenceResponse.Builder response =
+        GetAutomationPinConvergenceResponse.newBuilder();
+    try {
+      requireAdminRole();
+      ScriptPatchPinProjectionService.PinConvergenceLookup lookup =
+          scriptPatchPinProjectionService.getPinConvergence(
+              request.getTenantId(), request.getGameInstanceId());
+      if (lookup.summary().isPresent()) {
+        ScriptPatchPinProjectionService.PinConvergenceSummary summary = lookup.summary().get();
+        response
+            .setTenantId(summary.tenantId())
+            .setGameInstanceId(summary.gameInstanceId())
+            .setObservedPinnedScriptPatchVersion(summary.observedPinnedScriptPatchVersion())
+            .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
+            .setObservedAtMs(summary.observedAtMs())
+            .setProjectionAsOfMs(summary.projectionAsOfMs())
+            .setProjectionLagMs(summary.projectionLagMs())
+            .setIsProjectionStale(summary.projectionStale());
+      } else if (!lookup.errorCode().isBlank()) {
+        response.setError(
+            ErrorDetail.newBuilder().setCode(lookup.errorCode()).setMessage(lookup.errorMessage()));
+      } else {
+        response.setError(notFound("GetAutomationPinConvergence", "pin_projection_not_found"));
+      }
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.getScriptPatchInstanceRolloutStatus")
+  public void getScriptPatchInstanceRolloutStatus(
+      GetScriptPatchInstanceRolloutStatusRequest request,
+      StreamObserver<GetScriptPatchInstanceRolloutStatusResponse> responseObserver) {
+    GetScriptPatchInstanceRolloutStatusResponse.Builder response =
+        GetScriptPatchInstanceRolloutStatusResponse.newBuilder();
+    try {
+      requireAdminRole();
+      workItemService
+          .getPatchInstanceRolloutStatus(
+              request.getTenantId(), request.getGameInstanceId(), request.getScriptPatchVersion())
+          .ifPresentOrElse(
+              summary ->
+                  response
+                      .setTenantId(summary.tenantId())
+                      .setGameInstanceId(summary.gameInstanceId())
+                      .setScriptPatchVersion(summary.scriptPatchVersion())
+                      .setRolloutStatus(summary.rolloutStatus())
+                      .setStatusReason(summary.statusReason())
+                      .setLastChangedAtMs(summary.lastChangedAtMs())
+                      .setProjectionAsOfMs(summary.projectionAsOfMs())
+                      .setProjectionLagMs(summary.projectionLagMs())
+                      .setIsProjectionStale(summary.projectionStale()),
+              () ->
+                  response.setError(
+                      notFound(
+                          "GetScriptPatchInstanceRolloutStatus",
+                          "script_patch_instance_rollout_not_found")));
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.listScriptScheduleInstances")
+  public void listScriptScheduleInstances(
+      ListScriptScheduleInstancesRequest request,
+      StreamObserver<ListScriptScheduleInstancesResponse> responseObserver) {
+    ListScriptScheduleInstancesResponse.Builder response =
+        ListScriptScheduleInstancesResponse.newBuilder();
+    try {
+      requireAdminRole();
+      scriptScheduleInstanceService
+          .listInstances(
+              request.getTenantId(),
+              request.getGameInstanceId(),
+              request.getScriptPatchVersion(),
+              request.getLimit())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addSchedules);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.listScriptPatchInstanceRollouts")
+  public void listScriptPatchInstanceRollouts(
+      ListScriptPatchInstanceRolloutsRequest request,
+      StreamObserver<ListScriptPatchInstanceRolloutsResponse> responseObserver) {
+    ListScriptPatchInstanceRolloutsResponse.Builder response =
+        ListScriptPatchInstanceRolloutsResponse.newBuilder();
+    try {
+      requireAdminRole();
+      workItemService
+          .listPatchInstanceRollouts(
+              request.getTenantId(),
+              request.getGameInstanceId(),
+              request.getScriptPatchVersion(),
+              request.getRolloutStatus(),
+              request.getChangedAfterMs(),
+              request.getChangedBeforeMs())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addRollouts);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.listScriptPatchInstanceRolloutEvents")
+  public void listScriptPatchInstanceRolloutEvents(
+      ListScriptPatchInstanceRolloutEventsRequest request,
+      StreamObserver<ListScriptPatchInstanceRolloutEventsResponse> responseObserver) {
+    ListScriptPatchInstanceRolloutEventsResponse.Builder response =
+        ListScriptPatchInstanceRolloutEventsResponse.newBuilder();
+    try {
+      requireAdminRole();
+      workItemService
+          .listPatchInstanceRolloutEvents(
+              request.getTenantId(),
+              request.getGameInstanceId(),
+              request.getScriptPatchVersion(),
+              request.getRolloutStatus(),
+              request.getChangedAfterMs(),
+              request.getChangedBeforeMs(),
+              request.getLimit())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addEvents);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.listScriptHandoffEvents")
+  public void listScriptHandoffEvents(
+      ListScriptHandoffEventsRequest request,
+      StreamObserver<ListScriptHandoffEventsResponse> responseObserver) {
+    ListScriptHandoffEventsResponse.Builder response = ListScriptHandoffEventsResponse.newBuilder();
+    try {
+      requireAdminRole();
+      workItemService
+          .listHandoffEvents(
+              request.getTenantId(),
+              request.getGameInstanceId(),
+              request.getScriptPatchVersion(),
+              request.getWorkItemId(),
+              request.getHandoffOutcome(),
+              request.getChangedAfterMs(),
+              request.getChangedBeforeMs(),
+              request.getLimit())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addEvents);
     } catch (IllegalArgumentException ex) {
       response.setError(
           ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
@@ -250,6 +582,37 @@ public final class AutomationScriptingControlPlaneGrpcService
   }
 
   @Override
+  @Timed(value = "automationGrpc.controlPlane.cancelPendingWorkItemsForPluginVersion")
+  public void cancelPendingWorkItemsForPluginVersion(
+      CancelPendingWorkItemsForPluginVersionRequest request,
+      StreamObserver<CancelPendingWorkItemsForPluginVersionResponse> responseObserver) {
+    CancelPendingWorkItemsForPluginVersionResponse.Builder response =
+        CancelPendingWorkItemsForPluginVersionResponse.newBuilder();
+    try {
+      requireAdminRole();
+      long canceled =
+          workItemService.cancelPendingForPluginVersion(
+              new ScriptWorkItemService.CancelPendingForPluginVersionCommand(
+                  request.getTenantId(),
+                  request.getPluginId(),
+                  request.getPluginVersionId(),
+                  request.getGameInstanceId(),
+                  request.getRegionId(),
+                  request.getControlPlaneRequestId(),
+                  request.getActorPrincipal(),
+                  request.getReason()));
+      response.setCanceledCount(canceled);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
   @Timed(value = "automationGrpc.controlPlane.getPluginStatus")
   public void getPluginStatus(
       GetPluginStatusRequest request, StreamObserver<GetPluginStatusResponse> responseObserver) {
@@ -267,9 +630,72 @@ public final class AutomationScriptingControlPlaneGrpcService
                       .setStatusReason(status.statusReason())
                       .setLastChangedAtMs(status.lastChangedAtMs())
                       .setControlPlaneRequestId(status.controlPlaneRequestId())
-                      .setActorPrincipal(status.actorPrincipal()),
+                      .setActorPrincipal(status.actorPrincipal())
+                      .setLastPolicyCheckedAtMs(status.lastPolicyCheckedAtMs())
+                      .setPolicyCheckStale(isPolicyCheckStale(status.lastPolicyCheckedAtMs())),
               () ->
                   response.setError(notFound("GetPluginStatus", "plugin_runtime_state_not_found")));
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.listPluginRuntimeEvents")
+  public void listPluginRuntimeEvents(
+      ListPluginRuntimeEventsRequest request,
+      StreamObserver<ListPluginRuntimeEventsResponse> responseObserver) {
+    ListPluginRuntimeEventsResponse.Builder response = ListPluginRuntimeEventsResponse.newBuilder();
+    try {
+      requireAdminRole();
+      pluginRuntimeStateService
+          .listEvents(
+              request.getTenantId(),
+              request.getGameInstanceId(),
+              request.getPluginId(),
+              request.getPluginState(),
+              request.getActivePluginVersionId(),
+              request.getChangedAfterMs(),
+              request.getChangedBeforeMs(),
+              request.getLimit())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addEvents);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.getPluginPolicyConvergence")
+  public void getPluginPolicyConvergence(
+      GetPluginPolicyConvergenceRequest request,
+      StreamObserver<GetPluginPolicyConvergenceResponse> responseObserver) {
+    GetPluginPolicyConvergenceResponse.Builder response =
+        GetPluginPolicyConvergenceResponse.newBuilder();
+    try {
+      requireAdminRole();
+      PluginRuntimeStateService.PluginPolicyConvergence convergence =
+          pluginRuntimeStateService.getPluginPolicyConvergence(
+              request.getTenantId(), request.getGameInstanceId(), request.getMaxResults());
+      response
+          .setInspectedCount(convergence.inspectedCount())
+          .setFailClosedCount(convergence.failClosedCount())
+          .setConverged(convergence.converged())
+          .setEvaluatedAtMs(convergence.evaluatedAtMs());
+      convergence.violations().stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addViolations);
     } catch (IllegalArgumentException ex) {
       response.setError(
           ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
@@ -370,6 +796,39 @@ public final class AutomationScriptingControlPlaneGrpcService
     AdminRoleGuard.requireAdminRole();
   }
 
+  private static PluginPolicyViolation toProto(
+      PluginRuntimeStateService.PluginPolicyViolation violation) {
+    return PluginPolicyViolation.newBuilder()
+        .setGameInstanceId(violation.gameInstanceId())
+        .setPluginId(violation.pluginId())
+        .setActivePluginVersionId(violation.activePluginVersionId())
+        .setReason(violation.reason())
+        .setLastChangedAtMs(violation.lastChangedAtMs())
+        .build();
+  }
+
+  private static PluginRuntimeEventEntry toProto(
+      PluginRuntimeStateService.PluginRuntimeEventSummary summary) {
+    return PluginRuntimeEventEntry.newBuilder()
+        .setEventId(summary.eventId())
+        .setTenantId(summary.tenantId())
+        .setGameInstanceId(summary.gameInstanceId())
+        .setPluginId(summary.pluginId())
+        .setPreviousPluginVersionId(summary.previousPluginVersionId())
+        .setActivePluginVersionId(summary.activePluginVersionId())
+        .setPluginState(summary.pluginState())
+        .setStatusReason(summary.statusReason())
+        .setControlPlaneRequestId(summary.controlPlaneRequestId())
+        .setActorPrincipal(summary.actorPrincipal())
+        .setObservedAtMs(summary.observedAtMs())
+        .build();
+  }
+
+  private boolean isPolicyCheckStale(long lastPolicyCheckedAtMs) {
+    long ageMs = Instant.now().toEpochMilli() - lastPolicyCheckedAtMs;
+    return ageMs > runtimeProperties.getPluginPolicyStaleThresholdSeconds() * 1_000L;
+  }
+
   private static ErrorDetail authorizationError(AdminAuthorizationException ex) {
     return ErrorDetail.newBuilder()
         .setCode("PERMISSION_DENIED")
@@ -399,6 +858,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         .addAllAllowedBindingScopes(definition.allowedBindingScopes())
         .setDryRunSupport(definition.dryRunSupport())
         .setDeprecationStatus(definition.deprecationStatus())
+        .setPayloadSchemaRef(definition.payloadSchemaRef())
         .build();
   }
 
@@ -408,7 +868,27 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setStatus(summary.status())
         .setStatusReason(summary.statusReason())
         .setLastChangedAtMs(summary.lastChangedAtMs())
+        .setBaseVersionId(summary.baseVersionId())
+        .setAbilitySchemaDigest(summary.abilitySchemaDigest())
         .build();
+  }
+
+  private static AutomationAdmissionMode toProtoMode(String mode) {
+    return switch (mode) {
+      case "NORMAL" -> AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_NORMAL;
+      case "PAUSED_FOR_ROLLBACK" ->
+          AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK;
+      default -> AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_UNSPECIFIED;
+    };
+  }
+
+  private static String requireMode(AutomationAdmissionMode mode) {
+    return switch (mode) {
+      case AUTOMATION_ADMISSION_MODE_NORMAL -> "NORMAL";
+      case AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK -> "PAUSED_FOR_ROLLBACK";
+      case UNRECOGNIZED, AUTOMATION_ADMISSION_MODE_UNSPECIFIED ->
+          throw new IllegalArgumentException("mode is required");
+    };
   }
 
   private static ScriptDeadLetterEntry toProto(ScriptWorkItemService.DeadLetterSummary summary) {
@@ -427,6 +907,91 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setReason(summary.reason())
         .setCreatedAtMs(summary.createdAtMs())
         .setUpdatedAtMs(summary.updatedAtMs())
+        .build();
+  }
+
+  private static ScriptPatchInstanceRolloutEntry toProto(
+      ScriptWorkItemService.PatchInstanceRolloutSummary summary) {
+    return ScriptPatchInstanceRolloutEntry.newBuilder()
+        .setTenantId(summary.tenantId())
+        .setGameInstanceId(summary.gameInstanceId())
+        .setScriptPatchVersion(summary.scriptPatchVersion())
+        .setRolloutStatus(summary.rolloutStatus())
+        .setStatusReason(summary.statusReason())
+        .setLastChangedAtMs(summary.lastChangedAtMs())
+        .setProjectionAsOfMs(summary.projectionAsOfMs())
+        .setProjectionLagMs(summary.projectionLagMs())
+        .setIsProjectionStale(summary.projectionStale())
+        .build();
+  }
+
+  private static ScriptPatchInstanceRolloutEventEntry toProto(
+      ScriptWorkItemService.PatchInstanceRolloutEventSummary summary) {
+    return ScriptPatchInstanceRolloutEventEntry.newBuilder()
+        .setEventId(summary.eventId())
+        .setTenantId(summary.tenantId())
+        .setGameInstanceId(summary.gameInstanceId())
+        .setScriptPatchVersion(summary.scriptPatchVersion())
+        .setRolloutStatus(summary.rolloutStatus())
+        .setStatusReason(summary.statusReason())
+        .setObservedAtMs(summary.observedAtMs())
+        .setProjectionAsOfMs(summary.projectionAsOfMs())
+        .build();
+  }
+
+  private static ScriptScheduleInstanceEntry toProto(
+      ScriptScheduleInstanceService.ScheduleInstanceSummary summary) {
+    return ScriptScheduleInstanceEntry.newBuilder()
+        .setTenantId(summary.tenantId())
+        .setGameInstanceId(summary.gameInstanceId())
+        .setScriptPatchVersion(summary.scriptPatchVersion())
+        .setScriptId(summary.scriptId())
+        .setPluginId(summary.pluginId())
+        .setPluginVersionId(summary.pluginVersionId())
+        .setEventType(summary.eventType())
+        .setScheduleDefinitionId(summary.scheduleDefinitionId())
+        .setScheduleKind(summary.scheduleKind())
+        .setCadenceValue(summary.cadenceValue())
+        .setCadenceUnit(summary.cadenceUnit())
+        .setPriorityTag(summary.priorityTag())
+        .setTargetScopeType(summary.targetScopeType())
+        .setTargetScopeId(summary.targetScopeId())
+        .setBindingPriority(summary.bindingPriority())
+        .setRequiresExclusiveEvent(summary.requiresExclusiveEvent())
+        .setMaterializationStatus(summary.materializationStatus())
+        .setNextDueAtMs(summary.nextDueAtMs())
+        .setNextDueTickId(summary.nextDueTickId())
+        .setObservedRuntimeVersionId(summary.observedRuntimeVersionId())
+        .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
+        .setPinObservedAtMs(summary.pinObservedAtMs())
+        .setMaterializedAtMs(summary.materializedAtMs())
+        .setUpdatedAtMs(summary.updatedAtMs())
+        .setRuntimeRegionId(summary.runtimeRegionId())
+        .setRuntimeRegionEpoch(summary.runtimeRegionEpoch())
+        .setLastObservedTickId(summary.lastObservedTickId())
+        .setLastRuntimeProgressObservedAtMs(summary.lastRuntimeProgressObservedAtMs())
+        .build();
+  }
+
+  private static ScriptHandoffEventEntry toProto(
+      ScriptWorkItemService.HandoffEventSummary summary) {
+    return ScriptHandoffEventEntry.newBuilder()
+        .setEventId(summary.eventId())
+        .setTenantId(summary.tenantId())
+        .setGameInstanceId(summary.gameInstanceId())
+        .setScriptPatchVersion(summary.scriptPatchVersion())
+        .setScriptId(summary.scriptId())
+        .setPluginId(summary.pluginId())
+        .setPluginVersionId(summary.pluginVersionId())
+        .setWorkItemId(summary.workItemId())
+        .setCommandOrdinal(summary.commandOrdinal())
+        .setAutomationDispatchId(summary.automationDispatchId())
+        .setGameSessionCommandId(summary.gameSessionCommandId())
+        .setTargetEntityId(summary.targetEntityId())
+        .setEmittedCommandText(summary.emittedCommandText())
+        .setHandoffOutcome(summary.handoffOutcome())
+        .setHandoffReason(summary.handoffReason())
+        .setObservedAtMs(summary.observedAtMs())
         .build();
   }
 }

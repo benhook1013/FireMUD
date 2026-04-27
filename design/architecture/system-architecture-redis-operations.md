@@ -18,6 +18,31 @@ Other procedures and tuning advice here are advanced and should not be expanded 
 - [`system-architecture-redis-script-rollout-and-compatibility.md`](./system-architecture-redis-script-rollout-and-compatibility.md)
   - Lua compatibility modes, rollout matrix, registry expectations, and script upgrade runbooks
 
+## Canonical Coordination Reset Sequence
+
+This section is the normative source for the multi-step Coordination Redis reset/recovery workflow. Other runbooks should point here and then describe only scope choice, session policy, evidence, and scenario-specific abort or storage steps.
+
+Canonical sequence:
+
+1. `coordination-maintenance pause --operation reset ...`
+2. `coordination-maintenance reset ...`
+3. `coordination-maintenance reconcile-ledger ...`
+4. `coordination-maintenance converge-commands ...`
+5. `coordination-maintenance init-meta ...`
+6. `coordination-maintenance rebind-sessions ...` when the chosen scope preserves gameplay sessions after clearing region-local bindings
+7. `coordination-maintenance smoke-check ...`
+8. `coordination-maintenance resume ...`
+
+Rules:
+
+- `pause` is the canonical lock-acquiring step and must drive the chosen scope to canonical `PAUSED` before storage-level wipe or prefix deletion occurs.
+- `reset` is the only supported step that bumps `region_epoch` and emits the authoritative old/new epoch evidence for downstream reconciliation.
+- `reconcile-ledger` and `converge-commands` are required before traffic resumes; replay-first workflows may use those verbs without a preceding `reset`, but reset workflows must not skip them.
+- `init-meta` re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after the reset step.
+- `rebind-sessions` is conditional. Region-scoped resets preserve gameplay sessions by default, tenant-scoped resets do so only when `--preserve-sessions` is recorded, and cluster-scoped resets invalidate gameplay sessions by default.
+- `smoke-check` is the resume gate proving the new epoch can acquire leases, stage work, converge, and clean up correctly.
+- `resume` is the canonical success-path release step. If the workflow aborts before `resume`, operators must use `coordination-maintenance release-lock ...` rather than inventing an alternate unlock sequence.
+
 ## Redis SLOs & Budgets
 
 This section centralizes the normative targets for Redis behavior that other docs reference. Individual environments may tune concrete values, but changes should be treated as deliberate SLO updates rather than silent drift.
@@ -59,15 +84,10 @@ Operators should wire alerts directly to these metrics and treat sustained growt
 1. Confirm via metrics or `INFO` that AOF size, restart time, or daily growth is outside the agreed budget.
 2. Schedule a maintenance window.
 3. Keep the control-plane path and maintenance tooling alive long enough to execute the canonical reset handshake; do not stop the very components required to pause, fence, audit, and verify the workflow.
-4. Start the reset workflow with `coordination-maintenance pause --operation reset ...` for the affected scope so the deployment maintenance lock is acquired and the scope reaches canonical `PAUSED`.
-5. Run `coordination-maintenance reset ...` for that same scope. This command is the only supported place that bumps `region_epoch` and emits the authoritative old/new epoch evidence for downstream steps.
-6. Reset Coordination Redis for the fenced scope by stopping Redis, deleting or recreating the AOF volume, and restarting Redis with the desired AOF configuration.
-7. Complete the remaining reset handshake with the same maintenance lock token:
-   - reconcile old-epoch ledger rows
-   - converge accepted-but-unbound command records
-   - reinitialize `tick:{tenantRegionTag}:meta`
-   - run the post-reset smoke check
-8. Resume ticks and player traffic only through `coordination-maintenance resume ...`; if the workflow aborts before resume, release the lock explicitly with `coordination-maintenance release-lock ...`.
+4. Start the [Canonical Coordination Reset Sequence](#canonical-coordination-reset-sequence) for the affected scope and keep the same maintenance lock token through the full workflow.
+5. Perform the storage-level reset between the canonical `reset` and `reconcile-ledger` steps by stopping Redis, deleting or recreating the AOF volume, and restarting Redis with the desired AOF configuration.
+6. Finish the canonical sequence, including `smoke-check`, before resuming ticks and player traffic.
+7. If the workflow aborts before `resume`, release the lock explicitly with `coordination-maintenance release-lock ...`.
 
 Manual AOF surgery is not supported. Either the AOF is trusted and replayed as-is, or it is discarded and Redis restarts from a clean keyspace.
 
@@ -150,14 +170,7 @@ Every coordination reset that affects tick execution must include a tick-effect-
 
 1. detect the issue through CI, logs, or metrics
 2. choose the smallest safe scope
-3. execute the canonical reset workflow for that scope:
-   - `coordination-maintenance pause --operation reset ...`
-   - `coordination-maintenance reset ...` (this command performs and audits the `region_epoch` bump)
-   - `coordination-maintenance reconcile-ledger ...`
-   - `coordination-maintenance converge-commands ...`
-   - `coordination-maintenance init-meta ...`
-   - `coordination-maintenance smoke-check ...`
-   - `coordination-maintenance resume ...`
+3. execute the [Canonical Coordination Reset Sequence](#canonical-coordination-reset-sequence) for that scope
 4. resume traffic only according to the chosen scope’s session policy
 
 ### Key Enumeration Strategy for Scoped Resets
@@ -256,12 +269,10 @@ Goal: change how `tenantId` / `regionId` normalization and hash tags are formed 
 
 1. implement the new normalization version in shared helpers
 2. schedule a maintenance window
-3. drive the affected scope to canonical `PAUSED` through `coordination-maintenance pause --operation migration ...`
-4. deploy services using the new normalization helpers
-5. run `coordination-maintenance reset ...` for the affected scope so the canonical reset command owns the `region_epoch` bump and emits the audited epoch map
-6. start a fresh Coordination Redis deployment or logical database with an empty keyspace
-7. complete the rest of the canonical reset workflow with the same maintenance lock token
-8. resume traffic and rebuild coordination state from PostgreSQL plus fresh activity
+3. drive the affected scope to canonical `PAUSED` through `coordination-maintenance pause --operation migration ...`, then continue using the [Canonical Coordination Reset Sequence](#canonical-coordination-reset-sequence)
+4. deploy services using the new normalization helpers before the canonical `reset` step
+5. start a fresh Coordination Redis deployment or logical database with an empty keyspace after the canonical `reset` step
+6. finish the remaining canonical sequence with the same maintenance lock token and rebuild coordination state from PostgreSQL plus fresh activity
 
 ### Runbook: In-Place Normalization Migration
 

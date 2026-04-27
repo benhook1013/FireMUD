@@ -11,7 +11,7 @@ public record GameplayWebSocketBridgeProperties(
         upstreamUrl == null || upstreamUrl.isBlank()
             ? "ws://game-session-service:8080/ws/game"
             : upstreamUrl;
-    reconnectAttempts = reconnectAttempts <= 0 ? 40 : reconnectAttempts;
+    reconnectAttempts = reconnectAttempts <= 0 ? 160 : reconnectAttempts;
     reconnectDelayMs = reconnectDelayMs <= 0 ? 250L : reconnectDelayMs;
     bufferCapacity = bufferCapacity <= 0 ? 256 : bufferCapacity;
   }

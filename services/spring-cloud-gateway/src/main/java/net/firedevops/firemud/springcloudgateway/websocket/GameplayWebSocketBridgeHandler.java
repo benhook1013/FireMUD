@@ -217,7 +217,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
     if (status.getCode() == 1011 && "internal_error".equals(status.getReason())) {
       return false;
     }
-    return status.getCode() != 1000 && status.getCode() != 1008;
+    return status.getCode() != 1008;
   }
 
   private void emitIfConnected(WebSocketSession downstream, BridgeState state, String payload) {

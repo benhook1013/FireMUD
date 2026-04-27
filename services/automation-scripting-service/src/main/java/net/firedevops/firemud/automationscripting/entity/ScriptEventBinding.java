@@ -41,6 +41,9 @@ public class ScriptEventBinding {
   @Column(nullable = false)
   private int priority;
 
+  @Column(nullable = false, length = 32)
+  private String priorityTag = "normal";
+
   @Column(nullable = false)
   private boolean requiresExclusiveEvent;
 

@@ -6,9 +6,9 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.automationscripting.config.ScriptQuotaProperties;
 import net.firedevops.firemud.automationscripting.service.redis.AutomationRedisKeys;
 import net.firedevops.firemud.common.redis.RedisAtomicOperations;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -21,12 +21,7 @@ import org.springframework.stereotype.Service;
 public class ScriptQuotaServiceImpl implements ScriptQuotaService {
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
-
-  @Value("${script.quota.limit:50}")
-  private long limit;
-
-  @Value("${script.quota.windowSeconds:60}")
-  private long windowSeconds;
+  private final ScriptQuotaProperties quotaProperties;
 
   private Counter allowedCounter;
   private Counter deniedCounter;
@@ -43,8 +38,8 @@ public class ScriptQuotaServiceImpl implements ScriptQuotaService {
     String key = AutomationRedisKeys.automationQuota(tenantId, scriptId);
     Long count =
         RedisAtomicOperations.incrementWithTtl(
-            redisTemplate, key, java.time.Duration.ofSeconds(windowSeconds));
-    boolean allowed = count != null && count <= limit;
+            redisTemplate, key, java.time.Duration.ofSeconds(quotaProperties.getWindowSeconds()));
+    boolean allowed = count != null && count <= quotaProperties.getLimit();
     if (allowed) {
       allowedCounter.increment();
     } else {

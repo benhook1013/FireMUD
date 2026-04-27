@@ -2,9 +2,6 @@ package net.firedevops.firemud.gamesession;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.grpc.Server;
-import io.grpc.ServerBuilder;
-import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.io.IOException;
@@ -18,15 +15,6 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
-import net.firedevops.firemud.account.v1.AccountServiceGrpc;
-import net.firedevops.firemud.account.v1.AuthenticateRequest;
-import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
-import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
-import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
-import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
-import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -38,6 +26,7 @@ import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
+import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -69,7 +58,7 @@ class CommunicationWebSocketCrossServiceTest {
   static final GenericContainer<?> REDIS =
       new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine")).withExposedPorts(6379);
 
-  private static AccountServiceStub ACCOUNT_STUB;
+  private static AccountRuntimeStubServer ACCOUNT_STUB;
   private static WorldManagementStubServer WORLD_STUB;
   private static ChatEntityManagementStubServer ENTITY_STUB;
   private static SocialGroupsStubServer SOCIAL_STUB;
@@ -108,7 +97,7 @@ class CommunicationWebSocketCrossServiceTest {
       worldStub.close();
     }
 
-    AccountServiceStub accountStub = ACCOUNT_STUB;
+    AccountRuntimeStubServer accountStub = ACCOUNT_STUB;
     ACCOUNT_STUB = null;
     if (accountStub != null) {
       accountStub.close();
@@ -411,7 +400,9 @@ class CommunicationWebSocketCrossServiceTest {
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (ACCOUNT_STUB == null) {
-      ACCOUNT_STUB = new AccountServiceStub(TestSocketUtils.findAvailableTcpPort());
+      ACCOUNT_STUB = new AccountRuntimeStubServer(TestSocketUtils.findAvailableTcpPort());
+      ACCOUNT_STUB.setDefaultAccountId(ACCOUNT_ID);
+      ACCOUNT_STUB.mapAccountId("sora@example.com", SORA_ACCOUNT_ID);
     }
     if (WORLD_STUB == null) {
       WORLD_STUB = new WorldManagementStubServer(TestSocketUtils.findAvailableTcpPort());
@@ -540,98 +531,6 @@ class CommunicationWebSocketCrossServiceTest {
     double actual = counter == null ? 0.0 : counter.count();
     throw new AssertionError(
         "Metric " + meterName + " did not reach " + expectedValue + "; actual=" + actual);
-  }
-
-  private static final class AccountServiceStub implements AutoCloseable {
-    private final Server server;
-    private final int port;
-
-    AccountServiceStub(int port) throws IOException {
-      this.port = port;
-      this.server =
-          ServerBuilder.forPort(port)
-              .addService(
-                  new AccountServiceGrpc.AccountServiceImplBase() {
-                    @Override
-                    public void authenticate(
-                        AuthenticateRequest request,
-                        StreamObserver<AuthenticateResponse> responseObserver) {
-                      long accountId =
-                          switch (request.getUsername()) {
-                            case "sora@example.com" -> SORA_ACCOUNT_ID;
-                            default -> ACCOUNT_ID;
-                          };
-                      AuthenticateResponse response =
-                          AuthenticateResponse.newBuilder()
-                              .setAccountId(String.valueOf(accountId))
-                              .setAuthToken("stub-token")
-                              .build();
-                      responseObserver.onNext(response);
-                      responseObserver.onCompleted();
-                    }
-
-                    @Override
-                    public void getTenantMembershipForRuntime(
-                        GetTenantMembershipForRuntimeRequest request,
-                        StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
-                      responseObserver.onNext(
-                          GetTenantMembershipForRuntimeResponse.newBuilder()
-                              .setAccountId(request.getAccountId())
-                              .setTenantId(request.getTenantId())
-                              .setGameplayAdmissionAllowed(true)
-                              .setMembershipVersion(1L)
-                              .setEvaluatedAt("2026-03-30T00:00:00Z")
-                              .build());
-                      responseObserver.onCompleted();
-                    }
-
-                    @Override
-                    public void getTenantEntitlementsForRuntime(
-                        GetTenantEntitlementsForRuntimeRequest request,
-                        StreamObserver<GetTenantEntitlementsForRuntimeResponse> responseObserver) {
-                      responseObserver.onNext(
-                          GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                              .setTenantId(request.getTenantId())
-                              .setGameplayAvailable(true)
-                              .setEntitlementVersion(1L)
-                              .setTenantBillingSequence(1L)
-                              .setEvaluatedAt("2026-03-30T00:00:00Z")
-                              .build());
-                      responseObserver.onCompleted();
-                    }
-
-                    @Override
-                    public void ensurePublicProductionPlayerMembership(
-                        EnsurePublicProductionPlayerMembershipRequest request,
-                        StreamObserver<EnsurePublicProductionPlayerMembershipResponse>
-                            responseObserver) {
-                      responseObserver.onNext(
-                          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
-                              .setAccountId(request.getAccountId())
-                              .setTenantId(request.getTenantId())
-                              .setRealmSlug(request.getRealmSlug())
-                              .setGameplayAdmissionAllowed(true)
-                              .setMembershipVersion(1L)
-                              .setCreated(true)
-                              .setEvaluatedAt("2026-03-30T00:00:00Z")
-                              .build());
-                      responseObserver.onCompleted();
-                    }
-                  })
-              .build()
-              .start();
-    }
-
-    int port() {
-      return port;
-    }
-
-    @Override
-    public void close() {
-      if (server != null) {
-        server.shutdownNow();
-      }
-    }
   }
 
   private final class RecordingWebSocketClient implements AutoCloseable {

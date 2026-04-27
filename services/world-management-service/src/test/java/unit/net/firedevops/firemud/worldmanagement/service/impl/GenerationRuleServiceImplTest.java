@@ -28,7 +28,7 @@ class GenerationRuleServiceImplTest {
 
   @Test
   void saveRulePersistsEntity() {
-    GenerationRuleDto dto = new GenerationRuleDto(null, 1L, "max_rooms", "10");
+    GenerationRuleDto dto = new GenerationRuleDto(null, 1L, "max_rooms", null, null, "10");
     GenerationRule saved = new GenerationRule();
     saved.setId(5L);
     saved.setTenantId(1L);

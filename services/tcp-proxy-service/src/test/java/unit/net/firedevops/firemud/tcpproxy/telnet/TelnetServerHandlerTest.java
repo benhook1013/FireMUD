@@ -13,6 +13,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
@@ -629,6 +631,54 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  void shutdownPathSuppressesExpectedDisconnectNotifyTransportNoise() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
+    Mockito.when(eventService.notifyDisconnect(eq("1"), eq("1"), anyString(), anyLong()))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            () -> true,
+            (url, ip, proxyConnectionId, session, tenant, listener) -> {
+              listener.onOpen(new RecordingWebSocket());
+              return CompletableFuture.completedFuture(new RecordingWebSocket());
+            },
+            eventService,
+            new AtomicInteger(),
+            "1",
+            "1",
+            lookCacheService);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    EventExecutor executor = mock(EventExecutor.class);
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    when(executor.isShuttingDown()).thenReturn(true);
+
+    handler.channelActive(ctx);
+    handler.channelRead0(ctx, "look");
+    handler.channelInactive(ctx);
+
+    awaitCounter(
+        registry,
+        "tcpproxy.disconnect.notify.expected_shutdown_transport_failure",
+        Status.Code.UNAVAILABLE.name());
+    assertEquals(
+        0.0,
+        registry
+            .counter("tcpproxy.disconnect.notify.transport_failure", "status", "UNAVAILABLE")
+            .count());
+  }
+
+  @Test
   void gatewayDisconnectFailClosesTelnet() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     AtomicInteger connectAttempts = new AtomicInteger();
@@ -1000,6 +1050,23 @@ class TelnetServerHandlerTest {
   @SuppressWarnings("unchecked")
   private static <V> ScheduledFuture<V> mockScheduledFutureTyped() {
     return mock(ScheduledFuture.class);
+  }
+
+  private static void awaitCounter(
+      SimpleMeterRegistry registry, String meterName, String statusTag) {
+    long deadline = System.currentTimeMillis() + 1_000L;
+    while (System.currentTimeMillis() < deadline) {
+      if (registry.counter(meterName, "status", statusTag).count() >= 1.0) {
+        return;
+      }
+      try {
+        Thread.sleep(25L);
+      } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        throw new AssertionError("Interrupted while waiting for counter " + meterName, ex);
+      }
+    }
+    throw new AssertionError("Counter did not advance: " + meterName + " status=" + statusTag);
   }
 
   private static final class RecordingConnector implements TelnetServerHandler.WebSocketConnector {

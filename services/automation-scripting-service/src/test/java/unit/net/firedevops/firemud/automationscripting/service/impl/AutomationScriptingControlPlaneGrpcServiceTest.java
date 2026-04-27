@@ -7,30 +7,55 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
+import net.firedevops.firemud.automationscripting.v1.AutomationAdmissionMode;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchRequest;
 import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPatchResponse;
+import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPluginVersionRequest;
+import net.firedevops.firemud.automationscripting.v1.CancelPendingWorkItemsForPluginVersionResponse;
 import net.firedevops.firemud.automationscripting.v1.DisablePluginRequest;
 import net.firedevops.firemud.automationscripting.v1.DisablePluginResponse;
 import net.firedevops.firemud.automationscripting.v1.DrainPluginRequest;
 import net.firedevops.firemud.automationscripting.v1.DrainPluginResponse;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusRequest;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationPinConvergenceRequest;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationPinConvergenceResponse;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionResponse;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchInstanceRolloutStatusRequest;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchInstanceRolloutStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.ListPluginRuntimeEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListPluginRuntimeEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptEventDefinitionsResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptHandoffEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptHandoffEventsResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesResponse;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsRequest;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsResponse;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeRequest;
+import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeResponse;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionRequest;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -39,6 +64,24 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class AutomationScriptingControlPlaneGrpcServiceTest {
+  private static AutomationAdmissionStateService admissionStateService() {
+    return Mockito.mock(AutomationAdmissionStateService.class);
+  }
+
+  private static AutomationScriptingControlPlaneGrpcService newService(
+      ScriptWorkItemService workItemService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService) {
+    return new AutomationScriptingControlPlaneGrpcService(
+        new BuiltInScriptEventRegistryService(),
+        workItemService,
+        pluginRuntimeStateService,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        Mockito.mock(ScriptScheduleInstanceService.class));
+  }
+
   @AfterEach
   void clearSessionContext() {
     SessionContext.clear();
@@ -48,10 +91,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   void getsBuiltInEventDefinition() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     AutomationScriptingControlPlaneGrpcService service =
-        new AutomationScriptingControlPlaneGrpcService(
-            new BuiltInScriptEventRegistryService(),
+        newService(
             Mockito.mock(ScriptWorkItemService.class),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
     AtomicReference<GetScriptEventDefinitionResponse> ref = new AtomicReference<>();
 
     service.getScriptEventDefinition(
@@ -62,16 +106,18 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getDefinition().getEventType()).isEqualTo("onCommand");
     assertThat(ref.get().getDefinition().getSnapshotAuthority())
         .isEqualTo("PRODUCER_SUPPLIED_TOKEN");
+    assertThat(ref.get().getDefinition().getPayloadSchemaRef()).contains("#oncommand-payload-v1");
   }
 
   @Test
   void listsBuiltInEventDefinitionsByOwner() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     AutomationScriptingControlPlaneGrpcService service =
-        new AutomationScriptingControlPlaneGrpcService(
-            new BuiltInScriptEventRegistryService(),
+        newService(
             Mockito.mock(ScriptWorkItemService.class),
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
     AtomicReference<ListScriptEventDefinitionsResponse> ref = new AtomicReference<>();
 
     service.listScriptEventDefinitions(
@@ -92,10 +138,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     Mockito.when(workItemService.cancelPendingForPatch(Mockito.any())).thenReturn(3L);
     AutomationScriptingControlPlaneGrpcService service =
-        new AutomationScriptingControlPlaneGrpcService(
-            new BuiltInScriptEventRegistryService(),
+        newService(
             workItemService,
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
     AtomicReference<CancelPendingWorkItemsForPatchResponse> ref = new AtomicReference<>();
 
     service.cancelPendingWorkItemsForPatch(
@@ -117,6 +164,38 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void cancelsPendingWorkItemsForPluginVersion() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.cancelPendingForPluginVersion(Mockito.any())).thenReturn(2L);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<CancelPendingWorkItemsForPluginVersionResponse> ref = new AtomicReference<>();
+
+    service.cancelPendingWorkItemsForPluginVersion(
+        CancelPendingWorkItemsForPluginVersionRequest.newBuilder()
+            .setTenantId("1")
+            .setPluginId("plugin-1")
+            .setPluginVersionId("plugin-v1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .setReason("plugin_disabled")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getCanceledCount()).isEqualTo(2L);
+    Mockito.verify(workItemService)
+        .cancelPendingForPluginVersion(
+            new ScriptWorkItemService.CancelPendingForPluginVersionCommand(
+                "1", "plugin-1", "plugin-v1", "game-1", "region-1", "", "", "plugin_disabled"));
+  }
+
+  @Test
   void getsScriptPatchStatusFromWorkItemReadModel() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
@@ -127,12 +206,15 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "patch-1",
                     ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
                     "runtime_work_terminal",
-                    123L)));
+                    123L,
+                    7L,
+                    "ability-1")));
     AutomationScriptingControlPlaneGrpcService service =
-        new AutomationScriptingControlPlaneGrpcService(
-            new BuiltInScriptEventRegistryService(),
+        newService(
             workItemService,
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
     AtomicReference<GetScriptPatchStatusResponse> ref = new AtomicReference<>();
 
     service.getScriptPatchStatus(
@@ -146,6 +228,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getStatus()).isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY);
     assertThat(ref.get().getStatusReason()).isEqualTo("runtime_work_terminal");
     assertThat(ref.get().getLastChangedAtMs()).isEqualTo(123L);
+    assertThat(ref.get().getBaseVersionId()).isEqualTo(7L);
+    assertThat(ref.get().getAbilitySchemaDigest()).isEqualTo("ability-1");
   }
 
   @Test
@@ -161,12 +245,15 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "patch-2",
                     ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED,
                     "terminal_work_failed",
-                    15L)));
+                    15L,
+                    7L,
+                    "ability-1")));
     AutomationScriptingControlPlaneGrpcService service =
-        new AutomationScriptingControlPlaneGrpcService(
-            new BuiltInScriptEventRegistryService(),
+        newService(
             workItemService,
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
     AtomicReference<ListScriptPatchStatusesResponse> ref = new AtomicReference<>();
 
     service.listScriptPatchStatuses(
@@ -183,6 +270,386 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getPatches(0).getScriptPatchVersion()).isEqualTo("patch-2");
     assertThat(ref.get().getPatches(0).getStatus())
         .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
+    assertThat(ref.get().getPatches(0).getBaseVersionId()).isEqualTo(7L);
+    assertThat(ref.get().getPatches(0).getAbilitySchemaDigest()).isEqualTo("ability-1");
+  }
+
+  @Test
+  void getsAutomationDrainStatusFromWorkItemReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.getAutomationDrainStatus("1", "game-1", "region-1"))
+        .thenReturn(
+            new ScriptWorkItemService.AutomationDrainStatusSummary(
+                "1", "game-1", "region-1", "NORMAL", 1L, 2L, 123L, 4L, 200L));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<GetAutomationDrainStatusResponse> ref = new AtomicReference<>();
+
+    service.getAutomationDrainStatus(
+        GetAutomationDrainStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getTenantId()).isEqualTo("1");
+    assertThat(ref.get().getGameInstanceId()).isEqualTo("game-1");
+    assertThat(ref.get().getRegionId()).isEqualTo("region-1");
+    assertThat(ref.get().getAdmissionMode().name()).isEqualTo("AUTOMATION_ADMISSION_MODE_NORMAL");
+    assertThat(ref.get().getAdmissionEpoch()).isEqualTo(1L);
+    assertThat(ref.get().getActiveExecutionCount()).isEqualTo(2L);
+    assertThat(ref.get().getOldestActiveExecutionStartedAtMs()).isEqualTo(123L);
+    assertThat(ref.get().getPendingCancelableWorkItemCount()).isEqualTo(4L);
+    assertThat(ref.get().getObservedAtMs()).isEqualTo(200L);
+  }
+
+  @Test
+  void listsScriptScheduleInstancesFromReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(scheduleInstanceService.listInstances("1", "game-1", "patch-1", 25))
+        .thenReturn(
+            List.of(
+                new ScriptScheduleInstanceService.ScheduleInstanceSummary(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    "npc-guard",
+                    "",
+                    "",
+                    "onTimerExpire",
+                    "guard.alert.expire.v1",
+                    "TIMER",
+                    5000L,
+                    "MILLISECONDS",
+                    "normal",
+                    "ENTITY",
+                    "guard-1",
+                    10,
+                    false,
+                    "READY",
+                    5555L,
+                    0L,
+                    "runtime-v2",
+                    "req-9",
+                    1234L,
+                    1235L,
+                    1236L,
+                    "region-1",
+                    12L,
+                    100L,
+                    7777L)));
+    AutomationScriptingControlPlaneGrpcService service =
+        new AutomationScriptingControlPlaneGrpcService(
+            new BuiltInScriptEventRegistryService(),
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            scheduleInstanceService);
+    AtomicReference<ListScriptScheduleInstancesResponse> ref = new AtomicReference<>();
+
+    service.listScriptScheduleInstances(
+        ListScriptScheduleInstancesRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setLimit(25)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getSchedulesList()).hasSize(1);
+    assertThat(ref.get().getSchedules(0).getScheduleDefinitionId())
+        .isEqualTo("guard.alert.expire.v1");
+    assertThat(ref.get().getSchedules(0).getTargetScopeType()).isEqualTo("ENTITY");
+    assertThat(ref.get().getSchedules(0).getTargetScopeId()).isEqualTo("guard-1");
+    assertThat(ref.get().getSchedules(0).getMaterializationStatus()).isEqualTo("READY");
+    assertThat(ref.get().getSchedules(0).getNextDueAtMs()).isEqualTo(5555L);
+  }
+
+  @Test
+  void setsAutomationAdmissionModeThroughAdmissionStateService() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    AutomationAdmissionStateService admissionStateService =
+        Mockito.mock(AutomationAdmissionStateService.class);
+    Mockito.when(admissionStateService.setMode(Mockito.any()))
+        .thenReturn(
+            new AutomationAdmissionStateService.AdmissionStateSummary(
+                "1",
+                "game-1",
+                "region-1",
+                "PAUSED_FOR_ROLLBACK",
+                2L,
+                "req-2",
+                "admin",
+                "rollback",
+                300L));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService,
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<SetAutomationAdmissionModeResponse> ref = new AtomicReference<>();
+
+    service.setAutomationAdmissionMode(
+        SetAutomationAdmissionModeRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .setMode(AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK)
+            .setControlPlaneRequestId("req-2")
+            .setActorPrincipal("admin")
+            .setReason("rollback")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getMode())
+        .isEqualTo(AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK);
+    assertThat(ref.get().getAdmissionEpoch()).isEqualTo(2L);
+    assertThat(ref.get().getUpdatedAtMs()).isEqualTo(300L);
+  }
+
+  @Test
+  void getsAutomationPinConvergenceFromRuntimeState() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptPatchPinProjectionService pinProjectionService =
+        Mockito.mock(ScriptPatchPinProjectionService.class);
+    Mockito.when(pinProjectionService.getPinConvergence("1", "game-1"))
+        .thenReturn(
+            new ScriptPatchPinProjectionService.PinConvergenceLookup(
+                Optional.of(
+                    new ScriptPatchPinProjectionService.PinConvergenceSummary(
+                        "1", "game-1", "patch-2", "req-22", 222L, 230L, 4L, false)),
+                "",
+                ""));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            pinProjectionService);
+    AtomicReference<GetAutomationPinConvergenceResponse> ref = new AtomicReference<>();
+
+    service.getAutomationPinConvergence(
+        GetAutomationPinConvergenceRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getObservedPinnedScriptPatchVersion()).isEqualTo("patch-2");
+    assertThat(ref.get().getLastObservedControlPlaneRequestId()).isEqualTo("req-22");
+    assertThat(ref.get().getObservedAtMs()).isEqualTo(222L);
+    assertThat(ref.get().getProjectionAsOfMs()).isEqualTo(230L);
+    assertThat(ref.get().getProjectionLagMs()).isEqualTo(4L);
+    assertThat(ref.get().getIsProjectionStale()).isFalse();
+  }
+
+  @Test
+  void getsScriptPatchInstanceRolloutStatusFromReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.getPatchInstanceRolloutStatus("1", "game-1", "patch-1"))
+        .thenReturn(
+            Optional.of(
+                new ScriptWorkItemService.PatchInstanceRolloutSummary(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED,
+                    "runtime_pin_matches_patch",
+                    123L,
+                    130L,
+                    0L,
+                    false)));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<GetScriptPatchInstanceRolloutStatusResponse> ref = new AtomicReference<>();
+
+    service.getScriptPatchInstanceRolloutStatus(
+        GetScriptPatchInstanceRolloutStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getRolloutStatus())
+        .isEqualTo(ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED);
+    assertThat(ref.get().getProjectionLagMs()).isZero();
+  }
+
+  @Test
+  void listsScriptPatchInstanceRolloutsFromReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(
+            workItemService.listPatchInstanceRollouts(
+                "1",
+                "game-1",
+                "",
+                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+                10L,
+                20L))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.PatchInstanceRolloutSummary(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    ScriptPatchInstanceRolloutStatus
+                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
+                    "runtime_pin_differs_from_patch",
+                    15L,
+                    16L,
+                    0L,
+                    false)));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ListScriptPatchInstanceRolloutsResponse> ref = new AtomicReference<>();
+
+    service.listScriptPatchInstanceRollouts(
+        ListScriptPatchInstanceRolloutsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setChangedAfterMs(10L)
+            .setChangedBeforeMs(20L)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getRolloutsList()).hasSize(1);
+    assertThat(ref.get().getRollouts(0).getRolloutStatus())
+        .isEqualTo(
+            ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK);
+  }
+
+  @Test
+  void listsScriptPatchInstanceRolloutEventsFromReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(
+            workItemService.listPatchInstanceRolloutEvents(
+                "1",
+                "game-1",
+                "patch-1",
+                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED,
+                10L,
+                20L,
+                50))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.PatchInstanceRolloutEventSummary(
+                    "event-1",
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED,
+                    "runtime_pin_restored_after_rollback",
+                    15L,
+                    16L)));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ListScriptPatchInstanceRolloutEventsResponse> ref = new AtomicReference<>();
+
+    service.listScriptPatchInstanceRolloutEvents(
+        ListScriptPatchInstanceRolloutEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setRolloutStatus(
+                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED)
+            .setChangedAfterMs(10L)
+            .setChangedBeforeMs(20L)
+            .setLimit(50)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getEventsList()).hasSize(1);
+    assertThat(ref.get().getEvents(0).getEventId()).isEqualTo("event-1");
+    assertThat(ref.get().getEvents(0).getRolloutStatus())
+        .isEqualTo(ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED);
+  }
+
+  @Test
+  void listsScriptHandoffEventsFromReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(
+            workItemService.listHandoffEvents(
+                "1", "game-1", "patch-1", "99", "enqueued", 10L, 20L, 50))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.HandoffEventSummary(
+                    "event-1",
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    "script-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    "99",
+                    0,
+                    "workItem:99#0",
+                    "command-1",
+                    "target-1",
+                    "LOOK AT old chest",
+                    "enqueued",
+                    "game_session_accepted",
+                    15L)));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ListScriptHandoffEventsResponse> ref = new AtomicReference<>();
+
+    service.listScriptHandoffEvents(
+        ListScriptHandoffEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setWorkItemId("99")
+            .setHandoffOutcome("enqueued")
+            .setChangedAfterMs(10L)
+            .setChangedBeforeMs(20L)
+            .setLimit(50)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getEventsList()).hasSize(1);
+    assertThat(ref.get().getEvents(0).getAutomationDispatchId()).isEqualTo("workItem:99#0");
+    assertThat(ref.get().getEvents(0).getGameSessionCommandId()).isEqualTo("command-1");
+    assertThat(ref.get().getEvents(0).getEmittedCommandText()).isEqualTo("LOOK AT old chest");
+    assertThat(ref.get().getEvents(0).getHandoffOutcome()).isEqualTo("enqueued");
   }
 
   @Test
@@ -208,10 +675,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     100L,
                     200L)));
     AutomationScriptingControlPlaneGrpcService service =
-        new AutomationScriptingControlPlaneGrpcService(
-            new BuiltInScriptEventRegistryService(),
+        newService(
             workItemService,
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
     AtomicReference<ListScriptDeadLettersResponse> ref = new AtomicReference<>();
 
     service.listScriptDeadLetters(
@@ -236,10 +704,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     Mockito.when(workItemService.replayDeadLetters(Mockito.any()))
         .thenReturn(new ScriptWorkItemService.ReplayResult(2L, 1L));
     AutomationScriptingControlPlaneGrpcService service =
-        new AutomationScriptingControlPlaneGrpcService(
-            new BuiltInScriptEventRegistryService(),
+        newService(
             workItemService,
-            Mockito.mock(PluginRuntimeStateService.class));
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
     AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
 
     service.replayDeadLetteredWorkItems(
@@ -272,12 +741,14 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "operator_activation",
                     55L,
                     "req-1",
-                    "operator-1")));
+                    "operator-1",
+                    System.currentTimeMillis())));
     AutomationScriptingControlPlaneGrpcService service =
-        new AutomationScriptingControlPlaneGrpcService(
-            new BuiltInScriptEventRegistryService(),
+        newService(
             Mockito.mock(ScriptWorkItemService.class),
-            pluginRuntimeStateService);
+            pluginRuntimeStateService,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
     AtomicReference<GetPluginStatusResponse> ref = new AtomicReference<>();
 
     service.getPluginStatus(
@@ -294,6 +765,66 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getLastChangedAtMs()).isEqualTo(55L);
     assertThat(ref.get().getControlPlaneRequestId()).isEqualTo("req-1");
     assertThat(ref.get().getActorPrincipal()).isEqualTo("operator-1");
+    assertThat(ref.get().getLastPolicyCheckedAtMs()).isPositive();
+    assertThat(ref.get().getPolicyCheckStale()).isFalse();
+  }
+
+  @Test
+  void listsPluginRuntimeEventsFromRuntimeReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    PluginRuntimeStateService pluginRuntimeStateService =
+        Mockito.mock(PluginRuntimeStateService.class);
+    Mockito.when(
+            pluginRuntimeStateService.listEvents(
+                "1",
+                "game-1",
+                "plugin-1",
+                PluginState.PLUGIN_STATE_ENABLED,
+                "plugin-v1",
+                10L,
+                20L,
+                50))
+        .thenReturn(
+            List.of(
+                new PluginRuntimeStateService.PluginRuntimeEventSummary(
+                    "event-1",
+                    "1",
+                    "game-1",
+                    "plugin-1",
+                    "plugin-v0",
+                    "plugin-v1",
+                    PluginState.PLUGIN_STATE_ENABLED,
+                    "operator_activation",
+                    "req-1",
+                    "operator-1",
+                    15L)));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            pluginRuntimeStateService,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ListPluginRuntimeEventsResponse> ref = new AtomicReference<>();
+
+    service.listPluginRuntimeEvents(
+        ListPluginRuntimeEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPluginId("plugin-1")
+            .setPluginState(PluginState.PLUGIN_STATE_ENABLED)
+            .setActivePluginVersionId("plugin-v1")
+            .setChangedAfterMs(10L)
+            .setChangedBeforeMs(20L)
+            .setLimit(50)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getEventsList()).hasSize(1);
+    assertThat(ref.get().getEvents(0).getEventId()).isEqualTo("event-1");
+    assertThat(ref.get().getEvents(0).getPreviousPluginVersionId()).isEqualTo("plugin-v0");
+    assertThat(ref.get().getEvents(0).getActivePluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(ref.get().getEvents(0).getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_ENABLED);
   }
 
   @Test
@@ -305,10 +836,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         .thenReturn(
             new PluginRuntimeStateService.ActivationResult("plugin-v1", "plugin-v2", "req-1"));
     AutomationScriptingControlPlaneGrpcService service =
-        new AutomationScriptingControlPlaneGrpcService(
-            new BuiltInScriptEventRegistryService(),
+        newService(
             Mockito.mock(ScriptWorkItemService.class),
-            pluginRuntimeStateService);
+            pluginRuntimeStateService,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
     AtomicReference<SetPluginActiveVersionResponse> ref = new AtomicReference<>();
 
     service.setPluginActiveVersion(
@@ -335,10 +867,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     Mockito.when(pluginRuntimeStateService.disable(Mockito.any())).thenReturn(true);
     Mockito.when(pluginRuntimeStateService.drain(Mockito.any())).thenReturn(true);
     AutomationScriptingControlPlaneGrpcService service =
-        new AutomationScriptingControlPlaneGrpcService(
-            new BuiltInScriptEventRegistryService(),
+        newService(
             Mockito.mock(ScriptWorkItemService.class),
-            pluginRuntimeStateService);
+            pluginRuntimeStateService,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
     AtomicReference<DisablePluginResponse> disableRef = new AtomicReference<>();
     AtomicReference<DrainPluginResponse> drainRef = new AtomicReference<>();
 

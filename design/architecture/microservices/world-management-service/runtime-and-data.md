@@ -131,7 +131,7 @@ Implementation Notes:
 - Current concrete `zone` digest fields include `id`, `regionId`, and `name`.
 - Current concrete `room` digest fields include `id`, `zoneId`, `name`, `description`, `nameLocalizedVariantsJson`, and `descriptionLocalizedVariantsJson`.
 - Current concrete `room_exit` digest fields include `id`, `fromRoomId`, `toRoomId`, `direction`, and `cost`.
-- Current concrete `generation_rule` digest fields include `id`, `name`, and `value`.
+- Current concrete `generation_rule` digest fields include `id`, `name`, `scopeType`, `scopeId`, and `value`; generation-rule mutations that carry a subtree scope must validate that declared scope, share the same scope epoch, and participate in `REPLACE_SCOPE` / `SEED_APPEND_ONLY` enforcement.
 - Current concrete `world_entity_spawn_binding` digest fields include `id`, `roomId`, `entityTemplateType`, `entityTemplateId`, `spawnCount`, and `respawnDelaySeconds`.
 
 - Included objects:
@@ -148,7 +148,7 @@ Implementation Notes:
   - stable table ordering;
   - primary-key ordering within each table;
   - deterministic encoding for included semantic fields.
-- Current implementation note: the concrete first-slice table order is `regions`, `zones`, `rooms`, `roomExits`, `generationRules`, then `worldEntitySpawnBindings`, each ordered by ascending primary key. Null string values are canonicalized as empty strings before hashing.
+- Current implementation note: the concrete first-slice table order is `regions`, `zones`, `rooms`, `roomExits`, `generationRules`, then `worldEntitySpawnBindings`, each ordered by ascending primary key. Null string values are canonicalized as empty strings before hashing. The current World digest schema version is `2` because scoped generation-rule metadata is now hashed.
 - `digestSchemaVersion` must increment whenever included tables, field-selection rules, or canonical serialization semantics change.
 
 Publish gating fails closed if World Management cannot attest a digest consistent with this manifest.

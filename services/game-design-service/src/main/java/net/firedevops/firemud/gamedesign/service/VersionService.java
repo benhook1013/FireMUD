@@ -1,7 +1,9 @@
 package net.firedevops.firemud.gamedesign.service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
@@ -17,6 +19,8 @@ public interface VersionService {
 
   VersionDto getPublishedScriptPatchVersion(String tenantId, String scriptPatchVersion);
 
+  PublishedPluginVersionDto uploadPluginBundle(String tenantId, byte[] bundleBytes, String notes);
+
   PublishedPluginVersionDto publishPluginVersion(
       String tenantId,
       String pluginId,
@@ -27,10 +31,33 @@ public interface VersionService {
       int manifestSchemaVersion,
       String distributionManifestHash,
       String distributionManifestPath,
+      String signerKeyId,
+      boolean signerRevoked,
+      String componentPolicyDecision,
       String notes);
 
   PublishedPluginVersionDto getPublishedPluginVersion(
       String tenantId, String pluginId, String pluginVersionId);
+
+  PublishedPluginVersionDto revokePluginVersion(
+      String tenantId, String pluginId, String pluginVersionId, String reason);
+
+  List<PublishedPluginVersionDto> listPublishedPluginVersions(
+      String tenantId,
+      String pluginId,
+      VersionLifecycleState publicationState,
+      LocalDateTime changedAfter,
+      LocalDateTime changedBefore,
+      int limit);
+
+  List<PluginVersionStatusEventDto> listPluginVersionStatusEvents(
+      String tenantId,
+      String pluginId,
+      String pluginVersionId,
+      VersionLifecycleState publicationState,
+      LocalDateTime changedAfter,
+      LocalDateTime changedBefore,
+      int limit);
 
   List<VersionDto> listVersions(String tenantId);
 

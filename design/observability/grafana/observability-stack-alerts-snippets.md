@@ -7,6 +7,22 @@ This file contains reference PromQL expressions and Alertmanager rule snippets f
 Example alerts for the observability stack itself:
 
 ```yaml
+- alert: ObservabilityDeadmanHeartbeatStale
+  expr: |
+    absent(observability_deadman_heartbeat_timestamp_seconds)
+    or
+    (time() - max by (source) (observability_deadman_heartbeat_timestamp_seconds) > 180)
+  for: 2m
+  labels:
+    service: external-monitoring
+    component: deadman
+    severity: P0
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#deadman-freshness-contract
+  annotations:
+    summary: Independent observability deadman heartbeat stale
+    description: The mirrored external deadman heartbeat is absent or older than three 60-second intervals; confirm the authoritative external monitor and paging path immediately.
+
 - alert: AlertmanagerServiceUnavailable
   expr: up{job="alertmanager"} == 0
   for: 5m

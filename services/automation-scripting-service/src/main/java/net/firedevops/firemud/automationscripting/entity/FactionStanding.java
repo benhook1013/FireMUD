@@ -17,6 +17,9 @@ public class FactionStanding {
   @Column(name = "character_id", nullable = false)
   private Long characterId;
 
+  @Column(name = "playable_state_key", nullable = false, length = 120)
+  private String playableStateKey;
+
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "faction_id", nullable = false)
   private Faction faction;

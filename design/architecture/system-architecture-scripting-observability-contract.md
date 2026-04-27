@@ -7,7 +7,9 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 ## Correlation Rules (High Cardinality)
 
 - `scriptEventId` is for `script_event_audit`, logs, and traces.
+- `automationDispatchId` is for per-command handoff history, logs, and cross-service correlation with Game Session command admission, not for Prometheus labels.
 - `scriptEventId` must not be used as a Prometheus metric label (or any other high-cardinality metric dimension).
+- `automationDispatchId` must not be used as a Prometheus metric label (or any other high-cardinality metric dimension).
 - Metrics may include lower-cardinality identifiers such as `tenantId`, `scriptId`, `pluginId`, `pluginVersionId`, and `eventType` as documented below.
 
 ## Ingress Audit vs Handler Audit
@@ -16,8 +18,10 @@ Event-scope ingress decisions and handler-scoped execution outcomes are separate
 
 - Event-scope ingress audit/logging records pre-resolution decisions for the incoming event, such as auth failure, reload backpressure, rollback pause, pin-state unavailability, or version unavailability. These records are keyed by the event-scope identity in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields` and must not invent a synthetic `scriptId`.
 - `script_event_audit` records handler-scoped, scheduler/timer-scoped, tenant-readiness `onLoad`, and dry-run/test executions after a concrete script or plugin handler identity exists.
+- per-command handoff history is a separate durable surface keyed by `automationDispatchId` and `workItemId` so one handler audit row can still correlate to multiple emitted gameplay commands.
 - A successful event-scope ingress record means the event was accepted for handler resolution. It is not a summary of every handler outcome.
 - If ingress is accepted and resolves three handlers, tooling should expect one event-scope ingress record and up to three handler-scoped `script_event_audit` records, one per resolved Trigger Identity.
+- If one resolved handler emits three gameplay commands, tooling should expect one handler-scoped `script_event_audit` row plus three durable handoff-event rows under `ListScriptHandoffEvents`.
 
 ## `script_event_audit` (Required Fields)
 
@@ -79,7 +83,7 @@ Stages:
 
 - `ADMISSION` – the trigger was accepted/rejected before any DSL evaluation (quotas, reload backpressure, disabled scripts, invalid version, policy enforcement).
 - `DSL_EVAL` – the DSL graph was evaluated in the sandbox (validation, loop safety, runtime guards).
-- `WORK_ITEM_PERSIST` – the resulting script work item was persisted durably (for example, into a Postgres outbox) before being indexed for automation ticks.
+- `WORK_ITEM_PERSIST` – the resulting script work item was persisted durably (for example, into a Postgres outbox) before being indexed into the rebuildable automation queue projection.
 - `TICK_HANDOFF` – the work item was handed off to Game Session and accepted into tick queues (the point at which live `finalOutcome=success` is allowed).
 - `DRY_RUN_RESULT` – a non-committing dry-run/test execution completed after DSL evaluation and returned the would-be commands to the authorized caller without persisting a work item or handing off to tick queues.
 
@@ -103,7 +107,7 @@ Stage semantics:
 - Tenant-readiness `onLoad` completion must use `finalStage=DSL_EVAL` and `finalOutcome=readiness_success`; it is not a live gameplay success signal.
 - `finalOutcome=dry_run_success` must imply `finalStage=DRY_RUN_RESULT` and `isDryRun=true`. It means only that the non-committing test evaluation completed and returned inspectable would-be commands.
 - Backpressure outcomes like `skipped_reloading` must use `finalStage=ADMISSION`.
-- Rollback pause backpressure `skipped_rollback_pause` must use `finalStage=ADMISSION`.
+- Rollback pause backpressure `rollback_paused` must use `finalStage=ADMISSION`.
 - Quota denials must use `finalStage=ADMISSION` unless quotas are evaluated inside the DSL runtime for a given trigger (rare; avoid mixing).
 - Intentional rollback/control-plane fencing after admission must stay visible as `finalOutcome=canceled` at the last attempted live stage, with bounded `finalReason` values such as `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`.
 
@@ -233,7 +237,7 @@ The normative metric-family catalog lives in `design/architecture/system-archite
 - Quotas and budgets
   - `script_quota_allowed_total{tenantId, scriptId}`
   - `script_quota_denied_total{tenantId, scriptId, reason}`
-  - `automation_script_tenant_budget_seconds{tenantId, tier}`
+  - `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}`
 - Tick integration and queueing
   - `automation_tick_events_enqueued_total{tenantId}`
   - `automation_tick_version_fence_dropped_total{tenantId, scriptId, reason}`

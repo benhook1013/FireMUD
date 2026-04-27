@@ -5,6 +5,8 @@ import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
+import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
@@ -86,6 +88,16 @@ public class ItemRuntimeService {
     }
   }
 
+  public ApplyActorConditionResponse applyActorCondition(ApplyActorConditionRequest request) {
+    try {
+      return entityStub.applyActorCondition(request);
+    } catch (StatusRuntimeException ex) {
+      return ApplyActorConditionResponse.newBuilder()
+          .setError(error("ApplyActorCondition", "ACTOR_STATE_UNAVAILABLE", ex))
+          .build();
+    }
+  }
+
   public PickupItemFromRoomResponse pickupVisibleRoomItem(PickupVisibleRoomItemRequest request) {
     if (request.getQuantity() <= 0) {
       return pickupError("INVALID_ARGUMENT", "GET quantity must be positive");
@@ -121,6 +133,7 @@ public class ItemRuntimeService {
             .setTenantId(request.getTenantId())
             .setCharacterId(request.getCharacterId())
             .setGameInstanceId(request.getGameInstanceId())
+            .setPlayableStateScope(request.getPlayableStateScope())
             .setRoomInstanceId(request.getRoomInstanceId())
             .setItemId(item.getItemId())
             .setQuantity(request.getQuantity())
@@ -153,6 +166,8 @@ public class ItemRuntimeService {
             QueryInventoryRequest.newBuilder()
                 .setTenantId(request.getTenantId())
                 .setCharacterId(request.getCharacterId())
+                .setGameInstanceId(request.getGameInstanceId())
+                .setPlayableStateScope(request.getPlayableStateScope())
                 .setSessionAttestation(request.getSessionAttestation())
                 .build());
     if (inventory.hasError()) {
@@ -174,6 +189,7 @@ public class ItemRuntimeService {
             .setTenantId(request.getTenantId())
             .setCharacterId(request.getCharacterId())
             .setGameInstanceId(request.getGameInstanceId())
+            .setPlayableStateScope(request.getPlayableStateScope())
             .setRoomInstanceId(request.getRoomInstanceId())
             .setItemId(item.getItemId())
             .setQuantity(request.getQuantity())

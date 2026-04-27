@@ -83,6 +83,7 @@ Generation-specific conflict rules:
 
 - `REPLACE_SCOPE` requires the request to carry the current `expectedDraftScopeRevisionEpoch` for the declared target scope. If the scope advanced since the editor preview or generation planning read, World Management must reject the revision as `DRAFT_WRITE_CONFLICT` rather than replacing newer manual edits.
 - `SEED_APPEND_ONLY` also checks the same scope epoch. If deterministic replay would require rewriting or deleting rows already present in the scope, World Management must reject the revision as `OUT_OF_SYNC` or a more specific generation conflict instead of erasing authored content.
+- Multi-row generated topology uses the typed `WORLD_GENERATION_SUBTREE` `worldDesignMutation` payload on `SaveRevision`. Game Design keeps the revision history and forwards the concrete generated rooms, exits, generation rules, and spawn bindings to World Management through `ApplyWorldDesignMutation`; it must not save generated subtree content only as opaque revision JSON.
 - A generation revision that targets a newly created empty container initializes that container's scope epoch in the same transaction that records the generated topology. Later manual edits and later generation revisions for that scope must use that epoch.
 - A future multi-branch merge workflow may introduce richer scope reconciliation, but the initial-slice rule is one optimistic scope epoch, deterministic replay order, and fail-closed conflicts.
 

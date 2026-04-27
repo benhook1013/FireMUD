@@ -8,6 +8,7 @@ public record GameplayAdmissionPointerMutation(
     long tenantId,
     long gameInstanceId,
     boolean visible,
+    boolean publicProductionRealm,
     boolean requiresCharacterSelection,
     String stateScope,
     String characterCreationPolicy,

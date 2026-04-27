@@ -154,6 +154,11 @@ class SessionResumptionFlowTest {
                 .build());
     sessionAuthenticationService =
         new SessionAuthenticationService(sessionContextService, properties, instanceRepository);
+    net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService
+        pointerAuthorityService =
+            Mockito.mock(
+                net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService
+                    .class);
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
             instanceRepository,
@@ -161,7 +166,7 @@ class SessionResumptionFlowTest {
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
-            worldCatalog,
+            pointerAuthorityService,
             meterRegistry);
     lookHandler =
         new LookCommandHandler(

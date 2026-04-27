@@ -63,6 +63,7 @@ public class RoomGroundInventoryEntry {
     copy.setStackable(item.isStackable());
     copy.setStackCompatibilityMode(item.getStackCompatibilityMode());
     copy.setStackVariantKey(item.getStackVariantKey());
+    copy.setEffectPayloadJson(item.getEffectPayloadJson());
     return copy;
   }
 
@@ -80,6 +81,7 @@ public class RoomGroundInventoryEntry {
       copy.setStackable(item.isStackable());
       copy.setStackCompatibilityMode(item.getStackCompatibilityMode());
       copy.setStackVariantKey(item.getStackVariantKey());
+      copy.setEffectPayloadJson(item.getEffectPayloadJson());
       this.item = copy;
     }
   }

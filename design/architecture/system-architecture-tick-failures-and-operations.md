@@ -13,7 +13,7 @@ This document describes the full target-state recovery and operator model. The c
 - the live durable ownership row is currently `{tenantId, gameInstanceId}`-scoped;
 - the live owner/status API is `GetRuntimeOwnershipStatus`, not yet a full region-scoped status surface;
 - the live fence token is opaque and compare-and-match based;
-- the live `tick_batch` / `tick_effect` ledger is real, but the full selected-work manifest, region-scoped replay controller breadth, and cross-region result-return semantics described below remain target-state follow-through.
+- the live `tick_batch` / `tick_effect` ledger is real and now carries the current gameplay-command selected-work manifest on `tick_batch`, including current-boundary `enqueueSeq`, source metadata, and digest-checked replay reuse for surviving staged batches, but timer/retry/remote-follow-up source-claim manifests, region-scoped replay controller breadth, and cross-region result-return semantics described below remain target-state follow-through.
 
 ## What This Covers
 
@@ -97,7 +97,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - The tick-batch table enforces a unique key on those coordinates.
   - Batch allocation is lease-fenced using the recorded `lease_token` (or equivalent fencing token).
   - Recovery that observes multiple durable rows for the same coordinates treats the region as inconsistent, pauses it, and requires reconcile tooling before normal ticks resume.
-- For commands, the same durable transaction that creates the tick batch and selected-work manifest also advances the command record to `BOUND_TO_BATCH`; commands that never reach that state must still converge to a terminal command outcome during recovery or reset handling.
+- Current live boundary note: gameplay commands do not yet use the fuller target-state `BOUND_TO_BATCH` vocabulary. Instead, the command ledger exposes `enqueueSeq`, `STAGED`, `DRAINED`, and later terminal/requeue outcomes, while the sealed batch manifest digest is used to ensure replay reuses only matching staged batches instead of silently mutating an older batch contract.
 - For any `(tenant_id, region_id, region_epoch, tick_id, effect_key)` there must eventually be **exactly one terminal state**:
   - `status = APPLIED` – effect successfully committed to domain state.
   - `status = ABANDONED` – effect intentionally skipped or judged unrecoverable.

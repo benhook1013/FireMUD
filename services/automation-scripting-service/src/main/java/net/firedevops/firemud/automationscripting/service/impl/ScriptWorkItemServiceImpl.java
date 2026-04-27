@@ -6,16 +6,25 @@ import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
-import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
+import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
+import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptHandoffEventRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are internal Spring collaborators")
 public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
+  private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";
   private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_EVALUATING = "EVALUATING";
   private static final String STATUS_CANCELED = "CANCELED";
@@ -33,27 +43,43 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private static final String STATUS_FAILED = "FAILED";
   private static final String STATUS_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
   private static final List<String> CANCELABLE_STATUSES = List.of(STATUS_PENDING_EVALUATION);
+  private static final List<String> ACTIVE_DRAIN_STATUSES =
+      List.of(STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT);
+  private static final List<String> DRAIN_RELEVANT_STATUSES =
+      List.of(STATUS_PENDING_EVALUATION, STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT);
 
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository auditRepository;
   private final ScriptEventIngressAuditRepository ingressAuditRepository;
+  private final ScriptHandoffEventRepository handoffEventRepository;
   private final ScriptOutboxProperties outboxProperties;
-  private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
+  private final AutomationAdmissionStateService automationAdmissionStateService;
+  private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
+  private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
   private final PluginRuntimeStateService pluginRuntimeStateService;
+  private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
 
   public ScriptWorkItemServiceImpl(
       ScriptWorkItemRepository workItemRepository,
       ScriptEventAuditRepository auditRepository,
       ScriptEventIngressAuditRepository ingressAuditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
       ScriptOutboxProperties outboxProperties,
-      GameSessionControlPlaneClient gameSessionControlPlaneClient,
-      PluginRuntimeStateService pluginRuntimeStateService) {
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient) {
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
     this.ingressAuditRepository = ingressAuditRepository;
+    this.handoffEventRepository = handoffEventRepository;
     this.outboxProperties = outboxProperties;
-    this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
+    this.automationAdmissionStateService = automationAdmissionStateService;
+    this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
+    this.rolloutProjectionService = rolloutProjectionService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
+    this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
   }
 
   @Override
@@ -61,8 +87,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   public long cancelPendingForPatch(CancelPendingForPatchCommand command) {
     requireText(command.tenantId(), "tenant_id");
     requireText(command.scriptPatchVersion(), "script_patch_version");
-    String reason = normalizeReason(command.reason());
-    Instant now = Instant.now();
     List<ScriptWorkItem> candidates =
         workItemRepository
             .findByTenantIdAndScriptPatchVersionAndStatusInOrderByCreatedAtAscIdAsc(
@@ -76,8 +100,40 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                 item ->
                     command.regionId().isBlank() || item.getRegionId().equals(command.regionId()))
             .toList();
+    return cancelCandidates(candidates, command.reason());
+  }
+
+  @Override
+  @Transactional
+  public long cancelPendingForPluginVersion(CancelPendingForPluginVersionCommand command) {
+    requireText(command.tenantId(), "tenant_id");
+    requireText(command.pluginId(), "plugin_id");
+    requireText(command.pluginVersionId(), "plugin_version_id");
+    List<ScriptWorkItem> candidates =
+        workItemRepository
+            .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInOrderByCreatedAtAscIdAsc(
+                command.tenantId(),
+                command.pluginId(),
+                command.pluginVersionId(),
+                CANCELABLE_STATUSES)
+            .stream()
+            .filter(
+                item ->
+                    command.gameInstanceId().isBlank()
+                        || item.getGameInstanceId().equals(command.gameInstanceId()))
+            .filter(
+                item ->
+                    command.regionId().isBlank() || item.getRegionId().equals(command.regionId()))
+            .toList();
+    return cancelCandidates(candidates, command.reason());
+  }
+
+  private long cancelCandidates(List<ScriptWorkItem> candidates, String rawReason) {
+    String reason = normalizeReason(rawReason);
+    Instant now = Instant.now();
     candidates.forEach(item -> cancel(item, reason, now));
     workItemRepository.saveAll(candidates);
+    candidates.forEach(rolloutProjectionService::refreshForWorkItem);
     return candidates.size();
   }
 
@@ -96,7 +152,34 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
           item.setStatus(STATUS_EVALUATING);
           item.setUpdatedAt(now);
         });
-    return List.copyOf(workItemRepository.saveAll(items));
+    List<ScriptWorkItem> saved = List.copyOf(workItemRepository.saveAll(items));
+    saved.forEach(rolloutProjectionService::refreshForWorkItem);
+    return saved;
+  }
+
+  @Override
+  @Transactional
+  public List<ScriptWorkItem> claimPendingForEvaluation(List<Long> workItemIds, int maxItems) {
+    if (maxItems <= 0) {
+      throw new IllegalArgumentException("max_items must be positive");
+    }
+    if (workItemIds == null || workItemIds.isEmpty()) {
+      return List.of();
+    }
+    Instant now = Instant.now();
+    List<ScriptWorkItem> items =
+        workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+            workItemIds.stream().distinct().toList(),
+            STATUS_PENDING_EVALUATION,
+            PageRequest.of(0, maxItems));
+    items.forEach(
+        item -> {
+          item.setStatus(STATUS_EVALUATING);
+          item.setUpdatedAt(now);
+        });
+    List<ScriptWorkItem> saved = List.copyOf(workItemRepository.saveAll(items));
+    saved.forEach(rolloutProjectionService::refreshForWorkItem);
+    return saved;
   }
 
   @Override
@@ -153,6 +236,130 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
 
   @Override
   @Transactional(readOnly = true)
+  public AutomationDrainStatusSummary getAutomationDrainStatus(
+      String tenantId, String gameInstanceId, String regionId) {
+    requireText(tenantId, "tenant_id");
+    requireText(gameInstanceId, "game_instance_id");
+    Instant now = Instant.now();
+    AutomationAdmissionStateService.AdmissionStateSummary admissionState =
+        automationAdmissionStateService.getState(tenantId, gameInstanceId, regionId);
+    List<ScriptWorkItem> scopedWorkItems =
+        workItemRepository.findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
+            tenantId, gameInstanceId, blankToEmpty(regionId), DRAIN_RELEVANT_STATUSES);
+    List<ScriptWorkItem> countedWorkItems =
+        "PAUSED_FOR_ROLLBACK".equals(admissionState.mode())
+            ? scopedWorkItems.stream()
+                .filter(
+                    item ->
+                        item.getAdmissionEpoch() <= 0
+                            || item.getAdmissionEpoch() < admissionState.admissionEpoch())
+                .toList()
+            : scopedWorkItems;
+    long activeExecutionCount =
+        countedWorkItems.stream()
+            .filter(item -> ACTIVE_DRAIN_STATUSES.contains(item.getStatus()))
+            .count();
+    long oldestActiveExecutionStartedAtMs =
+        countedWorkItems.stream()
+            .filter(item -> ACTIVE_DRAIN_STATUSES.contains(item.getStatus()))
+            .map(ScriptWorkItem::getCreatedAt)
+            .findFirst()
+            .map(Instant::toEpochMilli)
+            .orElse(0L);
+    long pendingCancelableWorkItemCount =
+        countedWorkItems.stream()
+            .filter(item -> STATUS_PENDING_EVALUATION.equals(item.getStatus()))
+            .count();
+    return new AutomationDrainStatusSummary(
+        tenantId,
+        gameInstanceId,
+        blankToEmpty(regionId),
+        admissionState.mode(),
+        admissionState.admissionEpoch(),
+        activeExecutionCount,
+        oldestActiveExecutionStartedAtMs,
+        pendingCancelableWorkItemCount,
+        now.toEpochMilli());
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
+      String tenantId, String gameInstanceId, String scriptPatchVersion) {
+    requireText(tenantId, "tenant_id");
+    requireText(gameInstanceId, "game_instance_id");
+    requireText(scriptPatchVersion, "script_patch_version");
+    return rolloutProjectionService.getProjection(tenantId, gameInstanceId, scriptPatchVersion);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<PatchInstanceRolloutSummary> listPatchInstanceRollouts(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      long changedAfterMs,
+      long changedBeforeMs) {
+    requireText(tenantId, "tenant_id");
+    return rolloutProjectionService.listProjections(
+        tenantId,
+        gameInstanceId,
+        scriptPatchVersion,
+        rolloutStatus,
+        changedAfterMs,
+        changedBeforeMs);
+  }
+
+  @Override
+  public List<PatchInstanceRolloutEventSummary> listPatchInstanceRolloutEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit) {
+    return rolloutProjectionService.listEvents(
+        tenantId,
+        gameInstanceId,
+        scriptPatchVersion,
+        rolloutStatus,
+        changedAfterMs,
+        changedBeforeMs,
+        limit);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<HandoffEventSummary> listHandoffEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String workItemId,
+      String handoffOutcome,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit) {
+    requireText(tenantId, "tenant_id");
+    int boundedLimit = limit <= 0 ? 100 : Math.min(limit, 500);
+    return handoffEventRepository
+        .findEvents(
+            tenantId,
+            blankToEmpty(gameInstanceId),
+            blankToEmpty(scriptPatchVersion),
+            parseOptionalWorkItemId(workItemId),
+            blankToEmpty(handoffOutcome),
+            changedAfterMs <= 0 ? null : Instant.ofEpochMilli(changedAfterMs),
+            changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs),
+            PageRequest.of(0, boundedLimit))
+        .stream()
+        .map(ScriptWorkItemServiceImpl::toHandoffSummary)
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   public List<DeadLetterSummary> listDeadLetters(
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit) {
     requireText(tenantId, "tenant_id");
@@ -194,6 +401,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       item.setCancelReason("");
       item.setUpdatedAt(now);
       workItemRepository.save(item);
+      rolloutProjectionService.refreshForWorkItem(item);
       markReplayQueued(item.getId(), reason, now);
       replayed++;
     }
@@ -211,9 +419,41 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             .max(Comparator.naturalOrder())
             .orElse(Instant.EPOCH);
     ScriptPatchStatus status = statusFor(workItems);
+    PublicationMetadata publicationMetadata =
+        publicationMetadata(workItems.getFirst().getTenantId(), scriptPatchVersion);
     return Optional.of(
         new PatchStatusSummary(
-            scriptPatchVersion, status, statusReasonFor(status), lastChanged.toEpochMilli()));
+            scriptPatchVersion,
+            status,
+            statusReasonFor(status),
+            lastChanged.toEpochMilli(),
+            publicationMetadata.baseVersionId(),
+            publicationMetadata.abilitySchemaDigest()));
+  }
+
+  private PublicationMetadata publicationMetadata(String tenantId, String scriptPatchVersion) {
+    GetPublishedScriptPatchVersionResponse scriptPatchResponse =
+        gameDesignControlPlaneClient.getPublishedScriptPatchVersion(tenantId, scriptPatchVersion);
+    if (scriptPatchResponse.hasError() && !scriptPatchResponse.getError().getCode().isBlank()) {
+      return PublicationMetadata.empty();
+    }
+    long baseVersionId = scriptPatchResponse.getScriptPatch().getBaseVersionId();
+    if (baseVersionId <= 0) {
+      return PublicationMetadata.empty();
+    }
+    GetPublishedReleaseBundleResponse releaseBundleResponse =
+        gameDesignControlPlaneClient.getPublishedReleaseBundle(tenantId, baseVersionId);
+    if (releaseBundleResponse.hasError() && !releaseBundleResponse.getError().getCode().isBlank()) {
+      return new PublicationMetadata(baseVersionId, "");
+    }
+    String abilitySchemaDigest =
+        releaseBundleResponse.getBundle().getParticipantDigestsList().stream()
+            .filter(
+                digest -> PARTICIPANT_KEY_AUTOMATION_SCRIPTING.equals(digest.getParticipantKey()))
+            .map(ParticipantDigest::getContentDigest)
+            .findFirst()
+            .orElse("");
+    return new PublicationMetadata(baseVersionId, abilitySchemaDigest);
   }
 
   private ScriptPatchStatus statusFor(List<ScriptWorkItem> workItems) {
@@ -245,6 +485,16 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     };
   }
 
+  private record PublicationMetadata(long baseVersionId, String abilitySchemaDigest) {
+    private PublicationMetadata {
+      abilitySchemaDigest = abilitySchemaDigest == null ? "" : abilitySchemaDigest;
+    }
+
+    private static PublicationMetadata empty() {
+      return new PublicationMetadata(0L, "");
+    }
+  }
+
   private static DeadLetterSummary toDeadLetterSummary(ScriptWorkItem item) {
     return new DeadLetterSummary(
         item.getId().toString(),
@@ -261,6 +511,26 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         item.getCancelReason() == null ? "" : item.getCancelReason(),
         item.getCreatedAt().toEpochMilli(),
         item.getUpdatedAt().toEpochMilli());
+  }
+
+  private static HandoffEventSummary toHandoffSummary(ScriptHandoffEvent event) {
+    return new HandoffEventSummary(
+        event.getEventId(),
+        event.getTenantId(),
+        event.getGameInstanceId(),
+        event.getScriptPatchVersion(),
+        event.getScriptId(),
+        blankToEmpty(event.getPluginId()),
+        blankToEmpty(event.getPluginVersionId()),
+        Long.toString(event.getWorkItemId()),
+        event.getCommandOrdinal(),
+        event.getAutomationDispatchId(),
+        blankToEmpty(event.getGameSessionCommandId()),
+        event.getTargetEntityId(),
+        event.getEmittedCommandText(),
+        event.getHandoffOutcome(),
+        event.getHandoffReason(),
+        event.getObservedAt().toEpochMilli());
   }
 
   private List<ScriptWorkItem> selectReplayCandidates(
@@ -301,14 +571,14 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private boolean eligibleForReplay(ScriptWorkItem item) {
-    var runtime =
-        gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-            item.getTenantId(), item.getGameInstanceId());
-    if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
+    Optional<ScriptPatchPinProjectionService.PinConvergenceSummary> runtime =
+        scriptPatchPinProjectionService
+            .getPinConvergence(item.getTenantId(), item.getGameInstanceId())
+            .summary();
+    if (runtime.isEmpty() || runtime.get().projectionStale()) {
       return false;
     }
-    if (!item.getScriptPatchVersion()
-        .equals(runtime.getRuntimeState().getPinnedScriptPatchVersion())) {
+    if (!item.getScriptPatchVersion().equals(runtime.get().observedPinnedScriptPatchVersion())) {
       return false;
     }
     Optional<ScriptEventIngressAudit> audit =
@@ -398,5 +668,14 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     } catch (NumberFormatException ex) {
       throw new IllegalArgumentException("work_item_id must be numeric");
     }
+  }
+
+  private static Long parseOptionalWorkItemId(String workItemId) {
+    String normalized = blankToEmpty(workItemId);
+    return normalized.isBlank() ? null : parseWorkItemId(normalized);
+  }
+
+  private static String blankToEmpty(String value) {
+    return value == null ? "" : value;
   }
 }

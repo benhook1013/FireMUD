@@ -77,6 +77,15 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         List.of(TextCommandActionTag.UI));
     register(
         definitions,
+        TextCommandType.BLOCK,
+        List.of("block", "guard"),
+        TextCommandDispatchGroup.ACTIVITY,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.GAMEPLAY,
+        List.of(TextCommandActionTag.COMBAT));
+    register(
+        definitions,
         TextCommandType.PLAY,
         List.of("play"),
         TextCommandDispatchGroup.SESSION,

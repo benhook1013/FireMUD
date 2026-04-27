@@ -5,6 +5,9 @@ plugins {
 }
 
 dependencies {
+    testImplementation(project(":account-service"))
+    testFixturesImplementation(project(":account-service"))
     testFixturesImplementation(libs.spring.boot.starter.test)
     testFixturesCompileOnly(libs.grpc.spring.boot.starter)
+    testFixturesImplementation("io.grpc:grpc-netty-shaded:${libs.versions.grpc.get()}")
 }

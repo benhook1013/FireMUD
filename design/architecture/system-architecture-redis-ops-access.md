@@ -64,7 +64,7 @@ To keep ACL usage consistent across services and documentation, Redis deployment
 | --- | --- | --- |
 | `coord_app` | Coordination application client – may write and run Lua scripts against **Coordination Redis** only | Game Session Service, Automation & Scripting Service, shared coordination maintenance CLI |
 | `coord_ops_ro` | Read-only coordination ops user – may inspect coordination keys but never write or run Lua on them | Human operators using `redis-cli`/RedisInsight, monitoring/exporter agents for Coordination Redis |
-| `cache_app` | Cache/Rate-Limit application client – may read/write **only** cache/rate-limit prefixes on Cache/Rate-Limit Redis | Spring Cloud Gateway, Entity Management, World Management, Social & Groups, Game Session (for `view:room-look:*`), Automation & Scripting (for `automation:queue:{tenantInstanceTag}:*` / `automation:quota:*`) |
+| `cache_app` | Cache/Rate-Limit application client – may read/write **only** cache/rate-limit prefixes on Cache/Rate-Limit Redis | Spring Cloud Gateway, Entity Management, World Management, Social & Groups, Game Session (for `view:room-look:*`), Automation & Scripting (for `automation:queue:{tenantInstanceTag}:*` / `automation:quota:*` / `automation:tenant-budget:*` / `automation:test:capacity:*`) |
 | `cache_ops_ro` | Read-only cache ops user – may inspect cache/rate-limit keys but never write to them | Human operators inspecting Cache/Rate-Limit Redis, cache-focused monitoring/exporters |
 
 Per-service READMEs are expected to state which ACL user(s) each service uses and which Redis role(s) it connects to so configuration drift is easy to detect during reviews. CI and configuration checks should ensure that:

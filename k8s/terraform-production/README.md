@@ -1,7 +1,7 @@
 # Production Kubernetes Modules
 
 This directory provides example Terraform configuration for deploying a production FireMUD environment.
-It installs PostgreSQL and Redis using Bitnami Helm charts with replication enabled.
+It installs PostgreSQL plus separate Coordination and Cache/Rate-Limit Redis releases using Bitnami Helm charts.
 
 These modules assume an existing Kubernetes cluster and `kubectl` access via a kubeconfig file.
 The configuration is intentionally minimal and should be customized for real deployments.
@@ -9,7 +9,8 @@ The configuration is intentionally minimal and should be customized for real dep
 Persistent volumes are configured via the included Helm values files:
 
 - `postgres-values.yaml` provisions a **10Gi** volume for the PostgreSQL primary and each replica.
-- `redis-values.yaml` provisions **8Gi** volumes for Redis master and replicas with AOF enabled.
+- `redis-coord-values.yaml` provisions **8Gi** volumes for Coordination Redis master and replicas with AOF enabled.
+- `redis-cache-values.yaml` provisions **8Gi** volumes for Cache/Rate-Limit Redis master and replicas without AOF.
 
 Adjust these sizes to fit your production retention policy before applying the module.
 

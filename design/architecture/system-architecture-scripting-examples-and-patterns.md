@@ -64,7 +64,7 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
    - Each work item carries the originating `scriptEventId`, `scriptId`, `gameInstanceId`, version metadata, and region context.
 
 6. **Automation ticks and tick command enqueue**
-   - `ScriptTickService` drains automation queues and batches work under `automation:tick:{tenantInstanceScriptTag}:...`.
+   - Automation's durable execution loop claims pending work items and hands emitted commands to Game Session.
    - It then hands the resulting commands to the Game Session Service over internal gRPC so Game Session can enqueue them into `tick:{tenantRegionTag}:queue:<entityId>` using the tick engine’s Lua registry and invariants.
 
 7. **Execution, audit, and observability**
@@ -99,7 +99,7 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
 
 2. **Scheduling the next interval**
    - When the NPC spawns or when the script is first loaded, the Automation & Scripting Service’s scheduler registers an interval entry for the `<tenantId, gameInstanceId, scriptId, entityId>` tuple, computing a `nextTick` or `nextRunAt` timestamp based on the configured cadence and current tick/time.
-   - Leaders track these interval entries alongside other automation timers, using bounded scans and the automation tick budget (for example, `AUTOMATION_TICK_DURATION_MS`, `AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) to decide which `onInterval` triggers should fire in each automation tick.
+   - Leaders track these interval entries alongside other automation timers, using bounded scans and the execution-budget knobs (for example, `AUTOMATION_TICK_DURATION_MS`, `AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) to decide which `onInterval` triggers should fire in each scheduling window.
 
 3. **Firing `onInterval` and enforcing budgets**
    - When an interval becomes due, the scheduler creates a `scriptEventId` for the `onInterval` trigger and evaluates it using the same quota, cadence, and budgeting layers described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
@@ -114,11 +114,11 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
    - Each work item carries the originating `scriptEventId`, `scriptId`, `gameInstanceId`, version metadata, and the **current region** for the entity at enqueue time.
 
 5. **Execution, audit, and observability**
-   - `ScriptTickService` later drains `automation:queue`, stages these events under `automation:tick:{tenantInstanceScriptTag}:...`, and hands the resulting commands to the Game Session Service over internal gRPC so Game Session can enqueue them into the appropriate `tick:{tenantRegionTag}:queue:<entityId>`.
+   - Automation later claims the durable work items, uses `automation:queue` only as a rebuildable pointer index, and hands the resulting commands to the Game Session Service over internal gRPC so Game Session can enqueue them into the appropriate `tick:{tenantRegionTag}:queue:<entityId>`.
    - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so patrol movements and emotes follow the same fairness and conflict-resolution rules as player actions.
    - Each fired interval contributes to `automation_script_triggers_total` (tagged with `eventType=onInterval`) and, if it produces work that is accepted into tick queues, increases `automation_tick_events_enqueued_total`. An audit record is written to `script_event_audit` so missed or delayed intervals can be debugged using stage-aware fields (`finalStage`, `finalOutcome`, `finalReason`) alongside identifiers like `scriptEventId`, `scriptId`, and `tickId`; see the metrics and audit sections in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for interpretation.
 
-As with `onEnterRegion`, reload failures or version issues are surfaced via specific outcomes (for example, `skipped_reloading`, `skipped_rollback_pause`, `version_unavailable`) and corresponding metrics, detailed in the quotas and operations document.
+As with `onEnterRegion`, reload failures or version issues are surfaced via specific outcomes (for example, `skipped_reloading`, `rollback_paused`, `version_unavailable`) and corresponding metrics, detailed in the quotas and operations document.
 
 ### Timer Reliability Notes
 

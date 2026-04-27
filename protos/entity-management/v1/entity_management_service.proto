@@ -25,6 +25,8 @@ service EntityManagementService {
   rpc DropItemToRoom(DropItemToRoomRequest) returns (DropItemToRoomResponse);
   rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
   rpc FindCharacterByName(FindCharacterByNameRequest) returns (FindCharacterByNameResponse);
+  rpc QueryActorState(QueryActorStateRequest) returns (QueryActorStateResponse);
+  rpc ApplyActorCondition(ApplyActorConditionRequest) returns (ApplyActorConditionResponse);
   rpc ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse);
   rpc CleanupRuntimeInstance(CleanupRuntimeInstanceRequest) returns (CleanupRuntimeInstanceResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
@@ -49,6 +51,9 @@ message CreateCharacterResponse {
 
 message UpdateEntityRequest {
   string entity_id = 1;
+  string tenant_id = 2;
+  string game_instance_id = 3;
+  PlayableStateScope playable_state_scope = 4;
 }
 
 message UpdateEntityResponse {
@@ -60,6 +65,8 @@ message QueryInventoryRequest {
   string tenant_id = 1;
   string character_id = 2;
   string session_attestation = 3;
+  string game_instance_id = 4;
+  PlayableStateScope playable_state_scope = 5;
 }
 
 message QueryInventoryResponse {
@@ -93,6 +100,8 @@ message ListEquipmentRequest {
   string tenant_id = 1;
   string character_id = 2;
   string session_attestation = 3;
+  string game_instance_id = 4;
+  PlayableStateScope playable_state_scope = 5;
 }
 
 message ListEquipmentResponse {
@@ -107,6 +116,8 @@ message WearEquipmentItemRequest {
   string item_instance_id = 4;
   string session_attestation = 5;
   string effect_id = 6;
+  string game_instance_id = 7;
+  PlayableStateScope playable_state_scope = 8;
 }
 
 message WearEquipmentItemResponse {
@@ -120,6 +131,8 @@ message RemoveEquipmentRequest {
   string slot = 3;
   string session_attestation = 4;
   string effect_id = 5;
+  string game_instance_id = 6;
+  PlayableStateScope playable_state_scope = 7;
 }
 
 message RemoveEquipmentResponse {
@@ -144,6 +157,8 @@ message ListContainerContentsRequest {
   string character_id = 2;
   string container_instance_id = 3;
   string session_attestation = 4;
+  string game_instance_id = 5;
+  PlayableStateScope playable_state_scope = 6;
 }
 
 message ListContainerContentsResponse {
@@ -161,6 +176,8 @@ message PutItemIntoContainerRequest {
   string stack_family_key = 7;
   string session_attestation = 8;
   string effect_id = 9;
+  string game_instance_id = 10;
+  PlayableStateScope playable_state_scope = 11;
 }
 
 message PutItemIntoContainerResponse {
@@ -178,6 +195,8 @@ message TakeItemFromContainerRequest {
   string stack_family_key = 7;
   string session_attestation = 8;
   string effect_id = 9;
+  string game_instance_id = 10;
+  PlayableStateScope playable_state_scope = 11;
 }
 
 message TakeItemFromContainerResponse {
@@ -222,6 +241,7 @@ message PickupItemFromRoomRequest {
   string stack_family_key = 9;
   string session_attestation = 10;
   string effect_id = 11;
+  PlayableStateScope playable_state_scope = 12;
 }
 
 message PickupItemFromRoomResponse {
@@ -242,6 +262,7 @@ message DropItemToRoomRequest {
   string stack_family_key = 9;
   string session_attestation = 10;
   string effect_id = 11;
+  PlayableStateScope playable_state_scope = 12;
 }
 
 message DropItemToRoomResponse {
@@ -276,6 +297,7 @@ message Character {
   int32 stamina = 10;
   int32 health = 11;
   int32 mana = 12;
+  PlayableStateScope playable_state_scope = 13;
 }
 
 message ListCharactersByAccountResponse {
@@ -293,6 +315,62 @@ message FindCharacterByNameRequest {
 
 message FindCharacterByNameResponse {
   Character character = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message QueryActorStateRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string game_instance_id = 3;
+  PlayableStateScope playable_state_scope = 4;
+  string session_attestation = 5;
+}
+
+message ActorResourceValue {
+  string stat_key = 1;
+  int64 current_value = 2;
+  optional int64 max_value = 3;
+  optional int64 base_value = 4;
+  string primitive_kind = 5;
+  string source_type = 6;
+  string source_id = 7;
+}
+
+message ActorConditionState {
+  string condition_key = 1;
+  int32 stack_count = 2;
+  string source_type = 3;
+  string source_id = 4;
+  string started_at = 5;
+  string expires_at = 6;
+  string effect_payload_json = 7;
+}
+
+message QueryActorStateResponse {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string character_id = 3;
+  repeated ActorResourceValue resources = 4;
+  repeated ActorConditionState active_conditions = 5;
+  shared.v1.ErrorDetail error = 6;
+}
+
+message ApplyActorConditionRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string game_instance_id = 3;
+  PlayableStateScope playable_state_scope = 4;
+  string session_attestation = 5;
+  string condition_key = 6;
+  int32 stack_count = 7;
+  string source_type = 8;
+  string source_id = 9;
+  string expires_at = 10;
+  string effect_payload_json = 11;
+}
+
+message ApplyActorConditionResponse {
+  ActorConditionState active_condition = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

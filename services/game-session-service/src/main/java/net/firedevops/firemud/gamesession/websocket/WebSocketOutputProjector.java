@@ -1,8 +1,10 @@
 package net.firedevops.firemud.gamesession.websocket;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
+import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
@@ -78,6 +80,39 @@ public final class WebSocketOutputProjector {
     return toJson(new TranscriptChunkEnvelope("transcript_chunk", label, text));
   }
 
+  public String projectTranscriptEntry(
+      WebSocketSession session, String label, ScreenBufferService.BufferedEntry entry) {
+    if (!isFirstPartyWeb(session) || entry == null || !entry.hasStructuredOutput()) {
+      return projectTranscriptChunk(session, label, entry == null ? "" : entry.text());
+    }
+    JsonNode payload = parsePayload(entry.payloadJson());
+    if (payload == null) {
+      return projectTranscriptChunk(session, label, entry.text());
+    }
+    return toJson(
+        new TranscriptEntryEnvelope(
+            "transcript_entry",
+            label,
+            entry.text(),
+            new FirstPartyPlayerOutputEnvelope(
+                entry.outputKind(),
+                entry.replayPolicy(),
+                entry.briefRenderPolicy(),
+                entry.payloadType(),
+                payload)));
+  }
+
+  public ScreenBufferService.BufferedEntry toBufferedEntry(
+      PlayerOutput output, String protocolText) {
+    return ScreenBufferService.BufferedEntry.fromStructuredOutput(
+        protocolText,
+        output.kind().name(),
+        output.replayPolicy().name(),
+        output.briefRenderPolicy().name(),
+        payloadType(output.payload()),
+        toJson(output.payload()));
+  }
+
   boolean isFirstPartyWeb(WebSocketSession session) {
     Object mode =
         session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR);
@@ -117,6 +152,14 @@ public final class WebSocketOutputProjector {
     }
   }
 
+  private JsonNode parsePayload(String payloadJson) {
+    try {
+      return objectMapper.readTree(payloadJson);
+    } catch (JsonProcessingException ex) {
+      return null;
+    }
+  }
+
   private record FirstPartyEnvelope(
       String eventType,
       String commandType,
@@ -134,4 +177,7 @@ public final class WebSocketOutputProjector {
       Object payload) {}
 
   private record TranscriptChunkEnvelope(String eventType, String label, String text) {}
+
+  private record TranscriptEntryEnvelope(
+      String eventType, String label, String text, FirstPartyPlayerOutputEnvelope output) {}
 }

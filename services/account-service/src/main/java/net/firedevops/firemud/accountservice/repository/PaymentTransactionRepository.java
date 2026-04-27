@@ -17,4 +17,9 @@ public interface PaymentTransactionRepository extends JpaRepository<PaymentTrans
       "delete from PaymentTransaction pt "
           + "where pt.account.id = :accountId and pt.tenantId = :tenantId")
   void deleteByAccountId(@Param("accountId") Long accountId, @Param("tenantId") Long tenantId);
+
+  @Modifying
+  @Transactional
+  @Query("delete from PaymentTransaction pt where pt.account.id = :accountId")
+  void deleteByAccountId(@Param("accountId") Long accountId);
 }

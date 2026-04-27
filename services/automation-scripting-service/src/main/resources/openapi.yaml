@@ -74,11 +74,29 @@ paths:
           required: true
           schema:
             type: integer
+        - name: tenantId
+          in: query
+          required: true
+          schema:
+            type: integer
         - name: characterId
           in: query
           required: true
           schema:
             type: integer
+        - name: gameInstanceId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: playableStateScope
+          in: query
+          required: true
+          schema:
+            type: string
+            enum:
+              - PLAYABLE_STATE_SCOPE_SHARED
+              - PLAYABLE_STATE_SCOPE_ISOLATED
         - name: delta
           in: query
           required: true

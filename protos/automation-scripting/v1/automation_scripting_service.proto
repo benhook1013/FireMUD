@@ -35,6 +35,10 @@ service AutomationScriptingService {
   rpc NotifyScriptVersionUpdate(NotifyScriptVersionUpdateRequest)
       returns (NotifyScriptVersionUpdateResponse);
 
+  // Internal Game Session heartbeat/progress feed for tick-aligned script schedules.
+  rpc ObserveRuntimeTickProgress(ObserveRuntimeTickProgressRequest)
+      returns (ObserveRuntimeTickProgressResponse);
+
   // Returns the canonical design-time digest for script definitions that participate in one
   // script-patch version.
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
@@ -44,6 +48,22 @@ service AutomationScriptingService {
 service AutomationScriptingControlPlaneService {
   rpc GetScriptPatchStatus(GetScriptPatchStatusRequest) returns (GetScriptPatchStatusResponse);
   rpc ListScriptPatchStatuses(ListScriptPatchStatusesRequest) returns (ListScriptPatchStatusesResponse);
+  rpc SetAutomationAdmissionMode(SetAutomationAdmissionModeRequest)
+      returns (SetAutomationAdmissionModeResponse);
+  rpc GetAutomationDrainStatus(GetAutomationDrainStatusRequest)
+      returns (GetAutomationDrainStatusResponse);
+  rpc GetAutomationPinConvergence(GetAutomationPinConvergenceRequest)
+      returns (GetAutomationPinConvergenceResponse);
+  rpc GetScriptPatchInstanceRolloutStatus(GetScriptPatchInstanceRolloutStatusRequest)
+      returns (GetScriptPatchInstanceRolloutStatusResponse);
+  rpc ListScriptScheduleInstances(ListScriptScheduleInstancesRequest)
+      returns (ListScriptScheduleInstancesResponse);
+  rpc ListScriptPatchInstanceRollouts(ListScriptPatchInstanceRolloutsRequest)
+      returns (ListScriptPatchInstanceRolloutsResponse);
+  rpc ListScriptPatchInstanceRolloutEvents(ListScriptPatchInstanceRolloutEventsRequest)
+      returns (ListScriptPatchInstanceRolloutEventsResponse);
+  rpc ListScriptHandoffEvents(ListScriptHandoffEventsRequest)
+      returns (ListScriptHandoffEventsResponse);
   rpc ListScriptDeadLetters(ListScriptDeadLettersRequest) returns (ListScriptDeadLettersResponse);
   rpc ReplayDeadLetteredWorkItems(ReplayDeadLetteredWorkItemsRequest)
       returns (ReplayDeadLetteredWorkItemsResponse);
@@ -51,6 +71,8 @@ service AutomationScriptingControlPlaneService {
   // Cancel pending durable work items for a patch so they are never handed off again.
   rpc CancelPendingWorkItemsForPatch(CancelPendingWorkItemsForPatchRequest)
       returns (CancelPendingWorkItemsForPatchResponse);
+  rpc CancelPendingWorkItemsForPluginVersion(CancelPendingWorkItemsForPluginVersionRequest)
+      returns (CancelPendingWorkItemsForPluginVersionResponse);
 
   rpc GetScriptEventDefinition(GetScriptEventDefinitionRequest)
       returns (GetScriptEventDefinitionResponse);
@@ -59,6 +81,10 @@ service AutomationScriptingControlPlaneService {
 
   // Plugin lifecycle/control-plane APIs.
   rpc GetPluginStatus(GetPluginStatusRequest) returns (GetPluginStatusResponse);
+  rpc ListPluginRuntimeEvents(ListPluginRuntimeEventsRequest)
+      returns (ListPluginRuntimeEventsResponse);
+  rpc GetPluginPolicyConvergence(GetPluginPolicyConvergenceRequest)
+      returns (GetPluginPolicyConvergenceResponse);
   rpc SetPluginActiveVersion(SetPluginActiveVersionRequest)
       returns (SetPluginActiveVersionResponse);
   rpc DisablePlugin(DisablePluginRequest) returns (DisablePluginResponse);
@@ -125,6 +151,7 @@ message ScriptEventBinding {
   string target_scope_id = 4;
   int32 priority = 5;
   bool requires_exclusive_event = 6;
+  string priority_tag = 7;
 }
 
 message ScriptEventDefinition {
@@ -140,6 +167,7 @@ message ScriptEventDefinition {
   repeated string allowed_binding_scopes = 10;
   bool dry_run_support = 11;
   string deprecation_status = 12;
+  string payload_schema_ref = 13;
 }
 
 message GetScriptEventDefinitionRequest {
@@ -181,6 +209,22 @@ message NotifyScriptVersionUpdateRequest {
 message NotifyScriptVersionUpdateResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message ObserveRuntimeTickProgressRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  int64 region_epoch = 4;
+  int64 tick_id = 5;
+  int64 observed_at_ms = 6;
+}
+
+message ObserveRuntimeTickProgressResponse {
+  int32 updated_schedule_count = 1;
+  shared.v1.ErrorDetail error = 2;
+  int32 fired_schedule_count = 3;
+  int32 truncated_firing_count = 4;
 }
 
 message GetDraftDesignDigestRequest {
@@ -265,9 +309,20 @@ enum TriggerAdmissionOutcome {
       "TRIGGER_ADMISSION_OUTCOME_DENIED_DISABLED",
       "TRIGGER_ADMISSION_OUTCOME_DENIED_VERSION_UNAVAILABLE",
       "TRIGGER_ADMISSION_OUTCOME_DENIED_POLICY";
+  TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK = 11;
   TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR = 8;
   TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED = 9;
   TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED = 10;
+  TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE = 12;
+  TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE = 13;
+  TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE = 14;
+  TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED = 15;
+}
+
+enum AutomationAdmissionMode {
+  AUTOMATION_ADMISSION_MODE_UNSPECIFIED = 0;
+  AUTOMATION_ADMISSION_MODE_NORMAL = 1;
+  AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK = 2;
 }
 
 message TriggerScriptEventRequest {
@@ -341,7 +396,9 @@ message GetScriptPatchStatusResponse {
   ScriptPatchStatus status = 1;
   string status_reason = 2;
   int64 last_changed_at_ms = 3;
-  shared.v1.ErrorDetail error = 4;
+  int64 base_version_id = 4;
+  string ability_schema_digest = 5;
+  shared.v1.ErrorDetail error = 6;
 }
 
 message ListScriptPatchStatusesRequest {
@@ -356,10 +413,224 @@ message ScriptPatchStatusEntry {
   ScriptPatchStatus status = 2;
   string status_reason = 3;
   int64 last_changed_at_ms = 4;
+  int64 base_version_id = 5;
+  string ability_schema_digest = 6;
 }
 
 message ListScriptPatchStatusesResponse {
   repeated ScriptPatchStatusEntry patches = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetAutomationDrainStatusRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+}
+
+message SetAutomationAdmissionModeRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  AutomationAdmissionMode mode = 4;
+  string control_plane_request_id = 5;
+  string actor_principal = 6;
+  string reason = 7;
+}
+
+message SetAutomationAdmissionModeResponse {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  AutomationAdmissionMode mode = 4;
+  int64 admission_epoch = 5;
+  int64 updated_at_ms = 6;
+  shared.v1.ErrorDetail error = 7;
+}
+
+message GetAutomationDrainStatusResponse {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  AutomationAdmissionMode admission_mode = 4;
+  int64 admission_epoch = 5;
+  int64 active_execution_count = 6;
+  int64 oldest_active_execution_started_at_ms = 7;
+  int64 pending_cancelable_work_item_count = 8;
+  int64 observed_at_ms = 9;
+  shared.v1.ErrorDetail error = 10;
+}
+
+message GetAutomationPinConvergenceRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+}
+
+message GetAutomationPinConvergenceResponse {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string observed_pinned_script_patch_version = 3;
+  string last_observed_control_plane_request_id = 4;
+  int64 observed_at_ms = 5;
+  shared.v1.ErrorDetail error = 6;
+  int64 projection_as_of_ms = 7;
+  int64 projection_lag_ms = 8;
+  bool is_projection_stale = 9;
+}
+
+enum ScriptPatchInstanceRolloutStatus {
+  SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED = 0;
+  SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED = 1;
+  SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK = 2;
+  SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED = 3;
+}
+
+message GetScriptPatchInstanceRolloutStatusRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+}
+
+message GetScriptPatchInstanceRolloutStatusResponse {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  ScriptPatchInstanceRolloutStatus rollout_status = 4;
+  string status_reason = 5;
+  int64 last_changed_at_ms = 6;
+  int64 projection_as_of_ms = 7;
+  int64 projection_lag_ms = 8;
+  bool is_projection_stale = 9;
+  shared.v1.ErrorDetail error = 10;
+}
+
+message ListScriptScheduleInstancesRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  int32 limit = 4;
+}
+
+message ScriptScheduleInstanceEntry {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  string script_id = 4;
+  string plugin_id = 5;
+  string plugin_version_id = 6;
+  string event_type = 7;
+  string schedule_definition_id = 8;
+  string schedule_kind = 9;
+  int64 cadence_value = 10;
+  string cadence_unit = 11;
+  string priority_tag = 12;
+  string target_scope_type = 13;
+  string target_scope_id = 14;
+  int32 binding_priority = 15;
+  bool requires_exclusive_event = 16;
+  string materialization_status = 17;
+  int64 next_due_at_ms = 18;
+  int64 next_due_tick_id = 19;
+  string observed_runtime_version_id = 20;
+  string last_observed_control_plane_request_id = 21;
+  int64 pin_observed_at_ms = 22;
+  int64 materialized_at_ms = 23;
+  int64 updated_at_ms = 24;
+  string runtime_region_id = 25;
+  int64 runtime_region_epoch = 26;
+  int64 last_observed_tick_id = 27;
+  int64 last_runtime_progress_observed_at_ms = 28;
+}
+
+message ListScriptScheduleInstancesResponse {
+  repeated ScriptScheduleInstanceEntry schedules = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListScriptPatchInstanceRolloutsRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  ScriptPatchInstanceRolloutStatus rollout_status = 4;
+  int64 changed_after_ms = 5;
+  int64 changed_before_ms = 6;
+}
+
+message ScriptPatchInstanceRolloutEntry {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  ScriptPatchInstanceRolloutStatus rollout_status = 4;
+  string status_reason = 5;
+  int64 last_changed_at_ms = 6;
+  int64 projection_as_of_ms = 7;
+  int64 projection_lag_ms = 8;
+  bool is_projection_stale = 9;
+}
+
+message ListScriptPatchInstanceRolloutsResponse {
+  repeated ScriptPatchInstanceRolloutEntry rollouts = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListScriptPatchInstanceRolloutEventsRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  ScriptPatchInstanceRolloutStatus rollout_status = 4;
+  int64 changed_after_ms = 5;
+  int64 changed_before_ms = 6;
+  int32 limit = 7;
+}
+
+message ScriptPatchInstanceRolloutEventEntry {
+  string event_id = 1;
+  string tenant_id = 2;
+  string game_instance_id = 3;
+  string script_patch_version = 4;
+  ScriptPatchInstanceRolloutStatus rollout_status = 5;
+  string status_reason = 6;
+  int64 observed_at_ms = 7;
+  int64 projection_as_of_ms = 8;
+}
+
+message ListScriptPatchInstanceRolloutEventsResponse {
+  repeated ScriptPatchInstanceRolloutEventEntry events = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListScriptHandoffEventsRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  string work_item_id = 4;
+  string handoff_outcome = 5;
+  int64 changed_after_ms = 6;
+  int64 changed_before_ms = 7;
+  int32 limit = 8;
+}
+
+message ScriptHandoffEventEntry {
+  string event_id = 1;
+  string tenant_id = 2;
+  string game_instance_id = 3;
+  string script_patch_version = 4;
+  string script_id = 5;
+  string plugin_id = 6;
+  string plugin_version_id = 7;
+  string work_item_id = 8;
+  int32 command_ordinal = 9;
+  string automation_dispatch_id = 10;
+  string game_session_command_id = 11;
+  string target_entity_id = 12;
+  string emitted_command_text = 13;
+  string handoff_outcome = 14;
+  string handoff_reason = 15;
+  int64 observed_at_ms = 16;
+}
+
+message ListScriptHandoffEventsResponse {
+  repeated ScriptHandoffEventEntry events = 1;
   shared.v1.ErrorDetail error = 2;
 }
 
@@ -374,6 +645,22 @@ message CancelPendingWorkItemsForPatchRequest {
 }
 
 message CancelPendingWorkItemsForPatchResponse {
+  int64 canceled_count = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message CancelPendingWorkItemsForPluginVersionRequest {
+  string tenant_id = 1;
+  string plugin_id = 2;
+  string plugin_version_id = 3;
+  string game_instance_id = 4;
+  string region_id = 5;
+  string control_plane_request_id = 6;
+  string actor_principal = 7;
+  string reason = 8;
+}
+
+message CancelPendingWorkItemsForPluginVersionResponse {
   int64 canceled_count = 1;
   shared.v1.ErrorDetail error = 2;
 }
@@ -401,7 +688,62 @@ message GetPluginStatusResponse {
   int64 last_changed_at_ms = 5;
   string control_plane_request_id = 6;
   string actor_principal = 7;
-  shared.v1.ErrorDetail error = 8;
+  int64 last_policy_checked_at_ms = 8;
+  bool policy_check_stale = 9;
+  shared.v1.ErrorDetail error = 10;
+}
+
+message ListPluginRuntimeEventsRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string plugin_id = 3;
+  PluginState plugin_state = 4;
+  string active_plugin_version_id = 5;
+  int64 changed_after_ms = 6;
+  int64 changed_before_ms = 7;
+  int32 limit = 8;
+}
+
+message PluginRuntimeEventEntry {
+  string event_id = 1;
+  string tenant_id = 2;
+  string game_instance_id = 3;
+  string plugin_id = 4;
+  string previous_plugin_version_id = 5;
+  string active_plugin_version_id = 6;
+  PluginState plugin_state = 7;
+  string status_reason = 8;
+  string control_plane_request_id = 9;
+  string actor_principal = 10;
+  int64 observed_at_ms = 11;
+}
+
+message ListPluginRuntimeEventsResponse {
+  repeated PluginRuntimeEventEntry events = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetPluginPolicyConvergenceRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  int32 max_results = 3;
+}
+
+message PluginPolicyViolation {
+  string game_instance_id = 1;
+  string plugin_id = 2;
+  string active_plugin_version_id = 3;
+  string reason = 4;
+  int64 last_changed_at_ms = 5;
+}
+
+message GetPluginPolicyConvergenceResponse {
+  int32 inspected_count = 1;
+  int32 fail_closed_count = 2;
+  bool converged = 3;
+  int64 evaluated_at_ms = 4;
+  repeated PluginPolicyViolation violations = 5;
+  shared.v1.ErrorDetail error = 6;
 }
 
 message SetPluginActiveVersionRequest {

@@ -34,7 +34,4 @@ public class PasswordResetToken {
 
   @Column(name = "expires_at", nullable = false)
   private LocalDateTime expiresAt;
-
-  @Column(name = "tenant_id", nullable = false)
-  private Long tenantId;
 }

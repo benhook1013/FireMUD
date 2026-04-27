@@ -19,6 +19,9 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
   private static final String DEFAULT_EVENT_SCHEMA_VERSION = "v1";
+  private static final String PRIORITY_HIGH = "high";
+  private static final String PRIORITY_NORMAL = "normal";
+  private static final String PRIORITY_BACKGROUND = "background";
 
   private final ScriptDefinitionRepository repository;
   private final ScriptEventBindingRepository bindingRepository;
@@ -68,6 +71,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
     entity.setTargetScopeType(requiredText(binding.targetScopeType(), "target scope type"));
     entity.setTargetScopeId(normalize(binding.targetScopeId()));
     entity.setPriority(binding.priority());
+    entity.setPriorityTag(normalizePriorityTag(binding.priorityTag()));
     entity.setRequiresExclusiveEvent(binding.requiresExclusiveEvent());
     entity.setEnabled(true);
     return entity;
@@ -82,5 +86,17 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
 
   private static String normalize(String value) {
     return value == null ? "" : value;
+  }
+
+  private static String normalizePriorityTag(String value) {
+    if (value == null || value.isBlank()) {
+      return PRIORITY_NORMAL;
+    }
+    String normalized = value.toLowerCase(java.util.Locale.ROOT);
+    return switch (normalized) {
+      case PRIORITY_HIGH, PRIORITY_NORMAL, PRIORITY_BACKGROUND -> normalized;
+      default ->
+          throw new IllegalArgumentException("priority tag must be high, normal, or background");
+    };
   }
 }

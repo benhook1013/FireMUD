@@ -283,7 +283,11 @@ public class PlayCommandHandler {
                   roomInstanceId,
                   context.jwt(),
                   context.localeTag(),
-                  context.bootstrapGameInstanceId());
+                  context.bootstrapGameInstanceId(),
+                  selectedWorld.getSlug(),
+                  selectedRealm.getSlug(),
+                  selectedRealm.getPointerVersion(),
+                  selectedRealm.getStateScope().name());
           sessionContextService.save(updated);
           gameplayPresenceLifecycleService.registerConnected(updated);
 
@@ -722,7 +726,7 @@ public class PlayCommandHandler {
   }
 
   private boolean isPublicProductionRealm(GameplayCatalogProperties.Realm realm) {
-    return realm.isVisible() && "production".equalsIgnoreCase(realm.getSlug());
+    return realm.isVisible() && realm.isPublicProductionRealm();
   }
 
   private PlayableStateScope toPlayableStateScope(GameplayCatalogProperties.Realm realm) {
@@ -830,7 +834,12 @@ public class PlayCommandHandler {
   }
 
   private String displaySelection(String world, String realm) {
-    if (!StringUtils.hasText(realm) || "production".equalsIgnoreCase(realm)) {
+    if (!StringUtils.hasText(realm)
+        || gameplayWorldCatalog
+            .resolveWorld(world)
+            .flatMap(selectedWorld -> gameplayWorldCatalog.resolveRealm(selectedWorld, realm))
+            .map(GameplayCatalogProperties.Realm::isPublicProductionRealm)
+            .orElse(false)) {
       return world;
     }
     return world + " (" + realm + ")";
@@ -841,9 +850,7 @@ public class PlayCommandHandler {
       GameplayCatalogProperties.Realm selectedRealm) {
     return "PLAY "
         + selectedWorld.getSlug()
-        + ("production".equalsIgnoreCase(selectedRealm.getSlug())
-            ? ""
-            : " " + selectedRealm.getSlug())
+        + (selectedRealm.isPublicProductionRealm() ? "" : " " + selectedRealm.getSlug())
         + " <character>";
   }
 
@@ -852,9 +859,7 @@ public class PlayCommandHandler {
       GameplayCatalogProperties.Realm selectedRealm) {
     return "CHARS "
         + selectedWorld.getSlug()
-        + ("production".equalsIgnoreCase(selectedRealm.getSlug())
-            ? ""
-            : " " + selectedRealm.getSlug());
+        + (selectedRealm.isPublicProductionRealm() ? "" : " " + selectedRealm.getSlug());
   }
 
   private record ResolvedPlaySelection(

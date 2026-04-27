@@ -187,7 +187,7 @@ public class ChatServiceImpl implements ChatService {
   @Override
   @Timed(value = "chat.tells")
   public java.util.List<String> getRecentTells(Long tenantId, Long accountId) {
-    String key = String.format("tell:%d:%d", tenantId, accountId);
+    String key = String.format("chat:tell:%d:%d", tenantId, accountId);
     try {
       java.util.List<Object> raw = redisTemplate.opsForList().range(key, 0, -1);
       return raw == null
@@ -201,21 +201,21 @@ public class ChatServiceImpl implements ChatService {
 
   private String historyKey(SendMessageRequestDto request) {
     if (request.type() == ChatType.SAY) {
-      return String.format("say:%d:%d", request.tenantId(), request.senderAccountId());
+      return String.format("chat:say:%d:%d", request.tenantId(), request.senderAccountId());
     }
     if (request.type() == ChatType.WHISPER) {
-      return String.format("whisper:%d:%d", request.tenantId(), request.recipientAccountId());
+      return String.format("chat:whisper:%d:%d", request.tenantId(), request.recipientAccountId());
     }
     if (request.type() == ChatType.TELL) {
-      return String.format("tell:%d:%d", request.tenantId(), request.recipientAccountId());
+      return String.format("chat:tell:%d:%d", request.tenantId(), request.recipientAccountId());
     }
     if (request.type() == ChatType.GUILD) {
-      return String.format("guild:%d:%d", request.tenantId(), request.guildId());
+      return String.format("chat:guild:%d:%d", request.tenantId(), request.guildId());
     }
     if (request.type() == ChatType.CITY) {
-      return String.format("city:%d:%d", request.tenantId(), request.cityId());
+      return String.format("chat:city:%d:%d", request.tenantId(), request.cityId());
     }
-    return String.format("account:%d:%d", request.tenantId(), request.recipientAccountId());
+    return String.format("chat:account:%d:%d", request.tenantId(), request.recipientAccountId());
   }
 
   private ChatProperties.ChatCacheSettings settingsFor(SendMessageRequestDto request) {

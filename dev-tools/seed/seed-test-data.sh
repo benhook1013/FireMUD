@@ -4,7 +4,7 @@
 
 set -e
 
-psql -h localhost -U postgres -d firemud <<'SQL'
+psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d firemud <<'SQL'
 -- Sample region, rooms, and exits
 INSERT INTO region (id, name, tenant_id) VALUES (1, 'Demo Region', '11111111-1111-1111-1111-111111111111') ON CONFLICT DO NOTHING;
 INSERT INTO zone (id, region_id, name) VALUES (1, 1, 'Demo Zone') ON CONFLICT DO NOTHING;

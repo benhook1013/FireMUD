@@ -114,6 +114,94 @@ Minimum read payload:
 
 Game Design, Logging & Admin, and documentation generators should all consume these reads rather than duplicating registry tables locally.
 
+## Built-In Payload References
+
+The built-in registry entries currently use the following canonical payload-schema references:
+
+### `onLoad` payload `v1`
+
+Anchor target for `payloadSchemaRef`:
+`design/architecture/system-architecture-scripting-event-registry.md#onload-payload-v1`
+
+Minimum payload contract:
+
+- `tenantId`
+- `scriptPatchVersion`
+- `scriptEventId`
+- `isDryRun`
+
+No authoritative gameplay snapshot token is required. This payload exists for readiness-only initialization and must not imply mutable shared runtime ownership.
+
+### `onCommand` payload `v1`
+
+Anchor target for `payloadSchemaRef`:
+`design/architecture/system-architecture-scripting-event-registry.md#oncommand-payload-v1`
+
+Minimum payload contract:
+
+- `commandId`
+- `commandName`
+
+Required Trigger Identity and snapshot fields remain defined by the registry entry itself (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, `scriptPatchVersion`, `scriptEventId`, and `readSnapshotToken` where required). Payload contents are intentionally narrower than full Trigger Identity.
+
+### `onSpawn` payload `v1`
+
+Anchor target for `payloadSchemaRef`:
+`design/architecture/system-architecture-scripting-event-registry.md#onspawn-payload-v1`
+
+Minimum payload contract:
+
+- `spawnReason`
+- optional producer-owned spawn metadata needed by the owning service contract
+
+The producer service owns any additional spawn-specific fields, but they must remain versioned under this payload reference.
+
+### `onEnterRegion` payload `v1`
+
+Anchor target for `payloadSchemaRef`:
+`design/architecture/system-architecture-scripting-event-registry.md#onenterregion-payload-v1`
+
+Minimum payload contract:
+
+- `fromRegionId` when known
+- `toRegionId`
+- optional producer-owned movement metadata needed by the owning service contract
+
+### `onLeaveRegion` payload `v1`
+
+Anchor target for `payloadSchemaRef`:
+`design/architecture/system-architecture-scripting-event-registry.md#onleaveregion-payload-v1`
+
+Minimum payload contract:
+
+- `fromRegionId`
+- `toRegionId` when known
+- optional producer-owned movement metadata needed by the owning service contract
+
+### `onTimerExpire` payload `v1`
+
+Anchor target for `payloadSchemaRef`:
+`design/architecture/system-architecture-scripting-event-registry.md#ontimerexpire-payload-v1`
+
+Minimum payload contract:
+
+- `scheduleId`
+- `dueTickId` or equivalent due-point identity
+- optional timer payload fields owned by the scheduler contract
+
+### `onInterval` payload `v1`
+
+Anchor target for `payloadSchemaRef`:
+`design/architecture/system-architecture-scripting-event-registry.md#oninterval-payload-v1`
+
+Minimum payload contract:
+
+- `scheduleId`
+- `dueTickId` or equivalent cadence boundary identity
+- optional scheduler-owned interval metadata needed by the runtime contract
+
+If a future built-in payload changes incompatibly, it must publish a new `eventSchemaVersion` and a new payload reference target rather than rewriting these `v1` anchors in place.
+
 ## Ingress Contract Requirements
 
 Automation & Scripting ingress must enforce the registry before handler resolution:

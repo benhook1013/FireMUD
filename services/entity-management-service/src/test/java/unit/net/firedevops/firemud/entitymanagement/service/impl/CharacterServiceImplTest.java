@@ -11,6 +11,8 @@ import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.mapper.CharacterMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
@@ -26,7 +28,12 @@ class CharacterServiceImplTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     CharacterServiceImpl service =
         new CharacterServiceImpl(
-            repo, mapper, cacheManager, meterRegistry, new PlayableStateKeyResolver());
+            repo,
+            mapper,
+            cacheManager,
+            meterRegistry,
+            new PlayableStateKeyResolver(),
+            new ScopedCharacterResolver(repo, new PlayableStateKeyResolver()));
     service.initMetrics();
 
     Character character = new Character();
@@ -44,12 +51,16 @@ class CharacterServiceImplTest {
     character.setHealth(10);
     character.setMana(5);
 
-    when(repo.findById(1L)).thenReturn(Optional.of(character));
+    when(repo.findByIdAndTenantIdAndPlayableStateKey(1L, 1L, "shared-live"))
+        .thenReturn(Optional.of(character));
     when(repo.save(any(Character.class))).thenAnswer(a -> a.getArgument(0));
 
-    CharacterDto dto = service.gainExperience(1L, 1000);
+    CharacterDto dto =
+        service.gainExperience(
+            1L, 1L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 1000);
     assertEquals(2, dto.level());
     assertEquals(0, dto.experience());
+    assertEquals(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, dto.playableStateScope());
   }
 
   @Test
@@ -60,7 +71,12 @@ class CharacterServiceImplTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     CharacterServiceImpl service =
         new CharacterServiceImpl(
-            repo, mapper, cacheManager, meterRegistry, new PlayableStateKeyResolver());
+            repo,
+            mapper,
+            cacheManager,
+            meterRegistry,
+            new PlayableStateKeyResolver(),
+            new ScopedCharacterResolver(repo, new PlayableStateKeyResolver()));
     service.initMetrics();
 
     Character character = new Character();
@@ -74,5 +90,6 @@ class CharacterServiceImplTest {
 
     CharacterDto dto = service.getWithInventory(1L);
     assertEquals(1L, dto.id());
+    assertEquals(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, dto.playableStateScope());
   }
 }

@@ -15,10 +15,13 @@ import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationRequestDto;
+import net.firedevops.firemud.worldmanagement.entity.GenerationRule;
 import net.firedevops.firemud.worldmanagement.entity.Region;
 import net.firedevops.firemud.worldmanagement.entity.Room;
+import net.firedevops.firemud.worldmanagement.entity.RoomExit;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignAggregateEpoch;
 import net.firedevops.firemud.worldmanagement.entity.WorldDesignRevisionLedger;
+import net.firedevops.firemud.worldmanagement.entity.WorldDesignScopeEpoch;
 import net.firedevops.firemud.worldmanagement.entity.WorldEntitySpawnBinding;
 import net.firedevops.firemud.worldmanagement.entity.Zone;
 import net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository;
@@ -147,6 +150,85 @@ class WorldDesignMutationServiceImplTest {
             IllegalArgumentException.class, () -> service.applyMutation(regionUpdateRequest()));
 
     assertEquals(true, ex.getMessage().startsWith("DRAFT_WRITE_CONFLICT:"));
+    verify(regionRepository, never()).save(any(Region.class));
+  }
+
+  @Test
+  void staleScopeEpochFailsBeforeReplaceScopeMutation() {
+    WorldDesignScopeEpoch scopeEpoch = new WorldDesignScopeEpoch();
+    scopeEpoch.setTenantId(1L);
+    scopeEpoch.setVersionId(7L);
+    scopeEpoch.setScopeType("ZONE_SUBTREE");
+    scopeEpoch.setScopeId("12");
+    scopeEpoch.setDraftScopeRevisionEpoch(2L);
+    when(scopeEpochRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
+            1L, 7L, "ZONE_SUBTREE", "12"))
+        .thenReturn(Optional.of(scopeEpoch));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-2", "revision-2", "UPSERT", "WORLD_ENTITY_SPAWN_BINDING", ""))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.applyMutation(
+                    spawnBindingRequestWithScope("ZONE_SUBTREE", "12", "REPLACE_SCOPE")));
+
+    assertEquals(true, ex.getMessage().startsWith("DRAFT_WRITE_CONFLICT:"));
+    verify(roomRepository, never()).findByTenantIdAndVersionIdAndId(1L, 7L, 12L);
+    verify(worldEntitySpawnBindingRepository, never()).deleteAll(any());
+    verify(worldEntitySpawnBindingRepository, never()).save(any(WorldEntitySpawnBinding.class));
+  }
+
+  @Test
+  void staleNaturalKeySpawnBindingEpochFailsBeforeReplaceScopeDelete() {
+    Zone zone = zone(12L, 99L);
+    Room targetRoom = room(12L, zone);
+    WorldEntitySpawnBinding existing = binding(102L, targetRoom);
+    when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L))
+        .thenReturn(Optional.of(targetRoom));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-2", "revision-2", "UPSERT", "WORLD_ENTITY_SPAWN_BINDING", ""))
+        .thenReturn(Optional.empty());
+    when(worldEntitySpawnBindingRepository
+            .findByTenantIdAndVersionIdAndRoomIdAndEntityTemplateTypeAndEntityTemplateId(
+                1L, 7L, 12L, "NPC", 55L))
+        .thenReturn(Optional.of(existing));
+    WorldDesignAggregateEpoch epoch = new WorldDesignAggregateEpoch();
+    epoch.setTenantId(1L);
+    epoch.setVersionId(7L);
+    epoch.setAggregateType("WORLD_ENTITY_SPAWN_BINDING");
+    epoch.setAggregateId(102L);
+    epoch.setDraftRevisionEpoch(2L);
+    when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
+            1L, 7L, "WORLD_ENTITY_SPAWN_BINDING", 102L))
+        .thenReturn(Optional.of(epoch));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.applyMutation(
+                    spawnBindingRequestWithScope("ZONE_SUBTREE", "12", "REPLACE_SCOPE")));
+
+    assertEquals(true, ex.getMessage().startsWith("DRAFT_WRITE_CONFLICT:"));
+    verify(worldEntitySpawnBindingRepository, never()).deleteAll(any());
+    verify(worldEntitySpawnBindingRepository, never()).save(any(WorldEntitySpawnBinding.class));
+  }
+
+  @Test
+  void newAggregateWithNonZeroExpectedEpochFailsBeforeMutation() {
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.applyMutation(regionCreateRequestWithExpectedEpoch(1L)));
+
+    assertEquals(
+        "DRAFT_WRITE_CONFLICT: expected Draft aggregate epoch 1 but found 0", ex.getMessage());
+    verify(regionRepository, never()).save(any(Region.class));
   }
 
   @Test
@@ -352,7 +434,227 @@ class WorldDesignMutationServiceImplTest {
     verify(worldEntitySpawnBindingRepository, never()).deleteAll(any());
   }
 
+  @Test
+  void scopedRoomMutationRejectsRoomOutsideDeclaredZoneSubtree() {
+    Zone zone = zone(13L, 99L);
+    when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 13L)).thenReturn(Optional.of(zone));
+    when(roomRepository.save(any(Room.class)))
+        .thenAnswer(
+            invocation -> {
+              Room room = invocation.getArgument(0);
+              room.setId(88L);
+              return room;
+            });
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-room", "revision-room", "UPSERT", "ROOM", ""))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.applyMutation(roomCreateRequestWithScope("ZONE_SUBTREE", "12")));
+
+    assertEquals("OUT_OF_SYNC: room mutation is outside the declared scope", ex.getMessage());
+    verify(ledgerRepository, never()).save(any(WorldDesignRevisionLedger.class));
+  }
+
+  @Test
+  void scopedRoomMutationAllowsRoomInsideDeclaredRegionSubtree() {
+    Zone zone = zone(13L, 99L);
+    when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 13L)).thenReturn(Optional.of(zone));
+    when(roomRepository.save(any(Room.class)))
+        .thenAnswer(
+            invocation -> {
+              Room room = invocation.getArgument(0);
+              room.setId(88L);
+              return room;
+            });
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-room", "revision-room", "UPSERT", "ROOM", ""))
+        .thenReturn(Optional.empty());
+    when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
+            1L, 7L, "ROOM", 88L))
+        .thenReturn(Optional.empty());
+
+    var result = service.applyMutation(roomCreateRequestWithScope("REGION_SUBTREE", "99"));
+
+    assertEquals("APPLIED", result.result());
+    assertEquals(1L, result.draftScopeRevisionEpoch());
+  }
+
+  @Test
+  void scopedRoomExitRejectsExitCrossingOutsideDeclaredZoneSubtree() {
+    Zone zone = zone(12L, 99L);
+    Zone otherZone = zone(13L, 99L);
+    Room fromRoom = room(21L, zone);
+    Room toRoom = room(22L, otherZone);
+    when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 21L))
+        .thenReturn(Optional.of(fromRoom));
+    when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 22L))
+        .thenReturn(Optional.of(toRoom));
+    when(roomExitRepository.save(any(RoomExit.class)))
+        .thenAnswer(
+            invocation -> {
+              RoomExit exit = invocation.getArgument(0);
+              exit.setId(31L);
+              return exit;
+            });
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-exit", "revision-exit", "UPSERT", "ROOM_EXIT", ""))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.applyMutation(roomExitCreateRequestWithScope("ZONE_SUBTREE", "12")));
+
+    assertEquals("OUT_OF_SYNC: room exit mutation is outside the declared scope", ex.getMessage());
+    verify(ledgerRepository, never()).save(any(WorldDesignRevisionLedger.class));
+  }
+
+  @Test
+  void replaceScopeClearsExistingGenerationRulesWithinDeclaredZoneScope() {
+    Zone zone = zone(12L, 99L);
+    when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L)).thenReturn(Optional.of(zone));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L,
+                7L,
+                "commit-generation",
+                "revision-generation",
+                "UPSERT",
+                "GENERATION_RULE",
+                ""))
+        .thenReturn(Optional.empty());
+    GenerationRule existing = generationRule(70L, "ZONE_SUBTREE", "12", "density");
+    when(generationRuleRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeIdOrderByIdAsc(
+            1L, 7L, "ZONE_SUBTREE", "12"))
+        .thenReturn(List.of(existing));
+    when(generationRuleRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeIdAndName(
+            1L, 7L, "ZONE_SUBTREE", "12", "population"))
+        .thenReturn(Optional.empty());
+    when(generationRuleRepository.save(any(GenerationRule.class)))
+        .thenAnswer(
+            invocation -> {
+              GenerationRule rule = invocation.getArgument(0);
+              rule.setId(71L);
+              return rule;
+            });
+    when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
+            1L, 7L, "GENERATION_RULE", 71L))
+        .thenReturn(Optional.empty());
+
+    var result =
+        service.applyMutation(
+            generationRuleRequestWithScope("ZONE_SUBTREE", "12", "REPLACE_SCOPE"));
+
+    assertEquals("APPLIED", result.result());
+    verify(generationRuleRepository)
+        .deleteAll(
+            org.mockito.ArgumentMatchers.argThat(
+                rules -> {
+                  java.util.Iterator<? extends GenerationRule> iterator = rules.iterator();
+                  return iterator.hasNext()
+                      && iterator.next().getId().equals(70L)
+                      && !iterator.hasNext();
+                }));
+  }
+
+  @Test
+  void scopedGenerationRuleRejectsMissingDeclaredScope() {
+    when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L)).thenReturn(Optional.empty());
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L,
+                7L,
+                "commit-generation",
+                "revision-generation",
+                "UPSERT",
+                "GENERATION_RULE",
+                ""))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.applyMutation(
+                    generationRuleRequestWithScope("ZONE_SUBTREE", "12", "REPLACE_SCOPE")));
+
+    assertEquals("UNRESOLVED_REFERENCE: generation rule zone scope not found", ex.getMessage());
+    verify(generationRuleRepository, never()).save(any(GenerationRule.class));
+  }
+
+  @Test
+  void replaceScopeAppliesGeneratedSubtreeInOneScopedMutation() {
+    Zone zone = zone(12L, 99L);
+    Room staleRoom = room(40L, zone);
+    Room targetRoom = room(41L, zone);
+    when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L)).thenReturn(Optional.of(zone));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L,
+                7L,
+                "commit-subtree",
+                "revision-subtree",
+                "UPSERT",
+                "WORLD_GENERATION_SUBTREE",
+                ""))
+        .thenReturn(Optional.empty());
+    when(worldEntitySpawnBindingRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of(binding(80L, staleRoom)));
+    RoomExit staleExit = new RoomExit();
+    staleExit.setId(81L);
+    staleExit.setFromRoom(staleRoom);
+    staleExit.setToRoom(targetRoom);
+    when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of(staleExit));
+    when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L))
+        .thenReturn(List.of(staleRoom));
+    when(generationRuleRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeIdOrderByIdAsc(
+            1L, 7L, "ZONE_SUBTREE", "12"))
+        .thenReturn(List.of(generationRule(82L, "ZONE_SUBTREE", "12", "old-density")));
+    when(generationRuleRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeIdAndName(
+            1L, 7L, "ZONE_SUBTREE", "12", "population"))
+        .thenReturn(Optional.empty());
+    when(roomRepository.save(any(Room.class)))
+        .thenAnswer(
+            invocation -> {
+              Room room = invocation.getArgument(0);
+              room.setId("room-a".equals(room.getName()) ? 90L : 91L);
+              return room;
+            });
+    when(entityManagementClient.validateEntityTemplateReference(1L, 7L, "NPC", 55L))
+        .thenReturn(true);
+    when(worldEntitySpawnBindingRepository
+            .findByTenantIdAndVersionIdAndRoomIdAndEntityTemplateTypeAndEntityTemplateId(
+                1L, 7L, 90L, "NPC", 55L))
+        .thenReturn(Optional.empty());
+    when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
+            1L, 7L, "WORLD_GENERATION_SUBTREE", 2_000_000_000_012L))
+        .thenReturn(Optional.empty());
+
+    var result = service.applyMutation(generationSubtreeRequest("REPLACE_SCOPE"));
+
+    assertEquals("APPLIED", result.result());
+    assertEquals(2_000_000_000_012L, result.aggregateId());
+    assertEquals(1L, result.draftScopeRevisionEpoch());
+    verify(worldEntitySpawnBindingRepository).deleteAll(any());
+    verify(roomExitRepository).deleteAll(any());
+    verify(roomRepository).deleteAll(any());
+    verify(generationRuleRepository).deleteAll(any());
+    verify(roomExitRepository).save(any(RoomExit.class));
+    verify(worldEntitySpawnBindingRepository).save(any(WorldEntitySpawnBinding.class));
+  }
+
   private WorldDesignMutationRequestDto regionCreateRequest() {
+    return regionCreateRequestWithExpectedEpoch(0L);
+  }
+
+  private WorldDesignMutationRequestDto regionCreateRequestWithExpectedEpoch(long expectedEpoch) {
     return new WorldDesignMutationRequestDto(
         1L,
         7L,
@@ -361,13 +663,14 @@ class WorldDesignMutationServiceImplTest {
         "UPSERT",
         "REGION",
         "",
-        0L,
+        expectedEpoch,
         "",
         "",
         0L,
         "",
         new WorldDesignMutationRequestDto.RegionMutationDto(
             "North", "rain", 0, 123L, "ROOM_GRAPH", "{}", 1.0d),
+        null,
         null,
         null,
         null,
@@ -391,6 +694,7 @@ class WorldDesignMutationServiceImplTest {
         "",
         new WorldDesignMutationRequestDto.RegionMutationDto(
             "North", "rain", 0, 123L, "ROOM_GRAPH", "{}", 1.0d),
+        null,
         null,
         null,
         null,
@@ -423,7 +727,8 @@ class WorldDesignMutationServiceImplTest {
         null,
         null,
         new WorldDesignMutationRequestDto.WorldEntitySpawnBindingMutationDto(
-            "12", "NPC", "55", 2, 30));
+            "12", "NPC", "55", 2, 30),
+        null);
   }
 
   private WorldDesignMutationRequestDto regionUpdateRequestWithPolicy(String scopeMutationPolicy) {
@@ -442,6 +747,7 @@ class WorldDesignMutationServiceImplTest {
         scopeMutationPolicy,
         new WorldDesignMutationRequestDto.RegionMutationDto(
             "North", "rain", 0, 123L, "ROOM_GRAPH", "{}", 1.0d),
+        null,
         null,
         null,
         null,
@@ -468,7 +774,117 @@ class WorldDesignMutationServiceImplTest {
         null,
         null,
         null,
+        null,
         null);
+  }
+
+  private WorldDesignMutationRequestDto roomCreateRequestWithScope(
+      String scopeType, String scopeId) {
+    return new WorldDesignMutationRequestDto(
+        1L,
+        7L,
+        "commit-room",
+        "revision-room",
+        "UPSERT",
+        "ROOM",
+        "",
+        0L,
+        scopeType,
+        scopeId,
+        0L,
+        "REPLACE_SCOPE",
+        null,
+        null,
+        new WorldDesignMutationRequestDto.RoomMutationDto(
+            "North Gate", "A gate room", "13", null, null),
+        null,
+        null,
+        null,
+        null);
+  }
+
+  private WorldDesignMutationRequestDto roomExitCreateRequestWithScope(
+      String scopeType, String scopeId) {
+    return new WorldDesignMutationRequestDto(
+        1L,
+        7L,
+        "commit-exit",
+        "revision-exit",
+        "UPSERT",
+        "ROOM_EXIT",
+        "",
+        0L,
+        scopeType,
+        scopeId,
+        0L,
+        "REPLACE_SCOPE",
+        null,
+        null,
+        null,
+        new WorldDesignMutationRequestDto.RoomExitMutationDto("21", "22", "north", 1),
+        null,
+        null,
+        null);
+  }
+
+  private WorldDesignMutationRequestDto generationRuleRequestWithScope(
+      String scopeType, String scopeId, String scopeMutationPolicy) {
+    return new WorldDesignMutationRequestDto(
+        1L,
+        7L,
+        "commit-generation",
+        "revision-generation",
+        "UPSERT",
+        "GENERATION_RULE",
+        "",
+        0L,
+        scopeType,
+        scopeId,
+        0L,
+        scopeMutationPolicy,
+        null,
+        null,
+        null,
+        null,
+        new WorldDesignMutationRequestDto.GenerationRuleMutationDto("population", "dense"),
+        null,
+        null);
+  }
+
+  private WorldDesignMutationRequestDto generationSubtreeRequest(String scopeMutationPolicy) {
+    return new WorldDesignMutationRequestDto(
+        1L,
+        7L,
+        "commit-subtree",
+        "revision-subtree",
+        "UPSERT",
+        "WORLD_GENERATION_SUBTREE",
+        "",
+        0L,
+        "ZONE_SUBTREE",
+        "12",
+        0L,
+        scopeMutationPolicy,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        new WorldDesignMutationRequestDto.WorldGenerationSubtreeMutationDto(
+            List.of(
+                new WorldDesignMutationRequestDto.GenerationRuleMutationDto("population", "dense")),
+            List.of(
+                new WorldDesignMutationRequestDto.GeneratedRoomMutationDto(
+                    "a", "room-a", "A generated room", "12", null, null),
+                new WorldDesignMutationRequestDto.GeneratedRoomMutationDto(
+                    "b", "room-b", "Another generated room", "12", null, null)),
+            List.of(
+                new WorldDesignMutationRequestDto.GeneratedRoomExitMutationDto(
+                    "a", "b", "north", 1)),
+            List.of(
+                new WorldDesignMutationRequestDto.GeneratedWorldEntitySpawnBindingMutationDto(
+                    "a", "NPC", "55", 2, 30))));
   }
 
   private GetVersionStateResponse versionState(VersionLifecycleState state) {
@@ -510,5 +926,18 @@ class WorldDesignMutationServiceImplTest {
     binding.setEntityTemplateType("NPC");
     binding.setEntityTemplateId(55L);
     return binding;
+  }
+
+  private GenerationRule generationRule(
+      long ruleId, String scopeType, String scopeId, String name) {
+    GenerationRule rule = new GenerationRule();
+    rule.setId(ruleId);
+    rule.setTenantId(1L);
+    rule.setVersionId(7L);
+    rule.setScopeType(scopeType);
+    rule.setScopeId(scopeId);
+    rule.setName(name);
+    rule.setValue("value");
+    return rule;
   }
 }

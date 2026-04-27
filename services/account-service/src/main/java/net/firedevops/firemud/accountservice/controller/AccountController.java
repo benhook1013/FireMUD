@@ -6,6 +6,7 @@ import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest;
+import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -40,17 +41,24 @@ public class AccountController {
 
   @GetMapping("/{accountId}/export")
   public ResponseEntity<ApiResponse<AccountDataExportDto>> exportAccount(
+      @PathVariable Long accountId) {
+    requireCurrentAccountOrGlobalPrivilegedRole(accountId);
+    AccountDataExportDto data = accountService.exportAccountData(accountId);
+    return ResponseEntity.ok(ApiResponse.success(data));
+  }
+
+  @GetMapping("/{accountId}/tenant-export")
+  public ResponseEntity<ApiResponse<TenantDataExportDto>> exportTenantData(
       @PathVariable Long accountId, @RequestParam Long tenantId) {
     SessionContext.requireAccountAccess(tenantId, accountId);
-    AccountDataExportDto data = accountService.exportAccountData(tenantId, accountId);
+    TenantDataExportDto data = accountService.exportTenantData(tenantId, accountId);
     return ResponseEntity.ok(ApiResponse.success(data));
   }
 
   @DeleteMapping("/{accountId}")
-  public ResponseEntity<ApiResponse<Void>> deleteAccount(
-      @PathVariable Long accountId, @RequestParam Long tenantId) {
-    SessionContext.requireAccountAccess(tenantId, accountId);
-    accountService.deleteAccount(tenantId, accountId);
+  public ResponseEntity<ApiResponse<Void>> deleteAccount(@PathVariable Long accountId) {
+    requireCurrentAccountOrGlobalPrivilegedRole(accountId);
+    accountService.deleteAccount(accountId);
     return ResponseEntity.ok(ApiResponse.success(null));
   }
 
@@ -62,5 +70,13 @@ public class AccountController {
         new LinkExternalAccountRequest(
             request.tenantId(), accountId, request.provider(), request.externalId()));
     return ResponseEntity.ok(ApiResponse.success(null));
+  }
+
+  private void requireCurrentAccountOrGlobalPrivilegedRole(Long accountId) {
+    if (SessionContext.isCurrentAccount(accountId) || SessionContext.hasGlobalPrivilegedRole()) {
+      return;
+    }
+    throw new org.springframework.web.server.ResponseStatusException(
+        org.springframework.http.HttpStatus.FORBIDDEN, "Account access required");
   }
 }

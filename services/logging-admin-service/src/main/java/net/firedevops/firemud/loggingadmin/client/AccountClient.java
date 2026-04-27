@@ -49,10 +49,7 @@ public class AccountClient
   /** Permanently delete the account. */
   public DeleteAccountResponse deleteAccount(long tenantId, long accountId) {
     DeleteAccountRequest request =
-        DeleteAccountRequest.newBuilder()
-            .setTenantId(Long.toString(tenantId))
-            .setAccountId(Long.toString(accountId))
-            .build();
+        DeleteAccountRequest.newBuilder().setAccountId(Long.toString(accountId)).build();
     return stub().deleteAccount(request);
   }
 }

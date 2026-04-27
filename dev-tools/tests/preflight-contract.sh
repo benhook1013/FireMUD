@@ -11,6 +11,51 @@ RENDERED_MANIFEST="$TMP_DIR/hobby-rendered.yaml"
 REPORT_PATH="$TMP_DIR/preflight-report.json"
 TRAFFIC_EVIDENCE="$TMP_DIR/traffic-open.json"
 
+python3 - <<'PY' "$ROOT_DIR"
+import pathlib
+import sys
+import yaml
+
+root = pathlib.Path(sys.argv[1])
+required_paths = [
+    "internalBindings.postgres.endpoint",
+    "internalBindings.postgres.credentialsRef",
+    "internalBindings.redis.coordination.endpoint",
+    "internalBindings.redis.cache.endpoint",
+    "internalBindings.jwt.signingKeysRef",
+    "internalBindings.jwt.jwksRef",
+    "internalBindings.certificates.issuerRef",
+    "internalBindings.certificates.workloadMtlsRef",
+    "internalBindings.certificates.gatewayInternalWsListenerRef",
+    "internalBindings.certificates.tcpProxyBridgeClientRef",
+    "internalBindings.certificates.backupControlPlaneClientRef",
+    "internalBindings.registry.imagePullSecretRef",
+    "backupStorage.bucket",
+    "backupStorage.bindingRef",
+    "assetStorage.bucket",
+    "assetStorage.bindingRef",
+    "operatorCredentials.bindingRef",
+    "serviceDiscovery.mode",
+]
+
+def get(data, dotted):
+    cur = data
+    for part in dotted.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+for env in ("production", "staging", "hobby-self-hosted"):
+    ref = pathlib.Path(f"design/operations/environments/{env}/expected-bindings.yaml")
+    data = yaml.safe_load((root / ref).read_text(encoding="utf-8"))
+    if data.get("environment") != env:
+        raise SystemExit(f"{ref}: environment mismatch")
+    missing = [path for path in required_paths if not get(data, path)]
+    if missing:
+        raise SystemExit(f"{ref}: missing required binding paths: {missing}")
+PY
+
 cat >"$RENDERED_MANIFEST" <<'YAML'
 apiVersion: v1
 kind: ConfigMap
@@ -62,6 +107,45 @@ spec:
           env:
             - name: GATEWAY_WS_URL
               value: wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local/ws/game
+          envFrom:
+            - configMapRef:
+                name: firemud-config
+          volumeMounts:
+            - name: jwt-signing-keys
+              mountPath: /var/run/secrets/firemud/jwt
+              readOnly: true
+      volumes:
+        - name: jwt-signing-keys
+          secret:
+            secretName: jwt-signing-keys
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: account-service
+          image: ghcr.io/benhook1013/account-service:latest
+          envFrom:
+            - configMapRef:
+                name: firemud-config
+          volumeMounts:
+            - name: jwt-signing-keys
+              mountPath: /var/run/secrets/firemud/jwt
+              readOnly: true
+            - name: jwt-jwks
+              mountPath: /var/run/secrets/firemud/jwks
+              readOnly: true
+      volumes:
+        - name: jwt-signing-keys
+          secret:
+            secretName: jwt-signing-keys
+        - name: jwt-jwks
+          secret:
+            secretName: jwt-jwks
 YAML
 
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
@@ -108,7 +192,7 @@ if failures:
     raise SystemExit(f"unexpected required preflight failures: {failures}")
 PY
 
-cat >"$TRAFFIC_EVIDENCE" <<'JSON'
+cat >"$TRAFFIC_EVIDENCE" <<JSON
 {
   "schemaVersion": "traffic-open-record/v1",
   "environment": "hobby-self-hosted",
@@ -117,7 +201,7 @@ cat >"$TRAFFIC_EVIDENCE" <<'JSON'
   "assessedAt": "2026-04-22T00:00:00Z",
   "assessedBy": "preflight-contract",
   "backupComplianceRef": "design/operations/deployments/hobby-self-hosted/backup-compliance.yaml",
-  "preflightReportPath": "design/operations/deployments/hobby-self-hosted/preflight/contract-hobby.json",
+  "preflightReportPath": "$REPORT_PATH",
   "evidenceRefs": [
     "contract-test"
   ]

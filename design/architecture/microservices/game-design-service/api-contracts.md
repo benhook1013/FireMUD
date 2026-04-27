@@ -8,18 +8,18 @@ For REST endpoints, the authoritative request/response schema source is [openapi
 
 ## Implementation Status
 
-The release-attestation, launch-resolution, version-state, settings, asset-purge, script-patch publication read APIs, and the first plugin publication metadata path (`PublishPluginVersion` plus `GetPublishedPluginVersion`) are live in the current proto/service path. The heavier signed-bundle upload/extraction lifecycle (`UploadPluginBundle` and richer `ListPluginVersionStatuses` / signer-validation state) remains target-state contract work for the modding slice.
+The release-attestation, launch-resolution, version-state, settings, asset-purge, script-patch publication read APIs, and the first complete plugin publication workflow (`UploadPluginBundle`, `PublishPluginVersion`, `GetPublishedPluginVersion`, and `ListPluginVersionStatuses`) are live in the current proto/service path. `UploadPluginBundle` now parses signed plugin bundles, enforces bounded ZIP intake limits, verifies allowlisted Ed25519 signatures, extracts immutable manifest metadata, persists the raw bundle in Game Design storage, and records a durable `SIGNATURE_VERIFIED` publication row. `PublishPluginVersion` now validates against that uploaded bundle and the published base-version release attestation instead of trusting arbitrary caller metadata: the target `baseVersionId` must already have a published bundle, the requested plugin `abilitySchemaDigest` must match the attested `AUTOMATION_SCRIPTING` participant digest for that base version, blocked component-policy decisions fail the design-time transition, plugin asset refs are exported into a plugin-version-scoped distribution manifest before the version becomes `PUBLISHED`, and older published versions for the same `pluginId` are marked `SUPERSEDED`. Explicit design-time revoke transitions and a durable append-only plugin publication-event read surface are now live too through `RevokePluginVersion` and `ListPluginVersionStatusEvents`; the main remaining follow-through is broader activation-time alias/binding validation in owning runtime services.
 
 ## gRPC APIs
 
-- `SaveRevision` – persists a version-scoped design revision and can optionally apply a typed World Management design mutation in the same control-plane path.
+- `SaveRevision` – persists a version-scoped design revision and can optionally apply a typed World Management design mutation in the same control-plane path, including scoped multi-row `WORLD_GENERATION_SUBTREE` payloads for generated room, exit, generation-rule, and spawn-binding changes.
 - `PublishVersion` – freezes a set of revisions and notifies downstream services.
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
 - `GetPublishedScriptPatchVersion` – authoritative design-time read API for script-patch publication lifecycle and digest identity.
-- `UploadPluginBundle` – target-state signed bundle ingestion, archive verification, and indexed manifest extraction flow.
-- `PublishPluginVersion` – records immutable design-time plugin publication metadata and marks the version `PUBLISHED` for later runtime activation checks.
+- `UploadPluginBundle` – signed bundle ingestion, archive verification, object-store persistence, and indexed manifest extraction flow.
+- `PublishPluginVersion` – promotes a previously uploaded verified bundle into immutable design-time publication after compatibility and policy validation, exporting a plugin distribution manifest when the signed bundle declares `assetRefs[]`.
 - `GetPublishedPluginVersion` – authoritative design-time read API for plugin publication lifecycle and compatibility metadata.
-- `ListPluginVersionStatuses` – target-state broader plugin publication listing surface.
+- `ListPluginVersionStatuses` – authoritative broader plugin publication listing surface for operator and authoring tooling.
 - `ListVersions` – enumerates published versions for selection when creating a game instance.
 - `GetVersionState` / `CompareAndSetVersionState` – authoritative control-plane version lifecycle reads and CAS transitions. These APIs are now live in the proto/service path and are the canonical owner for `versionStateEpoch`.
 - `GetDesignControlPlaneDigest` – digest surface for publish gating over normalized metadata.
@@ -55,12 +55,14 @@ Detailed request and response schemas are defined in the [OpenAPI specification]
 ### gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_design_service.proto`](../../../../protos/game-design/v1/game_design_service.proto).
-- `SaveRevision(SaveRevisionRequest) returns (SaveRevisionResponse)` – persists a version-scoped design change and can return the typed result of an applied world-design mutation when the request carries `worldDesignMutation`.
+- `SaveRevision(SaveRevisionRequest) returns (SaveRevisionResponse)` – persists a version-scoped design change and can return the typed result of an applied world-design mutation when the request carries `worldDesignMutation`, including scoped world-generation-subtree writes.
 - `PublishVersion(PublishVersionRequest) returns (PublishVersionResponse)` – publishes a frozen version.
 - `PublishScriptPatchVersion(PublishScriptPatchVersionRequest) returns (PublishScriptPatchVersionResponse)` – publishes a script-only patch version.
 - `GetPublishedScriptPatchVersion(GetPublishedScriptPatchVersionRequest) returns (GetPublishedScriptPatchVersionResponse)` – returns the immutable script-patch publication read model, including base version, lifecycle state, digest identity, and last-changed time.
-- `PublishPluginVersion(PublishPluginVersionRequest) returns (PublishPluginVersionResponse)` – records immutable design-time plugin publication metadata keyed by `(tenantId, pluginId, pluginVersionId)`.
+- `UploadPluginBundle(UploadPluginBundleRequest) returns (UploadPluginBundleResponse)` – ingests a signed plugin bundle, verifies signatures against the configured signer allowlist, persists the raw bundle under Game Design-owned storage, and records `SIGNATURE_VERIFIED` design-time metadata keyed by `(tenantId, pluginId, pluginVersionId)`.
+- `PublishPluginVersion(PublishPluginVersionRequest) returns (PublishPluginVersionResponse)` – promotes a previously uploaded plugin bundle into `PUBLISHED` after base-version attestation checks, policy validation, and plugin distribution-manifest export.
 - `GetPublishedPluginVersion(GetPublishedPluginVersionRequest) returns (GetPublishedPluginVersionResponse)` – returns the immutable plugin publication read model, including base version, publication state, bundle digest, and distribution-manifest metadata.
+- `ListPluginVersionStatuses(ListPluginVersionStatusesRequest) returns (ListPluginVersionStatusesResponse)` – lists immutable plugin publication rows for a tenant with optional `pluginId`, `publicationState`, `changedAfterMs`, `changedBeforeMs`, and bounded `limit` filters.
 - `ListVersions(ListVersionsRequest) returns (ListVersionsResponse)` – lists available versions.
 - `GetVersionState(GetVersionStateRequest) returns (GetVersionStateResponse)` – reads authoritative version lifecycle state and CAS epoch.
 - `CompareAndSetVersionState(CompareAndSetVersionStateRequest) returns (CompareAndSetVersionStateResponse)` – performs CAS-guarded lifecycle transitions.

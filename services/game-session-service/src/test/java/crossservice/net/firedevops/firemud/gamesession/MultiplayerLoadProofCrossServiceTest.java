@@ -2,12 +2,8 @@ package net.firedevops.firemud.gamesession;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.grpc.Server;
-import io.grpc.ServerBuilder;
-import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
@@ -22,20 +18,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import net.firedevops.firemud.account.v1.AccountServiceGrpc;
-import net.firedevops.firemud.account.v1.AuthenticateRequest;
-import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
-import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
-import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
-import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
-import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
+import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -65,7 +53,7 @@ class MultiplayerLoadProofCrossServiceTest {
   static final GenericContainer<?> REDIS =
       new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine")).withExposedPorts(6379);
 
-  private static AccountServiceStub ACCOUNT_STUB;
+  private static AccountRuntimeStubServer ACCOUNT_STUB;
   private static WorldManagementStubServer WORLD_STUB;
   private static EntityManagementStubServer ENTITY_STUB;
   private static CrossServiceAppHarness.GameLogicHolder GAME_LOGIC;
@@ -85,7 +73,7 @@ class MultiplayerLoadProofCrossServiceTest {
       gameLogic.close();
     }
 
-    AccountServiceStub accountStub = ACCOUNT_STUB;
+    AccountRuntimeStubServer accountStub = ACCOUNT_STUB;
     ACCOUNT_STUB = null;
     if (accountStub != null) {
       accountStub.close();
@@ -160,7 +148,8 @@ class MultiplayerLoadProofCrossServiceTest {
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (ACCOUNT_STUB == null) {
-      ACCOUNT_STUB = new AccountServiceStub();
+      ACCOUNT_STUB = new AccountRuntimeStubServer(0);
+      ACCOUNT_STUB.setDefaultAccountId(ACCOUNT_ID_BASE);
     }
     if (WORLD_STUB == null) {
       WORLD_STUB = new WorldManagementStubServer(TestSocketUtils.findAvailableTcpPort());
@@ -209,6 +198,7 @@ class MultiplayerLoadProofCrossServiceTest {
       long accountId = ACCOUNT_ID_BASE + i + 1;
       long sessionId =
           GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, accountId, 7L);
+      ACCOUNT_STUB.mapAccountId("player" + (i + 1) + "@example.com", accountId);
       players.add(
           new PlayerSeed(
               sessionId, accountId, "player" + (i + 1) + "@example.com", "player-" + (i + 1)));
@@ -305,104 +295,6 @@ class MultiplayerLoadProofCrossServiceTest {
       try {
         webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
       } catch (Exception ignored) {
-      }
-    }
-  }
-
-  private static final class AccountServiceStub implements AutoCloseable {
-    private final Server server;
-
-    AccountServiceStub() throws IOException {
-      this.server =
-          ServerBuilder.forPort(0)
-              .addService(
-                  new AccountServiceGrpc.AccountServiceImplBase() {
-                    @Override
-                    public void authenticate(
-                        AuthenticateRequest request,
-                        StreamObserver<AuthenticateResponse> responseObserver) {
-                      long accountId = accountIdForUsername(request.getUsername());
-                      responseObserver.onNext(
-                          AuthenticateResponse.newBuilder()
-                              .setAccountId(Long.toString(accountId))
-                              .setAuthToken("stub-token-" + accountId)
-                              .build());
-                      responseObserver.onCompleted();
-                    }
-
-                    @Override
-                    public void getTenantMembershipForRuntime(
-                        GetTenantMembershipForRuntimeRequest request,
-                        StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
-                      responseObserver.onNext(
-                          GetTenantMembershipForRuntimeResponse.newBuilder()
-                              .setAccountId(request.getAccountId())
-                              .setTenantId(request.getTenantId())
-                              .setGameplayAdmissionAllowed(true)
-                              .setMembershipVersion(1L)
-                              .setEvaluatedAt("2026-03-30T00:00:00Z")
-                              .build());
-                      responseObserver.onCompleted();
-                    }
-
-                    @Override
-                    public void getTenantEntitlementsForRuntime(
-                        GetTenantEntitlementsForRuntimeRequest request,
-                        StreamObserver<GetTenantEntitlementsForRuntimeResponse> responseObserver) {
-                      responseObserver.onNext(
-                          GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                              .setTenantId(request.getTenantId())
-                              .setGameplayAvailable(true)
-                              .setEntitlementVersion(1L)
-                              .setTenantBillingSequence(1L)
-                              .setEvaluatedAt("2026-03-30T00:00:00Z")
-                              .build());
-                      responseObserver.onCompleted();
-                    }
-
-                    @Override
-                    public void ensurePublicProductionPlayerMembership(
-                        EnsurePublicProductionPlayerMembershipRequest request,
-                        StreamObserver<EnsurePublicProductionPlayerMembershipResponse>
-                            responseObserver) {
-                      responseObserver.onNext(
-                          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
-                              .setAccountId(request.getAccountId())
-                              .setTenantId(request.getTenantId())
-                              .setRealmSlug(request.getRealmSlug())
-                              .setGameplayAdmissionAllowed(true)
-                              .setMembershipVersion(1L)
-                              .setCreated(true)
-                              .setEvaluatedAt("2026-03-30T00:00:00Z")
-                              .build());
-                      responseObserver.onCompleted();
-                    }
-                  })
-              .build()
-              .start();
-    }
-
-    int port() {
-      return server.getPort();
-    }
-
-    @Override
-    public void close() {
-      server.shutdownNow();
-    }
-
-    private static long accountIdForUsername(String username) {
-      if (username == null
-          || !username.startsWith("player")
-          || !username.endsWith("@example.com")) {
-        return ACCOUNT_ID_BASE;
-      }
-      String ordinal =
-          username.substring("player".length(), username.length() - "@example.com".length());
-      try {
-        return ACCOUNT_ID_BASE + Long.parseLong(ordinal);
-      } catch (NumberFormatException ignored) {
-        return ACCOUNT_ID_BASE;
       }
     }
   }

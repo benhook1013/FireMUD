@@ -12,7 +12,7 @@ Use the following patterns to answer common operational questions:
 
 - **"Is a tenant being throttled by its own automation budget?"**
   - Check `automation_script_skips_total{reason="tenant_budget_exceeded", tenantId=...}` and audit rows with `finalStage=ADMISSION` and `finalOutcome=tenant_budget_exceeded`.
-  - Use `automation_script_tenant_budget_seconds{tenantId, tier}` to see which tiers are consuming budget.
+  - Use `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}` to see which tiers are consuming or exhausting budget.
 
 - **"Are cluster-wide ceilings causing drops?"**
   - Monitor `automation_script_triggers_dropped_total{reason="cluster_limit_reached"}` alongside `automation_tick_events_enqueued_total` and infrastructure-level CPU/time metrics. This combination indicates pressure at the cluster layer rather than within a single script or tenant.
@@ -21,7 +21,7 @@ Use the following patterns to answer common operational questions:
   - Use `automation_script_skips_total{reason="priority_throttled"}` and compare `automation_script_triggers_total` broken out by `priorityTag` to confirm that background work is yielding capacity to high-priority scripts as configured.
 
 - **"Are reloads or version issues causing skips?"**
-  - Inspect `automation_script_triggers_total{outcome="skipped_reloading"}`, `automation_script_triggers_total{outcome="skipped_rollback_pause"}`, and `automation_script_triggers_dropped_total{reason="version_unavailable"}`. Pair these with event-scope ingress audit records for pre-resolution denials and with `script_event_audit.finalStage=ADMISSION` for handler-scoped denials to distinguish reload pauses, rollback pauses, and missing or failed script versions.
+  - Inspect `automation_script_triggers_total{outcome="skipped_reloading"}`, `automation_script_triggers_total{outcome="rollback_paused"}`, and `automation_script_triggers_dropped_total{reason="version_unavailable"}`. Pair these with event-scope ingress audit records for pre-resolution denials and with `script_event_audit.finalStage=ADMISSION` for handler-scoped denials to distinguish reload pauses, rollback pauses, and missing or failed script versions.
   - For stale control-plane pin visibility, inspect admissions with `finalOutcome=pin_state_unavailable` and corresponding drop metrics keyed by the bounded `finalReason`.
 
 ### Tuning Playbook: Misbehaving Scripts
@@ -29,7 +29,7 @@ Use the following patterns to answer common operational questions:
 When a script or tenant consumes too many resources, adjust settings in this order:
 
 1. **Per-script cadence and concurrency** – Start with the script’s own knobs in [Scripting Quotas & Operations](./system-architecture-scripting-quotas-and-operations.md#per-script-scheduling-policies): increase `intervalTicks`, reduce `maxConcurrent`, or switch `concurrencyPolicy` from `queue_until_free` to `drop_new` so the script enqueues less often and runs fewer overlapping instances.
-2. **Per-script quota window** – If the script still runs too frequently, tighten `SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOWSECONDS` for that script so abusive patterns are capped before they hit the tick queues.
+2. **Per-script quota window** – If the script still runs too frequently, tighten `SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOW_SECONDS` for that script so abusive patterns are capped before they hit the tick queues.
 3. **Per-tenant tier budgets** – When one tenant’s background work threatens others, adjust that tenant’s budgets per tier (for example, reduce `background` capacity), watching `automation_script_skips_total{reason="tenant_budget_exceeded"}`.
 4. **Cluster-wide ceilings and capacity** – Only after tuning the above should you raise or lower global ceilings such as `AUTOMATION_TICK_MAX_EVENTS` or cluster CPU budgets. Use the metrics in the parent doc to confirm whether you are cluster-bound or script and tenant-bound.
 
@@ -152,7 +152,7 @@ Rollback orchestration should be modeled as a durable state machine (`PAUSING`, 
 Concrete rollback sequence example:
 
 1. Call `PauseTicks(tenantId=T1, gameInstanceId=G7, controlPlaneRequestId=RB-42)` so Game Session stops new tick scheduling and command intake for that instance.
-2. Call `SetAutomationAdmissionMode(tenantId=T1, gameInstanceId=G7, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42)` so new external and scheduler triggers are rejected with `finalOutcome=skipped_rollback_pause`.
+2. Call `SetAutomationAdmissionMode(tenantId=T1, gameInstanceId=G7, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42)` so new external and scheduler triggers are rejected with rollback backpressure outcome `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` and admission reason `rollback_paused`.
 3. Call `RollbackScriptPatchVersion(tenantId=T1, gameInstanceId=G7, targetScriptPatchVersion=P21, controlPlaneRequestId=RB-42)` to repin the instance to the known-good patch.
 4. Poll `GetAutomationPinConvergence` and `GetGameSessionPinConvergence` until both report `observedPinnedScriptPatchVersion=P21` and the latest observed `controlPlaneRequestId=RB-42`.
 5. Cancel or purge queued outbox work and staging entries that still carry the displaced patch `P22`, then poll `GetAutomationDrainStatus` until `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the paused scope.

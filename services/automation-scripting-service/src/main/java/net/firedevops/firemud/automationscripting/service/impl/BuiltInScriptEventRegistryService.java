@@ -1,5 +1,9 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -7,66 +11,23 @@ import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
+import org.springframework.boot.json.JsonParserFactory;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
 @Service
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification =
+        "Fail-fast startup is intentional if the built-in event registry manifest is invalid.")
 public class BuiltInScriptEventRegistryService implements ScriptEventRegistryService {
-  private static final String DEFAULT_SCHEMA_VERSION = "v1";
-  private static final List<String> RUNTIME_IDENTITY =
-      List.of(
-          "tenantId",
-          "gameInstanceId",
-          "regionId",
-          "regionEpoch",
-          "entityId",
-          "scriptPatchVersion",
-          "scriptEventId",
-          "isDryRun");
+  private static final String MANIFEST_PATH = "script-event-registry/built-in-events.json";
 
   private final Map<String, EventDefinition> definitions;
 
   public BuiltInScriptEventRegistryService() {
     this.definitions =
-        List.of(
-                definition(
-                    "onLoad",
-                    "automation-scripting-service",
-                    List.of("automation-scripting-service"),
-                    List.of("tenantId", "scriptPatchVersion", "scriptEventId", "isDryRun"),
-                    "NON_AUTHORITATIVE_NO_SNAPSHOT",
-                    "BEST_EFFORT",
-                    List.of("GLOBAL")),
-                runtimeDefinition(
-                    "onCommand",
-                    "game-session-service",
-                    List.of("game-session-service", "game-logic-service"),
-                    List.of("ENTITY", "REGION", "GLOBAL")),
-                runtimeDefinition(
-                    "onSpawn",
-                    "game-session-service",
-                    List.of("game-session-service", "world-management-service"),
-                    List.of("ENTITY", "REGION", "GLOBAL")),
-                runtimeDefinition(
-                    "onEnterRegion",
-                    "game-session-service",
-                    List.of("game-session-service", "world-management-service"),
-                    List.of("ENTITY", "REGION", "GLOBAL")),
-                runtimeDefinition(
-                    "onLeaveRegion",
-                    "game-session-service",
-                    List.of("game-session-service", "world-management-service"),
-                    List.of("ENTITY", "REGION", "GLOBAL")),
-                runtimeDefinition(
-                    "onTimerExpire",
-                    "automation-scripting-service",
-                    List.of("automation-scripting-service"),
-                    List.of("ENTITY", "REGION", "GLOBAL")),
-                runtimeDefinition(
-                    "onInterval",
-                    "automation-scripting-service",
-                    List.of("automation-scripting-service"),
-                    List.of("ENTITY", "REGION", "GLOBAL")))
-            .stream()
+        loadDefinitions().stream()
             .collect(Collectors.toUnmodifiableMap(this::key, Function.identity()));
   }
 
@@ -84,49 +45,109 @@ public class BuiltInScriptEventRegistryService implements ScriptEventRegistrySer
         .toList();
   }
 
-  private EventDefinition runtimeDefinition(
-      String eventType,
-      String ownerService,
-      List<String> allowedProducerPrincipals,
-      List<String> allowedBindingScopes) {
-    return definition(
-        eventType,
-        ownerService,
-        allowedProducerPrincipals,
-        RUNTIME_IDENTITY,
-        "PRODUCER_SUPPLIED_TOKEN",
-        "AUTHORITATIVE_REGION_TIMELINE",
-        allowedBindingScopes);
-  }
-
-  private EventDefinition definition(
-      String eventType,
-      String ownerService,
-      List<String> allowedProducerPrincipals,
-      List<String> requiredTriggerIdentityFields,
-      String snapshotAuthority,
-      String consistencyClass,
-      List<String> allowedBindingScopes) {
-    return new EventDefinition(
-        eventType,
-        DEFAULT_SCHEMA_VERSION,
-        ownerService,
-        allowedProducerPrincipals,
-        requiredTriggerIdentityFields,
-        snapshotAuthority,
-        consistencyClass,
-        "STANDARD_RUNTIME",
-        "IDEMPOTENT_BY_TRIGGER_IDENTITY",
-        allowedBindingScopes,
-        true,
-        "ACTIVE");
-  }
-
   private String key(EventDefinition definition) {
     return key(definition.eventType(), definition.eventSchemaVersion());
   }
 
   private String key(String eventType, String eventSchemaVersion) {
     return eventType + ":" + eventSchemaVersion;
+  }
+
+  private static List<EventDefinition> loadDefinitions() {
+    try (InputStream inputStream = new ClassPathResource(MANIFEST_PATH).getInputStream()) {
+      String json = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+      return JsonParserFactory.getJsonParser().parseList(json).stream()
+          .map(BuiltInScriptEventRegistryService::manifestFrom)
+          .map(BuiltInEventDefinitionManifest::toDefinition)
+          .toList();
+    } catch (IOException ex) {
+      throw new IllegalStateException("Failed to load built-in script event registry manifest", ex);
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private static BuiltInEventDefinitionManifest manifestFrom(Object value) {
+    if (!(value instanceof Map<?, ?> raw)) {
+      throw new IllegalStateException("Built-in event registry manifest entries must be objects");
+    }
+    return new BuiltInEventDefinitionManifest(
+        stringField(raw, "eventType"),
+        stringField(raw, "eventSchemaVersion"),
+        stringField(raw, "ownerService"),
+        stringListField(raw, "allowedProducerPrincipals"),
+        stringListField(raw, "requiredTriggerIdentityFields"),
+        stringField(raw, "snapshotAuthority"),
+        stringField(raw, "consistencyClass"),
+        stringField(raw, "quotaClass"),
+        stringField(raw, "replaySemantics"),
+        stringListField(raw, "allowedBindingScopes"),
+        booleanField(raw, "dryRunSupport"),
+        stringField(raw, "deprecationStatus"),
+        stringField(raw, "payloadSchemaRef"));
+  }
+
+  private record BuiltInEventDefinitionManifest(
+      String eventType,
+      String eventSchemaVersion,
+      String ownerService,
+      List<String> allowedProducerPrincipals,
+      List<String> requiredTriggerIdentityFields,
+      String snapshotAuthority,
+      String consistencyClass,
+      String quotaClass,
+      String replaySemantics,
+      List<String> allowedBindingScopes,
+      boolean dryRunSupport,
+      String deprecationStatus,
+      String payloadSchemaRef) {
+    private EventDefinition toDefinition() {
+      return new EventDefinition(
+          eventType,
+          eventSchemaVersion,
+          ownerService,
+          allowedProducerPrincipals,
+          requiredTriggerIdentityFields,
+          snapshotAuthority,
+          consistencyClass,
+          quotaClass,
+          replaySemantics,
+          allowedBindingScopes,
+          dryRunSupport,
+          deprecationStatus,
+          payloadSchemaRef);
+    }
+  }
+
+  private static String stringField(Map<?, ?> raw, String key) {
+    Object value = raw.get(key);
+    if (!(value instanceof String stringValue) || stringValue.isBlank()) {
+      throw new IllegalStateException("Built-in event registry field '" + key + "' is required");
+    }
+    return stringValue;
+  }
+
+  private static boolean booleanField(Map<?, ?> raw, String key) {
+    Object value = raw.get(key);
+    if (!(value instanceof Boolean booleanValue)) {
+      throw new IllegalStateException("Built-in event registry field '" + key + "' is required");
+    }
+    return booleanValue;
+  }
+
+  private static List<String> stringListField(Map<?, ?> raw, String key) {
+    Object value = raw.get(key);
+    if (!(value instanceof List<?> listValue)) {
+      throw new IllegalStateException("Built-in event registry field '" + key + "' is required");
+    }
+    return listValue.stream()
+        .map(
+            element -> {
+              if (!(element instanceof String stringValue) || stringValue.isBlank()) {
+                throw new IllegalStateException(
+                    "Built-in event registry field '" + key + "' must contain strings");
+              }
+              return stringValue;
+            })
+        .toList();
   }
 }
