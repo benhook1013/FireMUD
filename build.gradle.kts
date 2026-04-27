@@ -7,17 +7,6 @@ import org.gradle.api.tasks.compile.JavaCompile
 import java.io.File
 import org.springframework.boot.gradle.tasks.run.BootRun
 
-buildscript {
-    repositories {
-        mavenCentral()
-    }
-    dependencies {
-        classpath("com.fasterxml.jackson.core:jackson-databind:2.21.2")
-        classpath("org.flywaydb:flyway-database-postgresql:12.4.0")
-        classpath("org.postgresql:postgresql:42.7.10")
-    }
-}
-
 plugins {
     java
     id("com.github.node-gradle.node") version "7.1.0"
@@ -222,7 +211,7 @@ subprojects {
         testImplementation(libs.findLibrary("spring-boot-starter-restclient-test").get())
         testImplementation(libs.findLibrary("spring-boot-resttestclient").get())
         testImplementation(libs.findLibrary("spring-boot-starter-webmvc-test").get())
-        testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.0.3")
+        testRuntimeOnly(libs.findLibrary("junit-platform-launcher").get())
         if (projectDir.parentFile.name == "services" && !name.startsWith("common-")) {
             testImplementation(testFixtures(project(":common-test-support")))
         }
@@ -252,7 +241,6 @@ subprojects {
     tasks.withType<SpotBugsTask>().configureEach {
         enabled = fullCheck
         excludeFilter.set(rootProject.file("config/spotbugs/spotbugs-exclude.xml"))
-        setIgnoreFailures(true)
         when (name) {
             "spotbugsMain" -> dependsOn("compileJava", "processResources")
             "spotbugsTest" -> dependsOn("compileTestJava", "processTestResources")
