@@ -570,6 +570,43 @@ class TickServiceImplTest {
   }
 
   @Test
+  void processTickPersistsRetryClaimMetadataInSelectedWorkManifest() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|retry look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-1|retry look"));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
+    command.setCommandText("retry look");
+    command.setSanitizedCommandText("retry look");
+    command.setSourceType("AUTOMATION");
+    command.setDueTickId(21L);
+    command.setEnqueueSeq(78L);
+    command.setExecutionOutcome("RETRY_QUEUED");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(command));
+
+    service.processTick(1L, 2L);
+
+    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.TickBatch> batchCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.TickBatch.class);
+    verify(tickBatchRepository, org.mockito.Mockito.atLeastOnce()).save(batchCaptor.capture());
+    net.firedevops.firemud.gamesession.entity.TickBatch stagedBatch =
+        batchCaptor.getAllValues().stream()
+            .filter(batch -> "FRESH_STAGE".equals(batch.getBatchSource()))
+            .findFirst()
+            .orElseThrow();
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"sourceKind\":\"GAMEPLAY_RETRY\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch
+            .getSelectedWorkManifestJson()
+            .contains("\"sourceState\":\"REDIS_RETRY_CLAIMED\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"dueTickId\":21"));
+  }
+
+  @Test
   void processTickAbandonsReplayBatchWhenPendingDigestNoLongerMatchesSealedManifest() {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);

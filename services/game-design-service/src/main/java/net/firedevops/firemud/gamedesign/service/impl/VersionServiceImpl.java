@@ -2,19 +2,23 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
+import net.firedevops.firemud.gamedesign.entity.PluginVersionStatusEvent;
 import net.firedevops.firemud.gamedesign.entity.PublishedPluginVersion;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
@@ -22,6 +26,7 @@ import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.PluginVersionStatusEventRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedPluginVersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
@@ -57,6 +62,7 @@ public class VersionServiceImpl implements VersionService {
   private final VersionRepository versionRepository;
   private final GameRepository gameRepository;
   private final PublishedPluginVersionRepository publishedPluginVersionRepository;
+  private final PluginVersionStatusEventRepository pluginVersionStatusEventRepository;
   private final VersionMapper versionMapper;
   private final AutomationScriptingClient scriptingClient;
   private final AssetExportService assetExportService;
@@ -74,6 +80,7 @@ public class VersionServiceImpl implements VersionService {
       VersionRepository versionRepository,
       GameRepository gameRepository,
       PublishedPluginVersionRepository publishedPluginVersionRepository,
+      PluginVersionStatusEventRepository pluginVersionStatusEventRepository,
       VersionMapper versionMapper,
       AutomationScriptingClient scriptingClient,
       AssetExportService assetExportService,
@@ -88,6 +95,7 @@ public class VersionServiceImpl implements VersionService {
     this.versionRepository = versionRepository;
     this.gameRepository = gameRepository;
     this.publishedPluginVersionRepository = publishedPluginVersionRepository;
+    this.pluginVersionStatusEventRepository = pluginVersionStatusEventRepository;
     this.versionMapper = versionMapper;
     this.scriptingClient = scriptingClient;
     this.assetExportService = assetExportService;
@@ -283,7 +291,10 @@ public class VersionServiceImpl implements VersionService {
     entity.setNotes(normalizeBlank(notes));
     entity.setStatusReason("");
     entity.setLastChangedAt(LocalDateTime.now());
-    return toPublishedPluginVersionDto(publishedPluginVersionRepository.save(entity));
+    PublishedPluginVersion saved = publishedPluginVersionRepository.save(entity);
+    appendPluginVersionStatusEvent(
+        saved, VersionLifecycleState.DRAFT, saved.getPublicationState(), saved.getStatusReason());
+    return toPublishedPluginVersionDto(saved);
   }
 
   @Override
@@ -380,6 +391,7 @@ public class VersionServiceImpl implements VersionService {
           pluginBundleStorageService.exportPluginAssets(
               tenantId, parsedBundle, parsedBundle.signerKeyId(), parsedBundle.bundleDigest());
       supersedeOtherPublishedVersions(entity);
+      VersionLifecycleState previousState = entity.getPublicationState();
       entity.setPublicationState(VersionLifecycleState.PUBLISHED);
       entity.setDistributionManifestHash(normalizeBlank(exportedManifest.manifestHash()));
       entity.setDistributionManifestPath(normalizeBlank(exportedManifest.manifestPath()));
@@ -387,7 +399,10 @@ public class VersionServiceImpl implements VersionService {
       entity.setNotes(normalizeBlank(notes));
       entity.setStatusReason("");
       entity.setLastChangedAt(LocalDateTime.now());
-      return toPublishedPluginVersionDto(publishedPluginVersionRepository.save(entity));
+      PublishedPluginVersion saved = publishedPluginVersionRepository.save(entity);
+      appendPluginVersionStatusEvent(
+          saved, previousState, saved.getPublicationState(), saved.getStatusReason());
+      return toPublishedPluginVersionDto(saved);
     } catch (IllegalArgumentException ex) {
       if (ex.getMessage() != null && ex.getMessage().startsWith("VALIDATION_FAILED_DESIGN:")) {
         markValidationFailed(entity, validationStatusReason(ex.getMessage()));
@@ -406,6 +421,31 @@ public class VersionServiceImpl implements VersionService {
         .findByTenantIdAndPluginIdAndPluginVersionId(tenantId, pluginId, pluginVersionId)
         .map(this::toPublishedPluginVersionDto)
         .orElseThrow(() -> new IllegalArgumentException("NOT_FOUND: plugin version not found"));
+  }
+
+  @Override
+  @Transactional
+  public PublishedPluginVersionDto revokePluginVersion(
+      String tenantId, String pluginId, String pluginVersionId, String reason) {
+    requireText(pluginId, "pluginId");
+    requireText(pluginVersionId, "pluginVersionId");
+    PublishedPluginVersion entity =
+        publishedPluginVersionRepository
+            .findByTenantIdAndPluginIdAndPluginVersionId(tenantId, pluginId, pluginVersionId)
+            .orElseThrow(() -> new IllegalArgumentException("NOT_FOUND: plugin version not found"));
+    String normalizedReason = normalizeStatusReason(reason, "design_revoked");
+    if (entity.getPublicationState() == VersionLifecycleState.REVOKED_DESIGN
+        && normalizedReason.equals(normalizeBlank(entity.getStatusReason()))) {
+      return toPublishedPluginVersionDto(entity);
+    }
+    VersionLifecycleState previousState = entity.getPublicationState();
+    entity.setPublicationState(VersionLifecycleState.REVOKED_DESIGN);
+    entity.setStatusReason(normalizedReason);
+    entity.setLastChangedAt(LocalDateTime.now());
+    PublishedPluginVersion saved = publishedPluginVersionRepository.save(entity);
+    appendPluginVersionStatusEvent(
+        saved, previousState, saved.getPublicationState(), saved.getStatusReason());
+    return toPublishedPluginVersionDto(saved);
   }
 
   @Override
@@ -431,6 +471,34 @@ public class VersionServiceImpl implements VersionService {
             PageRequest.of(0, sanitizePluginVersionStatusLimit(limit)))
         .stream()
         .map(this::toPublishedPluginVersionDto)
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<PluginVersionStatusEventDto> listPluginVersionStatusEvents(
+      String tenantId,
+      String pluginId,
+      String pluginVersionId,
+      VersionLifecycleState publicationState,
+      LocalDateTime changedAfter,
+      LocalDateTime changedBefore,
+      int limit) {
+    if (changedAfter != null && changedBefore != null && changedAfter.isAfter(changedBefore)) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: changedAfter must be before or equal to changedBefore");
+    }
+    return pluginVersionStatusEventRepository
+        .findEvents(
+            tenantId,
+            normalizeBlank(pluginId),
+            normalizeBlank(pluginVersionId),
+            publicationState,
+            toInstant(changedAfter),
+            toInstant(changedBefore),
+            PageRequest.of(0, sanitizePluginVersionStatusLimit(limit)))
+        .stream()
+        .map(this::toPluginVersionStatusEventDto)
         .toList();
   }
 
@@ -639,10 +707,13 @@ public class VersionServiceImpl implements VersionService {
   }
 
   private void markValidationFailed(PublishedPluginVersion entity, String statusReason) {
+    VersionLifecycleState previousState = entity.getPublicationState();
     entity.setPublicationState(VersionLifecycleState.VALIDATION_FAILED_DESIGN);
     entity.setStatusReason(statusReason);
     entity.setLastChangedAt(LocalDateTime.now());
-    publishedPluginVersionRepository.save(entity);
+    PublishedPluginVersion saved = publishedPluginVersionRepository.save(entity);
+    appendPluginVersionStatusEvent(
+        saved, previousState, saved.getPublicationState(), saved.getStatusReason());
   }
 
   private String validationStatusReason(String message) {
@@ -659,11 +730,51 @@ public class VersionServiceImpl implements VersionService {
       if (existing.getId().equals(publishedVersion.getId())) {
         continue;
       }
+      VersionLifecycleState previousState = existing.getPublicationState();
       existing.setPublicationState(VersionLifecycleState.SUPERSEDED);
       existing.setStatusReason("superseded_by:" + publishedVersion.getPluginVersionId());
       existing.setLastChangedAt(LocalDateTime.now());
-      publishedPluginVersionRepository.save(existing);
+      PublishedPluginVersion saved = publishedPluginVersionRepository.save(existing);
+      appendPluginVersionStatusEvent(
+          saved, previousState, saved.getPublicationState(), saved.getStatusReason());
     }
+  }
+
+  private void appendPluginVersionStatusEvent(
+      PublishedPluginVersion entity,
+      VersionLifecycleState previousState,
+      VersionLifecycleState newState,
+      String statusReason) {
+    if (previousState == newState && normalizeBlank(statusReason).isBlank()) {
+      return;
+    }
+    PluginVersionStatusEvent event = new PluginVersionStatusEvent();
+    event.setEventId("ppse-" + UUID.randomUUID());
+    event.setTenantId(entity.getTenantId());
+    event.setPluginId(entity.getPluginId());
+    event.setPluginVersionId(entity.getPluginVersionId());
+    event.setPreviousPublicationState(previousState);
+    event.setNewPublicationState(newState);
+    event.setStatusReason(normalizeStatusReason(statusReason, "status_changed"));
+    event.setObservedAt(entity.getLastChangedAt().toInstant(ZoneOffset.UTC));
+    pluginVersionStatusEventRepository.save(event);
+  }
+
+  private PluginVersionStatusEventDto toPluginVersionStatusEventDto(
+      PluginVersionStatusEvent event) {
+    return new PluginVersionStatusEventDto(
+        event.getEventId(),
+        event.getTenantId(),
+        event.getPluginId(),
+        event.getPluginVersionId(),
+        event.getPreviousPublicationState(),
+        event.getNewPublicationState(),
+        event.getStatusReason(),
+        event.getObservedAt());
+  }
+
+  private Instant toInstant(LocalDateTime value) {
+    return value == null ? null : value.toInstant(ZoneOffset.UTC);
   }
 
   private VersionStateDto toVersionStateDto(Version version) {
@@ -717,6 +828,11 @@ public class VersionServiceImpl implements VersionService {
 
   private static String normalizeBlank(String value) {
     return value == null ? "" : value;
+  }
+
+  private static String normalizeStatusReason(String value, String defaultReason) {
+    String normalized = normalizeBlank(value).trim();
+    return normalized.isEmpty() ? defaultReason : normalized;
   }
 
   private static int sanitizePluginVersionStatusLimit(int limit) {

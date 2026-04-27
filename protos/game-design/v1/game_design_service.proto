@@ -20,8 +20,11 @@ service GameDesignService {
   rpc PublishPluginVersion(PublishPluginVersionRequest) returns (PublishPluginVersionResponse);
   rpc GetPublishedPluginVersion(GetPublishedPluginVersionRequest)
       returns (GetPublishedPluginVersionResponse);
+  rpc RevokePluginVersion(RevokePluginVersionRequest) returns (RevokePluginVersionResponse);
   rpc ListPluginVersionStatuses(ListPluginVersionStatusesRequest)
       returns (ListPluginVersionStatusesResponse);
+  rpc ListPluginVersionStatusEvents(ListPluginVersionStatusEventsRequest)
+      returns (ListPluginVersionStatusEventsResponse);
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
   rpc GetDesignControlPlaneDigest(GetDesignControlPlaneDigestRequest)
       returns (GetDesignControlPlaneDigestResponse);
@@ -179,6 +182,18 @@ message GetPublishedPluginVersionResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
+message RevokePluginVersionRequest {
+  string tenant_id = 1;
+  string plugin_id = 2;
+  string plugin_version_id = 3;
+  string reason = 4;
+}
+
+message RevokePluginVersionResponse {
+  int64 publication_id = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
 message ListPluginVersionStatusesRequest {
   string tenant_id = 1;
   string plugin_id = 2;
@@ -190,6 +205,21 @@ message ListPluginVersionStatusesRequest {
 
 message ListPluginVersionStatusesResponse {
   repeated PublishedPluginVersion plugin_versions = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListPluginVersionStatusEventsRequest {
+  string tenant_id = 1;
+  string plugin_id = 2;
+  string plugin_version_id = 3;
+  VersionLifecycleState publication_state = 4;
+  int64 changed_after_ms = 5;
+  int64 changed_before_ms = 6;
+  int32 limit = 7;
+}
+
+message ListPluginVersionStatusEventsResponse {
+  repeated PluginVersionStatusEventEntry events = 1;
   shared.v1.ErrorDetail error = 2;
 }
 
@@ -221,6 +251,17 @@ message PublishedPluginVersion {
   bool signer_revoked = 14;
   PluginComponentPolicyDecision component_policy_decision = 15;
   string status_reason = 16;
+}
+
+message PluginVersionStatusEventEntry {
+  string event_id = 1;
+  string tenant_id = 2;
+  string plugin_id = 3;
+  string plugin_version_id = 4;
+  VersionLifecycleState previous_publication_state = 5;
+  VersionLifecycleState new_publication_state = 6;
+  string status_reason = 7;
+  int64 observed_at_ms = 8;
 }
 
 enum PluginComponentPolicyDecision {

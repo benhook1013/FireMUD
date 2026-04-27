@@ -64,6 +64,8 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionAssetPurgeStatusRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetPurgeStatusResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
+import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusEventsRequest;
+import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusEventsResponse;
 import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusesRequest;
 import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusesResponse;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
@@ -71,6 +73,7 @@ import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
 import net.firedevops.firemud.gamedesign.v1.PingRequest;
 import net.firedevops.firemud.gamedesign.v1.PingResponse;
 import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
+import net.firedevops.firemud.gamedesign.v1.PluginVersionStatusEventEntry;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchVersionRequest;
@@ -85,6 +88,8 @@ import net.firedevops.firemud.gamedesign.v1.RepairPublishedVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.RepairPublishedVersionAssetsResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
+import net.firedevops.firemud.gamedesign.v1.RevokePluginVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.RevokePluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionResponse;
 import net.firedevops.firemud.gamedesign.v1.TemplateRemapEntry;
@@ -409,6 +414,40 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   }
 
   @Override
+  @Timed(value = "gamedesignGrpc.revokePluginVersion")
+  public void revokePluginVersion(
+      RevokePluginVersionRequest request,
+      StreamObserver<RevokePluginVersionResponse> responseObserver) {
+    RevokePluginVersionResponse.Builder builder = RevokePluginVersionResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      PublishedPluginVersionDto publication =
+          versionService.revokePluginVersion(
+              request.getTenantId(),
+              request.getPluginId(),
+              request.getPluginVersionId(),
+              request.getReason());
+      builder.setPublicationId(publication.id());
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "RevokePluginVersion", "PERMISSION_DENIED", ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "RevokePluginVersion",
+              pluginPublicationErrorCode(ex.getMessage()),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "RevokePluginVersion", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
   @Timed(value = "gamedesignGrpc.listPluginVersionStatuses")
   public void listPluginVersionStatuses(
       ListPluginVersionStatusesRequest request,
@@ -446,6 +485,49 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     } catch (Exception ex) {
       builder.setError(
           GrpcAppErrors.internal(meterRegistry, logger, "ListPluginVersionStatuses", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.listPluginVersionStatusEvents")
+  public void listPluginVersionStatusEvents(
+      ListPluginVersionStatusEventsRequest request,
+      StreamObserver<ListPluginVersionStatusEventsResponse> responseObserver) {
+    ListPluginVersionStatusEventsResponse.Builder builder =
+        ListPluginVersionStatusEventsResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      versionService
+          .listPluginVersionStatusEvents(
+              request.getTenantId(),
+              request.getPluginId(),
+              request.getPluginVersionId(),
+              toModelVersionLifecycleState(request.getPublicationState()),
+              toLocalDateTime(request.getChangedAfterMs()),
+              toLocalDateTime(request.getChangedBeforeMs()),
+              request.getLimit())
+          .forEach(event -> builder.addEvents(toProtoPluginVersionStatusEvent(event)));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ListPluginVersionStatusEvents",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ListPluginVersionStatusEvents",
+              pluginPublicationErrorCode(ex.getMessage()),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "ListPluginVersionStatusEvents", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
@@ -901,6 +983,20 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
             toProtoComponentPolicyDecision(plugin.componentPolicyDecision()))
         .setStatusReason(plugin.statusReason())
         .setLastChangedAtMs(plugin.lastChangedAt().toInstant(ZoneOffset.UTC).toEpochMilli())
+        .build();
+  }
+
+  private PluginVersionStatusEventEntry toProtoPluginVersionStatusEvent(
+      net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto event) {
+    return PluginVersionStatusEventEntry.newBuilder()
+        .setEventId(event.eventId())
+        .setTenantId(event.tenantId())
+        .setPluginId(event.pluginId())
+        .setPluginVersionId(event.pluginVersionId())
+        .setPreviousPublicationState(toProtoVersionLifecycleState(event.previousPublicationState()))
+        .setNewPublicationState(toProtoVersionLifecycleState(event.newPublicationState()))
+        .setStatusReason(event.statusReason())
+        .setObservedAtMs(event.observedAt().toEpochMilli())
         .build();
   }
 

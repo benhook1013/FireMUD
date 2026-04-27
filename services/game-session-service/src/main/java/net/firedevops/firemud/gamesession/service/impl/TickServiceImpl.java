@@ -1121,9 +1121,13 @@ public class TickServiceImpl implements TickService {
       QueuedCommandEnvelope entry = selection.entry();
       GameplayCommand command = selection.command();
       builder
-          .append("{\"sourceKind\":\"GAMEPLAY_COMMAND\",\"sourceOrdinal\":")
+          .append("{\"sourceKind\":\"")
+          .append(selectionSourceKind(command))
+          .append("\",\"sourceOrdinal\":")
           .append(selection.sourceOrdinal())
-          .append(",\"sourceState\":\"REDIS_PENDING_CLAIMED\"")
+          .append(",\"sourceState\":\"")
+          .append(selectionSourceState(command))
+          .append("\"")
           .append(",\"effectKey\":\"")
           .append(jsonEscape(selection.effectKey()))
           .append("\",\"commandId\":");
@@ -1159,6 +1163,20 @@ public class TickServiceImpl implements TickService {
     }
     builder.append("]}");
     return builder.toString();
+  }
+
+  private String selectionSourceKind(GameplayCommand command) {
+    if (command != null && "RETRY_QUEUED".equals(command.getExecutionOutcome())) {
+      return "GAMEPLAY_RETRY";
+    }
+    return "GAMEPLAY_COMMAND";
+  }
+
+  private String selectionSourceState(GameplayCommand command) {
+    if (command != null && "RETRY_QUEUED".equals(command.getExecutionOutcome())) {
+      return "REDIS_RETRY_CLAIMED";
+    }
+    return "REDIS_PENDING_CLAIMED";
   }
 
   private String jsonEscape(String value) {

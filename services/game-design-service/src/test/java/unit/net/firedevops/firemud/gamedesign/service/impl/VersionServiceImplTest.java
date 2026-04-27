@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
@@ -25,6 +26,7 @@ import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.PluginVersionStatusEventRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedPluginVersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
@@ -51,6 +53,7 @@ class VersionServiceImplTest {
   @Mock private VersionRepository versionRepository;
   @Mock private GameRepository gameRepository;
   @Mock private PublishedPluginVersionRepository publishedPluginVersionRepository;
+  @Mock private PluginVersionStatusEventRepository pluginVersionStatusEventRepository;
   @Mock private AutomationScriptingClient scriptingClient;
   @Mock private AssetExportService assetExportService;
   @Mock private PublishAttemptService publishAttemptService;
@@ -68,11 +71,14 @@ class VersionServiceImplTest {
   void setup() throws Exception {
     MockitoAnnotations.openMocks(this);
     VersionMapper mapper = Mappers.getMapper(VersionMapper.class);
+    when(publishedPluginVersionRepository.save(any(PublishedPluginVersion.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     service =
         new VersionServiceImpl(
             versionRepository,
             gameRepository,
             publishedPluginVersionRepository,
+            pluginVersionStatusEventRepository,
             mapper,
             scriptingClient,
             assetExportService,
@@ -573,6 +579,25 @@ class VersionServiceImplTest {
     assertEquals(VersionLifecycleState.PUBLISHED, published.publicationState());
     assertEquals(VersionLifecycleState.SUPERSEDED, olderPublished.getPublicationState());
     assertEquals("superseded_by:plugin-v2", olderPublished.getStatusReason());
+    verify(pluginVersionStatusEventRepository, times(2)).save(any());
+  }
+
+  @Test
+  void revokePluginVersionTransitionsToRevokedDesignAndAppendsEvent() {
+    PublishedPluginVersion published = uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
+    published.setPublicationState(VersionLifecycleState.PUBLISHED);
+    when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
+            "tenant-1", "plugin-1", "plugin-v1"))
+        .thenReturn(Optional.of(published));
+    when(publishedPluginVersionRepository.save(any(PublishedPluginVersion.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    PublishedPluginVersionDto revoked =
+        service.revokePluginVersion("tenant-1", "plugin-1", "plugin-v1", "signer_revoked");
+
+    assertEquals(VersionLifecycleState.REVOKED_DESIGN, revoked.publicationState());
+    assertEquals("signer_revoked", revoked.statusReason());
+    verify(pluginVersionStatusEventRepository).save(any());
   }
 
   @Test
@@ -658,6 +683,54 @@ class VersionServiceImplTest {
                     10));
 
     assertTrue(thrown.getMessage().contains("changedAfter"));
+  }
+
+  @Test
+  void listPluginVersionStatusEventsUsesRepositoryFiltersAndLimitClamp() {
+    net.firedevops.firemud.gamedesign.entity.PluginVersionStatusEvent event =
+        new net.firedevops.firemud.gamedesign.entity.PluginVersionStatusEvent();
+    event.setEventId("ppse-1");
+    event.setTenantId("tenant-1");
+    event.setPluginId("plugin-1");
+    event.setPluginVersionId("plugin-v1");
+    event.setPreviousPublicationState(VersionLifecycleState.SIGNATURE_VERIFIED);
+    event.setNewPublicationState(VersionLifecycleState.PUBLISHED);
+    event.setStatusReason("published");
+    event.setObservedAt(java.time.Instant.parse("2026-04-26T10:00:00Z"));
+    when(pluginVersionStatusEventRepository.findEvents(
+            org.mockito.ArgumentMatchers.eq("tenant-1"),
+            org.mockito.ArgumentMatchers.eq("plugin-1"),
+            org.mockito.ArgumentMatchers.eq("plugin-v1"),
+            org.mockito.ArgumentMatchers.eq(VersionLifecycleState.PUBLISHED),
+            org.mockito.ArgumentMatchers.eq(java.time.Instant.parse("2026-04-25T10:00:00Z")),
+            isNull(),
+            any(Pageable.class)))
+        .thenReturn(List.of(event));
+
+    List<PluginVersionStatusEventDto> results =
+        service.listPluginVersionStatusEvents(
+            "tenant-1",
+            "plugin-1",
+            "plugin-v1",
+            VersionLifecycleState.PUBLISHED,
+            LocalDateTime.parse("2026-04-25T10:00:00"),
+            null,
+            500);
+
+    assertEquals(1, results.size());
+    assertEquals("ppse-1", results.get(0).eventId());
+    org.mockito.ArgumentCaptor<Pageable> pageableCaptor =
+        org.mockito.ArgumentCaptor.forClass(Pageable.class);
+    verify(pluginVersionStatusEventRepository)
+        .findEvents(
+            org.mockito.ArgumentMatchers.eq("tenant-1"),
+            org.mockito.ArgumentMatchers.eq("plugin-1"),
+            org.mockito.ArgumentMatchers.eq("plugin-v1"),
+            org.mockito.ArgumentMatchers.eq(VersionLifecycleState.PUBLISHED),
+            org.mockito.ArgumentMatchers.eq(java.time.Instant.parse("2026-04-25T10:00:00Z")),
+            isNull(),
+            pageableCaptor.capture());
+    assertEquals(200, pageableCaptor.getValue().getPageSize());
   }
 
   @Test
