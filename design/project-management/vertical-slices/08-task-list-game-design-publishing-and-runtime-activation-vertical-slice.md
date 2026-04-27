@@ -21,6 +21,10 @@ That is no longer just planning work: the family is now active in code.
 - the canonical publish-attempt / participant-observation framework is also now live;
 - script-patch publish already uses that same framework with real Automation & Scripting plus Game Design control-plane digests;
 - full-version publish now also uses the real domain participant matrix instead of placeholder missing-participant failures, while remaining follow-through is recorded-digest comparison and deeper target-state data modeling rather than absent participant coverage.
+- `08.5` is complete at the current boundary and is the strongest doc-first review candidate in this family;
+- `08.1` through `08.4` are all materially real, but they still have meaningful remaining implementation follow-through and should be treated as in-progress slices rather than frozen review surfaces.
+
+This parent doc is intentionally a family map, not a claim that the whole `08.x` domain is finished enough to review without code.
 
 ## Why This Slice Exists
 
