@@ -63,6 +63,7 @@ These are already partly real in code and should continue after the immediate ru
    Remaining: keep `02.18.6` at operator-proof level and continue any later hardening only if real-load evidence justifies it.
 17. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
+
 ### 3. Design settled enough, but not started or only placeholder-level
 
 These are not broad audit topics anymore; they are real future slices with known direction.
