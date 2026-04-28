@@ -83,6 +83,18 @@ public final class GameplayWebSocketScenarios {
 
   private GameplayWebSocketScenarios() {}
 
+  public static GameplayWebSocketDriver openReady(
+      DriverFactory factory, String connectionId, Admission admission) throws Exception {
+    GameplayWebSocketDriver driver = factory.open(connectionId);
+    try {
+      enterReady(driver, admission);
+      return driver;
+    } catch (Exception ex) {
+      closeQuietly(driver, ex);
+      throw ex;
+    }
+  }
+
   public static TwoPlayerScenario openReadyPair(
       DriverFactory factory,
       String actorConnectionId,
