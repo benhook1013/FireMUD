@@ -41,7 +41,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 class GatewayLookCommandIntegrationTest {
-  private static GatewayHolder GATEWAY;
+  private static volatile GatewayHolder GATEWAY;
 
   @AfterAll
   static void stopGateway() {

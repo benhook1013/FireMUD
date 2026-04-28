@@ -1,5 +1,6 @@
 package net.firedevops.firemud.springcloudgateway.websocket;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -47,6 +48,9 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
   private final GameplayWebSocketBridgeProperties properties;
   private final RuntimeIdentity runtimeIdentity;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected client, properties, and runtime identity remain internal.")
   public GameplayWebSocketBridgeHandler(
       ReactorNettyWebSocketClient client,
       GameplayWebSocketBridgeProperties properties,

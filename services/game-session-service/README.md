@@ -12,7 +12,7 @@ This README is only a stub. **Do not place design information here.**
 
 ## Local development
 
-- Run the service with the normal `dev` profile and the real local dependency stack. For canonical end-to-end proof, use the repo smoke scripts under `dev-tools/` rather than a special single-service shortcut.
+- Run the service against the real local dependency stack using the canonical runtime configuration. For end-to-end proof, use the repo smoke scripts under `dev-tools/` rather than a special single-service profile or single-service shortcut.
 
 ## Environment variables
 

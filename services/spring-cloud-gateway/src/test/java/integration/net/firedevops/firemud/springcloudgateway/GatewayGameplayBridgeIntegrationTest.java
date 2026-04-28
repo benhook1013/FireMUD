@@ -46,8 +46,8 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import reactor.core.publisher.Mono;
 
 class GatewayGameplayBridgeIntegrationTest {
-  private static UpstreamHolder UPSTREAM;
-  private static GatewayHolder GATEWAY;
+  private static volatile UpstreamHolder UPSTREAM;
+  private static volatile GatewayHolder GATEWAY;
   private static final AtomicReference<String> TEST_UPSTREAM_URL = new AtomicReference<>();
   private static final AtomicReference<UpstreamRuntimeState> TEST_UPSTREAM_STATE =
       new AtomicReference<>();
@@ -76,8 +76,9 @@ class GatewayGameplayBridgeIntegrationTest {
 
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "42");
-    headers.add("X-Tenant-Id", "22");
+    headers.add("X-Proxy-Client-IP", "203.0.113.10");
+    headers.add("X-Proxy-Game-Instance-Id", "42");
+    headers.add("X-Proxy-Tenant-Id", "22");
     headers.add("X-Proxy-Connection-Id", "bridge-test-conn");
 
     List<String> responses = new CopyOnWriteArrayList<>();
@@ -145,8 +146,9 @@ class GatewayGameplayBridgeIntegrationTest {
 
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "42");
-    headers.add("X-Tenant-Id", "22");
+    headers.add("X-Proxy-Client-IP", "203.0.113.10");
+    headers.add("X-Proxy-Game-Instance-Id", "42");
+    headers.add("X-Proxy-Tenant-Id", "22");
     headers.add("X-Proxy-Connection-Id", "bridge-test-conn");
 
     AtomicBoolean downstreamClosed = new AtomicBoolean(false);

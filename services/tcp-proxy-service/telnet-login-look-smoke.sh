@@ -106,6 +106,9 @@ def wait_for_incremental_text(sock, responses, start_index, expected_substrings,
         if chunk:
             responses.append(chunk)
             response = "".join(responses[start_index:])
+            stripped = response.strip()
+            if stripped.startswith("ERROR ") or stripped.startswith("DISCONNECT "):
+                raise RuntimeError(f"Command failed explicitly: {stripped}")
             if all(substring in response for substring in expected_substrings):
                 trailing = drain_available(sock)
                 if trailing:

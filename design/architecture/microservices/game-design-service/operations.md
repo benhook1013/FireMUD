@@ -8,4 +8,4 @@
 
 ## Local Development Notes
 
-`TestDataSeeder` populates a demo game, template, revision and version when the `dev` Spring profile is active. Run `services/game-design-service/smoke-test.sh` to verify both REST and gRPC endpoints. The lightweight maintained application smoke now lives under `src/test/java/integration`; the old disabled GHCR-based cross-service placeholder was removed because it did not prove a meaningful current contract.
+`TestDataSeeder` populates a demo game, template, revision and version only when explicit smoke/runtime seeding is enabled through deployment config (`FIREMUD_SMOKE_SEED_DEMO_RUNTIME_ENABLED=true` in the local Compose smoke stack). Run `services/game-design-service/smoke-test.sh` to verify both REST and gRPC endpoints. The lightweight maintained application smoke now lives under `src/test/java/integration`; the old disabled GHCR-based cross-service placeholder was removed because it did not prove a meaningful current contract.

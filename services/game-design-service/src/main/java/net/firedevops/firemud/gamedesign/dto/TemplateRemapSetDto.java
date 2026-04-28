@@ -14,4 +14,13 @@ public record TemplateRemapSetDto(
     String approvalReason,
     LocalDateTime createdAt,
     LocalDateTime approvedAt,
-    List<TemplateRemapEntryDto> remapEntries) {}
+    List<TemplateRemapEntryDto> remapEntries) {
+  public TemplateRemapSetDto {
+    remapEntries = remapEntries == null ? List.of() : List.copyOf(remapEntries);
+  }
+
+  @Override
+  public List<TemplateRemapEntryDto> remapEntries() {
+    return remapEntries;
+  }
+}

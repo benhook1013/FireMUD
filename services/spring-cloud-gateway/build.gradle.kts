@@ -35,7 +35,7 @@ tasks.named<BootRun>("bootRun") {
     val activeProfile =
         System.getProperty("spring.profiles.active") ?: System.getenv("SPRING_PROFILES_ACTIVE")
 
-    if (activeProfile.isNullOrBlank()) {
-        systemProperty("spring.profiles.active", "dev")
+    if (!activeProfile.isNullOrBlank()) {
+        systemProperty("spring.profiles.active", activeProfile)
     }
 }

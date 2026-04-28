@@ -207,19 +207,19 @@ class CommunicationWebSocketCrossServiceTest {
         RecordingWebSocketClient target = openSessionClient(sessionId, "target-conn");
         RecordingWebSocketClient observer = openSessionClient(sessionId, "observer-conn")) {
       actor.send("LOGIN demo@example.com swordfish");
-      actor.awaitResponseCount(1);
+      actor.awaitStartsWith("OK LOGIN");
       actor.send("PLAY demo");
-      actor.awaitResponseCount(2);
+      actor.awaitStartsWith("OK PLAY");
 
       target.send("LOGIN demo@example.com swordfish");
-      target.awaitResponseCount(1);
+      target.awaitStartsWith("OK LOGIN");
       target.send("PLAY demo Sora");
-      target.awaitResponseCount(2);
+      target.awaitStartsWith("OK PLAY");
 
       observer.send("LOGIN demo@example.com swordfish");
-      observer.awaitResponseCount(1);
+      observer.awaitStartsWith("OK LOGIN");
       observer.send("PLAY demo Nyx");
-      observer.awaitResponseCount(2);
+      observer.awaitStartsWith("OK PLAY");
 
       actor.send("WHISPER Sora Keep quiet");
       actor.awaitContains(ChatTestFixtures.canonicalWhisperText());
@@ -236,14 +236,14 @@ class CommunicationWebSocketCrossServiceTest {
     try (RecordingWebSocketClient actor = openSessionClient(sessionId, "actor-tell-conn");
         RecordingWebSocketClient target = openSessionClient(sessionId, "target-tell-conn")) {
       actor.send("LOGIN demo@example.com swordfish");
-      actor.awaitResponseCount(1);
+      actor.awaitStartsWith("OK LOGIN");
       actor.send("PLAY demo Emberline");
-      actor.awaitResponseCount(2);
+      actor.awaitStartsWith("OK PLAY");
 
       target.send("LOGIN demo@example.com swordfish");
-      target.awaitResponseCount(1);
+      target.awaitStartsWith("OK LOGIN");
       target.send("PLAY demo Sora");
-      target.awaitResponseCount(2);
+      target.awaitStartsWith("OK PLAY");
 
       actor.send("TELL Sora Meet me at the forge");
       actor.awaitContains(ChatTestFixtures.canonicalTellText());
@@ -259,9 +259,9 @@ class CommunicationWebSocketCrossServiceTest {
 
     try (RecordingWebSocketClient client = openSessionClient(sessionId, "item-loop-conn")) {
       client.send("LOGIN demo@example.com swordfish");
-      client.awaitResponseCount(1);
+      client.awaitStartsWith("OK LOGIN");
       client.send("PLAY demo");
-      client.awaitResponseCount(2);
+      client.awaitStartsWith("OK PLAY");
       client.send("LOOK");
       client.awaitContains("Candle-lit Antechamber");
 
@@ -347,9 +347,9 @@ class CommunicationWebSocketCrossServiceTest {
 
     try (RecordingWebSocketClient client = openSessionClient(sessionId, "equipment-loop-conn")) {
       client.send("LOGIN demo@example.com swordfish");
-      client.awaitResponseCount(1);
+      client.awaitStartsWith("OK LOGIN");
       client.send("PLAY demo");
-      client.awaitResponseCount(2);
+      client.awaitStartsWith("OK PLAY");
 
       client.send("EQUIPMENT");
       client.awaitContains("You have nothing equipped.");
@@ -490,9 +490,9 @@ class CommunicationWebSocketCrossServiceTest {
     try (RecordingWebSocketClient client =
         openSessionClient(sessionId, "flow-" + commandText.hashCode())) {
       client.send("LOGIN demo@example.com swordfish");
-      client.awaitResponseCount(1);
+      client.awaitStartsWith("OK LOGIN");
       client.send("PLAY demo");
-      client.awaitResponseCount(2);
+      client.awaitStartsWith("OK PLAY");
       client.send(commandText);
       client.awaitResponseCount(3);
       return List.copyOf(client.responses);
@@ -581,6 +581,18 @@ class CommunicationWebSocketCrossServiceTest {
       }
       throw new AssertionError(
           "Expected at least " + expected + " responses, got " + received.get());
+    }
+
+    private void awaitStartsWith(String expectedPrefix) throws Exception {
+      long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
+      while (System.currentTimeMillis() < deadline) {
+        if (responses.stream().anyMatch(response -> response.startsWith(expectedPrefix))) {
+          return;
+        }
+        Thread.sleep(50);
+      }
+      throw new AssertionError(
+          "Expected a response starting with '" + expectedPrefix + "', got " + responses);
     }
 
     private void awaitContains(String expectedSubstring) throws Exception {

@@ -24,13 +24,10 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 > Internal synchronous RPCs use **gRPC**; asynchronous contracts (for example audit/saga events and lifecycle signals) use dedicated event flows documented in [System Architecture Overview](./system-architecture-overview.md#asynchronous-and-event-flows).
 > See [System Architecture Overview](./system-architecture-overview.md) and [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the complete login and gRPC flow.
 
-- Static URIs configured in the `dev` profile within `application.yml`
-  (used by Docker Compose)
-- Kubernetes DNS-based service names configured in the `prod` profile of
-  `application.yml` (used in production)
-- Initial routes are loaded on startup from `routes-dev.yml` or `routes-prod.yml` via `spring.config.import`.
+- Initial routes are loaded on startup from a canonical `routes.yml` via `spring.config.import`.
+- Baseline route targets use in-environment DNS names by default and may be overridden explicitly with environment variables when a deployment needs different upstream targets.
 - Initial route targets are loaded on startup, but operators can override them using environment variables prefixed `FIREMUD_SERVICES_`, matching the `ServiceEndpointsProperties` approach used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery).
-- Dynamic route management APIs (REST and gRPC) can add or remove routes at runtime as **ephemeral overrides** layered on top of the baseline configuration; config files remain the canonical source of truth for route definitions.
+- Dynamic route management APIs (REST and gRPC) can add or remove routes at runtime as **ephemeral overrides** layered on top of the baseline configuration; `routes.yml` remains the canonical source of truth for route definitions.
 
 For the Telnet-to-WebSocket bridge – including the `GATEWAY_WS_URL` contract, Proxy → Gateway mutual TLS, and how gameplay traffic is normalized through `/ws/game/**` – treat [Protocol Bridging](./system-architecture-protocol-bridging.md) as the **canonical specification**. This document summarizes the gateway’s routing and configuration responsibilities and defers to the protocol-bridging design for detailed edge semantics.
 
@@ -138,7 +135,7 @@ At a configuration level, Spring Cloud Gateway defines WebSocket routes in `appl
 - **Canonical route path** – `/ws/game/**` is the canonical gameplay WebSocket entry point for first-party gameplay clients and Telnet clients bridged via the TCP Proxy Service.
 - **Single route policy** – `/ws/game/**` is the only supported gameplay WebSocket entry point. Gameplay admission through alternate legacy routes is not supported.
 - **First-party admission marker** – successful first-party `/ws/game/**` handshakes must emit `X-Firemud-Connection-Mode=first_party_web` as defined in [Gateway Output Rules (Downstream-Trusted)](#gateway-output-rules-downstream-trusted), so downstream services can distinguish this path using the same positive discriminator model as the trusted TCP Proxy path.
-- **Telnet bridge usage** – The TCP Proxy Service connects to Spring Cloud Gateway using the `GATEWAY_WS_URL` environment variable. The proxy’s `dev` profile may fall back to `ws://spring-cloud-gateway:8080/ws/game` when unset, but shared and player-facing environments must set it explicitly to a `wss://.../ws/game` URL that targets the Gateway’s internal-only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`) so the proxy–gateway hop uses mTLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway). TCP Proxy bootstrap metadata and header propagation rules are defined in the TCP Proxy design; this document intentionally summarizes only the routing side.
+- **Telnet bridge usage** – The TCP Proxy Service connects to Spring Cloud Gateway using the explicit `GATEWAY_WS_URL` environment variable. Shared and player-facing environments must set it to a `wss://.../ws/game` URL that targets the Gateway’s internal-only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`) so the proxy–gateway hop uses mTLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway). Local Compose smoke sets the same variable explicitly to the canonical in-stack target. TCP Proxy bootstrap metadata and header propagation rules are defined in the TCP Proxy design; this document intentionally summarizes only the routing side.
 - **Required headers** – Spring Cloud Gateway preserves or sets:
   - `X-Client-IP` with the originating client address. For web clients this is derived from the external load balancer’s forwarded headers. For Telnet clients this is derived by the gateway from `X-Proxy-Client-IP` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
   - `X-Proxy-Game-Instance-Id`, `X-Proxy-Tenant-Id`, and `X-Proxy-Connection-Id` on the TCP Proxy → Gateway hop when the proxy supplies server-owned bootstrap metadata or future hidden MCP-carried smart-client hints, or when the proxy needs disconnect correlation. The gateway strips these from public ingress and only forwards canonical `X-Game-Instance-Id` / `X-Tenant-Id` and `X-Proxy-Connection-Id` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
@@ -419,7 +416,7 @@ If gameplay execution is sharded across multiple Game Session instances, that sh
 
 ### Dynamic Route Override Lifecycle
 
-Dynamic route management APIs exist to apply **ephemeral overrides** on top of the baseline route configuration loaded from `routes-dev.yml` / `routes-prod.yml`.
+Dynamic route management APIs exist to apply **ephemeral overrides** on top of the baseline route configuration loaded from `routes.yml`.
 
 The lifecycle expectations for these overrides must be explicit so operators understand convergence and persistence:
 
@@ -467,7 +464,7 @@ This approach minimizes latency and matches the protocol table in the
 | Prod | `http://service.namespace.svc.cluster.local:8080` | Kubernetes DNS |
 
 Spring profiles defined in `application.yml` and selected via
-`SPRING_PROFILES_ACTIVE` configure routing targets based on environment. Baseline routes are defined in `routes-dev.yml` and `routes-prod.yml`, and any `FIREMUD_SERVICES_*` environment variable overrides or dynamic route changes apply *on top* of these files rather than replacing them as the canonical source of truth.
+Baseline routing targets are defined in `routes.yml`, and any environment-variable overrides or dynamic route changes apply *on top* of that file rather than replacing it as the canonical source of truth.
 
 ---
 

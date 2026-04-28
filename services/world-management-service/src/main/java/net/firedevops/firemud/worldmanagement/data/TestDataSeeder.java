@@ -27,13 +27,17 @@ import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.context.annotation.Profile;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Seeds minimal world data for local development when the {@code dev} Spring profile is active. */
+/** Seeds deterministic world/runtime fixtures when local compose explicitly enables them. */
 @Component
-@Profile("dev")
+@ConditionalOnProperty(
+    prefix = "firemud.smoke.seed-demo-runtime",
+    name = "enabled",
+    havingValue = "true",
+    matchIfMissing = false)
 @RequiredArgsConstructor
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",

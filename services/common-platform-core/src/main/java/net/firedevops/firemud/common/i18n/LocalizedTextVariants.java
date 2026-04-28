@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.i18n;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -60,6 +61,14 @@ public record LocalizedTextVariants(
       }
     }
     return new ResolvedLocalizedText(sourceLocaleTag, sourceText, true);
+  }
+
+  @Override
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Variants are normalized to an immutable Map.copyOf snapshot.")
+  public Map<String, String> localizedVariants() {
+    return localizedVariants;
   }
 
   public record ResolvedLocalizedText(String localeTag, String text, boolean sourceFallbackUsed) {

@@ -42,7 +42,7 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | --- | --- | --- |
 | `TCP_PROXY_PORT` | TCP port the proxy listens on | `2323` |
 | `TCP_PROXY_PROXY_PROTOCOL_PORT` | TCP port for the PROXY-protocol Telnet listener; internal-only and reachable only from the Telnet edge proxy | `2325` |
-| `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway; in the dev profile the application falls back to `ws://spring-cloud-gateway:8080/ws/game` when unset, but player-facing environments must set it explicitly | *(none; must be set explicitly outside local/dev)* |
+| `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway; local Docker and test environments may use a plaintext `ws://` endpoint, but player-facing environments must set an explicit `wss://.../ws/game` target | *(none)* |
 | `TCP_PROXY_TLS_ENABLED` | Enable Telnet-over-TLS termination | `false` |
 | `TCP_PROXY_TLS_PORT` | TCP port for the Telnet-over-TLS listener | `2324` |
 | `TCP_PROXY_TLS_CERT` | Path to the Telnet listener TLS certificate | *(empty)* |

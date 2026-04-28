@@ -83,7 +83,7 @@ Using a `services:` prefix (for example `:services:tcp-proxy-service:test`) will
 
 ### Spring Profiles for Testing
 
-Local development and CI default to relaxed Spring profiles so you can run `./gradlew bootRun` or `./gradlew test` without provisioning PostgreSQL. The build script sets `spring.profiles.active` to `dev` for `bootRun` and `test` for `Test` tasks when no profile is provided, and those profiles disable Flyway while pointing to an in-memory H2 datasource. Set `SPRING_PROFILES_ACTIVE=prod` (or `--args=--spring.profiles.active=prod` for `bootRun`) when you specifically want to use PostgreSQL, such as when running the Docker Compose stack or validating migration scripts.
+The only maintained alternate Spring profile is `test`, and Gradle test tasks default to it when no profile is provided. `bootRun` no longer forces a local runtime profile automatically; if you want an in-memory test-style run, set `SPRING_PROFILES_ACTIVE=test` explicitly. If you want the real runtime topology, use the canonical Docker Compose stack or provide the real Postgres/Redis/downstream endpoints directly.
 
 ### Telnet Proxy Limits in Local Dev
 
@@ -400,7 +400,7 @@ Typical key patterns include `session:*`, `tick:*`, `timer:*`, and `ratelimit:*`
 
 Environment‑specific settings live in each service's `src/main/resources` directory.
 
-- `application.yml` – base configuration containing both `dev` and `prod` profile sections.
+- `application.yml` – base configuration for the canonical runtime contract.
 - `SPRING_PROFILES_ACTIVE` – environment variable used to select the active profile at runtime.
 
 More details on deployment environments and gateway routing can be found in the following design documents:
@@ -413,7 +413,7 @@ These documents explain how the compose setup differs from production and provid
 
 ### Local development model
 
-- The canonical local path now uses the normal `dev` profile with the real Postgres, Redis, Gateway, Account, and gameplay-service topology.
+- The canonical local path now uses the normal runtime configuration with the real Postgres, Redis, Gateway, Account, and gameplay-service topology.
 - For end-to-end validation, prefer the repo-owned smoke scripts under `dev-tools/` instead of ad hoc single-service shortcuts:
   - `dev-tools/verify-fresh-bootstrap.sh`
   - `dev-tools/verify-restart-state.sh`

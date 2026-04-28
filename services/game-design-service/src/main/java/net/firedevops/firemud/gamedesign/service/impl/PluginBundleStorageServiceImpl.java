@@ -23,6 +23,9 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected collaborators remain internal service dependencies")
 public class PluginBundleStorageServiceImpl implements PluginBundleStorageService {
   private static final String BUNDLE_ROOT = "plugin-bundles";
 
@@ -121,7 +124,8 @@ public class PluginBundleStorageServiceImpl implements PluginBundleStorageServic
     manifestAsset.put("path", asset.path());
     manifestAsset.put("contentHash", asset.contentHash());
     manifestAsset.put("contentType", asset.contentType());
-    manifestAsset.put("sizeBytes", asset.sizeBytes() == null ? bytes.length : asset.sizeBytes());
+    Long sizeBytes = asset.sizeBytes();
+    manifestAsset.put("sizeBytes", sizeBytes == null ? Long.valueOf(bytes.length) : sizeBytes);
     manifestAsset.put("storagePath", objectKey);
     manifestAsset.put(
         "url", properties.getEndpoint() + "/" + properties.getBucket() + "/" + objectKey);

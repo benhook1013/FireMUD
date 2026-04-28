@@ -16,6 +16,13 @@ public class LookProperties {
     return Map.copyOf(rooms);
   }
 
+  public void setRooms(Map<String, LookRoom> rooms) {
+    this.rooms.clear();
+    if (rooms != null) {
+      this.rooms.putAll(rooms);
+    }
+  }
+
   public void putRoom(String key, LookRoom room) {
     rooms.put(key, room);
   }
@@ -25,6 +32,13 @@ public class LookProperties {
 
     public List<LookEntity> getEntities() {
       return List.copyOf(entities);
+    }
+
+    public void setEntities(List<LookEntity> entities) {
+      this.entities.clear();
+      if (entities != null) {
+        this.entities.addAll(entities);
+      }
     }
 
     public void addEntity(LookEntity entity) {

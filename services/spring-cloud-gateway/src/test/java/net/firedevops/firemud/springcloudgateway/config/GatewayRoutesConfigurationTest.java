@@ -14,7 +14,6 @@ import org.springframework.cloud.gateway.config.GatewayProperties;
 import org.springframework.cloud.gateway.filter.FilterDefinition;
 import org.springframework.cloud.gateway.route.RouteDefinition;
 import org.springframework.context.annotation.Import;
-import org.springframework.test.context.ActiveProfiles;
 
 @SpringBootTest(
     classes = SpringCloudGatewayApplication.class,
@@ -29,7 +28,6 @@ import org.springframework.test.context.ActiveProfiles;
       GatewayTestProperties.REACTIVE_WEB_APPLICATION,
       GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER
     })
-@ActiveProfiles("dev")
 @Import({NoGrpcServerTestConfiguration.class, TestGatewayRateLimiterConfig.class})
 class GatewayRoutesConfigurationTest {
 

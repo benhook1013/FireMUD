@@ -53,14 +53,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private final AccountService accountService;
   private final MeterRegistry meterRegistry;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Services are injected and remain internal")
   public AccountGrpcService(PingService pingService, AccountService accountService) {
     this(pingService, accountService, null);
   }
 
   @Autowired
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected services and registry remain internal collaborators.")
   public AccountGrpcService(
       PingService pingService, AccountService accountService, MeterRegistry meterRegistry) {
     this.pingService = pingService;

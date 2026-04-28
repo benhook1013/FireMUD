@@ -32,7 +32,11 @@ def tracked_application_yamls() -> list[Path]:
         text=True,
         stdout=subprocess.PIPE,
     )
-    return [ROOT / line for line in result.stdout.splitlines() if line.strip()]
+    return [
+        path
+        for line in result.stdout.splitlines()
+        if line.strip() and (path := ROOT / line).exists()
+    ]
 
 
 def proto_methods() -> set[str]:

@@ -51,7 +51,27 @@ Entry format:
   - Observation: the canonical smoke script hung in `docker compose ... down` when launched through a PTY-backed Codex exec session, while the same compose commands completed immediately in plain-output mode. Separately, running the WebSocket and Telnet smoke scripts in parallel against the same demo account/session produced a false failure on the Telnet path even though the underlying gameplay commands succeeded.
   - Expected pattern: AI-driven Docker smoke proofs should invoke compose in noninteractive/plain mode, and the gameplay smoke clients should be treated as sequential shared-state checks unless they use isolated accounts or session ids.
 
+- `2026-04-28`: Local trusted-proxy defaults should include IPv6 loopback wherever localhost header trust is intentional
+  - Context: removing `dev` profile semantics from `spring-cloud-gateway` exposed websocket bridge integration tests returning `403` on `/ws/game` even though they still sent the expected trusted tcp-proxy headers from localhost.
+  - Observation: the gateway header-trust defaults only allowed `127.0.0.1/32`, but Java websocket clients in test mode connected from `::1`, so `HeaderTrustFilter` rejected the proxy headers before gameplay upgrade and the failure looked like a bridge regression.
+  - Expected pattern: canonical localhost trust defaults should include both IPv4 and IPv6 loopback (`127.0.0.1/32` and `::1/128`) so local and test traffic do not silently depend on the host stack preferring IPv4.
+
+- `2026-04-28`: Spring profile overrides can silently discard lower-precedence list config within the same subtree
+  - Context: after removing the `dev` profile, `spring-cloud-gateway` test startup still returned `403` on trusted tcp-proxy websocket upgrades even though `application-test.yml` only changed the scalar `allow-insecure-headers-from-trusted-cidrs` flag.
+  - Observation: the live bound `GatewayHeaderTrustProperties` kept the boolean override from `application-test.yml` but lost the `insecure-trusted-cidrs` list from `application.yml`, so the test profile ended up allowing insecure proxy headers from an empty trust set.
+  - Expected pattern: when a profile-specific config file touches a subtree that contains list-valued `@ConfigurationProperties`, restate the full list in that profile or move the differing scalar to a separate property source; do not assume YAML/profile layering will merge list defaults the way map/scalar overrides do.
+
 - `2026-04-27`: The repository root README should stay an entrypoint, not a docs junk drawer
   - Context: reviewing recent root `README.md` growth after contributor-tooling content and deeper documentation navigation were added directly to the repo landing page.
   - Observation: once the root README starts carrying setup commands, workflow rules, subsystem-specific design links, and long reading lists, it duplicates narrower docs and becomes harder to use as a stable orientation surface.
   - Expected pattern: keep the root README focused on project identity, a compact architecture/docs map, and top-level entry links; move setup, contribution workflow, and deep design navigation into focused docs such as `DEVELOPER_SETUP.md`, `CONTRIBUTING.md`, and `design/README.md`.
+
+- `2026-04-28`: Local smoke seed data should be explicit deployment config, not hidden behind a broad Spring profile
+  - Context: removing the last `dev` profile usage left the canonical Docker stack healthy, but the WebSocket smoke failed with `AUTH_INVALID_CREDENTIALS` because `account-service` only seeded the `demo@example.com` smoke account when the `dev` profile was active.
+  - Observation: profile-gating deterministic smoke fixtures hides an operational contract behind a semantic bucket that is otherwise unrelated to account seeding, so profile cleanup can silently break blackbox verification even when the services boot correctly.
+  - Expected pattern: if local or preview smoke depends on seeded demo identities, enable that seeding through an explicit env/property such as a smoke-fixture toggle in the deployment config rather than via a catch-all runtime profile.
+
+- `2026-04-28`: Demo runtime topology fixtures should also be explicit deployment config, not a hidden local profile side effect
+  - Context: after removing `application-dev.yml`, the direct Game Session smoke still failed on `LOGIN` with `SESSION_NOT_FOUND` because multiple service seeders were still behind `@Profile("dev")`, including the `game-session-service` bootstrap `GameInstance` and the paired Game Design / World Management / Entity Management demo runtime fixtures.
+  - Observation: player-facing smoke proofs may depend on a cross-service seeded runtime graph, not just one demo account, so deleting a broad profile can leave the stack "healthy" while the first real admission path still has no playable bootstrap state.
+  - Expected pattern: when blackbox smoke depends on deterministic runtime fixtures, gate those fixtures behind one explicit smoke/runtime-seeding deployment toggle and wire the entire local smoke stack through that toggle instead of scattering hidden `@Profile("dev")` seeders across services.

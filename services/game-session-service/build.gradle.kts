@@ -65,11 +65,11 @@ dependencies {
 }
 
 tasks.named<BootRun>("bootRun") {
-    val activeProfile = System.getProperty("spring.profiles.active")
-        ?: System.getenv("SPRING_PROFILES_ACTIVE")
-        ?: "dev"
-
-    systemProperty("spring.profiles.active", activeProfile)
+    val activeProfile =
+        System.getProperty("spring.profiles.active") ?: System.getenv("SPRING_PROFILES_ACTIVE")
+    if (!activeProfile.isNullOrBlank()) {
+        systemProperty("spring.profiles.active", activeProfile)
+    }
 }
 
 val isWindows = System.getProperty("os.name").lowercase().contains("windows")

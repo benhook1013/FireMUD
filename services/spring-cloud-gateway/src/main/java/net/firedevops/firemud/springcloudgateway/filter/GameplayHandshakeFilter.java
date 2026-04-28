@@ -1,5 +1,6 @@
 package net.firedevops.firemud.springcloudgateway.filter;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.Jws;
@@ -59,6 +60,9 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
   private final boolean allowLocalReplayFallback;
   private final ConcurrentHashMap<String, Long> replayCache = new ConcurrentHashMap<>();
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected collaborators remain internal filter dependencies.")
   public GameplayHandshakeFilter(
       JwtUtil jwtUtil,
       RuntimeIdentity runtimeIdentity,
@@ -71,7 +75,7 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
     this.allowLocalReplayFallback =
         Arrays.stream(environment.getActiveProfiles())
             .map(String::toLowerCase)
-            .anyMatch(profile -> profile.equals("dev") || profile.equals("test"));
+            .anyMatch(profile -> profile.equals("test"));
   }
 
   @Override

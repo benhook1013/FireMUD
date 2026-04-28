@@ -46,7 +46,7 @@ Despite their differences, both protocols are normalized into the same internal 
 
 - Used by traditional MUD clients (e.g., MUDlet, TinTin++, GMud).
 - Clients connect using raw TCP (typically Telnet-compatible) and are handled by a dedicated **TCP Proxy Service**.
-- The TCP Proxy Service listens on port `2323` by default so Telnet clients can simply connect without additional configuration. This and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables). The proxy’s `dev` profile may fall back to `ws://spring-cloud-gateway:8080/ws/game` when `GATEWAY_WS_URL` is unset, but shared and player-facing environments must set `GATEWAY_WS_URL` explicitly. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
+- The TCP Proxy Service listens on port `2323` by default so Telnet clients can simply connect without additional configuration. This and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables). `GATEWAY_WS_URL` should always be set explicitly by deployment config; local Compose smoke also sets it explicitly to the canonical in-stack target. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
 - Normal Telnet clients connect, optionally browse `WORLDS`, then issue `LOGIN` and `PLAY` before gameplay commands. Typed `SESSION` lines are no longer part of the Telnet contract. If smart-client attach hints return later, they should travel as hidden MCP metadata and remain advisory transport context only.
 
 The proxy establishes the Proxy → Gateway gameplay WebSocket lazily for each Telnet connection:
@@ -240,7 +240,7 @@ Resume affects gameplay identity and session binding, not transport continuity:
 ### WebSocket Bridge Configuration
 
 The TCP Proxy Service acts as the bridge and speaks directly to Spring Cloud Gateway through the WebSocket route that also serves modern clients. The TCP Proxy Service uses the
-`GATEWAY_WS_URL` environment variable (no global default; the TCP Proxy’s `dev` profile may fall back to `ws://spring-cloud-gateway:8080/ws/game` when unset) so the proxy always connects to the `/ws/game/**` predicate shown in the
+`GATEWAY_WS_URL` environment variable so the proxy always connects to the `/ws/game/**` predicate shown in the
 [Gateway Architecture](./system-architecture-gateway.md) document (`Path=/api/session/**,/ws/game/**`). This keeps the Telnet flow and the web client flow aligned:
 they both traverse the same filters, metrics, and downstream `game-session-service` backend.
 

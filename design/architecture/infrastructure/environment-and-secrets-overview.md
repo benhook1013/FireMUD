@@ -24,7 +24,7 @@ This section summarizes the **most important environment variables and rotation 
 
 This document describes the canonical environment and secret target state. The first implementation pass now covers the highest-risk deployment-critical pieces:
 
-- Player-facing JWT signing material can come from `FIREMUD_AUTH_JWT_SECRET_PATH` without requiring inline `firemud.auth.jwt-secret` in non-dev profiles.
+- Player-facing JWT signing material can come from `FIREMUD_AUTH_JWT_SECRET_PATH` without requiring inline `firemud.auth.jwt-secret` in canonical non-test runtimes.
 - Account Service can serve JWKS from the environment-provided `jwt-jwks` resource while preserving the packaged classpath fallback for local/dev.
 - Hosted `pr-preview` rendering produces preview-unique JWT signing material and matching JWKS data per namespace instead of relying on one shared inline JWT secret.
 - `dev-tools/deploy/preflight.sh` consumes player-facing expected-binding manifests under `design/operations/environments/`, emits `expectedBindingsRef`, and validates the first required binding fields and policy IDs.
@@ -35,7 +35,7 @@ Remaining deployment evidence work is narrower: the traffic-open backup gates va
 
 | Variable | Purpose | Notes |
 | -------- | ------- | ----- |
-| `SPRING_PROFILES_ACTIVE` | Spring profile (`dev` or `prod`) | Kubernetes manifests and any shared environment must set this explicitly (do not rely on defaults). |
+| `SPRING_PROFILES_ACTIVE` | Optional Spring profile override | Keep unset for canonical runtime; reserve it for explicit cases such as `test`. |
 
 ### PostgreSQL (Authoritative Data)
 
@@ -98,7 +98,7 @@ For full descriptions of the variables and their defaults, open `environment-and
 
 ### Shared and Player-Facing Kubernetes Environments
 
-This section describes the Kubernetes-backed environments that use the shared `prod` application profile and Kubernetes Secrets delivery model. Unless a bullet explicitly says `production` only, the rules here apply to `hobby-self-hosted`, `staging`, and `production`.
+This section describes the Kubernetes-backed environments that use the canonical runtime configuration and Kubernetes Secrets delivery model. Unless a bullet explicitly says `production` only, the rules here apply to `hobby-self-hosted`, `staging`, and `production`.
 
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
 - Sensitive values (database passwords, JWT signing keys, TLS certificates) are stored in Kubernetes `Secret` objects.

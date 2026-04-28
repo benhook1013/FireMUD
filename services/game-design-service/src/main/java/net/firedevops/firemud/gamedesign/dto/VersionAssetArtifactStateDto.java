@@ -14,4 +14,14 @@ public record VersionAssetArtifactStateDto(
     String lastErrorCode,
     String lastErrorMessage,
     LocalDateTime updatedAt,
-    List<String> exportedManifestAssetKeys) {}
+    List<String> exportedManifestAssetKeys) {
+  public VersionAssetArtifactStateDto {
+    exportedManifestAssetKeys =
+        exportedManifestAssetKeys == null ? List.of() : List.copyOf(exportedManifestAssetKeys);
+  }
+
+  @Override
+  public List<String> exportedManifestAssetKeys() {
+    return exportedManifestAssetKeys;
+  }
+}

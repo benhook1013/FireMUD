@@ -39,7 +39,7 @@ When this document says an environment “must” satisfy a gate, that is a targ
 - `traffic-open`: the operational state in which an environment is allowed to accept external player traffic. Player-facing environments do not become traffic-open merely because workloads are healthy; they must also satisfy the applicable backup, recovery, and preflight gates for that event.
 - `promotion candidate`: a staging deployment record that is eligible to produce production promotion evidence. Detached or quarantined staging drills may be valid operational exercises without being promotion candidates.
 - `production`: the primary player-facing environment with the strictest change gates and mandatory scheduled backup posture.
-- `shared prod-profile Kubernetes environments`: Kubernetes-backed environments that run the shared Spring `prod` profile and Kubernetes Secret delivery model. This includes `dev-demo-cluster`, `hobby-self-hosted`, `staging`, and `production`, though only the player-facing subset inherits the stricter traffic-open controls.
+- `shared canonical-runtime Kubernetes environments`: Kubernetes-backed environments that run the shared canonical runtime configuration and Kubernetes Secret delivery model. This includes `dev-demo-cluster`, `hobby-self-hosted`, `staging`, and `production`, though only the player-facing subset inherits the stricter traffic-open controls.
 
 ---
 

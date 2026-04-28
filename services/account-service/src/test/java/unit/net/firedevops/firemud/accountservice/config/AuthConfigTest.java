@@ -13,10 +13,10 @@ import org.springframework.core.env.StandardEnvironment;
 
 class AuthConfigTest {
   @Test
-  void generatesSecretWhenMissingInDev() {
+  void generatesSecretWhenMissingInTestProfile() {
     AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext();
     StandardEnvironment env = new StandardEnvironment();
-    env.setActiveProfiles("dev");
+    env.setActiveProfiles("test");
     env.getPropertySources()
         .addFirst(
             new MapPropertySource("test", Map.of("firemud.auth.jwt-expiration-ms", "3600000")));

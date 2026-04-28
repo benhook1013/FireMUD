@@ -140,18 +140,18 @@ public class CommonSecurityAutoConfiguration {
             "firemud.auth.jwt-secret-path could not be read: " + secretPath, ex);
       }
     }
-    boolean devLike =
+    boolean testProfileActive =
         Arrays.stream(environment.getActiveProfiles())
             .map(String::toLowerCase)
-            .anyMatch(profile -> profile.equals("dev") || profile.equals("test"));
-    if (!devLike) {
+            .anyMatch(profile -> profile.equals("test"));
+    if (!testProfileActive) {
       throw new IllegalStateException(
           "firemud.auth.jwt-secret or firemud.auth.jwt-secret-path must be set");
     }
     String generated =
         UUID.randomUUID().toString().replace("-", "")
             + UUID.randomUUID().toString().replace("-", "");
-    logger.info("Generated random JWT secret for development profile");
+    logger.info("Generated random JWT secret for test profile");
     props.setJwtSecret(generated);
     return generated;
   }

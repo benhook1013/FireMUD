@@ -23,6 +23,9 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected collaborators remain internal service dependencies")
 public class AssetExportServiceImpl implements AssetExportService {
   private final GameAssetRepository repository;
 

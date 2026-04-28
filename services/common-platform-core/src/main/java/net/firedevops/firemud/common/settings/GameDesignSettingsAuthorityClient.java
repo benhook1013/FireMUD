@@ -21,6 +21,7 @@ public class GameDesignSettingsAuthorityClient
     extends AbstractReloadingBlockingGrpcClient<GameDesignServiceGrpc.GameDesignServiceBlockingStub>
     implements SharedSettingsAuthorityReader {
   private static final Duration DEFAULT_CACHE_TTL = Duration.ofSeconds(5);
+  private static final Duration DEFAULT_FETCH_DEADLINE = Duration.ofSeconds(2);
 
   private final ConcurrentHashMap<CacheKey, CacheEntry> cache = new ConcurrentHashMap<>();
   private final Clock clock;
@@ -107,7 +108,7 @@ public class GameDesignSettingsAuthorityClient
     try {
       var response =
           stub()
-              .withDeadlineAfter(250L, TimeUnit.MILLISECONDS)
+              .withDeadlineAfter(DEFAULT_FETCH_DEADLINE.toMillis(), TimeUnit.MILLISECONDS)
               .getScopedSettingsOverrides(request.build());
       ScopedSettingsSnapshot snapshot =
           response.hasError()
