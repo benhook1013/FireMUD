@@ -75,20 +75,14 @@ Current implementation limitations:
 ## Current transport stance
 
 - Preview keeps the **target-state** service topology, auth/session model, and per-PR namespace isolation.
-- Preview currently uses a temporary plaintext internal gRPC exception while the Spring gRPC SSL-bundle migration is still being re-proven. That exception is preview-only, must remain documented here and in the transport-alignment slice, and must be removed once preview mTLS is validated end-to-end again.
-- The presence of mounted gRPC TLS material and `FIREMUD_GRPC_PLAINTEXT: "false"` in the example values should not be read as proof that preview mTLS is currently authoritative end to end. The documented contract remains "preview plaintext exception until re-proven."
-- The canonical non-local target state remains Spring Boot SSL bundles plus Spring gRPC server SSL-bundle binding for internal gRPC everywhere outside intentionally relaxed local development.
-- The explicit cleanup path is:
-  - keep preview transport expectations documented,
-  - migrate services away from legacy top-level `grpc.server.*` assumptions to `spring.grpc.server.ssl.*` with `spring.ssl.bundle.*`,
-  - add CI/static checks to prevent legacy server-TLS property drift,
-  - remove the temporary preview plaintext exception after preview mTLS is re-proved.
+- Preview now follows the same Spring Boot SSL-bundle plus Spring gRPC server SSL-bundle binding contract as the other Kubernetes-backed environments.
+- The checked-in Helm values mount workload mTLS material, set `FIREMUD_GRPC_PLAINTEXT: "false"`, and keep the internal gRPC topology aligned with the non-local target state rather than carrying a separate preview-only plaintext mode.
+- The remaining transport distinction in preview is the TCP bridge's `ws://spring-cloud-gateway/ws/game` bootstrap path for reviewer-facing Telnet smoke, not an internal gRPC plaintext exception.
 
 ## Current network-policy stance
 
-- Hosted preview currently does not render checked-in `NetworkPolicy` resources from the Helm chart.
-- The player-facing Kustomize/base path has baseline internal-service policies, but hosted preview/dev-demo are still an explicit parity gap rather than a silent inheritance of those manifests.
-- That gap is tracked as deployment-contract convergence work, not treated as the settled long-term environment posture.
+- Hosted preview now renders checked-in baseline internal-service `NetworkPolicy` resources from the Helm chart.
+- The player-facing Kustomize/base path and the hosted preview/dev-demo path now share one checked-in baseline policy posture, even though the actual environment classes still differ in lifecycle and operational scope.
 
 ## Current TCP bootstrap contract
 

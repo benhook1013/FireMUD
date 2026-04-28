@@ -1,2 +1,4 @@
 previewStack:
   enabled: false
+  networkPolicies:
+    enabled: true

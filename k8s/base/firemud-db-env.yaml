@@ -17,30 +17,3 @@ data:
   OTEL_ENDPOINT: http://otel-collector:4317
   FLUENT_ELASTICSEARCH_HOST: elasticsearch
   FLUENT_ELASTICSEARCH_PORT: "9200"
----
-apiVersion: v1
-kind: Secret
-metadata:
-  namespace: firemud
-  name: postgres-credentials
-data:
-  FIREMUD_POSTGRES_USER: ZmlyZW11ZA==
-  FIREMUD_POSTGRES_PASSWORD: ZmlyZW11ZA==
----
-apiVersion: v1
-kind: Secret
-metadata:
-  namespace: firemud
-  name: jwt-signing-keys
-type: Opaque
-stringData:
-  current.key: changeit-changeit-changeit-changeit
----
-apiVersion: v1
-kind: Secret
-metadata:
-  namespace: firemud
-  name: jwt-jwks
-type: Opaque
-stringData:
-  jwks.json: '{"keys":[]}'

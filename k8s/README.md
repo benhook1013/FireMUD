@@ -3,7 +3,7 @@
 This directory contains the repository's Kubernetes-side deployment assets. The current deployment surfaces are not all equal:
 
 - `k8s/helm/firemud/` is the exercised hosted deployment path for `pr-preview` and `dev-demo-cluster`.
-- `overlays/` is the intended Git-tracked Kustomize path for staging and production, but it is still under deployment-contract convergence rather than being a finished doc-first canonical surface today.
+- `overlays/` is the Git-tracked Kustomize path for staging and production, with digest-pinned workload images and externally managed bootstrap bindings enforced by preflight.
 - `base/` contains a baseline manifest set that is useful for reference and ad hoc cluster bring-up, but it is not the main player-facing deployment contract.
 - `network-policies/`, `monitoring/`, `preview/`, `postgres/`, `velero/`, and the Terraform directories provide supporting infrastructure assets.
 
@@ -35,20 +35,14 @@ kubectl apply -k k8s/overlays/prod
 The staging overlay is intentionally treated as disposable by default and does not include production backup schedules.
 PRs that modify `k8s/` run `.github/workflows/validate-kustomize-overlays.yml`, which blocks staging backup schedules unless `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 
-Important current limitation:
+Player-facing bootstrap bindings are intentionally environment-owned rather than rendered inline in the overlays. The canonical Kustomize path expects:
 
-- the overlay path is still a staged player-facing scaffold, not a finished doc-first deployment contract
-- it currently relies on the baked-in `base/` substrate and its bootstrap placeholder resources
-- the larger convergence work to make overlays fully trustworthy as canonical player-facing deployment truth is tracked separately in `02.15.9`
+- `base/firemud-db-env.yaml` for the shared `firemud-config` `ConfigMap`
+- externally managed `postgres-credentials`, `jwt-signing-keys`, and `jwt-jwks` Secrets
+- externally managed workload mTLS material such as `firemud-grpc-tls`
+- expected-binding manifests under `design/operations/environments/*` plus `dev-tools/deploy/preflight.sh` to validate that those bindings match the target environment contract
 
-The shared baseline config and secret inputs include:
-
-- `base/firemud-db-env.yaml` for the `firemud-config` `ConfigMap`
-- `postgres-credentials`
-- `jwt-signing-keys`
-- `jwt-jwks`
-
-The base manifests and overlays expect those names unless you intentionally customize them.
+The base manifests and overlays expect those names unless you intentionally customize them together with the matching expected-binding and operator bootstrap evidence.
 
 The canonical internal-service network policies are part of `base/`. The `network-policies/` directory is documentation-only now; apply the policy manifests from `base/` if you are selectively applying files outside Kustomize:
 
@@ -60,7 +54,7 @@ kubectl apply -n firemud -f base/internal-services-egress-network-policy.yaml
 The policy allows gRPC (8080, 6565) and OpenTelemetry traffic on port `4317` in
 addition to database access.
 
-Hosted preview/dev-demo currently do not render checked-in `NetworkPolicy` resources from the Helm chart. That is a deliberate current gap in hosted-environment parity, not an accident in this README.
+Hosted preview/dev-demo now also render their own checked-in baseline internal-service network policies from `k8s/helm/firemud`, so the hosted path no longer silently diverges from the player-facing policy posture.
 
 ## Monitoring Components
 

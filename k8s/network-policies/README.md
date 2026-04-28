@@ -16,4 +16,4 @@ the Redis roles with `app` labels `redis-coord` and `redis-cache`. The policies
 reference those labels directly. Update the selectors if your release naming or
 labels differ.
 
-Hosted preview/dev-demo currently do not render these policies from the `k8s/helm/firemud` chart. If hosted-environment policy parity becomes required, add explicit Helm chart resources rather than assuming the base Kustomize policies apply automatically.
+Hosted preview/dev-demo now render matching baseline internal-service policies from the `k8s/helm/firemud` chart. The hosted chart uses chart-specific selectors for the preview stack's pod labels and stateful support services; keep the base and Helm variants aligned when the baseline posture changes.

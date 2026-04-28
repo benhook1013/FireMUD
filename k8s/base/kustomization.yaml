@@ -4,8 +4,6 @@ kind: Kustomization
 resources:
   - firemud-db-env.yaml
   - service-account.yaml
-  - firemud-grpc-certificate.yaml
-  - firemud-grpc-tls.yaml
   - account-service.yaml
   - automation-scripting-service.yaml
   - entity-management-service.yaml

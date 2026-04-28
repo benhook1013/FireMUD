@@ -60,5 +60,4 @@ Current limitation:
 
 - The umbrella chart is now the real hosted deploy path for preview and dev-demo, including Helm apply and hosted smoke.
 - Hosted environments still intentionally clean-redeploy today rather than preserving mutable state across updates.
-- Hosted environments do not yet render checked-in `NetworkPolicy` resources from this chart; policy parity with the staged Kustomize path remains separate convergence work.
 - The broader frontend/runtime delivery path remains under implementation even though the TCP-first hosted proof path is live.

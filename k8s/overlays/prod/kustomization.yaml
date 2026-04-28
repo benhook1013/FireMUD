@@ -5,3 +5,27 @@ resources:
   - ../../base
   - ../../postgres
   - ../../velero
+
+images:
+  - name: ghcr.io/benhook1013/account-service
+    digest: sha256:00816d58cbbd84b7a61ecf863984eb4c39f882dd82e9f4f381a02ef680c3f0c7
+  - name: ghcr.io/benhook1013/automation-scripting-service
+    digest: sha256:b25a68b96042f3942767e073aa0be9092e8c76ca90ad5157759dcb046fef46e1
+  - name: ghcr.io/benhook1013/entity-management-service
+    digest: sha256:ab81195d33e3db9f69c30af2bda386259e1080e2eef9b082dcdc89d7affd2e69
+  - name: ghcr.io/benhook1013/game-design-service
+    digest: sha256:c125a206d8d20d9536f0c9794be70aecca0587bc31168bc91733fab1f4c0d2b1
+  - name: ghcr.io/benhook1013/game-logic-service
+    digest: sha256:71433f7cbd7c41acc659d3e6854f643d5d5331cadc1f0ecfa3ff90ad727640b1
+  - name: ghcr.io/benhook1013/game-session-service
+    digest: sha256:7710f543c7346bfe15c04c73c3a44a55a91e5355395cc2829ade2dbb80dcd981
+  - name: ghcr.io/benhook1013/logging-admin-service
+    digest: sha256:ef7e8457d5f578d2b8f54c18484e5b123df78875cc49091bc30ef28e67e79e5b
+  - name: ghcr.io/benhook1013/social-groups-service
+    digest: sha256:84ed1f5795d3b3c9144d7a69123156eed2ca9888f2977e1006774224ede3286b
+  - name: ghcr.io/benhook1013/spring-cloud-gateway
+    digest: sha256:23ec30421f9c22f492861dd23769209d754ef35679620f2fe00be5045f2787b5
+  - name: ghcr.io/benhook1013/tcp-proxy-service
+    digest: sha256:4946993cad13c126cf88a214631d10894d1a044eefaccb682822706b60467870
+  - name: ghcr.io/benhook1013/world-management-service
+    digest: sha256:2a89019959fb6e87c92986d9b8160f931b9a04e1c77600825bbcc360bc3bbcb2

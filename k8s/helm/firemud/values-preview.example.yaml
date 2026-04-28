@@ -9,6 +9,8 @@ preview:
 
 previewStack:
   enabled: true
+  networkPolicies:
+    enabled: true
   defaultImageTag: pr-123-deadbeef
   imagePullSecrets:
     - ghcr-preview-pull

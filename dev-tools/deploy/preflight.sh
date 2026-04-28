@@ -95,6 +95,46 @@ raise SystemExit(1)
 PY
 }
 
+rendered_references_secret() {
+  local name="$1"
+  python3 - <<'PY' "$RENDERED_PATH" "$name"
+import pathlib
+import sys
+import yaml
+
+path = pathlib.Path(sys.argv[1])
+name = sys.argv[2]
+documents = [
+    document
+    for document in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+
+def walk(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from walk(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from walk(item)
+
+for document in documents:
+    for node in walk(document):
+        if not isinstance(node, dict):
+            continue
+        if node.get("secretName") == name:
+            raise SystemExit(0)
+        secret_ref = node.get("secretRef")
+        if isinstance(secret_ref, dict) and secret_ref.get("name") == name:
+            raise SystemExit(0)
+        secret_key_ref = node.get("secretKeyRef")
+        if isinstance(secret_key_ref, dict) and secret_key_ref.get("name") == name:
+            raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 WAIVER_PATH="${FIREMUD_PREFLIGHT_WAIVER:-}"
 WAIVED_IDS=""
 WAIVER_APPROVER=""
@@ -176,7 +216,8 @@ except Exception as exc:
 path = pathlib.Path(sys.argv[1])
 ref = sys.argv[2]
 env_class = sys.argv[3]
-rendered = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
+rendered_path = pathlib.Path(sys.argv[4])
+rendered = rendered_path.read_text(encoding="utf-8")
 context = sys.argv[5]
 
 def result(policy_id, required, status, message):
@@ -198,6 +239,36 @@ except Exception as exc:
     result("PREFLIGHT-EXTERNAL-001", True, "fail", "Expected-bindings manifest is unreadable")
     result("PREFLIGHT-SERVICES-001", True, "fail", "Expected-bindings manifest is unreadable")
     raise SystemExit(0)
+
+documents = [
+    document
+    for document in yaml.safe_load_all(rendered)
+    if isinstance(document, dict)
+]
+
+def walk(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from walk(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from walk(item)
+
+def rendered_references_secret(name):
+    for document in documents:
+        for node in walk(document):
+            if not isinstance(node, dict):
+                continue
+            if node.get("secretName") == name:
+                return True
+            secret_ref = node.get("secretRef")
+            if isinstance(secret_ref, dict) and secret_ref.get("name") == name:
+                return True
+            secret_key_ref = node.get("secretKeyRef")
+            if isinstance(secret_key_ref, dict) and secret_key_ref.get("name") == name:
+                return True
+    return False
 
 if data.get("environment") != env_class:
     result("PREFLIGHT-SECRETS-002", True, "fail", f"Expected-bindings environment mismatch in {ref}")
@@ -222,25 +293,25 @@ else:
         get(data, "internalBindings.jwt.signingKeysRef"),
         get(data, "internalBindings.jwt.jwksRef"),
     ]
-    missing_rendered = []
+    missing_rendered_refs = []
     for ref_value in secret_refs:
         if isinstance(ref_value, str) and ref_value.startswith("secret://"):
             name = ref_value.rstrip("/").split("/")[-1]
-            if not re.search(rf"name:\s*{re.escape(name)}(\s|$)", rendered):
-                missing_rendered.append(name)
+            if not rendered_references_secret(name):
+                missing_rendered_refs.append(name)
     if missing:
         result("PREFLIGHT-SECRETS-002", True, "fail", "Expected-bindings missing internal keys: " + ", ".join(missing))
-    elif missing_rendered:
-        result("PREFLIGHT-SECRETS-002", True, "fail", "Rendered manifests missing expected Secret bindings: " + ", ".join(missing_rendered))
+    elif missing_rendered_refs:
+        result("PREFLIGHT-SECRETS-002", True, "fail", "Rendered workloads do not reference expected Secret bindings: " + ", ".join(missing_rendered_refs))
     else:
         result("PREFLIGHT-SECRETS-002", True, "pass", f"Internal state/trust bindings match {ref}")
 
 bootstrap_names = ["postgres-credentials", "jwt-signing-keys", "jwt-jwks"]
-missing_bootstrap = [name for name in bootstrap_names if not re.search(rf"name:\s*{re.escape(name)}(\s|$)", rendered)]
+missing_bootstrap = [name for name in bootstrap_names if not rendered_references_secret(name)]
 if missing_bootstrap:
-    result("PREFLIGHT-BOOTSTRAP-001", True, "fail", "Rendered manifests missing bootstrap resources: " + ", ".join(missing_bootstrap))
+    result("PREFLIGHT-BOOTSTRAP-001", True, "fail", "Rendered workloads do not reference bootstrap bindings: " + ", ".join(missing_bootstrap))
 else:
-    result("PREFLIGHT-BOOTSTRAP-001", True, "pass", "Minimum bootstrap secret/trust resources are present")
+    result("PREFLIGHT-BOOTSTRAP-001", True, "pass", "Rendered workloads reference the minimum bootstrap secret bindings")
 
 external_requirements = [
     ("backupStorage.bucket", None),
@@ -315,15 +386,28 @@ fi
 
 # PREFLIGHT-SECRETS-001
 secret_check_failed=0
-for secret_name in postgres-credentials jwt-signing-keys jwt-jwks; do
-  if ! rendered_has_resource Secret "$secret_name"; then
-    append_result "PREFLIGHT-SECRETS-001" "true" "fail" "Missing required Secret in rendered manifests: $secret_name"
-    secret_check_failed=1
-    break
+if [ "$CONTEXT" = "ci-static" ]; then
+  for secret_name in postgres-credentials jwt-signing-keys jwt-jwks; do
+    if ! rendered_references_secret "$secret_name"; then
+      append_result "PREFLIGHT-SECRETS-001" "true" "fail" "Rendered workloads do not reference required Secret binding: $secret_name"
+      secret_check_failed=1
+      break
+    fi
+  done
+  if [ "${secret_check_failed:-0}" -eq 0 ]; then
+    append_result "PREFLIGHT-SECRETS-001" "true" "pass" "Rendered workloads reference required player-facing Secret bindings"
   fi
-done
-if [ "${secret_check_failed:-0}" -eq 0 ]; then
-  append_result "PREFLIGHT-SECRETS-001" "true" "pass" "Required player-facing Secrets are present"
+else
+  for secret_name in postgres-credentials jwt-signing-keys jwt-jwks; do
+    if ! kubectl get secret -n firemud "$secret_name" >/dev/null 2>&1; then
+      append_result "PREFLIGHT-SECRETS-001" "true" "fail" "Missing required Secret in cluster: firemud/$secret_name"
+      secret_check_failed=1
+      break
+    fi
+  done
+  if [ "${secret_check_failed:-0}" -eq 0 ]; then
+    append_result "PREFLIGHT-SECRETS-001" "true" "pass" "Required player-facing Secrets exist in the target cluster"
+  fi
 fi
 
 JWT_JWKS_RESULTS="$(python3 - <<'PY' "$RENDERED_PATH"
@@ -424,10 +508,23 @@ elif missing_signing_mount:
 else:
     result("PREFLIGHT-JWT-001", "pass", "JWT file-path contract and signing Secret mounts are satisfied")
 
+def has_secret_reference(name):
+    for workload_name, container, volumes in [
+        item for document in documents for item in primary_containers(document)
+    ]:
+        for mounted_secret in volumes.values():
+            if mounted_secret == name:
+                return True
+        for entry in container.get("envFrom") or []:
+            secret_ref = entry.get("secretRef")
+            if isinstance(secret_ref, dict) and secret_ref.get("name") == name:
+                return True
+    return False
+
 if has_resource("ConfigMap", "jwt-jwks"):
     result("PREFLIGHT-JWKS-001", "fail", "jwt-jwks is configured as a ConfigMap in player-facing context")
-elif not has_resource("Secret", "jwt-jwks"):
-    result("PREFLIGHT-JWKS-001", "fail", "No jwt-jwks Secret found in rendered manifests")
+elif not has_resource("Secret", "jwt-jwks") and not has_secret_reference("jwt-jwks"):
+    result("PREFLIGHT-JWKS-001", "fail", "Rendered workloads do not reference jwt-jwks as a Secret")
 elif missing_jwks_mount:
     result("PREFLIGHT-JWKS-001", "fail", "Account Service does not mount jwt-jwks at the configured JWKS path: " + ", ".join(missing_jwks_mount))
 else:
