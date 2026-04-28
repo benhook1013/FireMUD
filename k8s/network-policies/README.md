@@ -15,3 +15,5 @@ Helm deployments name the PostgreSQL release `firemud-postgresql` and expose
 the Redis roles with `app` labels `redis-coord` and `redis-cache`. The policies
 reference those labels directly. Update the selectors if your release naming or
 labels differ.
+
+Hosted preview/dev-demo currently do not render these policies from the `k8s/helm/firemud` chart. If hosted-environment policy parity becomes required, add explicit Helm chart resources rather than assuming the base Kustomize policies apply automatically.

@@ -20,7 +20,7 @@ kubectl apply -n firemud -f spring-cloud-gateway.yaml
 
 These manifests assume a `firemud` namespace.
 
-These files expose the services internally using `ClusterIP` (except the gateway and TCP proxy which are `LoadBalancer`). They also carry more baked-in assumptions than a purely minimal example set, including explicit `prod` profile usage, JWT/JWKS mounts, gRPC TLS mounts, and Fluent Bit sidecars in some services. See the [Deployment Environments](../../design/architecture/infrastructure/deployment-environments.md) document for the canonical player-facing deployment paths.
+These files expose the services internally using `ClusterIP` (except the gateway and TCP proxy which are `LoadBalancer`). They also carry more baked-in assumptions than a purely minimal example set, including explicit `prod` profile usage, JWT/JWKS mounts, gRPC TLS mounts, and Fluent Bit sidecars in some services. Today `base/` still also carries bootstrap placeholder Secrets/TLS material for repo validation and ad hoc bring-up, so it should be treated as a baseline scaffold rather than a finished player-facing contract.
 
 Ports align with the design documents:
 
@@ -32,7 +32,7 @@ All deployments include readiness probes against `/actuator/health/readiness`, l
 
 ## Database Settings
 
-All Spring Boot services expect PostgreSQL and Redis connection details via environment variables. The baseline set also expects additional auth-related Secrets such as `jwt-signing-keys` and `jwt-jwks` where applicable. A `firemud-config` `ConfigMap` and `postgres-credentials` `Secret` are provided to supply the shared database and observability values:
+All Spring Boot services expect PostgreSQL and Redis connection details via environment variables. The baseline set also expects additional auth-related Secrets such as `jwt-signing-keys` and `jwt-jwks` where applicable. The current `firemud-config`, `postgres-credentials`, JWT/JWKS, and gRPC TLS resources in this folder include bootstrap placeholder content for reference and repo validation; operators should replace them with environment-owned resources before treating any cluster as player-facing:
 
 ```bash
 FIREMUD_POSTGRES_HOST=postgres

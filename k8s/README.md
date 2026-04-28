@@ -2,8 +2,8 @@
 
 This directory contains the repository's Kubernetes-side deployment assets. The current deployment surfaces are not all equal:
 
-- `overlays/` is the canonical Kustomize path for player-facing staging and production-style deployments.
-- `k8s/helm/firemud/` is the hosted preview and dev-demo chart path.
+- `k8s/helm/firemud/` is the exercised hosted deployment path for `pr-preview` and `dev-demo-cluster`.
+- `overlays/` is the intended Git-tracked Kustomize path for staging and production, but it is still under deployment-contract convergence rather than being a finished doc-first canonical surface today.
 - `base/` contains a baseline manifest set that is useful for reference and ad hoc cluster bring-up, but it is not the main player-facing deployment contract.
 - `network-policies/`, `monitoring/`, `preview/`, `postgres/`, `velero/`, and the Terraform directories provide supporting infrastructure assets.
 
@@ -35,6 +35,12 @@ kubectl apply -k k8s/overlays/prod
 The staging overlay is intentionally treated as disposable by default and does not include production backup schedules.
 PRs that modify `k8s/` run `.github/workflows/validate-kustomize-overlays.yml`, which blocks staging backup schedules unless `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 
+Important current limitation:
+
+- the overlay path is still a staged player-facing scaffold, not a finished doc-first deployment contract
+- it currently relies on the baked-in `base/` substrate and its bootstrap placeholder resources
+- the larger convergence work to make overlays fully trustworthy as canonical player-facing deployment truth is tracked separately in `02.15.9`
+
 The shared baseline config and secret inputs include:
 
 - `base/firemud-db-env.yaml` for the `firemud-config` `ConfigMap`
@@ -53,6 +59,8 @@ kubectl apply -n firemud -f base/internal-services-egress-network-policy.yaml
 
 The policy allows gRPC (8080, 6565) and OpenTelemetry traffic on port `4317` in
 addition to database access.
+
+Hosted preview/dev-demo currently do not render checked-in `NetworkPolicy` resources from the Helm chart. That is a deliberate current gap in hosted-environment parity, not an accident in this README.
 
 ## Monitoring Components
 
