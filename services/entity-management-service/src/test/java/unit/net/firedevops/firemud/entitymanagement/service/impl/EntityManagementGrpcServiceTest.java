@@ -73,7 +73,17 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(service.requireValid(Mockito.anyString()))
         .thenReturn(
             new GameplaySessionAttestationClaims(
-                "GAMEPLAY_SESSION", "1", "41", "test-account", "7", "GI-1", "R-1"));
+                "GAMEPLAY_SESSION",
+                "1",
+                "41",
+                "test-account",
+                "7",
+                "GI-1",
+                "R-1",
+                "demo",
+                "production",
+                "17",
+                "SHARED"));
     return service;
   }
 

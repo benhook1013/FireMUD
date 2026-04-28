@@ -41,9 +41,9 @@ class RoomEntityServiceImplTest {
   @Test
   void returnsEntitiesForConfiguredRoom() {
     LookProperties.LookRoom room = new LookProperties.LookRoom();
-    room.getEntities().add(entity("P-1", "Sora", EntityType.PLAYER, ReloadHint.STABLE));
-    room.getEntities().add(entity("NPC-1", "Kobold Scout", EntityType.NPC, ReloadHint.STABLE));
-    props.getRooms().put("1:R-1021", room);
+    room.addEntity(entity("P-1", "Sora", EntityType.PLAYER, ReloadHint.STABLE));
+    room.addEntity(entity("NPC-1", "Kobold Scout", EntityType.NPC, ReloadHint.STABLE));
+    props.putRoom("1:R-1021", room);
 
     List<RoomEntityDto> listed = service.listEntities("1", "game-1", "R-1021");
     assertEquals(2, listed.size());

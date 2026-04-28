@@ -125,7 +125,11 @@ public class GameLogicClient
                     Long.toString(context.accountId()),
                     characterId,
                     gameInstanceId,
-                    roomId))
+                    roomId,
+                    context.worldSlug(),
+                    context.realmSlug(),
+                    pointerVersionClaim(context),
+                    context.playableStateScope()))
             .build();
     return callStub().resolveLook(request);
   }
@@ -185,7 +189,16 @@ public class GameLogicClient
             .setEffectId(effectId == null ? "" : effectId)
             .setSessionAttestation(
                 gameplaySessionAttestationService.issueGameplaySessionAttestation(
-                    tenantId, sessionId, accountId, characterId, gameInstanceId, roomId))
+                    tenantId,
+                    sessionId,
+                    accountId,
+                    characterId,
+                    gameInstanceId,
+                    roomId,
+                    context.worldSlug(),
+                    context.realmSlug(),
+                    pointerVersionClaim(context),
+                    context.playableStateScope()))
             .build();
     return callStub().sendCommunication(request);
   }
@@ -216,7 +229,11 @@ public class GameLogicClient
                     Long.toString(context.accountId()),
                     characterId,
                     gameInstanceId,
-                    roomId))
+                    roomId,
+                    context.worldSlug(),
+                    context.realmSlug(),
+                    pointerVersionClaim(context),
+                    context.playableStateScope()))
             .build();
     return callStub().resolveMove(request);
   }
@@ -701,7 +718,15 @@ public class GameLogicClient
         Long.toString(context.accountId()),
         Long.toString(context.characterId()),
         Long.toString(context.gameInstanceId()),
-        roomId);
+        roomId,
+        context.worldSlug(),
+        context.realmSlug(),
+        pointerVersionClaim(context),
+        context.playableStateScope());
+  }
+
+  private String pointerVersionClaim(SessionContext context) {
+    return context.pointerVersion() > 0 ? Long.toString(context.pointerVersion()) : null;
   }
 
   private ErrorDetail error(String code, String message) {

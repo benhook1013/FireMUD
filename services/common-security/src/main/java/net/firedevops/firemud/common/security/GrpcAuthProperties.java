@@ -16,7 +16,7 @@ public class GrpcAuthProperties {
   }
 
   public List<String> getPublicMethods() {
-    return publicMethods;
+    return List.copyOf(publicMethods);
   }
 
   public void setPublicMethods(List<String> publicMethods) {

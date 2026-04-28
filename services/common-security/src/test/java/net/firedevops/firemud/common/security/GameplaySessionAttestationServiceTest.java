@@ -18,7 +18,9 @@ class GameplaySessionAttestationServiceTest {
 
   @Test
   void requireGameplaySessionMatchAllowsOmittedOptionalDimensions() {
-    String token = service.issueGameplaySessionAttestation("22", "41", "7", "123", "1", "1021");
+    String token =
+        service.issueGameplaySessionAttestation(
+            "22", "41", "7", "123", "1", "1021", "demo", "production", "17", "SHARED");
 
     assertDoesNotThrow(
         () -> service.requireGameplaySessionMatch(token, "22", null, null, "123", "1", "1021"));
@@ -26,7 +28,9 @@ class GameplaySessionAttestationServiceTest {
 
   @Test
   void requireGameplaySessionMatchStillRejectsProvidedMismatchedDimensions() {
-    String token = service.issueGameplaySessionAttestation("22", "41", "7", "123", "1", "1021");
+    String token =
+        service.issueGameplaySessionAttestation(
+            "22", "41", "7", "123", "1", "1021", "demo", "production", "17", "SHARED");
 
     GameplaySessionAttestationException ex =
         assertThrows(
@@ -35,6 +39,33 @@ class GameplaySessionAttestationServiceTest {
 
     assertEquals("SESSION_ATTESTATION_MISMATCH", ex.getCode());
     assertEquals("Gameplay session attestation does not match accountId", ex.getMessage());
+  }
+
+  @Test
+  void requireGameplaySessionMatchRejectsMismatchedAttestedRoutingScope() {
+    String token =
+        service.issueGameplaySessionAttestation(
+            "22", "41", "7", "123", "1", "1021", "demo", "production", "17", "SHARED");
+
+    GameplaySessionAttestationException ex =
+        assertThrows(
+            GameplaySessionAttestationException.class,
+            () ->
+                service.requireGameplaySessionMatch(
+                    token,
+                    "22",
+                    "41",
+                    "7",
+                    "123",
+                    "1",
+                    "1021",
+                    "demo",
+                    "production",
+                    "17",
+                    "ISOLATED"));
+
+    assertEquals("SESSION_ATTESTATION_MISMATCH", ex.getCode());
+    assertEquals("Gameplay session attestation does not match playableStateScope", ex.getMessage());
   }
 
   @Test

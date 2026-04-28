@@ -1,5 +1,6 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import net.firedevops.firemud.entitymanagement.dto.EntityUpgradeValidationResultDto;
 import net.firedevops.firemud.entitymanagement.repository.CharacterEquipmentRepository;
@@ -15,6 +16,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected repositories are managed dependencies kept internal.")
 public class EntityUpgradeValidationServiceImpl implements EntityUpgradeValidationService {
   private static final List<String> STATE_CLASSES = List.of("S1", "S2", "S3");
   private static final List<String> CHECKED_FAMILIES =
@@ -61,10 +65,10 @@ public class EntityUpgradeValidationServiceImpl implements EntityUpgradeValidati
   public EntityUpgradeValidationResultDto validateEntityUpgradeMappings(
       long tenantId, long sourceGameInstanceId, long targetVersionId, String remapSetId) {
     String gameInstanceId = Long.toString(sourceGameInstanceId);
-    long characterRows = characterRepository.countByTenantId(tenantId);
+    characterRepository.countByTenantId(tenantId);
     long inventoryRows = inventoryEntryRepository.countByCharacterTenantId(tenantId);
     long equipmentRows = characterEquipmentRepository.countByCharacterTenantId(tenantId);
-    long friendRows = characterFriendRepository.countByTenantId(tenantId);
+    characterFriendRepository.countByTenantId(tenantId);
     itemInstanceRepository.countByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
     itemStackRepository.countByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
     containerInstanceRepository.countByTenantIdAndGameInstanceId(tenantId, gameInstanceId);

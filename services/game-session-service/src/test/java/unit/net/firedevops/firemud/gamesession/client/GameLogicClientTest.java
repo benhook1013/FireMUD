@@ -312,7 +312,8 @@ class GameLogicClientTest {
   private static GameLogicClient newClient() {
     GameplaySessionAttestationService attestationService =
         mock(GameplaySessionAttestationService.class);
-    when(attestationService.issueGameplaySessionAttestation("22", "41", "0", "123", "1", "1021"))
+    when(attestationService.issueGameplaySessionAttestation(
+            "22", "41", "0", "123", "1", "1021", null, null, null, null))
         .thenReturn("attestation");
     GameplayCatalogProperties properties = new GameplayCatalogProperties();
     GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();

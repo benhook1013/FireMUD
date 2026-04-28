@@ -1,5 +1,6 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -21,6 +22,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification =
+        "Injected configuration and repositories are managed dependencies kept internal.")
 public class RoomEntityServiceImpl implements RoomEntityService {
   private final LookProperties lookProperties;
   private final ItemInstanceRepository itemInstanceRepository;

@@ -21,7 +21,11 @@ public class GameplaySessionAttestationService {
       String accountId,
       String characterId,
       String gameInstanceId,
-      String roomInstanceId) {
+      String roomInstanceId,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
+      String playableStateScope) {
     requireText(tenantId, "tenantId");
     requireText(sessionId, "sessionId");
     requireText(accountId, "accountId");
@@ -29,14 +33,18 @@ public class GameplaySessionAttestationService {
     requireText(gameInstanceId, "gameInstanceId");
     return jwtUtil.generateToken(
         "gameplay-session:" + sessionId,
-        Map.of(
-            "attestationType", GAMEPLAY_SESSION,
-            "tenantId", tenantId,
-            "sessionId", sessionId,
-            "accountId", accountId,
-            "characterId", characterId,
-            "gameInstanceId", gameInstanceId,
-            "roomInstanceId", blankToEmpty(roomInstanceId)));
+        Map.ofEntries(
+            Map.entry("attestationType", GAMEPLAY_SESSION),
+            Map.entry("tenantId", tenantId),
+            Map.entry("sessionId", sessionId),
+            Map.entry("accountId", accountId),
+            Map.entry("characterId", characterId),
+            Map.entry("gameInstanceId", gameInstanceId),
+            Map.entry("roomInstanceId", blankToEmpty(roomInstanceId)),
+            Map.entry("worldSlug", blankToEmpty(worldSlug)),
+            Map.entry("realmSlug", blankToEmpty(realmSlug)),
+            Map.entry("pointerVersion", blankToEmpty(pointerVersion)),
+            Map.entry("playableStateScope", blankToEmpty(playableStateScope))));
   }
 
   public String issueInternalProbeAttestation(
@@ -46,14 +54,18 @@ public class GameplaySessionAttestationService {
     requireText(roomInstanceId, "roomInstanceId");
     return jwtUtil.generateToken(
         "gameplay-probe:" + tenantId + ":" + gameInstanceId + ":" + roomInstanceId,
-        Map.of(
-            "attestationType", INTERNAL_PROBE,
-            "tenantId", tenantId,
-            "sessionId", "0",
-            "accountId", "0",
-            "characterId", "0",
-            "gameInstanceId", gameInstanceId,
-            "roomInstanceId", roomInstanceId));
+        Map.ofEntries(
+            Map.entry("attestationType", INTERNAL_PROBE),
+            Map.entry("tenantId", tenantId),
+            Map.entry("sessionId", "0"),
+            Map.entry("accountId", "0"),
+            Map.entry("characterId", "0"),
+            Map.entry("gameInstanceId", gameInstanceId),
+            Map.entry("roomInstanceId", roomInstanceId),
+            Map.entry("worldSlug", ""),
+            Map.entry("realmSlug", ""),
+            Map.entry("pointerVersion", ""),
+            Map.entry("playableStateScope", "")));
   }
 
   public GameplaySessionAttestationClaims requireValid(String token) {
@@ -75,6 +87,10 @@ public class GameplaySessionAttestationService {
     String characterId = requireClaim(claims, "characterId");
     String gameInstanceId = requireClaim(claims, "gameInstanceId");
     String roomInstanceId = claimText(claims.get("roomInstanceId"));
+    String worldSlug = claimText(claims.get("worldSlug"));
+    String realmSlug = claimText(claims.get("realmSlug"));
+    String pointerVersion = claimText(claims.get("pointerVersion"));
+    String playableStateScope = claimText(claims.get("playableStateScope"));
     if (!GAMEPLAY_SESSION.equals(attestationType) && !INTERNAL_PROBE.equals(attestationType)) {
       throw new GameplaySessionAttestationException(
           "SESSION_ATTESTATION_INVALID", "Gameplay session attestation type is unsupported");
@@ -86,7 +102,11 @@ public class GameplaySessionAttestationService {
         accountId,
         characterId,
         gameInstanceId,
-        roomInstanceId);
+        roomInstanceId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        playableStateScope);
   }
 
   public void requireGameplaySessionMatch(
@@ -97,6 +117,32 @@ public class GameplaySessionAttestationService {
       String characterId,
       String gameInstanceId,
       String roomInstanceId) {
+    requireGameplaySessionMatch(
+        token,
+        tenantId,
+        sessionId,
+        accountId,
+        characterId,
+        gameInstanceId,
+        roomInstanceId,
+        null,
+        null,
+        null,
+        null);
+  }
+
+  public void requireGameplaySessionMatch(
+      String token,
+      String tenantId,
+      String sessionId,
+      String accountId,
+      String characterId,
+      String gameInstanceId,
+      String roomInstanceId,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
+      String playableStateScope) {
     GameplaySessionAttestationClaims claims = requireValid(token);
     if (!GAMEPLAY_SESSION.equals(claims.attestationType())) {
       throw new GameplaySessionAttestationException(
@@ -108,6 +154,10 @@ public class GameplaySessionAttestationService {
     requireOptionalEquals(claims.characterId(), characterId, "characterId");
     requireOptionalEquals(claims.gameInstanceId(), gameInstanceId, "gameInstanceId");
     requireOptionalEquals(claims.roomInstanceId(), roomInstanceId, "roomInstanceId");
+    requireOptionalEquals(claims.worldSlug(), worldSlug, "worldSlug");
+    requireOptionalEquals(claims.realmSlug(), realmSlug, "realmSlug");
+    requireOptionalEquals(claims.pointerVersion(), pointerVersion, "pointerVersion");
+    requireOptionalEquals(claims.playableStateScope(), playableStateScope, "playableStateScope");
   }
 
   public void requireGameplayOrProbeMatch(

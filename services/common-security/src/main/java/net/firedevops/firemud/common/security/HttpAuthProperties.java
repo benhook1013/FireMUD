@@ -26,7 +26,7 @@ public class HttpAuthProperties {
   }
 
   public List<String> getIncludePathPatterns() {
-    return includePathPatterns;
+    return List.copyOf(includePathPatterns);
   }
 
   public void setIncludePathPatterns(List<String> includePathPatterns) {
@@ -35,7 +35,7 @@ public class HttpAuthProperties {
   }
 
   public List<String> getPublicPathPatterns() {
-    return publicPathPatterns;
+    return List.copyOf(publicPathPatterns);
   }
 
   public void setPublicPathPatterns(List<String> publicPathPatterns) {

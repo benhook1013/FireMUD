@@ -1,5 +1,6 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
@@ -10,6 +11,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected repositories are managed dependencies kept internal.")
 public class RuntimeInstanceCleanupServiceImpl implements RuntimeInstanceCleanupService {
   private final RoomGroundInventoryRepository roomGroundInventoryRepository;
   private final ItemStackRepository itemStackRepository;

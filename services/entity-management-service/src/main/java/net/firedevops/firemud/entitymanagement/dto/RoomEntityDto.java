@@ -13,4 +13,8 @@ public record RoomEntityDto(
     int visionPriority,
     ReloadHint reloadHint,
     boolean visible,
-    String visibleRef) {}
+    String visibleRef) {
+  public RoomEntityDto {
+    stateFlags = stateFlags == null ? List.of() : List.copyOf(stateFlags);
+  }
+}

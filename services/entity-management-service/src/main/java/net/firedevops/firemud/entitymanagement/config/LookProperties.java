@@ -13,14 +13,22 @@ public class LookProperties {
   private final Map<String, LookRoom> rooms = new LinkedHashMap<>();
 
   public Map<String, LookRoom> getRooms() {
-    return rooms;
+    return Map.copyOf(rooms);
+  }
+
+  public void putRoom(String key, LookRoom room) {
+    rooms.put(key, room);
   }
 
   public static class LookRoom {
     private final List<LookEntity> entities = new ArrayList<>();
 
     public List<LookEntity> getEntities() {
-      return entities;
+      return List.copyOf(entities);
+    }
+
+    public void addEntity(LookEntity entity) {
+      entities.add(entity);
     }
   }
 
@@ -67,11 +75,11 @@ public class LookProperties {
     }
 
     public List<String> getStateFlags() {
-      return stateFlags;
+      return List.copyOf(stateFlags);
     }
 
     public void setStateFlags(List<String> stateFlags) {
-      this.stateFlags = stateFlags;
+      this.stateFlags = stateFlags == null ? new ArrayList<>() : new ArrayList<>(stateFlags);
     }
 
     public Integer getVisionPriority() {

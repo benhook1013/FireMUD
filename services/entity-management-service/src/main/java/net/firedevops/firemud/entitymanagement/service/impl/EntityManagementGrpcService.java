@@ -705,7 +705,8 @@ public class EntityManagementGrpcService
               request.getTenantId(),
               request.getCharacterId(),
               request.getGameInstanceId(),
-              null);
+              null,
+              request.getPlayableStateScope());
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -715,7 +716,7 @@ public class EntityManagementGrpcService
                   tenantId,
                   characterId,
                   resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
-                  requirePlayableStateScope(request.getPlayableStateScope()),
+                  resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                   Pageable.unpaged())
               .getContent();
       var items = entries.stream().map(this::toProto).toList();
@@ -767,7 +768,8 @@ public class EntityManagementGrpcService
               request.getTenantId(),
               request.getCharacterId(),
               request.getGameInstanceId(),
-              null);
+              null,
+              request.getPlayableStateScope());
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -776,7 +778,7 @@ public class EntityManagementGrpcService
               tenantId,
               characterId,
               resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
-              requirePlayableStateScope(request.getPlayableStateScope()));
+              resolvePlayableStateScope(request.getPlayableStateScope(), claims));
       QueryActorStateResponse response =
           QueryActorStateResponse.newBuilder()
               .setTenantId(String.valueOf(actorState.tenantId()))
@@ -850,7 +852,8 @@ public class EntityManagementGrpcService
               request.getTenantId(),
               request.getCharacterId(),
               request.getGameInstanceId(),
-              null);
+              null,
+              request.getPlayableStateScope());
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -859,7 +862,7 @@ public class EntityManagementGrpcService
               tenantId,
               characterId,
               resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
-              requirePlayableStateScope(request.getPlayableStateScope()),
+              resolvePlayableStateScope(request.getPlayableStateScope(), claims),
               request.getConditionKey(),
               request.getStackCount(),
               request.getSourceType(),
@@ -928,7 +931,8 @@ public class EntityManagementGrpcService
           request.getTenantId(),
           request.getCharacterId(),
           request.getGameInstanceId(),
-          null);
+          null,
+          request.getPlayableStateScope());
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -937,7 +941,7 @@ public class EntityManagementGrpcService
               tenantId,
               characterId,
               request.getGameInstanceId(),
-              requirePlayableStateScope(request.getPlayableStateScope()),
+              resolvePlayableStateScope(request.getPlayableStateScope(), null),
               Pageable.unpaged());
       ListEquipmentResponse response =
           ListEquipmentResponse.newBuilder()
@@ -990,7 +994,8 @@ public class EntityManagementGrpcService
               request.getTenantId(),
               request.getCharacterId(),
               request.getGameInstanceId(),
-              null);
+              null,
+              request.getPlayableStateScope());
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -1010,7 +1015,7 @@ public class EntityManagementGrpcService
                         tenantId,
                         characterId,
                         resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
-                        requirePlayableStateScope(request.getPlayableStateScope()),
+                        resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         itemId,
                         itemInstanceId,
                         blankToNull(request.getEffectId()),
@@ -1088,7 +1093,8 @@ public class EntityManagementGrpcService
               request.getTenantId(),
               request.getCharacterId(),
               request.getGameInstanceId(),
-              null);
+              null,
+              request.getPlayableStateScope());
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -1103,7 +1109,7 @@ public class EntityManagementGrpcService
                         tenantId,
                         characterId,
                         resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
-                        requirePlayableStateScope(request.getPlayableStateScope()),
+                        resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         request.getSlot(),
                         blankToNull(request.getEffectId()),
                         blankToNull(claims.sessionId()));
@@ -1174,7 +1180,8 @@ public class EntityManagementGrpcService
               request.getTenantId(),
               request.getCharacterId(),
               request.getGameInstanceId(),
-              null);
+              null,
+              request.getPlayableStateScope());
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -1185,7 +1192,7 @@ public class EntityManagementGrpcService
               characterId,
               containerInstanceId,
               resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
-              requirePlayableStateScope(request.getPlayableStateScope()),
+              resolvePlayableStateScope(request.getPlayableStateScope(), claims),
               blankToNull(claims.roomInstanceId()),
               Pageable.unpaged());
       ListContainerContentsResponse response =
@@ -1262,7 +1269,8 @@ public class EntityManagementGrpcService
               request.getTenantId(),
               request.getCharacterId(),
               request.getGameInstanceId(),
-              null);
+              null,
+              request.getPlayableStateScope());
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -1284,7 +1292,7 @@ public class EntityManagementGrpcService
                         characterId,
                         containerInstanceId,
                         resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
-                        requirePlayableStateScope(request.getPlayableStateScope()),
+                        resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         blankToNull(claims.roomInstanceId()),
                         itemId,
                         itemInstanceId,
@@ -1363,7 +1371,8 @@ public class EntityManagementGrpcService
               request.getTenantId(),
               request.getCharacterId(),
               request.getGameInstanceId(),
-              null);
+              null,
+              request.getPlayableStateScope());
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -1385,7 +1394,7 @@ public class EntityManagementGrpcService
                         characterId,
                         containerInstanceId,
                         resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
-                        requirePlayableStateScope(request.getPlayableStateScope()),
+                        resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         blankToNull(claims.roomInstanceId()),
                         itemId,
                         itemInstanceId,
@@ -1550,7 +1559,8 @@ public class EntityManagementGrpcService
               request.getTenantId(),
               request.getCharacterId(),
               request.getGameInstanceId(),
-              request.getRoomInstanceId());
+              request.getRoomInstanceId(),
+              request.getPlayableStateScope());
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -1567,7 +1577,7 @@ public class EntityManagementGrpcService
                         tenantId,
                         characterId,
                         request.getGameInstanceId(),
-                        requirePlayableStateScope(request.getPlayableStateScope()),
+                        resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         request.getRoomInstanceId(),
                         itemId,
                         request.getItemInstanceId().isBlank()
@@ -1648,7 +1658,8 @@ public class EntityManagementGrpcService
               request.getTenantId(),
               request.getCharacterId(),
               request.getGameInstanceId(),
-              request.getRoomInstanceId());
+              request.getRoomInstanceId(),
+              request.getPlayableStateScope());
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
@@ -1665,7 +1676,7 @@ public class EntityManagementGrpcService
                         tenantId,
                         characterId,
                         request.getGameInstanceId(),
-                        requirePlayableStateScope(request.getPlayableStateScope()),
+                        resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         request.getRoomInstanceId(),
                         itemId,
                         request.getItemInstanceId().isBlank()
@@ -1882,6 +1893,26 @@ public class EntityManagementGrpcService
     return playableStateScope;
   }
 
+  private PlayableStateScope resolvePlayableStateScope(
+      PlayableStateScope requestPlayableStateScope, GameplaySessionAttestationClaims claims) {
+    if (requestPlayableStateScope != null
+        && requestPlayableStateScope != PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED
+        && requestPlayableStateScope != PlayableStateScope.UNRECOGNIZED) {
+      return requestPlayableStateScope;
+    }
+    if (claims == null) {
+      throw new IllegalArgumentException("playableStateScope must be specified");
+    }
+    return switch (blankToNull(claims.playableStateScope())) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      case null -> throw new IllegalArgumentException("playableStateScope must be specified");
+      default ->
+          throw new IllegalArgumentException(
+              "Unsupported attested playableStateScope=" + claims.playableStateScope());
+    };
+  }
+
   private static ActorStateService unsupportedActorStateService() {
     return (tenantId, characterId, gameInstanceId, playableStateScope) -> {
       throw new UnsupportedOperationException("actor state service is not configured");
@@ -2089,12 +2120,36 @@ public class EntityManagementGrpcService
       String tenantId,
       String characterId,
       String gameInstanceId,
-      String roomInstanceId) {
+      String roomInstanceId,
+      PlayableStateScope playableStateScope) {
     GameplaySessionAttestationClaims claims = gameplaySessionAttestationService.requireValid(token);
     gameplaySessionAttestationService.requireGameplaySessionMatch(
-        token, tenantId, null, null, characterId, gameInstanceId, roomInstanceId);
+        token,
+        tenantId,
+        null,
+        null,
+        characterId,
+        gameInstanceId,
+        roomInstanceId,
+        null,
+        null,
+        null,
+        attestedPlayableStateScopeText(playableStateScope));
     requireInternalServiceCaller();
     return claims;
+  }
+
+  private String attestedPlayableStateScopeText(PlayableStateScope playableStateScope) {
+    if (playableStateScope == null
+        || playableStateScope == PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED
+        || playableStateScope == PlayableStateScope.UNRECOGNIZED) {
+      return null;
+    }
+    return switch (playableStateScope) {
+      case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
+      case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
+      default -> null;
+    };
   }
 
   private void requireGameplayOrProbeAttestation(

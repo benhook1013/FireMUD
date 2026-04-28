@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.security;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -11,6 +12,9 @@ public class HttpJwtAuthInterceptor implements HandlerInterceptor {
   private final JwtUtil jwtUtil;
   private final HttpAuthProperties props;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected auth properties are treated as application configuration.")
   public HttpJwtAuthInterceptor(JwtUtil jwtUtil, HttpAuthProperties props) {
     this.jwtUtil = jwtUtil;
     this.props = props;
