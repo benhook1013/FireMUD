@@ -2,8 +2,6 @@ package net.firedevops.firemud.gamesession;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.MeterRegistry;
 import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -18,6 +16,7 @@ import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
+import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.AfterAll;
@@ -135,7 +134,11 @@ class MultiplayerLoadProofCrossServiceTest {
                 });
       }
 
-      assertMetricEventually("gamesession.command.look.invocations", CLIENT_COUNT);
+      GameplayAsyncAssertions.assertMetricEventually(
+          GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+          COMMAND_WAIT,
+          "gamesession.command.look.invocations",
+          CLIENT_COUNT);
     } finally {
       executor.shutdownNow();
       executor.awaitTermination(5, TimeUnit.SECONDS);
@@ -218,23 +221,6 @@ class MultiplayerLoadProofCrossServiceTest {
       client.awaitStartsWith("OK LOOK");
       return new PlayerRunResult(player, List.copyOf(client.responses()));
     }
-  }
-
-  private void assertMetricEventually(String meterName, double expectedValue, String... tags)
-      throws Exception {
-    MeterRegistry registry = GAME_SESSION.bean(MeterRegistry.class);
-    long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
-    while (System.currentTimeMillis() < deadline) {
-      Counter counter = registry.find(meterName).tags(tags).counter();
-      if (counter != null && counter.count() >= expectedValue) {
-        return;
-      }
-      Thread.sleep(100);
-    }
-    Counter counter = registry.find(meterName).tags(tags).counter();
-    double actual = counter == null ? 0.0 : counter.count();
-    throw new AssertionError(
-        "Metric " + meterName + " did not reach " + expectedValue + "; actual=" + actual);
   }
 
   private record PlayerSeed(long sessionId, long accountId, String username, String label) {}

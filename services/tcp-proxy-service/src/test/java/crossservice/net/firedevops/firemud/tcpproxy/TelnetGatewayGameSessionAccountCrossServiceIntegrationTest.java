@@ -9,7 +9,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Predicate;
 import javax.sql.DataSource;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
@@ -29,7 +28,9 @@ import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
+import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayEntityAssertions;
+import net.firedevops.firemud.gamesession.testsupport.GameplayTranscriptMatchers;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
@@ -212,7 +213,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       telnetLookResponse = client.readBlockContaining("OK LOOK");
     }
 
-    assertThat(telnetLookResponse.trim()).matches(matchesCanonicalLookWithOptionalPrompt());
+    assertThat(telnetLookResponse.trim())
+        .matches(GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt());
 
     assertThat(ACCOUNT_STUB.capturedAuthenticateRequests())
         .anyMatch(
@@ -264,7 +266,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     assertThat(telnetMoveResponse.trim())
         .matches(
-            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+            GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                LookTestFixtures.DESTINATION_ROOM_ID));
     assertThat(telnetLookResponse)
         .contains("Room: Crafting Hall of Ember")
         .contains("A soot-dark hall ringed with anvils and cooling braziers.");
@@ -433,12 +436,16 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     assertThat(telnetMoveResponse.trim())
         .matches(
-            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+            GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                LookTestFixtures.DESTINATION_ROOM_ID));
     assertThat(telnetReplayResponse.trim())
         .matches(
-            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+            GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                LookTestFixtures.DESTINATION_ROOM_ID));
     assertThat(telnetReconnectLookResponse.trim())
-        .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+        .matches(
+            GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                LookTestFixtures.DESTINATION_ROOM_ID));
   }
 
   @Test
@@ -475,10 +482,11 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     assertThat(telnetMoveResponse.trim())
         .matches(
-            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+            GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                LookTestFixtures.DESTINATION_ROOM_ID));
     assertThat(telnetReplayResponse.trim()).isEqualTo("demo>");
     assertThat(telnetReconnectLookResponse.trim())
-        .matches(matchesCanonicalLookWithOptionalPrompt());
+        .matches(GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt());
   }
 
   @Test
@@ -494,13 +502,13 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       firstClient.play("demo");
       firstClient.sendLine("LOOK");
       assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK").trim())
-          .matches(matchesCanonicalLookWithOptionalPrompt());
+          .matches(GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt());
 
       secondClient.login("demo@example.com", "swordfish");
       secondClient.play("demo");
       secondClient.sendLine("LOOK");
       assertThat(secondClient.readBlockContainingOrTimeout("OK LOOK").trim())
-          .matches(matchesCanonicalLookWithOptionalPrompt());
+          .matches(GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt());
 
       firstClient.sendLine("LOOK");
       assertThat(firstClient.readLineContaining("ERROR LOGIN_REQUIRED"))
@@ -571,11 +579,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       assertThat(sessionRegistry.find(observerContext.sessionId())).isPresent();
 
       scenario.actor().sendLine("WHISPER Sora Keep quiet");
-      assertBufferedScreenEventuallyContains(
-          screenBufferService, targetContext, ChatTestFixtures.canonicalWhisperTargetText());
-      assertBufferedScreenEventuallyContains(
+      GameplayAsyncAssertions.assertBufferedScreenEventuallyContains(
+          screenBufferService,
+          targetContext,
+          COMMAND_WAIT,
+          ChatTestFixtures.canonicalWhisperTargetText());
+      GameplayAsyncAssertions.assertBufferedScreenEventuallyContains(
           screenBufferService,
           observerContext,
+          COMMAND_WAIT,
           ChatTestFixtures.canonicalWhisperObserverMetadataText());
       assertThat(scenario.actor().readLineContaining(ChatTestFixtures.canonicalWhisperText()))
           .contains(ChatTestFixtures.canonicalWhisperText());
@@ -610,8 +622,11 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       assertThat(sessionRegistry.find(targetContext.sessionId())).isPresent();
 
       scenario.actor().sendLine("TELL Sora Meet me at the forge");
-      assertBufferedScreenEventuallyContains(
-          screenBufferService, targetContext, ChatTestFixtures.canonicalTellTargetText());
+      GameplayAsyncAssertions.assertBufferedScreenEventuallyContains(
+          screenBufferService,
+          targetContext,
+          COMMAND_WAIT,
+          ChatTestFixtures.canonicalTellTargetText());
       assertThat(scenario.actor().readLineContaining(ChatTestFixtures.canonicalTellText()))
           .contains(ChatTestFixtures.canonicalTellText());
       assertThat(scenario.target().readLineContaining(ChatTestFixtures.canonicalTellTargetText()))
@@ -823,57 +838,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         this::openTelnetClient,
         GameplayTelnetScenarios.Admission.unnamed(
             "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT));
-  }
-
-  private static void assertBufferedScreenEventuallyContains(
-      ScreenBufferService screenBufferService, SessionContext context, String expectedSubstring)
-      throws InterruptedException {
-    long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
-    while (System.currentTimeMillis() < deadline) {
-      Optional<ScreenBufferService.BufferedScreen> maybeBuffer =
-          screenBufferService.get(
-              context.tenantId(), context.gameInstanceId(), context.characterId());
-      if (maybeBuffer.isPresent()
-          && maybeBuffer.orElseThrow().protocolText().contains(expectedSubstring)) {
-        return;
-      }
-      Thread.sleep(50L);
-    }
-    Optional<ScreenBufferService.BufferedScreen> maybeBuffer =
-        screenBufferService.get(
-            context.tenantId(), context.gameInstanceId(), context.characterId());
-    String actual = maybeBuffer.map(ScreenBufferService.BufferedScreen::protocolText).orElse("");
-    throw new AssertionError(
-        "Expected buffered screen to contain '" + expectedSubstring + "', got '" + actual + "'");
-  }
-
-  private static Predicate<String> matchesCanonicalLookWithOptionalPrompt() {
-    return matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.ROOM_ID);
-  }
-
-  private static Predicate<String> matchesCanonicalLookWithOptionalPrompt(String roomId) {
-    String canonical = LookTestFixtures.canonicalLookText(roomId).trim();
-    String leadingPrompt = "demo> \n" + canonical;
-    String trailingPrompt = canonical + "\n\ndemo>";
-    String wrappedPrompt = "demo> \n" + trailingPrompt;
-    return response ->
-        response.equals(canonical)
-            || response.equals(leadingPrompt)
-            || response.equals(trailingPrompt)
-            || response.equals(wrappedPrompt);
-  }
-
-  private static Predicate<String> matchesCanonicalMoveRefreshWithOptionalPrompt(String roomId) {
-    String canonical =
-        LookTestFixtures.canonicalLookText(roomId).replaceFirst("\\nLong: .*\\n", "\n").trim();
-    String leadingPrompt = "demo> \n" + canonical;
-    String trailingPrompt = canonical + "\n\ndemo>";
-    String wrappedPrompt = "demo> \n" + trailingPrompt;
-    return response ->
-        response.equals(canonical)
-            || response.equals(leadingPrompt)
-            || response.equals(trailingPrompt)
-            || response.equals(wrappedPrompt);
   }
 
   private static final class GameLogicHolder {

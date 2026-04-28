@@ -2,18 +2,17 @@ package net.firedevops.firemud.gamesession;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.MeterRegistry;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
-import java.util.function.Predicate;
 import javax.sql.DataSource;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
+import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
+import net.firedevops.firemud.gamesession.testsupport.GameplayTranscriptMatchers;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
@@ -106,11 +105,22 @@ class LookWebSocketCrossServiceTest {
     assertThat(responses.get(0)).startsWith("OK WORLDS");
     assertThat(responses.get(1)).startsWith("OK LOGIN");
     assertThat(responses.get(2)).startsWith("OK PLAY");
-    assertThat(responses.get(3).trim()).isEqualTo(canonicalLookWithPrompt());
+    assertThat(responses.get(3).trim())
+        .isEqualTo(GameplayTranscriptMatchers.canonicalLookWithPrompt());
     assertThat(responses.get(4)).startsWith("ERROR ROOM_NOT_FOUND");
 
-    assertMetricEventually("gamesession.command.look.invocations", 2.0);
-    assertMetricEventually("gamesession.command.look.failures", 1.0, "error", "ROOM_NOT_FOUND");
+    GameplayAsyncAssertions.assertMetricEventually(
+        GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+        COMMAND_WAIT,
+        "gamesession.command.look.invocations",
+        2.0);
+    GameplayAsyncAssertions.assertMetricEventually(
+        GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+        COMMAND_WAIT,
+        "gamesession.command.look.failures",
+        1.0,
+        "error",
+        "ROOM_NOT_FOUND");
   }
 
   @Test
@@ -146,14 +156,17 @@ class LookWebSocketCrossServiceTest {
     assertThat(responses)
         .anyMatch(
             response ->
-                matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+                GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                        LookTestFixtures.DESTINATION_ROOM_ID)
                     .test(response.trim()));
     assertThat(responses)
         .anyMatch(
             response ->
                 response
                     .trim()
-                    .equals(canonicalLookWithPrompt(LookTestFixtures.DESTINATION_ROOM_ID)));
+                    .equals(
+                        GameplayTranscriptMatchers.canonicalLookWithPrompt(
+                            LookTestFixtures.DESTINATION_ROOM_ID)));
     assertThat(responses).anyMatch(response -> response.startsWith("ERROR INVALID_EXIT"));
   }
 
@@ -168,7 +181,8 @@ class LookWebSocketCrossServiceTest {
     assertThat(firstConnection)
         .anyMatch(
             response ->
-                matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+                GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                        LookTestFixtures.DESTINATION_ROOM_ID)
                     .test(response.trim()));
 
     List<String> reconnectLook = runLookAfterReconnect(sessionId);
@@ -176,7 +190,8 @@ class LookWebSocketCrossServiceTest {
     String combinedReconnect = String.join("\n", reconnectLook);
     assertThat(combinedReconnect).contains("OK LOGIN");
     assertThat(combinedReconnect).contains("OK PLAY");
-    assertThat(combinedReconnect).contains(canonicalLook(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(combinedReconnect)
+        .contains(GameplayTranscriptMatchers.canonicalLook(LookTestFixtures.DESTINATION_ROOM_ID));
   }
 
   @Test
@@ -189,19 +204,25 @@ class LookWebSocketCrossServiceTest {
     try (GameplayWebSocketDriver first = openReadySession(firstSessionId);
         GameplayWebSocketDriver second = openReadySession(secondSessionId)) {
       assertThat(first.responses())
-          .anyMatch(response -> response.trim().equals(canonicalLookWithPrompt()));
+          .anyMatch(
+              response ->
+                  response.trim().equals(GameplayTranscriptMatchers.canonicalLookWithPrompt()));
 
       assertThat(second.responses())
           .anyMatch(
               response ->
-                  response.trim().equals(canonicalLookWithPrompt())
-                      || response.trim().equals(canonicalLook()));
+                  response.trim().equals(GameplayTranscriptMatchers.canonicalLookWithPrompt())
+                      || response.trim().equals(GameplayTranscriptMatchers.canonicalLook()));
 
       first.send("LOOK");
       first.awaitStartsWith("ERROR LOGIN_REQUIRED");
       assertThat(first.responses())
           .anyMatch(response -> response.startsWith("ERROR LOGIN_REQUIRED"));
-      assertMetricEventually("gamesession.session.takeover", 1.0);
+      GameplayAsyncAssertions.assertMetricEventually(
+          GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+          COMMAND_WAIT,
+          "gamesession.session.takeover",
+          1.0);
     }
   }
 
@@ -215,13 +236,14 @@ class LookWebSocketCrossServiceTest {
       socket.send("north");
       socket.awaitMatching(
           response ->
-              matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+              GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                      LookTestFixtures.DESTINATION_ROOM_ID)
                   .test(response.trim()),
           "destination move refresh");
       assertThat(socket.responses())
           .anyMatch(
               response ->
-                  matchesCanonicalMoveRefreshWithOptionalPrompt(
+                  GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
                           LookTestFixtures.DESTINATION_ROOM_ID)
                       .test(response.trim()));
 
@@ -230,7 +252,11 @@ class LookWebSocketCrossServiceTest {
       socket.send("LOOK");
       socket.awaitMatching(
           response ->
-              response.trim().equals(canonicalLookWithPrompt(LookTestFixtures.DESTINATION_ROOM_ID)),
+              response
+                  .trim()
+                  .equals(
+                      GameplayTranscriptMatchers.canonicalLookWithPrompt(
+                          LookTestFixtures.DESTINATION_ROOM_ID)),
           "destination look after restart");
       assertThat(socket.responses())
           .matches(
@@ -241,7 +267,7 @@ class LookWebSocketCrossServiceTest {
                               response
                                   .trim()
                                   .equals(
-                                      canonicalLookWithPrompt(
+                                      GameplayTranscriptMatchers.canonicalLookWithPrompt(
                                           LookTestFixtures.DESTINATION_ROOM_ID))));
     }
   }
@@ -257,7 +283,8 @@ class LookWebSocketCrossServiceTest {
     assertThat(firstConnection)
         .anyMatch(
             response ->
-                matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+                GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                        LookTestFixtures.DESTINATION_ROOM_ID)
                     .test(response.trim()));
 
     ACCOUNT_STUB.denyGameplayAdmission();
@@ -279,7 +306,8 @@ class LookWebSocketCrossServiceTest {
     assertThat(firstConnection)
         .anyMatch(
             response ->
-                matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+                GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                        LookTestFixtures.DESTINATION_ROOM_ID)
                     .test(response.trim()));
 
     GAME_SESSION
@@ -292,7 +320,7 @@ class LookWebSocketCrossServiceTest {
     assertThat(combinedReconnect).contains("OK LOGIN");
     assertThat(combinedReconnect).contains("OK PLAY");
     assertThat(combinedReconnect).contains("demo>");
-    assertThat(combinedReconnect).contains(canonicalLook());
+    assertThat(combinedReconnect).contains(GameplayTranscriptMatchers.canonicalLook());
   }
 
   @Test
@@ -309,43 +337,8 @@ class LookWebSocketCrossServiceTest {
     List<String> reconnectResponses = runPlayAfterReconnectExpectingFreshLook(sessionId);
     assertThat(reconnectResponses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(reconnectResponses).anyMatch(response -> response.startsWith("OK LOGIN"));
-    assertThat(reconnectResponses).anyMatch(response -> response.trim().equals(canonicalLook()));
-  }
-
-  private static String canonicalLook() {
-    return canonicalLook(LookTestFixtures.ROOM_ID);
-  }
-
-  private static String canonicalLook(String roomId) {
-    return LookTestFixtures.canonicalLookText(roomId).trim();
-  }
-
-  private static Predicate<String> matchesCanonicalLookWithOptionalPrompt(String roomId) {
-    String canonical = canonicalLook(roomId);
-    String withPrompt = canonicalLookWithPrompt(roomId);
-    return response -> response.equals(canonical) || response.equals(withPrompt);
-  }
-
-  private static String canonicalMoveRefresh(String roomId) {
-    return LookTestFixtures.canonicalLookText(roomId).replaceFirst("\\nLong: .*\\n", "\n").trim();
-  }
-
-  private static Predicate<String> matchesCanonicalMoveRefreshWithOptionalPrompt(String roomId) {
-    String canonical = canonicalMoveRefresh(roomId);
-    String withPrompt = canonical + "\n\ndemo>";
-    return response -> response.equals(canonical) || response.equals(withPrompt);
-  }
-
-  private static String canonicalBufferedMoveRefresh(String roomId) {
-    return canonicalMoveRefresh(roomId).replaceFirst("^OK LOOK\\n", "");
-  }
-
-  private static String canonicalLookWithPrompt() {
-    return canonicalLookWithPrompt(LookTestFixtures.ROOM_ID);
-  }
-
-  private static String canonicalLookWithPrompt(String roomId) {
-    return LookTestFixtures.canonicalLookText(roomId).trim() + "\n\ndemo>";
+    assertThat(reconnectResponses)
+        .anyMatch(response -> response.trim().equals(GameplayTranscriptMatchers.canonicalLook()));
   }
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
@@ -437,13 +430,18 @@ class LookWebSocketCrossServiceTest {
       client.send("north");
       client.awaitMatching(
           response ->
-              matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+              GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                      LookTestFixtures.DESTINATION_ROOM_ID)
                   .test(response.trim()),
           "destination move refresh");
       client.send("LOOK");
       client.awaitMatching(
           response ->
-              response.trim().equals(canonicalLookWithPrompt(LookTestFixtures.DESTINATION_ROOM_ID)),
+              response
+                  .trim()
+                  .equals(
+                      GameplayTranscriptMatchers.canonicalLookWithPrompt(
+                          LookTestFixtures.DESTINATION_ROOM_ID)),
           "destination look with prompt");
       client.send("west");
       client.awaitStartsWith("ERROR INVALID_EXIT");
@@ -465,7 +463,8 @@ class LookWebSocketCrossServiceTest {
       client.send("north");
       client.awaitMatching(
           response ->
-              matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+              GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                      LookTestFixtures.DESTINATION_ROOM_ID)
                   .test(response.trim()),
           "destination move refresh");
       return client.responses();
@@ -483,8 +482,11 @@ class LookWebSocketCrossServiceTest {
       client.send("LOOK");
       client.awaitMatching(
           response ->
-              matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.ROOM_ID).test(response.trim())
-                  || matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+              GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                          LookTestFixtures.ROOM_ID)
+                      .test(response.trim())
+                  || GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                          LookTestFixtures.DESTINATION_ROOM_ID)
                       .test(response.trim()),
           "reconnect look response");
       return client.responses();
@@ -510,23 +512,6 @@ class LookWebSocketCrossServiceTest {
       client.awaitStartsWith("OK LOOK");
       return client.responses();
     }
-  }
-
-  private void assertMetricEventually(String meterName, double expectedValue, String... tags)
-      throws Exception {
-    MeterRegistry registry = GAME_SESSION.bean(MeterRegistry.class);
-    long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
-    while (System.currentTimeMillis() < deadline) {
-      Counter counter = registry.find(meterName).tags(tags).counter();
-      if (counter != null && counter.count() >= expectedValue) {
-        return;
-      }
-      Thread.sleep(100);
-    }
-    Counter counter = registry.find(meterName).tags(tags).counter();
-    double actual = counter == null ? 0.0 : counter.count();
-    throw new AssertionError(
-        "Metric " + meterName + " did not reach " + expectedValue + "; actual=" + actual);
   }
 
   private GameplayWebSocketDriver openSessionClient(long sessionId) {

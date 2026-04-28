@@ -55,6 +55,8 @@ dependencies {
     testFixturesApi(project(":game-logic-service"))
     testFixturesApi(project(":social-groups-service"))
     testFixturesApi(project(":world-management-service"))
+    testFixturesImplementation(project(":common-data-runtime"))
+    testFixturesImplementation(libs.spring.boot.starter.actuator)
     testFixturesImplementation("io.grpc:grpc-netty-shaded:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-protobuf:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")

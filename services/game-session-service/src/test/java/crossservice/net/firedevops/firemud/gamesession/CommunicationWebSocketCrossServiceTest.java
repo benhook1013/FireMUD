@@ -2,8 +2,6 @@ package net.firedevops.firemud.gamesession;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.MeterRegistry;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
@@ -12,9 +10,10 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
-import net.firedevops.firemud.gamesession.test.stubs.ChatEntityManagementStubServer;
+import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
+import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayEntityAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
@@ -56,7 +55,7 @@ class CommunicationWebSocketCrossServiceTest {
 
   private static AccountRuntimeStubServer ACCOUNT_STUB;
   private static WorldManagementStubServer WORLD_STUB;
-  private static ChatEntityManagementStubServer ENTITY_STUB;
+  private static EntityManagementStubServer ENTITY_STUB;
   private static SocialGroupsStubServer SOCIAL_STUB;
   private static CrossServiceAppHarness.GameLogicHolder GAME_LOGIC;
   private static CrossServiceAppHarness.GameSessionHolder GAME_SESSION;
@@ -81,7 +80,7 @@ class CommunicationWebSocketCrossServiceTest {
       socialStub.close();
     }
 
-    ChatEntityManagementStubServer entityStub = ENTITY_STUB;
+    EntityManagementStubServer entityStub = ENTITY_STUB;
     ENTITY_STUB = null;
     if (entityStub != null) {
       entityStub.close();
@@ -122,7 +121,11 @@ class CommunicationWebSocketCrossServiceTest {
               assertThat(request.getEffectId()).isNotBlank();
             });
 
-    assertMetricEventually("gamesession.command.say.invocations", 1.0);
+    GameplayAsyncAssertions.assertMetricEventually(
+        GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+        COMMAND_WAIT,
+        "gamesession.command.say.invocations",
+        1.0);
   }
 
   @Test
@@ -143,7 +146,11 @@ class CommunicationWebSocketCrossServiceTest {
         "keep quiet",
         true);
 
-    assertMetricEventually("gamesession.command.whisper.invocations", 1.0);
+    GameplayAsyncAssertions.assertMetricEventually(
+        GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+        COMMAND_WAIT,
+        "gamesession.command.whisper.invocations",
+        1.0);
   }
 
   @Test
@@ -165,7 +172,11 @@ class CommunicationWebSocketCrossServiceTest {
         "meet me at the forge",
         true);
 
-    assertMetricEventually("gamesession.command.tell.invocations", 1.0);
+    GameplayAsyncAssertions.assertMetricEventually(
+        GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+        COMMAND_WAIT,
+        "gamesession.command.tell.invocations",
+        1.0);
   }
 
   @Test
@@ -369,7 +380,8 @@ class CommunicationWebSocketCrossServiceTest {
       WORLD_STUB = new WorldManagementStubServer(TestSocketUtils.findAvailableTcpPort());
     }
     if (ENTITY_STUB == null) {
-      ENTITY_STUB = new ChatEntityManagementStubServer(TestSocketUtils.findAvailableTcpPort());
+      ENTITY_STUB = new EntityManagementStubServer(TestSocketUtils.findAvailableTcpPort());
+      ENTITY_STUB.setRoomEntities(ChatTestFixtures.sampleEntities());
     }
     if (SOCIAL_STUB == null) {
       SOCIAL_STUB = new SocialGroupsStubServer(TestSocketUtils.findAvailableTcpPort());
@@ -472,22 +484,5 @@ class CommunicationWebSocketCrossServiceTest {
         TENANT_ID,
         sessionId,
         java.util.Map.of("X-Proxy-Connection-Id", proxyConnectionId));
-  }
-
-  private void assertMetricEventually(String meterName, double expectedValue, String... tags)
-      throws Exception {
-    MeterRegistry registry = GAME_SESSION.bean(MeterRegistry.class);
-    long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
-    while (System.currentTimeMillis() < deadline) {
-      Counter counter = registry.find(meterName).tags(tags).counter();
-      if (counter != null && counter.count() >= expectedValue) {
-        return;
-      }
-      Thread.sleep(100);
-    }
-    Counter counter = registry.find(meterName).tags(tags).counter();
-    double actual = counter == null ? 0.0 : counter.count();
-    throw new AssertionError(
-        "Metric " + meterName + " did not reach " + expectedValue + "; actual=" + actual);
   }
 }
