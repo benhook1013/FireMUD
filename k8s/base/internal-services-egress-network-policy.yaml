@@ -23,6 +23,16 @@ spec:
           port: 5432
     - to:
         - podSelector:
+            matchLabels:
+              app: redis-coord
+        - podSelector:
+            matchLabels:
+              app: redis-cache
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - podSelector:
             matchExpressions:
               - key: app
                 operator: NotIn
@@ -36,13 +46,3 @@ spec:
           port: 6565
         - protocol: TCP
           port: 4317
-    - to:
-        - podSelector:
-            matchLabels:
-              app: redis-coord
-        - podSelector:
-            matchLabels:
-              app: redis-cache
-      ports:
-        - protocol: TCP
-          port: 6379

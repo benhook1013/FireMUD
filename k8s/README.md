@@ -1,9 +1,13 @@
 # Kubernetes Manifests
 
-This directory contains Kubernetes manifests and Helm chart placeholders for deploying the FireMUD services.
+This directory contains the repository's Kubernetes-side deployment assets. The current deployment surfaces are not all equal:
 
-The `base/` folder provides minimal deployment files that can be applied to a development cluster:
-These manifests set `metadata.namespace: firemud` directly in YAML, so `firemud` is the default shared namespace unless you apply namespace transforms via overlays.
+- `overlays/` is the canonical Kustomize path for player-facing staging and production-style deployments.
+- `k8s/helm/firemud/` is the hosted preview and dev-demo chart path.
+- `base/` contains a baseline manifest set that is useful for reference and ad hoc cluster bring-up, but it is not the main player-facing deployment contract.
+- `network-policies/`, `monitoring/`, `preview/`, `postgres/`, `velero/`, and the Terraform directories provide supporting infrastructure assets.
+
+The `base/` manifests set `metadata.namespace: firemud` directly in YAML, so `firemud` is the default shared namespace unless you apply namespace transforms via overlays.
 
 ```bash
 kubectl apply -n firemud -f base/account-service.yaml
@@ -31,15 +35,20 @@ kubectl apply -k k8s/overlays/prod
 The staging overlay is intentionally treated as disposable by default and does not include production backup schedules.
 PRs that modify `k8s/` run `.github/workflows/validate-kustomize-overlays.yml`, which blocks staging backup schedules unless `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 
-The file `base/firemud-db-env.yaml` defines the shared `firemud-config`
-`ConfigMap` and `firemud-secret` `Secret` used by these deployments.
+The shared baseline config and secret inputs include:
 
-After the services are running, apply the default network policies found in
-`network-policies/` to restrict traffic to internal pods only:
+- `base/firemud-db-env.yaml` for the `firemud-config` `ConfigMap`
+- `postgres-credentials`
+- `jwt-signing-keys`
+- `jwt-jwks`
+
+The base manifests and overlays expect those names unless you intentionally customize them.
+
+The canonical internal-service network policies are part of `base/`. The `network-policies/` directory is documentation-only now; apply the policy manifests from `base/` if you are selectively applying files outside Kustomize:
 
 ```bash
-kubectl apply -n firemud -f network-policies/internal-services.yaml
-kubectl apply -n firemud -f base/firemud-grpc-certificate.yaml
+kubectl apply -n firemud -f base/internal-services-network-policy.yaml
+kubectl apply -n firemud -f base/internal-services-egress-network-policy.yaml
 ```
 
 The policy allows gRPC (8080, 6565) and OpenTelemetry traffic on port `4317` in
@@ -80,17 +89,19 @@ The production Terraform modules provision persistent volumes for PostgreSQL plu
 
 ## Helm Charts
 
-The [`helm/`](./helm) folder contains example charts. Use `values-local.yaml` or `values-dev.yaml` to override connection details and feature flags when deploying locally. `values-local.yaml` also reduces replica counts to 1 so a Kind or minikube cluster doesn't run out of resources:
+The main Helm deployment path in this repository is [`k8s/helm/firemud`](./helm/firemud), which is used for the hosted preview and dev-demo environments. Use `values-local.yaml` or `values-dev.yaml` to override connection details and feature flags when deploying locally. `values-local.yaml` also reduces replica counts to 1 so a Kind or minikube cluster doesn't run out of resources:
 
 ```bash
 helm install game-session ./helm/game-session-service -f helm/values-local.yaml
 ```
 
-For production deployments, use the umbrella chart:
+For the hosted full-stack chart path, use:
 
 ```bash
-helm upgrade --install firemud ./charts/firemud -n firemud --create-namespace
+helm upgrade --install firemud ./helm/firemud -f helm/firemud/values-preview.example.yaml -n firemud --create-namespace
 ```
+
+The top-level `charts/firemud` chart is a narrower support chart rather than the main full-stack deployment surface.
 
 ## Preview Cluster Prerequisites
 

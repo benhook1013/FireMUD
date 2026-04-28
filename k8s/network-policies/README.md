@@ -1,12 +1,12 @@
 # Kubernetes Network Policies
 
-This folder contains baseline `NetworkPolicy` manifests for the FireMUD cluster. These policies restrict **ingress** traffic so only other pods inside the namespace can connect to the internal microservices. An additional egress policy limits outbound traffic from those services to the database, Redis, and other internal pods.
+This folder documents the baseline `NetworkPolicy` set for the FireMUD cluster. The canonical manifests now live under `k8s/base/` so the base Kustomization and overlays consume one source of truth.
 
-Apply the policies after the base service deployments:
+Apply the policies after the base service deployments if you are applying files directly rather than via `kubectl apply -k`:
 
 ```bash
-kubectl apply -f network-policies/internal-services.yaml
-kubectl apply -f network-policies/internal-services-egress.yaml
+kubectl apply -f k8s/base/internal-services-network-policy.yaml
+kubectl apply -f k8s/base/internal-services-egress-network-policy.yaml
 ```
 
 The gateway and TCP proxy remain accessible to external clients, while all other services accept connections only from within the cluster.

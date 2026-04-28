@@ -1,9 +1,10 @@
 # Helm Charts
 
 This directory contains Helm charts for deploying FireMUD services.
-Charts are provided for the **Account Service** and **Game Session Service** as focused examples.
-The umbrella chart under `firemud/` is the evolving deployment surface for the hosted `pr-preview` environment.
-The same chart is also used for the fixed `dev-demo-cluster` hosted `develop` environment, currently via a separate values example and workflow.
+
+- `firemud/` is the real full-stack chart path used for the hosted `pr-preview` and fixed `dev-demo-cluster` environments.
+- `account-service/` and `game-session-service/` are narrower service-specific example charts.
+- The top-level `charts/firemud` chart elsewhere in the repository is a separate support chart, not the main full-stack Helm surface described here.
 
 The files `values-local.yaml` and `values-dev.yaml` demonstrate how runtime
 settings such as Redis connection info, tick interval, and feature flags can be
@@ -27,7 +28,7 @@ helm install account-service ./account-service \
   -f values-local.yaml
 ```
 
-To deploy all services at once you can use the umbrella chart:
+To deploy all services at once through the full-stack chart path:
 
 ```bash
 helm install firemud ./firemud \

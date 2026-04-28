@@ -1,6 +1,6 @@
 # Baseline Kubernetes Manifests
 
-This directory contains minimal deployment files for running the core FireMUD services in a Kubernetes cluster. The manifests are intended as starting points and should be customized with image repositories, resource limits, and environment variables.
+This directory contains baseline deployment files for running the core FireMUD services in a Kubernetes cluster. They are intended as reference manifests and starting points for ad hoc cluster bring-up, not as the main player-facing deployment contract.
 
 Apply all manifests with:
 
@@ -20,7 +20,7 @@ kubectl apply -n firemud -f spring-cloud-gateway.yaml
 
 These manifests assume a `firemud` namespace.
 
-These files expose the services internally using `ClusterIP` (except the gateway and TCP proxy which are `LoadBalancer`). See the [Deployment Environments](../../design/architecture/infrastructure/deployment-environments.md) document for production considerations.
+These files expose the services internally using `ClusterIP` (except the gateway and TCP proxy which are `LoadBalancer`). They also carry more baked-in assumptions than a purely minimal example set, including explicit `prod` profile usage, JWT/JWKS mounts, gRPC TLS mounts, and Fluent Bit sidecars in some services. See the [Deployment Environments](../../design/architecture/infrastructure/deployment-environments.md) document for the canonical player-facing deployment paths.
 
 Ports align with the design documents:
 
@@ -32,7 +32,7 @@ All deployments include readiness probes against `/actuator/health/readiness`, l
 
 ## Database Settings
 
-All Spring Boot services expect PostgreSQL and Redis connection details via environment variables. A `firemud-config` `ConfigMap` and `postgres-credentials` `Secret` are provided to supply these values:
+All Spring Boot services expect PostgreSQL and Redis connection details via environment variables. The baseline set also expects additional auth-related Secrets such as `jwt-signing-keys` and `jwt-jwks` where applicable. A `firemud-config` `ConfigMap` and `postgres-credentials` `Secret` are provided to supply the shared database and observability values:
 
 ```bash
 FIREMUD_POSTGRES_HOST=postgres
