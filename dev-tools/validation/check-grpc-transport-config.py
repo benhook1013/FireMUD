@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--root",
-        default=Path(os.environ.get("FIREMUD_REPO_ROOT", Path(__file__).resolve().parent.parent)),
+        default=Path(os.environ.get("FIREMUD_REPO_ROOT", Path(__file__).resolve().parents[2])),
         type=Path,
         help="Repository root to scan. Defaults to the FireMUD checkout root.",
     )

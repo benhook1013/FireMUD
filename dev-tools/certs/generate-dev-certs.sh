@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Generate self-signed CA and a shared mTLS certificate for local dev and preview.
 TARGET="${1:-}"
 if [ -n "$TARGET" ]; then
   CERT_DIR="$TARGET"
 else
-  CERT_DIR="${CERT_DIR:-certs}"
+  CERT_DIR="${CERT_DIR:-$SCRIPT_DIR}"
 fi
 
 if [ -f "$CERT_DIR/dev-cert.pem" ] && [ -f "$CERT_DIR/dev-key.pem" ] && [ -f "$CERT_DIR/dev-ca.pem" ]; then

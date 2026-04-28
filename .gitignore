@@ -17,7 +17,10 @@
 # Logs and temporary files
 *.log
 .DS_Store
-certs/
+/dev-tools/certs/*
+!/dev-tools/certs/README.md
+!/dev-tools/certs/clean-dev-certs.sh
+!/dev-tools/certs/generate-dev-certs.sh
 docker/backups/
 
 # Python bytecode

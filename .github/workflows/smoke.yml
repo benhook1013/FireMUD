@@ -97,7 +97,7 @@ jobs:
               ".github/workflows/smoke-full.yml",
               ".github/workflows/runtime-images.yml",
               "dev-tools/build-compose-service-jars.sh",
-              "dev-tools/generate-dev-certs.sh",
+              "dev-tools/certs/generate-dev-certs.sh",
               "dev-tools/verify-compose-health.sh",
               "dev-tools/verify-fresh-bootstrap.sh",
               "dev-tools/verify-restart-state.sh",

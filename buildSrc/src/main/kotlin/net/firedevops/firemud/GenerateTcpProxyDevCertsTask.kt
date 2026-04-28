@@ -41,7 +41,7 @@ abstract class GenerateTcpProxyDevCertsTask : DefaultTask() {
             ProcessBuilder(
                     "bash",
                     "-c",
-                    "CERT_DIR=$normalizedPath dev-tools/generate-dev-certs.sh")
+                    "CERT_DIR=$normalizedPath dev-tools/certs/generate-dev-certs.sh")
                 .directory(scriptDir)
                 .inheritIO()
                 .start()

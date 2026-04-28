@@ -110,3 +110,8 @@ Entry format:
   - Context: reviewing why a pragmatic “fix nearby fallout while converging the current area” response felt good in practice but was only implied by the existing AI instructions.
   - Observation: without one short explicit rule, agents can over-index on the narrowest interpretation of a task even when the repo’s initial-development model would benefit from resolving clearly related breakage and drift in the same pass.
   - Expected pattern: keep one compact instruction that tells agents to be proactive within scope and resolve clearly related fallout when practical, without turning that into permission for broad opportunistic refactors.
+
+- `2026-04-29`: Large repo-owned tooling surfaces need a folder index and strict root-entrypoint discipline before the root becomes a junk drawer
+  - Context: reviewing `dev-tools/` after smoke, preview, preflight, backup, validation, observability, and one-off maintenance helpers had all accumulated under the same tree.
+  - Observation: subfolders can still be mostly reasonable while the tool root becomes hard to navigate if policy checkers, operational helpers, generated-material lanes, and personal maintenance scripts all sit beside the canonical human-facing entrypoints.
+  - Expected pattern: keep a small set of root entrypoints, move category-specific tools into named subfolders such as `validation/` or `maintenance/`, and add a `README` index once the tool surface becomes large enough that contributors would otherwise reopen scripts to infer ownership.

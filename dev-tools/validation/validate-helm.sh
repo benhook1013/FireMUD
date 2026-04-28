@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 usage() {
   cat <<'EOF'
-Usage: dev-tools/validate-helm.sh [lint|render|all]
+Usage: dev-tools/validation/validate-helm.sh [lint|render|all]
 
   lint   Run helm lint for tracked charts and representative values
   render Render tracked charts and validate the manifests with kubectl --dry-run=client

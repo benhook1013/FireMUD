@@ -13,7 +13,7 @@ usage() {
 Inspect and optionally prune old T3 Code checkpoint refs while keeping the newest turns per thread.
 
 Usage:
-  dev-tools/prune-t3-checkpoints.sh [options]
+  dev-tools/maintenance/ai/prune-t3-checkpoints.sh [options]
 
 Options:
   --keep N             Keep the latest N checkpoint refs per thread. Default: 5.

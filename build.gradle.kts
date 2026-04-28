@@ -312,25 +312,25 @@ tasks.register<Exec>("linkCheck") {
 tasks.register<Exec>("checkFlywayVersions") {
     group = "verification"
     description = "Checks service Flyway migrations for duplicate or out-of-order versions."
-    commandLine("bash", "dev-tools/check-flyway-versions.sh")
+    commandLine("bash", "dev-tools/validation/check-flyway-versions.sh")
 }
 
 tasks.register<Exec>("checkGrpcTransportConfig") {
     group = "verification"
     description = "Checks gRPC transport configuration for stale server TLS property usage."
-    commandLine("bash", "dev-tools/check-grpc-transport-config.sh")
+    commandLine("bash", "dev-tools/validation/check-grpc-transport-config.sh")
 }
 
 tasks.register<Exec>("checkGrpcPublicMethods") {
     group = "verification"
     description = "Checks gRPC public-method allowlists against proto declarations."
-    commandLine("bash", "dev-tools/check-grpc-public-methods.sh")
+    commandLine("bash", "dev-tools/validation/check-grpc-public-methods.sh")
 }
 
 tasks.register<Exec>("checkProtoTimeFields") {
     group = "verification"
     description = "Checks proto time-related field names for explicit time domains or units."
-    commandLine("python3", "dev-tools/check-proto-time-fields.py")
+    commandLine("python3", "dev-tools/validation/check-proto-time-fields.py")
 }
 
 tasks.register<Exec>("validateObservabilityContract") {
@@ -469,8 +469,7 @@ tasks.register("buildDockerImagesSmoke") {
 }
 
 tasks.register<Exec>("generateDevCerts") {
-    workingDir("dev-tools")
-    commandLine("bash", "generate-dev-certs.sh", "certs")
+    commandLine("bash", "dev-tools/certs/generate-dev-certs.sh")
 }
 
 tasks.register<Exec>("devUp") {

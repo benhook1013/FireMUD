@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bash dev-tools/cloc-report.sh [repo|source|markdown] [extra cloc args...]
+Usage: bash dev-tools/analysis/cloc-report.sh [repo|source|markdown] [extra cloc args...]
 
 Modes:
   repo      Broad repository footprint across source, docs, config, CI, and scripts.
@@ -11,9 +11,9 @@ Modes:
   markdown  Markdown-only count across the repository.
 
 Examples:
-  bash dev-tools/cloc-report.sh
-  bash dev-tools/cloc-report.sh source
-  bash dev-tools/cloc-report.sh markdown --by-file
+  bash dev-tools/analysis/cloc-report.sh
+  bash dev-tools/analysis/cloc-report.sh source
+  bash dev-tools/analysis/cloc-report.sh markdown --by-file
 EOF
 }
 
