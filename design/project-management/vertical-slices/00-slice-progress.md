@@ -61,8 +61,6 @@ These are already partly real in code and should continue after the immediate ru
    Remaining: keep `02.18.6` at operator-proof level and continue any later hardening only if real-load evidence justifies it.
 17. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
-18. [02.18.17 Gameplay Transport Test Harness Convergence](./02.18.17-task-list-gameplay-transport-test-harness-convergence-vertical-slice.md)
-   Remaining: the shared WebSocket harness and first shared Telnet driver are now live, including full migration of the larger telnet gameplay/account suite; the next gap is reusable multi-actor/scenario fixtures, remaining telnet chained-flow conversions, and cleanup of repeated backend assertion helpers so one canonical chained gameplay proof style remains.
 
 ### 3. Design settled enough, but not started or only placeholder-level
 
