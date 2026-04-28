@@ -17,9 +17,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
@@ -73,11 +71,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.socket.CloseStatus;
-import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketHttpHeaders;
-import org.springframework.web.socket.WebSocketSession;
-import org.springframework.web.socket.client.standard.StandardWebSocketClient;
-import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @SuppressWarnings({"removal"})
 @SpringBootTest(
@@ -555,49 +549,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketLogoutClearsReplayStateAndClosesTransport() throws Exception {
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
-
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = gameplayHeaders("41");
-    CountDownLatch closedLatch = new CountDownLatch(1);
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-                session.sendMessage(new TextMessage("PLAY demo"));
-                session.sendMessage(new TextMessage("LOGOUT"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                payloads.add(message.getPayload());
-              }
-
-              @Override
-              public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-                closeStatus.set(status);
-                closedLatch.countDown();
-              }
-            },
-            headers,
-            websocketUri());
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    await()
-        .atMost(10, TimeUnit.SECONDS)
-        .untilAsserted(
-            () -> assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY")));
-    assertThat(closedLatch.await(10, TimeUnit.SECONDS)).isTrue();
-    if (session.isOpen()) {
-      session.close();
+    GameplayWebSocketDriver.CloseEvent closeEvent;
+    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      client.send("LOGOUT");
+      closeEvent = client.awaitClosed();
     }
 
-    assertThat(closeStatus.get()).isNotNull();
-    assertThat(closeStatus.get().getCode()).isEqualTo(CloseStatus.NORMAL.getCode());
-    assertThat(closeStatus.get().getReason()).isEqualTo("LOGOUT");
+    assertThat(closeEvent.statusCode()).isEqualTo(CloseStatus.NORMAL.getCode());
+    assertThat(closeEvent.reason()).isEqualTo("LOGOUT");
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isEmpty();
     verify(screenBufferService).clear(22L, 1L, 123L);
     verify(commandService, never()).enqueue("41", "LOGOUT", false);
@@ -642,10 +603,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     1,
                     System.currentTimeMillis())));
 
-    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
-    }
+    GameplayWebSocketDriver firstClient = openGameplayDriver("41");
+    firstClient.login("demo@example.com", "swordfish");
+    firstClient.play("demo");
+    firstClient.abort();
     assertThat(waitForPresenceCount(22L, 1L, 0)).isTrue();
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isPresent();
     assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
@@ -1099,120 +1060,57 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .when(screenBufferService)
         .clear(22L, 1L, 123L);
 
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders firstHeaders = new WebSocketHttpHeaders();
-    firstHeaders.add("X-Firemud-Connection-Mode", "first_party_web");
-    firstHeaders.add("X-Firemud-Transport-Session-Id", "1");
-    firstHeaders.add(
-        "X-Firemud-Connect-Context",
-        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
-            .generateToken(
-                "123",
-                java.util.Map.of(
-                    "tenantId", "22",
-                    "worldSlug", "demo",
-                    "realmSlug", "production",
-                    "gameInstanceId", "1",
-                    "pointerVersion", "1",
-                    "connectScopeId", "scope-logout-1",
-                    "connectTokenJti", "connect-jti-logout-1",
-                    "connectRequestId", "connect-req-logout-1",
-                    "gatewayRequestId", "gateway-req-logout-1")));
-    CountDownLatch firstResponses = new CountDownLatch(2);
-    CountDownLatch firstClosed = new CountDownLatch(1);
-    java.util.List<String> firstPayloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    java.util.concurrent.atomic.AtomicReference<CloseStatus> firstCloseStatus =
-        new java.util.concurrent.atomic.AtomicReference<>();
-
-    var firstFuture =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                session.sendMessage(new TextMessage("LOGIN"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message)
-                  throws IOException {
-                String payload = message.getPayload();
-                firstPayloads.add(payload);
-                if (isStructuredCommand(payload, "LOGIN")) {
-                  session.sendMessage(new TextMessage("PLAY demo"));
-                } else if (isStructuredCommand(payload, "PLAY")) {
-                  session.sendMessage(new TextMessage("LOGOUT"));
-                }
-                firstResponses.countDown();
-              }
-
-              @Override
-              public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-                firstCloseStatus.set(status);
-                firstClosed.countDown();
-              }
-            },
-            firstHeaders,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession firstSession = firstFuture.get(5, TimeUnit.SECONDS);
-    assertThat(firstResponses.await(10, TimeUnit.SECONDS)).isTrue();
-    assertThat(firstClosed.await(10, TimeUnit.SECONDS)).isTrue();
-    if (firstSession.isOpen()) {
-      firstSession.close();
+    GameplayWebSocketDriver.CloseEvent firstCloseEvent;
+    try (GameplayWebSocketDriver client =
+        openFirstPartyDriver(
+            "1",
+            java.util.Map.of(
+                "tenantId", "22",
+                "worldSlug", "demo",
+                "realmSlug", "production",
+                "gameInstanceId", "1",
+                "pointerVersion", "1",
+                "connectScopeId", "scope-logout-1",
+                "connectTokenJti", "connect-jti-logout-1",
+                "connectRequestId", "connect-req-logout-1",
+                "gatewayRequestId", "gateway-req-logout-1"))) {
+      client.send("LOGIN");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      client.send("PLAY demo");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      client.send("LOGOUT");
+      firstCloseEvent = client.awaitClosed();
     }
 
-    assertThat(firstCloseStatus.get()).isNotNull();
-    assertThat(firstCloseStatus.get().getReason()).isEqualTo("LOGOUT");
+    assertThat(firstCloseEvent.reason()).isEqualTo("LOGOUT");
     assertThat(cleared.get()).isTrue();
     assertThat(waitForPresenceCount(22L, 1L, 0)).isTrue();
     assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
 
-    WebSocketHttpHeaders secondHeaders = new WebSocketHttpHeaders();
-    secondHeaders.add("X-Firemud-Connection-Mode", "first_party_web");
-    secondHeaders.add("X-Firemud-Transport-Session-Id", "2");
-    secondHeaders.add(
-        "X-Firemud-Connect-Context",
-        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
-            .generateToken(
-                "123",
-                java.util.Map.of(
-                    "tenantId", "22",
-                    "worldSlug", "demo",
-                    "realmSlug", "production",
-                    "gameInstanceId", "1",
-                    "pointerVersion", "1",
-                    "connectScopeId", "scope-logout-2",
-                    "connectTokenJti", "connect-jti-logout-2",
-                    "connectRequestId", "connect-req-logout-2",
-                    "gatewayRequestId", "gateway-req-logout-2")));
-    java.util.List<String> secondPayloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch secondResponses = new CountDownLatch(2);
-
-    var secondFuture =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                session.sendMessage(new TextMessage("LOGIN"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message)
-                  throws IOException {
-                String payload = message.getPayload();
-                secondPayloads.add(payload);
-                if (isStructuredCommand(payload, "LOGIN")) {
-                  session.sendMessage(new TextMessage("PLAY demo"));
-                }
-                secondResponses.countDown();
-              }
-            },
-            secondHeaders,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession secondSession = secondFuture.get(5, TimeUnit.SECONDS);
-    assertThat(secondResponses.await(10, TimeUnit.SECONDS)).isTrue();
-    secondSession.close();
+    java.util.List<String> secondPayloads;
+    try (GameplayWebSocketDriver client =
+        openFirstPartyDriver(
+            "2",
+            java.util.Map.of(
+                "tenantId", "22",
+                "worldSlug", "demo",
+                "realmSlug", "production",
+                "gameInstanceId", "1",
+                "pointerVersion", "1",
+                "connectScopeId", "scope-logout-2",
+                "connectTokenJti", "connect-jti-logout-2",
+                "connectRequestId", "connect-req-logout-2",
+                "gatewayRequestId", "gateway-req-logout-2"))) {
+      client.send("LOGIN");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      client.send("PLAY demo");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      secondPayloads = client.responses();
+    }
 
     assertThat(secondPayloads).anyMatch(payload -> isStructuredCommand(payload, "LOGIN"));
     assertThat(secondPayloads).anyMatch(payload -> isStructuredCommand(payload, "PLAY"));
@@ -1252,34 +1150,19 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketFirstPartyInvalidConnectContextClosesImmediately() throws Exception {
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Firemud-Connection-Mode", "first_party_web");
-    headers.add("X-Firemud-Connect-Context", "not-a-valid-context");
-    CountDownLatch latch = new CountDownLatch(1);
-    java.util.concurrent.atomic.AtomicReference<org.springframework.web.socket.CloseStatus> close =
-        new java.util.concurrent.atomic.AtomicReference<>();
+    GameplayWebSocketDriver.CloseEvent closeEvent;
+    try (GameplayWebSocketDriver client =
+        GameplayWebSocketDriver.connect(
+            websocketUri(),
+            java.time.Duration.ofSeconds(10),
+            java.util.Map.of(
+                "X-Firemud-Connection-Mode", "first_party_web",
+                "X-Firemud-Connect-Context", "not-a-valid-context"))) {
+      closeEvent = client.awaitClosed();
+    }
 
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionClosed(
-                  WebSocketSession session, org.springframework.web.socket.CloseStatus status) {
-                close.set(status);
-                latch.countDown();
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
-    session.close();
-
-    assertThat(close.get()).isNotNull();
-    assertThat(close.get().getCode()).isEqualTo(1008);
-    assertThat(close.get().getReason()).isEqualTo("CONNECT_CONTEXT_INVALID");
+    assertThat(closeEvent.statusCode()).isEqualTo(1008);
+    assertThat(closeEvent.reason()).isEqualTo("CONNECT_CONTEXT_INVALID");
   }
 
   @Test
@@ -1431,29 +1314,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   private void performLogoutFlow(String sessionId) throws Exception {
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    CountDownLatch closedLatch = new CountDownLatch(1);
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-                session.sendMessage(new TextMessage("PLAY demo"));
-                session.sendMessage(new TextMessage("LOGOUT"));
-              }
-
-              @Override
-              public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-                closedLatch.countDown();
-              }
-            },
-            gameplayHeaders(sessionId),
-            websocketUri());
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(closedLatch.await(10, TimeUnit.SECONDS)).isTrue();
-    if (session.isOpen()) {
-      session.close();
+    try (GameplayWebSocketDriver client = openGameplayDriver(sessionId)) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      client.send("LOGOUT");
+      GameplayWebSocketDriver.CloseEvent closeEvent = client.awaitClosed();
+      assertThat(closeEvent.reason()).isEqualTo("LOGOUT");
     }
   }
 

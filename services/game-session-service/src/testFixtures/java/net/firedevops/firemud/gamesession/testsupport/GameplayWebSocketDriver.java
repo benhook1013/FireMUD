@@ -8,22 +8,32 @@ import java.net.http.WebSocket.Listener;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
 
 /** FireMUD-specific websocket gameplay test driver for chained login/play/command flows. */
 public final class GameplayWebSocketDriver implements AutoCloseable {
+  public record CloseEvent(int statusCode, String reason) {}
+
   private final Duration waitTimeout;
   private final CopyOnWriteArrayList<String> responses;
   private final WebSocket webSocket;
+  private final CompletableFuture<CloseEvent> closeFuture;
 
   private GameplayWebSocketDriver(
-      WebSocket webSocket, Duration waitTimeout, CopyOnWriteArrayList<String> responses) {
+      WebSocket webSocket,
+      Duration waitTimeout,
+      CopyOnWriteArrayList<String> responses,
+      CompletableFuture<CloseEvent> closeFuture) {
     this.webSocket = webSocket;
     this.waitTimeout = waitTimeout;
     this.responses = responses;
+    this.closeFuture = closeFuture;
   }
 
   public static GameplayWebSocketDriver connect(
@@ -32,6 +42,7 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
     WebSocket.Builder builder = client.newWebSocketBuilder();
     headers.forEach(builder::header);
     CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
+    CompletableFuture<CloseEvent> closeFuture = new CompletableFuture<>();
     WebSocket webSocket =
         builder
             .buildAsync(
@@ -49,9 +60,22 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
                     webSocket.request(1);
                     return Listener.super.onText(webSocket, data, last);
                   }
+
+                  @Override
+                  public CompletionStage<?> onClose(
+                      WebSocket webSocket, int statusCode, String reason) {
+                    closeFuture.complete(new CloseEvent(statusCode, reason));
+                    return Listener.super.onClose(webSocket, statusCode, reason);
+                  }
+
+                  @Override
+                  public void onError(WebSocket webSocket, Throwable error) {
+                    closeFuture.completeExceptionally(error);
+                    Listener.super.onError(webSocket, error);
+                  }
                 })
             .join();
-    return new GameplayWebSocketDriver(webSocket, waitTimeout, responses);
+    return new GameplayWebSocketDriver(webSocket, waitTimeout, responses, closeFuture);
   }
 
   public void send(String text) {
@@ -105,8 +129,23 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
     return List.copyOf(responses);
   }
 
+  public CloseEvent awaitClosed() throws Exception {
+    try {
+      return closeFuture.get(waitTimeout.toMillis(), TimeUnit.MILLISECONDS);
+    } catch (TimeoutException ex) {
+      throw new AssertionError("Expected websocket close event, got responses " + responses, ex);
+    }
+  }
+
+  public void abort() {
+    webSocket.abort();
+  }
+
   @Override
   public void close() {
+    if (closeFuture.isDone()) {
+      return;
+    }
     try {
       webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     } catch (CompletionException ex) {
