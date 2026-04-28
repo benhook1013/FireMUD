@@ -1,5 +1,7 @@
 package net.firedevops.firemud.tcpproxy.testsupport;
 
+import java.util.List;
+
 /** Shared chained-gameplay telnet scenario helpers for multi-actor proof. */
 public final class GameplayTelnetScenarios {
 
@@ -18,6 +20,19 @@ public final class GameplayTelnetScenarios {
 
     public static Admission unnamed(String email, String password, String world, String readyText) {
       return new Admission(email, password, world, null, readyText);
+    }
+  }
+
+  @FunctionalInterface
+  public interface DriverExercise {
+    void accept(GameplayTelnetDriver driver) throws Exception;
+  }
+
+  public record ReconnectScenario(List<String> firstResponses, GameplayTelnetDriver reconnecting)
+      implements AutoCloseable {
+    @Override
+    public void close() throws Exception {
+      reconnecting.close();
     }
   }
 
@@ -123,6 +138,21 @@ public final class GameplayTelnetScenarios {
       return new ThreePlayerScenario(actor, target, observer);
     } catch (Exception ex) {
       closeQuietly(observer, target, actor, ex);
+      throw ex;
+    }
+  }
+
+  public static ReconnectScenario reconnectAfterReady(
+      DriverFactory factory, Admission admission, DriverExercise firstSessionExercise)
+      throws Exception {
+    GameplayTelnetDriver first = openReady(factory, admission);
+    try {
+      firstSessionExercise.accept(first);
+      first.close();
+      GameplayTelnetDriver reconnecting = openReady(factory, admission);
+      return new ReconnectScenario(List.of(), reconnecting);
+    } catch (Exception ex) {
+      closeQuietly(first, ex);
       throw ex;
     }
   }

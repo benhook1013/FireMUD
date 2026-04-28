@@ -2,12 +2,10 @@ package integration.net.firedevops.firemud.springcloudgateway;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.IOException;
-import java.net.URI;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -16,6 +14,7 @@ import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
 import net.firedevops.firemud.springcloudgateway.config.GameplayWebSocketBridgeProperties;
 import net.firedevops.firemud.springcloudgateway.health.GameplayRouteReadinessHealthIndicator;
+import net.firedevops.firemud.springcloudgateway.testsupport.GatewayWebSocketProbe;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.AfterAll;
@@ -38,11 +37,7 @@ import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
-import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketHttpHeaders;
-import org.springframework.web.socket.WebSocketSession;
-import org.springframework.web.socket.client.standard.StandardWebSocketClient;
-import org.springframework.web.socket.handler.TextWebSocketHandler;
 import reactor.core.publisher.Mono;
 
 class GatewayGameplayBridgeIntegrationTest {
@@ -74,66 +69,24 @@ class GatewayGameplayBridgeIntegrationTest {
   void gatewayRebindsUpstreamAfterAbruptDropWithoutDroppingClientSocket() throws Exception {
     ensureStarted();
 
-    StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Proxy-Client-IP", "203.0.113.10");
     headers.add("X-Proxy-Game-Instance-Id", "42");
     headers.add("X-Proxy-Tenant-Id", "22");
     headers.add("X-Proxy-Connection-Id", "bridge-test-conn");
 
-    List<String> responses = new CopyOnWriteArrayList<>();
-    AtomicBoolean downstreamClosed = new AtomicBoolean(false);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-    CountDownLatch firstReady = new CountDownLatch(1);
-    CountDownLatch firstLook = new CountDownLatch(1);
-    CountDownLatch secondLook = new CountDownLatch(1);
-
-    WebSocketSession session =
-        client
-            .execute(
-                new TextWebSocketHandler() {
-                  @Override
-                  public void afterConnectionEstablished(WebSocketSession session)
-                      throws IOException {
-                    sessionRef.set(session);
-                  }
-
-                  @Override
-                  protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                    responses.add(message.getPayload());
-                    if (message.getPayload().startsWith("UPSTREAM_READY")) {
-                      if (firstReady.getCount() > 0) {
-                        firstReady.countDown();
-                      }
-                    }
-                    if (message.getPayload().startsWith("OK LOOK")) {
-                      firstLook.countDown();
-                      secondLook.countDown();
-                    }
-                  }
-
-                  @Override
-                  public void afterConnectionClosed(
-                      WebSocketSession session,
-                      org.springframework.web.socket.CloseStatus closeStatus) {
-                    downstreamClosed.set(true);
-                  }
-                },
-                headers,
-                URI.create(GATEWAY.websocketUrl()))
-            .get(5, TimeUnit.SECONDS);
-
-    assertThat(firstReady.await(5, TimeUnit.SECONDS)).isTrue();
-    sessionRef.get().sendMessage(new TextMessage("LOOK"));
-    assertThat(firstLook.await(5, TimeUnit.SECONDS)).isTrue();
-    sessionRef.get().sendMessage(new TextMessage("FORCE_DROP"));
-    assertThat(UPSTREAM.awaitConnections(2, 5, TimeUnit.SECONDS)).isTrue();
-    assertThat(downstreamClosed.get()).isFalse();
-    session.sendMessage(new TextMessage("LOOK"));
-    assertThat(secondLook.await(5, TimeUnit.SECONDS)).isTrue();
-    session.close();
-
-    assertThat(responses).contains(LookCommandConstants.LOOK_RESPONSE);
+    try (GatewayWebSocketProbe probe =
+        GatewayWebSocketProbe.connect(GATEWAY.websocketUrl(), headers)) {
+      probe.awaitStartsWith("UPSTREAM_READY", Duration.ofSeconds(5));
+      probe.send("LOOK");
+      probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(5));
+      probe.send("FORCE_DROP");
+      assertThat(UPSTREAM.awaitConnections(2, 5, TimeUnit.SECONDS)).isTrue();
+      assertThat(probe.downstreamClosed()).isFalse();
+      probe.send("LOOK");
+      probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(5));
+      assertThat(probe.responses()).contains(LookCommandConstants.LOOK_RESPONSE);
+    }
     assertThat(UPSTREAM.seenTransportSessionIds()).hasSize(2);
     assertThat(UPSTREAM.seenTransportSessionIds().get(0))
         .isEqualTo(UPSTREAM.seenTransportSessionIds().get(1));
@@ -144,64 +97,25 @@ class GatewayGameplayBridgeIntegrationTest {
   void gatewayRebindsAfterRealUpstreamRestartWithoutDroppingClientSocket() throws Exception {
     ensureStarted();
 
-    StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Proxy-Client-IP", "203.0.113.10");
     headers.add("X-Proxy-Game-Instance-Id", "42");
     headers.add("X-Proxy-Tenant-Id", "22");
     headers.add("X-Proxy-Connection-Id", "bridge-test-conn");
 
-    AtomicBoolean downstreamClosed = new AtomicBoolean(false);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-    CountDownLatch firstReady = new CountDownLatch(1);
-    CountDownLatch firstLook = new CountDownLatch(1);
-    CountDownLatch secondLook = new CountDownLatch(1);
+    try (GatewayWebSocketProbe probe =
+        GatewayWebSocketProbe.connect(GATEWAY.websocketUrl(), headers)) {
+      probe.awaitStartsWith("UPSTREAM_READY", Duration.ofSeconds(5));
+      probe.send("LOOK");
+      probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(5));
 
-    WebSocketSession session =
-        client
-            .execute(
-                new TextWebSocketHandler() {
-                  @Override
-                  public void afterConnectionEstablished(WebSocketSession session)
-                      throws IOException {
-                    sessionRef.set(session);
-                  }
+      UPSTREAM.restart();
+      assertThat(UPSTREAM.awaitConnections(2, 30, TimeUnit.SECONDS)).isTrue();
+      assertThat(probe.downstreamClosed()).isFalse();
 
-                  @Override
-                  protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                    if (message.getPayload().startsWith("UPSTREAM_READY")) {
-                      if (firstReady.getCount() > 0) {
-                        firstReady.countDown();
-                      }
-                    }
-                    if (message.getPayload().startsWith("OK LOOK")) {
-                      firstLook.countDown();
-                      secondLook.countDown();
-                    }
-                  }
-
-                  @Override
-                  public void afterConnectionClosed(
-                      WebSocketSession session,
-                      org.springframework.web.socket.CloseStatus closeStatus) {
-                    downstreamClosed.set(true);
-                  }
-                },
-                headers,
-                URI.create(GATEWAY.websocketUrl()))
-            .get(5, TimeUnit.SECONDS);
-
-    assertThat(firstReady.await(5, TimeUnit.SECONDS)).isTrue();
-    sessionRef.get().sendMessage(new TextMessage("LOOK"));
-    assertThat(firstLook.await(5, TimeUnit.SECONDS)).isTrue();
-
-    UPSTREAM.restart();
-    assertThat(UPSTREAM.awaitConnections(2, 30, TimeUnit.SECONDS)).isTrue();
-    assertThat(downstreamClosed.get()).isFalse();
-
-    session.sendMessage(new TextMessage("LOOK"));
-    assertThat(secondLook.await(30, TimeUnit.SECONDS)).isTrue();
-    session.close();
+      probe.send("LOOK");
+      probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(30));
+    }
 
     assertThat(UPSTREAM.seenTransportSessionIds()).hasSize(2);
     assertThat(UPSTREAM.seenTransportSessionIds().get(0))

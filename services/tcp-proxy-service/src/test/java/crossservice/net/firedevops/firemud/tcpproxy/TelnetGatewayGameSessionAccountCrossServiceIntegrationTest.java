@@ -5,16 +5,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.Tracer;
 import java.io.IOException;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
-import javax.sql.DataSource;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
-import net.firedevops.firemud.gamelogic.GameLogicServiceApplication;
-import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
+import net.firedevops.firemud.gamesession.CrossServiceAppHarness;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
@@ -23,12 +20,11 @@ import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
-import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
-import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
+import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
 import net.firedevops.firemud.gamesession.testsupport.GameplayEntityAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayTranscriptMatchers;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
@@ -62,7 +58,6 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.grpc.server.service.GrpcServiceDiscoverer;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -102,12 +97,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   static final GenericContainer<?> REDIS =
       new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine")).withExposedPorts(6379);
 
-  private static AccountRuntimeStubServer ACCOUNT_STUB;
-  private static WorldManagementStubServer WORLD_STUB;
-  private static EntityManagementStubServer ENTITY_STUB;
-  private static SocialGroupsStubServer SOCIAL_STUB;
-  private static GameLogicHolder GAME_LOGIC;
-  private static GameSessionHolder GAME_SESSION;
+  private static GameplayCrossServiceStack STACK;
+  private static long DEFAULT_GAME_INSTANCE_ID;
   private static GatewayHolder GATEWAY;
 
   @LocalServerPort private int port;
@@ -126,7 +117,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     registry.add("TCP_PROXY_DEFAULT_REALM_SLUG", () -> "production");
     registry.add("TCP_PROXY_DEFAULT_POINTER_VERSION", () -> "1");
     registry.add(
-        "TCP_PROXY_DEFAULT_GAME_INSTANCE_ID", () -> String.valueOf(GAME_SESSION.sessionId()));
+        "TCP_PROXY_DEFAULT_GAME_INSTANCE_ID", () -> String.valueOf(DEFAULT_GAME_INSTANCE_ID));
     registry.add("TCP_PROXY_DEFAULT_TENANT_ID", () -> String.valueOf(TENANT_ID));
     registry.add("firemud.redis.host", REDIS::getHost);
     registry.add("firemud.redis.port", () -> REDIS.getMappedPort(6379));
@@ -140,51 +131,17 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       gateway.close();
     }
 
-    GameSessionHolder gameSession = GAME_SESSION;
-    GAME_SESSION = null;
-    if (gameSession != null) {
-      gameSession.close();
-    }
-
-    AccountRuntimeStubServer accountStub = ACCOUNT_STUB;
-    ACCOUNT_STUB = null;
-    if (accountStub != null) {
-      accountStub.close();
-    }
-
-    GameLogicHolder gameLogic = GAME_LOGIC;
-    GAME_LOGIC = null;
-    if (gameLogic != null) {
-      gameLogic.close();
-    }
-
-    WorldManagementStubServer worldStub = WORLD_STUB;
-    WORLD_STUB = null;
-    if (worldStub != null) {
-      worldStub.close();
-    }
-
-    EntityManagementStubServer entityStub = ENTITY_STUB;
-    ENTITY_STUB = null;
-    if (entityStub != null) {
-      entityStub.close();
-    }
-
-    SocialGroupsStubServer socialStub = SOCIAL_STUB;
-    SOCIAL_STUB = null;
-    if (socialStub != null) {
-      socialStub.close();
+    GameplayCrossServiceStack stack = STACK;
+    STACK = null;
+    if (stack != null) {
+      stack.close();
     }
   }
 
   @BeforeEach
   void clearSharedRuntimeState() {
-    stringRedisTemplate.getConnectionFactory().getConnection().serverCommands().flushAll();
-    ACCOUNT_STUB.setGameplayAdmissionAllowed(true);
-    ACCOUNT_STUB.setGameplayAvailable(true);
-    if (ENTITY_STUB != null) {
-      ENTITY_STUB.resetRoomEntities();
-    }
+    STACK.resetScenarioState();
+    STACK.clearRedis();
   }
 
   @Test
@@ -216,7 +173,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(telnetLookResponse.trim())
         .matches(GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt());
 
-    assertThat(ACCOUNT_STUB.capturedAuthenticateRequests())
+    assertThat(accountStub().capturedAuthenticateRequests())
         .anyMatch(
             request ->
                 request.getUsername().equals("demo@example.com")
@@ -233,7 +190,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       firstClient.play("demo");
     }
 
-    ACCOUNT_STUB.setGameplayAdmissionAllowed(false);
+    accountStub().setGameplayAdmissionAllowed(false);
 
     try (GameplayTelnetDriver secondClient = openTelnetClient()) {
       secondClient.awaitInitialGuidance();
@@ -277,8 +234,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void telnetItemAndEquipmentLoopMatchesWebSocketCommandSurface() throws Exception {
     ensureTestServicesStarted();
-    ENTITY_STUB.resetRoomEntities();
-    ENTITY_STUB.resetItemState();
+    entityStub().resetRoomEntities();
+    entityStub().resetItemState();
 
     String roomInventoryBeforePickup;
     String pickupResponse;
@@ -347,40 +304,40 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         .contains("ERROR SLOT_INCOMPATIBLE")
         .contains("Iron Boots cannot be worn by this body layout.");
     GameplayEntityAssertions.assertPickup(
-        ENTITY_STUB.lastPickupRequest(),
+        entityStub().lastPickupRequest(),
         String.valueOf(TENANT_ID),
         ChatTestFixtures.PLAYER_EMBERLINE,
         null,
         LookTestFixtures.ROOM_ID,
         "torch");
     GameplayEntityAssertions.assertDrop(
-        ENTITY_STUB.lastDropRequest(),
+        entityStub().lastDropRequest(),
         String.valueOf(TENANT_ID),
         ChatTestFixtures.PLAYER_EMBERLINE,
         null,
         LookTestFixtures.ROOM_ID,
         "torch");
     GameplayEntityAssertions.assertPut(
-        ENTITY_STUB.lastPutRequest(),
+        entityStub().lastPutRequest(),
         String.valueOf(TENANT_ID),
         ChatTestFixtures.PLAYER_EMBERLINE,
         "container-backpack-1",
         "torch",
         "torch-ground-1");
     GameplayEntityAssertions.assertTake(
-        ENTITY_STUB.lastTakeRequest(),
+        entityStub().lastTakeRequest(),
         String.valueOf(TENANT_ID),
         ChatTestFixtures.PLAYER_EMBERLINE,
         "container-backpack-1",
         "torch",
         "");
     GameplayEntityAssertions.assertRemove(
-        ENTITY_STUB.lastRemoveRequest(),
+        entityStub().lastRemoveRequest(),
         String.valueOf(TENANT_ID),
         ChatTestFixtures.PLAYER_EMBERLINE,
         "HEAD");
     GameplayEntityAssertions.assertWear(
-        ENTITY_STUB.lastWearRequest(),
+        entityStub().lastWearRequest(),
         String.valueOf(TENANT_ID),
         ChatTestFixtures.PLAYER_EMBERLINE,
         "iron-boots",
@@ -399,7 +356,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           .contains(LookTestFixtures.DESTINATION_ROOM_ID);
     }
 
-    ACCOUNT_STUB.setGameplayAdmissionAllowed(false);
+    accountStub().setGameplayAdmissionAllowed(false);
 
     try (GameplayTelnetDriver secondClient = openTelnetClient()) {
       secondClient.awaitInitialGuidance();
@@ -408,44 +365,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       assertThat(secondClient.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
           .contains("ERROR WORLD_ACCESS_DENIED");
     }
-  }
-
-  @Test
-  void telnetReconnectAfterMoveKeepsDestinationRoomContext() throws Exception {
-    ensureTestServicesStarted();
-    String telnetMoveResponse;
-    String telnetReplayResponse;
-    String telnetReconnectLookResponse;
-
-    try (GameplayTelnetDriver client = openTelnetClient()) {
-      client.awaitInitialGuidance();
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
-      client.sendLine("MOVE north");
-      telnetMoveResponse = client.readBlockContainingOrTimeout("OK LOOK");
-    }
-
-    try (GameplayTelnetDriver client = openTelnetClient()) {
-      client.awaitInitialGuidance();
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
-      telnetReplayResponse = client.readBlockContainingOrTimeout("OK LOOK");
-      client.sendLine("LOOK");
-      telnetReconnectLookResponse = client.readBlockContainingOrTimeout("OK LOOK");
-    }
-
-    assertThat(telnetMoveResponse.trim())
-        .matches(
-            GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
-                LookTestFixtures.DESTINATION_ROOM_ID));
-    assertThat(telnetReplayResponse.trim())
-        .matches(
-            GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
-                LookTestFixtures.DESTINATION_ROOM_ID));
-    assertThat(telnetReconnectLookResponse.trim())
-        .matches(
-            GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
-                LookTestFixtures.DESTINATION_ROOM_ID));
   }
 
   @Test
@@ -463,7 +382,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       telnetMoveResponse = client.readBlockContainingOrTimeout("OK LOOK");
     }
 
-    SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
+    SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
     long activeGameplaySessionId =
         sessionContextService
             .findByGameplayIdentity(TENANT_ID, DEMO_WORLD_INSTANCE_ID, ACCOUNT_ID)
@@ -519,7 +438,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void telnetCommunicationMatchesCanonicalTranscriptsWithoutSession() throws Exception {
     ensureTestServicesStarted();
-    ENTITY_STUB.setRoomEntities(ChatTestFixtures.sampleEntities());
+    entityStub().setRoomEntities(ChatTestFixtures.sampleEntities());
     seedLiveTargetSession();
 
     String telnetWhisperResponse;
@@ -529,7 +448,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       client.sendLine("WHISPER Sora Keep quiet");
       telnetWhisperResponse = client.readLineContaining(ChatTestFixtures.canonicalWhisperText());
       GameplayEntityAssertions.assertMessage(
-          SOCIAL_STUB.lastRequest(),
+          socialStub().lastRequest(),
           ChatType.CHAT_TYPE_WHISPER,
           ChatTestFixtures.PLAYER_SORA,
           null,
@@ -542,7 +461,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(telnetWhisperResponse).contains(ChatTestFixtures.canonicalWhisperText());
     assertThat(telnetTellResponse).contains(ChatTestFixtures.canonicalTellText());
     GameplayEntityAssertions.assertMessage(
-        SOCIAL_STUB.lastRequest(),
+        socialStub().lastRequest(),
         ChatType.CHAT_TYPE_TELL,
         ChatTestFixtures.PLAYER_SORA,
         null,
@@ -552,7 +471,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void telnetWhisperDeliversTargetAndObserverViews() throws Exception {
     ensureTestServicesStarted();
-    ENTITY_STUB.setRoomEntities(ChatTestFixtures.sampleEntities());
+    entityStub().setRoomEntities(ChatTestFixtures.sampleEntities());
 
     try (GameplayTelnetScenarios.ThreePlayerScenario scenario =
         GameplayTelnetScenarios.openReadyTrio(
@@ -563,10 +482,10 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT),
             GameplayTelnetScenarios.Admission.named(
                 "demo@example.com", "swordfish", "demo", "Nyx", READY_LOOK_TEXT))) {
-      SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
+      SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
-          GAME_SESSION.bean(ActiveTransportSessionRegistry.class);
-      ScreenBufferService screenBufferService = GAME_SESSION.bean(ScreenBufferService.class);
+          gameSession().bean(ActiveTransportSessionRegistry.class);
+      ScreenBufferService screenBufferService = gameSession().bean(ScreenBufferService.class);
       SessionContext targetContext =
           sessionContextService
               .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora")
@@ -602,7 +521,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void telnetTellDeliversTargetView() throws Exception {
     ensureTestServicesStarted();
-    ENTITY_STUB.setRoomEntities(ChatTestFixtures.sampleEntities());
+    entityStub().setRoomEntities(ChatTestFixtures.sampleEntities());
 
     try (GameplayTelnetScenarios.TwoPlayerScenario scenario =
         GameplayTelnetScenarios.openReadyPair(
@@ -611,10 +530,10 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 "demo@example.com", "swordfish", "demo", "Emberline", READY_LOOK_TEXT),
             GameplayTelnetScenarios.Admission.named(
                 "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT))) {
-      SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
+      SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
-          GAME_SESSION.bean(ActiveTransportSessionRegistry.class);
-      ScreenBufferService screenBufferService = GAME_SESSION.bean(ScreenBufferService.class);
+          gameSession().bean(ActiveTransportSessionRegistry.class);
+      ScreenBufferService screenBufferService = gameSession().bean(ScreenBufferService.class);
       SessionContext targetContext =
           sessionContextService
               .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora")
@@ -635,168 +554,50 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   private static synchronized void ensureTestServicesStarted() {
-    if (ACCOUNT_STUB == null) {
+    if (STACK == null) {
       try {
-        ACCOUNT_STUB = startAccountStub();
+        STACK =
+            GameplayCrossServiceStack.builder()
+                .withPostgres(
+                    POSTGRES.getHost(),
+                    POSTGRES.getMappedPort(5432),
+                    POSTGRES.getDatabaseName(),
+                    POSTGRES.getUsername(),
+                    POSTGRES.getPassword())
+                .withRedis(REDIS.getHost(), REDIS.getMappedPort(6379))
+                .withDefaultAccountId(ACCOUNT_ID)
+                .mapAccountId("sora@example.com", SORA_ACCOUNT_ID)
+                .withSocialEnabled(true)
+                .withGameLogicProps(
+                    Map.of(
+                        "spring.autoconfigure.exclude",
+                        "org.springframework.cloud.gateway.config.GatewayRedisAutoConfiguration"))
+                .withGameSessionProps(
+                    Map.of(
+                        "game-session.require-authenticated-commands",
+                        "true",
+                        "spring.main.allow-bean-definition-overriding",
+                        "true",
+                        "firemud.auth.jwt-secret",
+                        CROSS_SERVICE_TEST_JWT_SECRET,
+                        "management.endpoint.health.group.readiness.include",
+                        "readinessState,db,redis,gameplayPathReadiness"))
+                .withGameLogicConfigs(NestedReadinessOverrides.class)
+                .withGameSessionConfigs(
+                    GameSessionTestOverrides.class, NestedReadinessOverrides.class)
+                .start();
+        DEFAULT_GAME_INSTANCE_ID = STACK.insertRunningGameInstance(TENANT_ID, ACCOUNT_ID, 7L, true);
       } catch (IOException e) {
-        throw new IllegalStateException("Failed to start account stub", e);
+        throw new IllegalStateException("Failed to start shared gameplay stack", e);
       }
-    }
-    if (WORLD_STUB == null) {
-      try {
-        WORLD_STUB = startWorldStub();
-      } catch (IOException e) {
-        throw new IllegalStateException("Failed to start world stub", e);
-      }
-    }
-    if (ENTITY_STUB == null) {
-      try {
-        ENTITY_STUB = startEntityStub();
-      } catch (IOException e) {
-        throw new IllegalStateException("Failed to start entity stub", e);
-      }
-    }
-    if (SOCIAL_STUB == null) {
-      try {
-        SOCIAL_STUB = new SocialGroupsStubServer(0);
-      } catch (IOException e) {
-        throw new IllegalStateException("Failed to start social stub", e);
-      }
-    }
-    if (GAME_LOGIC == null) {
-      GAME_LOGIC = startGameLogic(WORLD_STUB.port(), ENTITY_STUB.port(), SOCIAL_STUB.port());
-    }
-    if (GAME_SESSION == null) {
-      GAME_SESSION = startGameSession(GAME_LOGIC.grpcPort(), ACCOUNT_STUB.port());
     }
     if (GATEWAY == null) {
-      GATEWAY = startGateway(GAME_SESSION.port());
+      GATEWAY = startGateway(STACK.gameSessionPort());
     }
-  }
-
-  private static AccountRuntimeStubServer startAccountStub() throws IOException {
-    AccountRuntimeStubServer stub = new AccountRuntimeStubServer(0);
-    stub.setDefaultAccountId(ACCOUNT_ID);
-    stub.mapAccountId("sora@example.com", SORA_ACCOUNT_ID);
-    return stub;
-  }
-
-  private static WorldManagementStubServer startWorldStub() throws IOException {
-    return new WorldManagementStubServer(0);
-  }
-
-  private static EntityManagementStubServer startEntityStub() throws IOException {
-    return new EntityManagementStubServer(0);
-  }
-
-  private static GameLogicHolder startGameLogic(int worldPort, int entityPort, int socialPort) {
-    Map<String, Object> props = new java.util.LinkedHashMap<>();
-    props.put("spring.profiles.active", "test");
-    props.put("spring.application.name", "game-logic-service");
-    props.put("server.port", "0");
-    props.put("spring.grpc.server.port", "0");
-    props.put("firemud.grpc.plaintext", "true");
-    props.put("firemud.auth.jwt-secret", CROSS_SERVICE_TEST_JWT_SECRET);
-    props.put("otel.endpoint", "disabled");
-    props.put("firemud.database.enabled", "false");
-    props.put(
-        "spring.autoconfigure.exclude",
-        "org.springframework.cloud.gateway.config.GatewayRedisAutoConfiguration");
-    props.put("firemud.services.worldManagementService", "localhost:" + worldPort);
-    props.put("firemud.services.entityManagementService", "localhost:" + entityPort);
-    props.put("firemud.services.socialGroupsService", "localhost:" + socialPort);
-    ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(
-                GameLogicServiceApplication.class, NestedReadinessOverrides.class)
-            .run(toCommandLineArgs(props));
-    int boundGrpcPort = context.getBean(GrpcServerLifecycle.class).getPort();
-    return new GameLogicHolder(context, boundGrpcPort);
-  }
-
-  private static GameSessionHolder startGameSession(int gameLogicPort, int accountPort) {
-    ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(
-                GameSessionServiceApplication.class,
-                GameSessionTestOverrides.class,
-                NestedReadinessOverrides.class)
-            .run(toCommandLineArgs(gameSessionProps(gameLogicPort, accountPort)));
-
-    JdbcTemplate jdbc = new JdbcTemplate(context.getBean(DataSource.class));
-    long insertedId =
-        GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, ACCOUNT_ID, 7L);
-    int port = ((WebServerApplicationContext) context).getWebServer().getPort();
-    return new GameSessionHolder(context, port, insertedId);
-  }
-
-  private static Map<String, Object> gameSessionProps(int gameLogicPort, int accountPort) {
-    Map<String, Object> props = new java.util.LinkedHashMap<>();
-    props.put("spring.profiles.active", "test");
-    props.put("spring.application.name", "game-session-service");
-    props.put("server.port", "0");
-    props.put("spring.grpc.server.port", "0");
-    props.put("game-session.require-authenticated-commands", "true");
-    props.put("firemud.services.accountService", "localhost:" + accountPort);
-    props.put("firemud.services.gameLogicService", "localhost:" + gameLogicPort);
-    props.put("firemud.grpc.plaintext", "true");
-    props.put("otel.endpoint", "disabled");
-    props.put("game.logic.default-room-id", LookTestFixtures.ROOM_ID);
-    props.put("firemud.postgres.host", POSTGRES.getHost());
-    props.put("firemud.postgres.port", String.valueOf(POSTGRES.getMappedPort(5432)));
-    props.put("firemud.postgres.database", POSTGRES.getDatabaseName());
-    props.put("firemud.postgres.username", POSTGRES.getUsername());
-    props.put("firemud.postgres.password", POSTGRES.getPassword());
-    props.put("firemud.redis.host", REDIS.getHost());
-    props.put("firemud.redis.port", String.valueOf(REDIS.getMappedPort(6379)));
-    props.put("firemud.database.enabled", "true");
-    props.put("spring.main.allow-bean-definition-overriding", "true");
-    props.put("firemud.auth.jwt-secret", CROSS_SERVICE_TEST_JWT_SECRET);
-    props.put("firemud.services.entityManagementService", "localhost:" + ENTITY_STUB.port());
-    props.put(
-        "management.endpoint.health.group.readiness.include",
-        "readinessState,db,redis,gameplayPathReadiness");
-    props.put(
-        "spring.datasource.url",
-        "jdbc:postgresql://"
-            + POSTGRES.getHost()
-            + ":"
-            + POSTGRES.getMappedPort(5432)
-            + "/"
-            + POSTGRES.getDatabaseName());
-    props.put("spring.datasource.username", POSTGRES.getUsername());
-    props.put("spring.datasource.password", POSTGRES.getPassword());
-    props.put("spring.jpa.hibernate.ddl-auto", "none");
-    props.put("spring.flyway.enabled", "true");
-    props.put("spring.flyway.locations", "filesystem:" + gameSessionMigrationDir());
-    props.put(
-        "spring.autoconfigure.exclude",
-        "org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,"
-            + "org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,"
-            + "org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration");
-    return props;
-  }
-
-  private static String gameSessionMigrationDir() {
-    return resolveModuleMigrationDir("game-session-service").toString();
-  }
-
-  private static Path resolveModuleMigrationDir(String moduleName) {
-    Path current = Path.of("").toAbsolutePath().normalize();
-    while (current != null) {
-      Path candidate =
-          current
-              .resolve("services")
-              .resolve(moduleName)
-              .resolve("src/main/resources/db/migration");
-      if (candidate.toFile().exists()) {
-        return candidate;
-      }
-      current = current.getParent();
-    }
-    throw new IllegalStateException("Could not resolve migration directory for " + moduleName);
   }
 
   private void seedLiveTargetSession() {
-    GAME_SESSION
+    gameSession()
         .bean(SessionContextService.class)
         .save(
             new SessionContext(
@@ -823,12 +624,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     return new GatewayHolder(context, port);
   }
 
-  private static String[] toCommandLineArgs(Map<String, Object> props) {
-    return props.entrySet().stream()
-        .map(entry -> "--" + entry.getKey() + "=" + entry.getValue())
-        .toArray(String[]::new);
-  }
-
   private GameplayTelnetDriver openTelnetClient() throws IOException {
     return GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT);
   }
@@ -840,50 +635,20 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT));
   }
 
-  private static final class GameLogicHolder {
-    private final ConfigurableApplicationContext context;
-    private final int grpcPort;
-
-    GameLogicHolder(ConfigurableApplicationContext context, int grpcPort) {
-      this.context = context;
-      this.grpcPort = grpcPort;
-    }
-
-    int grpcPort() {
-      return grpcPort;
-    }
-
-    void close() {
-      context.close();
-    }
+  private static AccountRuntimeStubServer accountStub() {
+    return STACK.accountStub();
   }
 
-  private static final class GameSessionHolder {
-    private final ConfigurableApplicationContext context;
-    private final int port;
-    private final long sessionId;
+  private static EntityManagementStubServer entityStub() {
+    return STACK.entityStub();
+  }
 
-    GameSessionHolder(ConfigurableApplicationContext context, int port, long sessionId) {
-      this.context = context;
-      this.port = port;
-      this.sessionId = sessionId;
-    }
+  private static SocialGroupsStubServer socialStub() {
+    return STACK.socialStub();
+  }
 
-    int port() {
-      return port;
-    }
-
-    long sessionId() {
-      return sessionId;
-    }
-
-    <T> T bean(Class<T> type) {
-      return context.getBean(type);
-    }
-
-    void close() {
-      context.close();
-    }
+  private static CrossServiceAppHarness.GameSessionHolder gameSession() {
+    return STACK.gameSession();
   }
 
   private static final class GatewayHolder {

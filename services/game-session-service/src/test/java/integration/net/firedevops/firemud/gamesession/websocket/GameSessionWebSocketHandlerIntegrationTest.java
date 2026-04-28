@@ -617,12 +617,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.play("demo");
       client.awaitContains("RECONNECT REPLAY APPEARS");
       secondPayloads = client.responses();
+      assertThat(waitForPresenceCount(22L, 1L, 1)).isTrue();
+      assertThat(gameplayPresenceService.listConnectedByGameInstance(22L, 1L))
+          .anySatisfy(presence -> assertThat(presence.sessionId()).isEqualTo(42L));
     }
     assertThat(secondPayloads).anyMatch(payload -> payload.contains("RECONNECT REPLAY APPEARS"));
     assertThat(secondPayloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
-    assertThat(waitForPresenceCount(22L, 1L, 1)).isTrue();
-    assertThat(gameplayPresenceService.listConnectedByGameInstance(22L, 1L))
-        .anySatisfy(presence -> assertThat(presence.sessionId()).isEqualTo(42L));
     verify(screenBufferService).get(22L, 1L, 123L);
     verify(screenBufferService, never()).clear(22L, 1L, 123L);
   }

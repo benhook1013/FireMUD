@@ -54,6 +54,10 @@ public final class WorldManagementStubServer implements AutoCloseable {
     nextFailure.set(Status.NOT_FOUND.withDescription(description).asRuntimeException());
   }
 
+  public void resetFailures() {
+    nextFailure.set(null);
+  }
+
   public String endpoint() {
     return "localhost:" + port;
   }

@@ -1,11 +1,15 @@
 package net.firedevops.firemud.gamesession;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
@@ -34,11 +38,27 @@ public final class CrossServiceAppHarness {
   public static GameLogicHolder startGameLogic(
       String worldEndpoint, String entityEndpoint, String socialEndpoint) {
     return startGameLogic(
-        TestSocketUtils.findAvailableTcpPort(), worldEndpoint, entityEndpoint, socialEndpoint);
+        TestSocketUtils.findAvailableTcpPort(),
+        worldEndpoint,
+        entityEndpoint,
+        socialEndpoint,
+        props -> {},
+        new Class<?>[0]);
   }
 
   public static GameLogicHolder startGameLogic(
       int grpcPort, String worldEndpoint, String entityEndpoint, String socialEndpoint) {
+    return startGameLogic(
+        grpcPort, worldEndpoint, entityEndpoint, socialEndpoint, props -> {}, new Class<?>[0]);
+  }
+
+  public static GameLogicHolder startGameLogic(
+      int grpcPort,
+      String worldEndpoint,
+      String entityEndpoint,
+      String socialEndpoint,
+      Consumer<Map<String, Object>> customizer,
+      Class<?>... extraConfigClasses) {
     Map<String, Object> props = new LinkedHashMap<>();
     props.put("spring.profiles.active", "test");
     props.put("spring.application.name", "game-logic-service");
@@ -53,18 +73,42 @@ public final class CrossServiceAppHarness {
     if (socialEndpoint != null) {
       props.put("firemud.services.socialGroupsService", socialEndpoint);
     }
+    customizer.accept(props);
 
     ConfigurableApplicationContext context =
         new SpringApplicationBuilder(
-                net.firedevops.firemud.gamelogic.GameLogicServiceApplication.class)
+                applicationClasses(
+                    net.firedevops.firemud.gamelogic.GameLogicServiceApplication.class,
+                    extraConfigClasses))
             .run(toCommandLineArgs(props));
     int boundGrpcPort = context.getBean(GrpcServerLifecycle.class).getPort();
+    int restartGrpcPort = grpcPort == 0 ? boundGrpcPort : grpcPort;
     return new GameLogicHolder(
-        context, boundGrpcPort, worldEndpoint, entityEndpoint, socialEndpoint);
+        context,
+        boundGrpcPort,
+        worldEndpoint,
+        entityEndpoint,
+        socialEndpoint,
+        () ->
+            startGameLogic(
+                restartGrpcPort,
+                worldEndpoint,
+                entityEndpoint,
+                socialEndpoint,
+                customizer,
+                extraConfigClasses));
   }
 
   public static GameSessionHolder startGameSession(
       int gameLogicPort, int accountPort, Consumer<Map<String, Object>> customizer) {
+    return startGameSession(gameLogicPort, accountPort, customizer, new Class<?>[0]);
+  }
+
+  public static GameSessionHolder startGameSession(
+      int gameLogicPort,
+      int accountPort,
+      Consumer<Map<String, Object>> customizer,
+      Class<?>... extraConfigClasses) {
     Map<String, Object> props = new LinkedHashMap<>();
     props.put("spring.profiles.active", "test");
     props.put("spring.application.name", "game-session-service");
@@ -87,10 +131,26 @@ public final class CrossServiceAppHarness {
 
     ConfigurableApplicationContext context =
         new SpringApplicationBuilder(
-                GameSessionServiceApplication.class, GameSessionTestOverrides.class)
+                applicationClasses(
+                    GameSessionServiceApplication.class,
+                    combineConfigs(GameSessionTestOverrides.class, extraConfigClasses)))
             .run(toCommandLineArgs(props));
     int port = ((WebServerApplicationContext) context).getWebServer().getPort();
     return new GameSessionHolder(context, port);
+  }
+
+  private static Class<?>[] applicationClasses(Class<?> primary, Class<?>... extras) {
+    List<Class<?>> classes = new ArrayList<>();
+    classes.add(primary);
+    classes.addAll(Arrays.asList(extras));
+    return classes.toArray(Class<?>[]::new);
+  }
+
+  private static Class<?>[] combineConfigs(Class<?> first, Class<?>... extras) {
+    List<Class<?>> classes = new ArrayList<>();
+    classes.add(first);
+    classes.addAll(Arrays.asList(extras));
+    return classes.toArray(Class<?>[]::new);
   }
 
   private static String[] toCommandLineArgs(Map<String, Object> props) {
@@ -254,18 +314,21 @@ public final class CrossServiceAppHarness {
     private final String worldEndpoint;
     private final String entityEndpoint;
     private final String socialEndpoint;
+    private final Supplier<GameLogicHolder> restartAction;
 
     GameLogicHolder(
         ConfigurableApplicationContext context,
         int grpcPort,
         String worldEndpoint,
         String entityEndpoint,
-        String socialEndpoint) {
+        String socialEndpoint,
+        Supplier<GameLogicHolder> restartAction) {
       this.context = context;
       this.grpcPort = grpcPort;
       this.worldEndpoint = worldEndpoint;
       this.entityEndpoint = entityEndpoint;
       this.socialEndpoint = socialEndpoint;
+      this.restartAction = restartAction;
     }
 
     public int grpcPort() {
@@ -274,7 +337,7 @@ public final class CrossServiceAppHarness {
 
     public GameLogicHolder restart() {
       context.close();
-      return startGameLogic(grpcPort, worldEndpoint, entityEndpoint, socialEndpoint);
+      return restartAction.get();
     }
 
     public void close() {

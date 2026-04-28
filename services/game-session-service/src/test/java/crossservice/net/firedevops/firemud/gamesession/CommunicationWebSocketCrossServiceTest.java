@@ -10,22 +10,17 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
-import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
-import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
-import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
+import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
 import net.firedevops.firemud.gamesession.testsupport.GameplayEntityAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
-import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.util.TestSocketUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -53,49 +48,14 @@ class CommunicationWebSocketCrossServiceTest {
   static final GenericContainer<?> REDIS =
       new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine")).withExposedPorts(6379);
 
-  private static AccountRuntimeStubServer ACCOUNT_STUB;
-  private static WorldManagementStubServer WORLD_STUB;
-  private static EntityManagementStubServer ENTITY_STUB;
-  private static SocialGroupsStubServer SOCIAL_STUB;
-  private static CrossServiceAppHarness.GameLogicHolder GAME_LOGIC;
-  private static CrossServiceAppHarness.GameSessionHolder GAME_SESSION;
+  private static GameplayCrossServiceStack STACK;
 
   @AfterAll
   static synchronized void stopServices() {
-    CrossServiceAppHarness.GameSessionHolder gameSession = GAME_SESSION;
-    GAME_SESSION = null;
-    if (gameSession != null) {
-      gameSession.close();
-    }
-
-    CrossServiceAppHarness.GameLogicHolder gameLogic = GAME_LOGIC;
-    GAME_LOGIC = null;
-    if (gameLogic != null) {
-      gameLogic.close();
-    }
-
-    SocialGroupsStubServer socialStub = SOCIAL_STUB;
-    SOCIAL_STUB = null;
-    if (socialStub != null) {
-      socialStub.close();
-    }
-
-    EntityManagementStubServer entityStub = ENTITY_STUB;
-    ENTITY_STUB = null;
-    if (entityStub != null) {
-      entityStub.close();
-    }
-
-    WorldManagementStubServer worldStub = WORLD_STUB;
-    WORLD_STUB = null;
-    if (worldStub != null) {
-      worldStub.close();
-    }
-
-    AccountRuntimeStubServer accountStub = ACCOUNT_STUB;
-    ACCOUNT_STUB = null;
-    if (accountStub != null) {
-      accountStub.close();
+    GameplayCrossServiceStack stack = STACK;
+    STACK = null;
+    if (stack != null) {
+      stack.close();
     }
   }
 
@@ -112,7 +72,7 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(responses).anyMatch(response -> response.startsWith("OK PLAY"));
     assertThat(responses)
         .anyMatch(response -> response.contains(ChatTestFixtures.canonicalSayText()));
-    assertThat(SOCIAL_STUB.lastRequest())
+    assertThat(socialStub().lastRequest())
         .hasValueSatisfying(
             request -> {
               assertThat(request.getContent()).isEqualTo("hello travelers");
@@ -122,7 +82,7 @@ class CommunicationWebSocketCrossServiceTest {
             });
 
     GameplayAsyncAssertions.assertMetricEventually(
-        GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+        gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
         COMMAND_WAIT,
         "gamesession.command.say.invocations",
         1.0);
@@ -140,14 +100,14 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(responses)
         .anyMatch(response -> response.contains(ChatTestFixtures.canonicalWhisperText()));
     GameplayEntityAssertions.assertMessage(
-        SOCIAL_STUB.lastRequest(),
+        socialStub().lastRequest(),
         ChatType.CHAT_TYPE_WHISPER,
         ChatTestFixtures.PLAYER_SORA,
         "keep quiet",
         true);
 
     GameplayAsyncAssertions.assertMetricEventually(
-        GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+        gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
         COMMAND_WAIT,
         "gamesession.command.whisper.invocations",
         1.0);
@@ -166,14 +126,14 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(responses)
         .anyMatch(response -> response.contains(ChatTestFixtures.canonicalTellText()));
     GameplayEntityAssertions.assertMessage(
-        SOCIAL_STUB.lastRequest(),
+        socialStub().lastRequest(),
         ChatType.CHAT_TYPE_TELL,
         ChatTestFixtures.PLAYER_SORA,
         "meet me at the forge",
         true);
 
     GameplayAsyncAssertions.assertMetricEventually(
-        GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+        gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
         COMMAND_WAIT,
         "gamesession.command.tell.invocations",
         1.0);
@@ -183,20 +143,21 @@ class CommunicationWebSocketCrossServiceTest {
   void websocketFriendsShowsCanonicalCrossGamePresence() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-    SOCIAL_STUB.setFriendPresenceEntries(
-        List.of(
-            FriendPresenceEntry.newBuilder()
-                .setFriendAccountId(Long.toString(SORA_ACCOUNT_ID))
-                .setOnline(true)
-                .setCharacterId(ChatTestFixtures.PLAYER_SORA)
-                .setCharacterName("Sora")
-                .setWorldSlug("demo")
-                .setWorldDisplayName("Demo World")
-                .setRealmSlug("production")
-                .setRealmDisplayName("Live Realm")
-                .setActivityState(
-                    FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
-                .build()));
+    socialStub()
+        .setFriendPresenceEntries(
+            List.of(
+                FriendPresenceEntry.newBuilder()
+                    .setFriendAccountId(Long.toString(SORA_ACCOUNT_ID))
+                    .setOnline(true)
+                    .setCharacterId(ChatTestFixtures.PLAYER_SORA)
+                    .setCharacterName("Sora")
+                    .setWorldSlug("demo")
+                    .setWorldDisplayName("Demo World")
+                    .setRealmSlug("production")
+                    .setRealmDisplayName("Live Realm")
+                    .setActivityState(
+                        FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
+                    .build()));
 
     List<String> responses =
         runCommunicationSequence(
@@ -205,7 +166,7 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses)
         .anyMatch(response -> response.contains("Sora - online in Demo World / Live Realm (idle)"));
-    assertThat(SOCIAL_STUB.lastPresenceRequest())
+    assertThat(socialStub().lastPresenceRequest())
         .hasValueSatisfying(
             request -> {
               assertThat(request.getTenantId()).isEqualTo(Long.toString(TENANT_ID));
@@ -261,7 +222,7 @@ class CommunicationWebSocketCrossServiceTest {
   void websocketItemLoopMovesRoomItemThroughInventoryAndBack() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-    ENTITY_STUB.resetItemState();
+    entityStub().resetItemState();
 
     try (GameplayWebSocketDriver client = openReadySessionClient(sessionId, "item-loop-conn")) {
 
@@ -275,7 +236,7 @@ class CommunicationWebSocketCrossServiceTest {
       client.awaitContains("Inventory:");
       client.awaitContains("- Torch [torch#1] (A small torch)");
       GameplayEntityAssertions.assertPickup(
-          ENTITY_STUB.lastPickupRequest(),
+          entityStub().lastPickupRequest(),
           String.valueOf(TENANT_ID),
           ChatTestFixtures.PLAYER_EMBERLINE,
           String.valueOf(DEMO_WORLD_INSTANCE_ID),
@@ -290,7 +251,7 @@ class CommunicationWebSocketCrossServiceTest {
       client.awaitContains("You put Torch into Backpack.");
       client.awaitContains("- Torch [torch#1] (A small torch)");
       GameplayEntityAssertions.assertPut(
-          ENTITY_STUB.lastPutRequest(),
+          entityStub().lastPutRequest(),
           String.valueOf(TENANT_ID),
           ChatTestFixtures.PLAYER_EMBERLINE,
           "container-backpack-1",
@@ -301,7 +262,7 @@ class CommunicationWebSocketCrossServiceTest {
       client.awaitContains("You take Torch from Backpack.");
       client.awaitContains("- Ration [ration#1] (A dry trail ration)");
       GameplayEntityAssertions.assertTake(
-          ENTITY_STUB.lastTakeRequest(),
+          entityStub().lastTakeRequest(),
           String.valueOf(TENANT_ID),
           ChatTestFixtures.PLAYER_EMBERLINE,
           "container-backpack-1",
@@ -314,7 +275,7 @@ class CommunicationWebSocketCrossServiceTest {
       client.awaitContains("Room Inventory:");
       client.awaitContains("- Torch [torch#1] (A small torch)");
       GameplayEntityAssertions.assertDrop(
-          ENTITY_STUB.lastDropRequest(),
+          entityStub().lastDropRequest(),
           String.valueOf(TENANT_ID),
           ChatTestFixtures.PLAYER_EMBERLINE,
           String.valueOf(DEMO_WORLD_INSTANCE_ID),
@@ -327,7 +288,7 @@ class CommunicationWebSocketCrossServiceTest {
   void websocketEquipmentLoopMovesCarriedItemThroughSlotAndBack() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-    ENTITY_STUB.resetItemState();
+    entityStub().resetItemState();
 
     try (GameplayWebSocketDriver client =
         openReadySessionClient(sessionId, "equipment-loop-conn")) {
@@ -338,7 +299,7 @@ class CommunicationWebSocketCrossServiceTest {
       client.send("WEAR Leather Cap");
       client.awaitContains("You wear Leather Cap.");
       GameplayEntityAssertions.assertWear(
-          ENTITY_STUB.lastWearRequest(),
+          entityStub().lastWearRequest(),
           String.valueOf(TENANT_ID),
           ChatTestFixtures.PLAYER_EMBERLINE,
           "leather-cap",
@@ -350,7 +311,7 @@ class CommunicationWebSocketCrossServiceTest {
       client.send("REMOVE HEAD");
       client.awaitContains("You remove Leather Cap.");
       GameplayEntityAssertions.assertRemove(
-          ENTITY_STUB.lastRemoveRequest(),
+          entityStub().lastRemoveRequest(),
           String.valueOf(TENANT_ID),
           ChatTestFixtures.PLAYER_EMBERLINE,
           "HEAD");
@@ -362,7 +323,7 @@ class CommunicationWebSocketCrossServiceTest {
       client.awaitContains(
           "ERROR SLOT_INCOMPATIBLE Iron Boots cannot be worn by this body layout.");
       GameplayEntityAssertions.assertWear(
-          ENTITY_STUB.lastWearRequest(),
+          entityStub().lastWearRequest(),
           String.valueOf(TENANT_ID),
           ChatTestFixtures.PLAYER_EMBERLINE,
           "iron-boots",
@@ -371,80 +332,44 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
-    if (ACCOUNT_STUB == null) {
-      ACCOUNT_STUB = new AccountRuntimeStubServer(TestSocketUtils.findAvailableTcpPort());
-      ACCOUNT_STUB.setDefaultAccountId(ACCOUNT_ID);
-      ACCOUNT_STUB.mapAccountId("sora@example.com", SORA_ACCOUNT_ID);
+    if (STACK == null) {
+      STACK =
+          GameplayCrossServiceStack.builder()
+              .withPostgres(
+                  POSTGRES.getHost(),
+                  POSTGRES.getMappedPort(5432),
+                  POSTGRES.getDatabaseName(),
+                  POSTGRES.getUsername(),
+                  POSTGRES.getPassword())
+              .withRedis(REDIS.getHost(), REDIS.getMappedPort(6379))
+              .withDefaultAccountId(ACCOUNT_ID)
+              .mapAccountId("sora@example.com", SORA_ACCOUNT_ID)
+              .withInitialRoomEntities(ChatTestFixtures.sampleEntities())
+              .withSocialEnabled(true)
+              .start();
     }
-    if (WORLD_STUB == null) {
-      WORLD_STUB = new WorldManagementStubServer(TestSocketUtils.findAvailableTcpPort());
-    }
-    if (ENTITY_STUB == null) {
-      ENTITY_STUB = new EntityManagementStubServer(TestSocketUtils.findAvailableTcpPort());
-      ENTITY_STUB.setRoomEntities(ChatTestFixtures.sampleEntities());
-    }
-    if (SOCIAL_STUB == null) {
-      SOCIAL_STUB = new SocialGroupsStubServer(TestSocketUtils.findAvailableTcpPort());
-    }
-    if (GAME_LOGIC == null) {
-      GAME_LOGIC = startGameLogic(WORLD_STUB.port(), ENTITY_STUB.port(), SOCIAL_STUB.port());
-    }
-    if (GAME_SESSION == null) {
-      GAME_SESSION = startGameSession(GAME_LOGIC.grpcPort(), ACCOUNT_STUB.port());
-    }
-  }
-
-  private static CrossServiceAppHarness.GameLogicHolder startGameLogic(
-      int worldPort, int entityPort, int socialPort) {
-    return CrossServiceAppHarness.startGameLogic(
-        WORLD_STUB.endpoint(), ENTITY_STUB.endpoint(), SOCIAL_STUB.endpoint());
-  }
-
-  private static CrossServiceAppHarness.GameSessionHolder startGameSession(
-      int gameLogicPort, int accountPort) {
-    return CrossServiceAppHarness.startGameSession(
-        gameLogicPort,
-        accountPort,
-        props -> {
-          props.put("game.logic.default-room-id", ChatTestFixtures.ROOM_ID);
-          props.put("firemud.redis.host", REDIS.getHost());
-          props.put("firemud.redis.port", REDIS.getMappedPort(6379));
-          props.put("firemud.postgres.host", POSTGRES.getHost());
-          props.put("firemud.postgres.port", POSTGRES.getMappedPort(5432));
-          props.put("firemud.postgres.database", POSTGRES.getDatabaseName());
-          props.put("firemud.postgres.username", POSTGRES.getUsername());
-          props.put("firemud.postgres.password", POSTGRES.getPassword());
-          props.put("firemud.database.enabled", "true");
-          props.put("spring.jpa.hibernate.ddl-auto", "none");
-          props.put("firemud.services.entityManagementService", ENTITY_STUB.endpoint());
-          props.put("firemud.services.socialGroupsService", SOCIAL_STUB.endpoint());
-        });
   }
 
   private long prepareGameInstance() {
-    GAME_SESSION
-        .bean(StringRedisTemplate.class)
-        .getConnectionFactory()
-        .getConnection()
-        .serverCommands()
-        .flushAll();
-    GAME_SESSION
+    STACK.resetScenarioState();
+    STACK.clearRedis();
+    gameSession()
         .bean(ScreenBufferService.class)
         .clear(TENANT_ID, DEMO_WORLD_INSTANCE_ID, ACCOUNT_ID);
-    GAME_SESSION
+    gameSession()
         .bean(ScreenBufferService.class)
         .clear(TENANT_ID, DEMO_WORLD_INSTANCE_ID, Long.parseLong(ChatTestFixtures.PLAYER_SORA));
-    GAME_SESSION
+    gameSession()
         .bean(ScreenBufferService.class)
         .clear(TENANT_ID, DEMO_WORLD_INSTANCE_ID, Long.parseLong(ChatTestFixtures.PLAYER_NYX));
-    JdbcTemplate jdbc = new JdbcTemplate(GAME_SESSION.bean(javax.sql.DataSource.class));
+    JdbcTemplate jdbc = new JdbcTemplate(gameSession().bean(javax.sql.DataSource.class));
     GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
     jdbc.update("DELETE FROM game_instances");
     return GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, ACCOUNT_ID, 7L);
   }
 
   private void seedLiveTargetSession() {
-    SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
+    SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
     sessionContextService.save(
         new SessionContext(
             90210L,
@@ -479,10 +404,23 @@ class CommunicationWebSocketCrossServiceTest {
 
   private GameplayWebSocketDriver openSessionClient(long sessionId, String proxyConnectionId) {
     return GameplayWebSocketDriver.connectGameplaySession(
-        URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game"),
+        URI.create("ws://localhost:" + gameSession().port() + "/ws/game"),
         COMMAND_WAIT,
         TENANT_ID,
         sessionId,
         java.util.Map.of("X-Proxy-Connection-Id", proxyConnectionId));
+  }
+
+  private static CrossServiceAppHarness.GameSessionHolder gameSession() {
+    return STACK.gameSession();
+  }
+
+  private static net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer socialStub() {
+    return STACK.socialStub();
+  }
+
+  private static net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer
+      entityStub() {
+    return STACK.entityStub();
   }
 }

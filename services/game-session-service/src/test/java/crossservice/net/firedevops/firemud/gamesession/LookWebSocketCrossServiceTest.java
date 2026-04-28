@@ -9,18 +9,15 @@ import javax.sql.DataSource;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
-import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
-import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
+import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
 import net.firedevops.firemud.gamesession.testsupport.GameplayTranscriptMatchers;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.util.TestSocketUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -46,58 +43,21 @@ class LookWebSocketCrossServiceTest {
   static final GenericContainer<?> REDIS =
       new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine")).withExposedPorts(6379);
 
-  private static AccountRuntimeStubServer ACCOUNT_STUB;
-  private static WorldManagementStubServer WORLD_STUB;
-  private static EntityManagementStubServer ENTITY_STUB;
-  private static CrossServiceAppHarness.GameLogicHolder GAME_LOGIC;
-  private static CrossServiceAppHarness.GameSessionHolder GAME_SESSION;
-
-  private static synchronized void replaceGameLogic(
-      CrossServiceAppHarness.GameLogicHolder restartedGameLogic) {
-    CrossServiceAppHarness.GameLogicHolder previous = GAME_LOGIC;
-    GAME_LOGIC = restartedGameLogic;
-    if (previous != null) {
-      previous.close();
-    }
-  }
+  private static GameplayCrossServiceStack STACK;
 
   @AfterAll
   static synchronized void stopServices() {
-    CrossServiceAppHarness.GameSessionHolder gameSession = GAME_SESSION;
-    GAME_SESSION = null;
-    if (gameSession != null) {
-      gameSession.close();
-    }
-
-    CrossServiceAppHarness.GameLogicHolder gameLogic = GAME_LOGIC;
-    GAME_LOGIC = null;
-    if (gameLogic != null) {
-      gameLogic.close();
-    }
-
-    AccountRuntimeStubServer accountStub = ACCOUNT_STUB;
-    ACCOUNT_STUB = null;
-    if (accountStub != null) {
-      accountStub.close();
-    }
-
-    WorldManagementStubServer worldStub = WORLD_STUB;
-    WORLD_STUB = null;
-    if (worldStub != null) {
-      worldStub.close();
-    }
-
-    EntityManagementStubServer entityStub = ENTITY_STUB;
-    ENTITY_STUB = null;
-    if (entityStub != null) {
-      entityStub.close();
+    GameplayCrossServiceStack stack = STACK;
+    STACK = null;
+    if (stack != null) {
+      stack.close();
     }
   }
 
   @Test
   void websocketLookFlowReportsCanonicalTranscriptAndMetrics() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
     List<String> responses = runLookSequence(sessionId);
 
@@ -110,12 +70,12 @@ class LookWebSocketCrossServiceTest {
     assertThat(responses.get(4)).startsWith("ERROR ROOM_NOT_FOUND");
 
     GameplayAsyncAssertions.assertMetricEventually(
-        GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+        gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
         COMMAND_WAIT,
         "gamesession.command.look.invocations",
         2.0);
     GameplayAsyncAssertions.assertMetricEventually(
-        GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+        gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
         COMMAND_WAIT,
         "gamesession.command.look.failures",
         1.0,
@@ -126,7 +86,7 @@ class LookWebSocketCrossServiceTest {
   @Test
   void websocketQuickLookOmitsLongDescriptionButKeepsPrompt() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
     List<String> responses = runQuickLookSequence(sessionId);
 
@@ -146,7 +106,7 @@ class LookWebSocketCrossServiceTest {
   @Test
   void websocketMovementReturnsDestinationLookAndPersistsRoomContext() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
     List<String> responses = runMovementSequence(sessionId);
 
@@ -173,7 +133,7 @@ class LookWebSocketCrossServiceTest {
   @Test
   void websocketReconnectAfterMoveKeepsDestinationRoomContext() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
@@ -197,7 +157,7 @@ class LookWebSocketCrossServiceTest {
   @Test
   void websocketSecondConnectionTakesOverGameplayBinding() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long firstSessionId = prepareGameInstance();
     long secondSessionId = prepareAdditionalGameInstance();
 
@@ -219,7 +179,7 @@ class LookWebSocketCrossServiceTest {
       assertThat(first.responses())
           .anyMatch(response -> response.startsWith("ERROR LOGIN_REQUIRED"));
       GameplayAsyncAssertions.assertMetricEventually(
-          GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+          gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
           COMMAND_WAIT,
           "gamesession.session.takeover",
           1.0);
@@ -229,7 +189,7 @@ class LookWebSocketCrossServiceTest {
   @Test
   void websocketMovedPlayerStaysInGameAcrossGameLogicRestart() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
 
     try (GameplayWebSocketDriver socket = openReadySession(sessionId)) {
@@ -247,7 +207,7 @@ class LookWebSocketCrossServiceTest {
                           LookTestFixtures.DESTINATION_ROOM_ID)
                       .test(response.trim()));
 
-      replaceGameLogic(GAME_LOGIC.restart());
+      STACK.restartGameLogic();
 
       socket.send("LOOK");
       socket.awaitMatching(
@@ -275,7 +235,7 @@ class LookWebSocketCrossServiceTest {
   @Test
   void websocketReconnectAfterRevocationFailsClosed() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
@@ -287,7 +247,7 @@ class LookWebSocketCrossServiceTest {
                         LookTestFixtures.DESTINATION_ROOM_ID)
                     .test(response.trim()));
 
-    ACCOUNT_STUB.denyGameplayAdmission();
+    accountStub().denyGameplayAdmission();
     List<String> reconnectResponses = runPlayAfterReconnect(sessionId);
     assertThat(reconnectResponses).hasSizeGreaterThanOrEqualTo(2);
     assertThat(reconnectResponses).anyMatch(response -> response.startsWith("OK LOGIN"));
@@ -298,7 +258,7 @@ class LookWebSocketCrossServiceTest {
   @Test
   void websocketReconnectAfterStaleSessionFreshEntersGameplay() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
@@ -310,7 +270,7 @@ class LookWebSocketCrossServiceTest {
                         LookTestFixtures.DESTINATION_ROOM_ID)
                     .test(response.trim()));
 
-    GAME_SESSION
+    gameSession()
         .bean(net.firedevops.firemud.gamesession.service.SessionContextService.class)
         .deleteBySessionId(TENANT_ID, sessionId);
 
@@ -326,7 +286,7 @@ class LookWebSocketCrossServiceTest {
   @Test
   void websocketReconnectWithoutBufferedTranscriptStillGetsFreshLook() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runPlayThenDisconnect(sessionId);
@@ -342,47 +302,19 @@ class LookWebSocketCrossServiceTest {
   }
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
-    if (ACCOUNT_STUB == null) {
-      ACCOUNT_STUB = new AccountRuntimeStubServer(TestSocketUtils.findAvailableTcpPort());
-      ACCOUNT_STUB.setDefaultAccountId(ACCOUNT_ID);
+    if (STACK == null) {
+      STACK =
+          GameplayCrossServiceStack.builder()
+              .withPostgres(
+                  POSTGRES.getHost(),
+                  POSTGRES.getMappedPort(5432),
+                  POSTGRES.getDatabaseName(),
+                  POSTGRES.getUsername(),
+                  POSTGRES.getPassword())
+              .withRedis(REDIS.getHost(), REDIS.getMappedPort(6379))
+              .withDefaultAccountId(ACCOUNT_ID)
+              .start();
     }
-    if (WORLD_STUB == null) {
-      WORLD_STUB = new WorldManagementStubServer(TestSocketUtils.findAvailableTcpPort());
-    }
-    if (ENTITY_STUB == null) {
-      ENTITY_STUB = new EntityManagementStubServer(TestSocketUtils.findAvailableTcpPort());
-    }
-    if (GAME_LOGIC == null) {
-      GAME_LOGIC = startGameLogic(WORLD_STUB.port(), ENTITY_STUB.port());
-    }
-    if (GAME_SESSION == null) {
-      GAME_SESSION = startGameSession(GAME_LOGIC.grpcPort(), ACCOUNT_STUB.port());
-    }
-  }
-
-  private static CrossServiceAppHarness.GameLogicHolder startGameLogic(
-      int worldPort, int entityPort) {
-    return CrossServiceAppHarness.startGameLogic(
-        WORLD_STUB.endpoint(), ENTITY_STUB.endpoint(), null);
-  }
-
-  private static CrossServiceAppHarness.GameSessionHolder startGameSession(
-      int gameLogicPort, int accountPort) {
-    return CrossServiceAppHarness.startGameSession(
-        gameLogicPort,
-        accountPort,
-        props -> {
-          props.put("game.logic.default-room-id", LookTestFixtures.ROOM_ID);
-          props.put("firemud.redis.host", REDIS.getHost());
-          props.put("firemud.redis.port", REDIS.getMappedPort(6379));
-          props.put("firemud.postgres.host", POSTGRES.getHost());
-          props.put("firemud.postgres.port", POSTGRES.getMappedPort(5432));
-          props.put("firemud.postgres.database", POSTGRES.getDatabaseName());
-          props.put("firemud.postgres.username", POSTGRES.getUsername());
-          props.put("firemud.postgres.password", POSTGRES.getPassword());
-          props.put("firemud.database.enabled", "true");
-          props.put("spring.jpa.hibernate.ddl-auto", "none");
-        });
   }
 
   private long prepareGameInstance() {
@@ -394,18 +326,14 @@ class LookWebSocketCrossServiceTest {
   }
 
   private long insertGameInstance(boolean clearExisting) {
-    DataSource dataSource = GAME_SESSION.bean(DataSource.class);
+    DataSource dataSource = gameSession().bean(DataSource.class);
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
     if (clearExisting) {
-      GAME_SESSION
-          .bean(StringRedisTemplate.class)
-          .getConnectionFactory()
-          .getConnection()
-          .serverCommands()
-          .flushAll();
+      STACK.resetScenarioState();
+      STACK.clearRedis();
       jdbc.update("DELETE FROM game_instances");
-      GAME_SESSION.bean(ScreenBufferService.class).clear(TENANT_ID, 1L, ACCOUNT_ID);
+      gameSession().bean(ScreenBufferService.class).clear(TENANT_ID, 1L, ACCOUNT_ID);
     }
     return GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, ACCOUNT_ID, 7L);
   }
@@ -417,7 +345,7 @@ class LookWebSocketCrossServiceTest {
       enterGameplay(client);
       client.send("LOOK");
       client.awaitStartsWith("OK LOOK");
-      WORLD_STUB.triggerNotFound("room missing for regression");
+      worldStub().triggerNotFound("room missing for regression");
       client.send("LOOK");
       client.awaitStartsWith("ERROR ROOM_NOT_FOUND");
       return client.responses();
@@ -516,7 +444,7 @@ class LookWebSocketCrossServiceTest {
 
   private GameplayWebSocketDriver openSessionClient(long sessionId) {
     return GameplayWebSocketDriver.connectGameplaySession(
-        URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game"),
+        URI.create("ws://localhost:" + gameSession().port() + "/ws/game"),
         COMMAND_WAIT,
         TENANT_ID,
         sessionId);
@@ -532,5 +460,18 @@ class LookWebSocketCrossServiceTest {
 
   private void enterGameplay(GameplayWebSocketDriver client) throws Exception {
     client.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
+  }
+
+  private static AccountRuntimeStubServer accountStub() {
+    return STACK.accountStub();
+  }
+
+  private static net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer
+      worldStub() {
+    return STACK.worldStub();
+  }
+
+  private static CrossServiceAppHarness.GameSessionHolder gameSession() {
+    return STACK.gameSession();
   }
 }

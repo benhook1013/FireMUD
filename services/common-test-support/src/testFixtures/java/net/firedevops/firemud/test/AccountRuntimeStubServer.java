@@ -90,6 +90,13 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     realmAccessGranted.set(granted);
   }
 
+  public void resetRuntimeState() {
+    authenticateRequests.clear();
+    gameplayAdmissionAllowed.set(true);
+    gameplayAvailable.set(true);
+    realmAccessGranted.set(true);
+  }
+
   @Override
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     responseObserver.onNext(PingResponse.newBuilder().setMessage("ok").build());

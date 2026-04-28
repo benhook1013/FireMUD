@@ -19,6 +19,7 @@ SMOKE_PLAY_EXPECT=${SMOKE_PLAY_EXPECT:-"OK PLAY"}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_STARTUP_EXPECT=${SMOKE_STARTUP_EXPECT:-"DISCONNECT startup_unavailable"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
+FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON=python3
@@ -35,14 +36,21 @@ echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 echo "Using account API base '${SMOKE_ACCOUNT_API_BASE}' for smoke validation"
 
 "$PYTHON" - <<'PYTHON'
-import json
 import os
 import socket
-import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
+from pathlib import Path
+
+repo_root = Path(os.environ["FIREMUD_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
+
+from smoke_common import (
+    http_readiness_up,
+    verify_smoke_account,
+    wait_for_account_schema,
+    wait_for_http_readiness,
+)
 
 host = os.environ.get("SMOKE_TELNET_HOST", "localhost")
 port = int(os.environ.get("TCP_PORT", "2323"))
@@ -62,8 +70,6 @@ look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 startup_expect = os.environ.get("SMOKE_STARTUP_EXPECT", "DISCONNECT startup_unavailable")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
 startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
-compose_project_name = os.environ.get("COMPOSE_PROJECT_NAME", "docker")
-postgres_container = f"{compose_project_name}-postgres-1"
 
 def recv_until(sock, expected_substring, timeout):
     deadline = time.time() + timeout
@@ -140,96 +146,6 @@ def send_and_expect(sock, responses, line, expected_substrings, label):
     return response
 
 
-def verify_smoke_account():
-    payload = json.dumps(
-        {
-            "tenantId": int(tenant_id),
-            "username": username,
-            "password": password,
-            "otp": "",
-        }
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        f"{account_api_base}/auth/login",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    for attempt in range(1, 4):
-        try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                body = response.read().decode("utf-8", errors="ignore").strip()
-                print("=== Account validation response ===")
-                print(body or "<empty>")
-                if response.status >= 500:
-                    raise RuntimeError(
-                        f"Smoke account validation returned unexpected status {response.status}"
-                    )
-                return body
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="ignore").strip()
-            print("=== Account validation response ===")
-            print(body or "<empty>")
-            raise RuntimeError(
-                f"Smoke account validation failed with status {exc.code}: {body or '<empty>'}"
-            ) from exc
-        except OSError as exc:
-            if attempt < 3:
-                time.sleep(1)
-                continue
-            raise RuntimeError(f"Smoke account validation failed: {exc}") from exc
-
-
-def wait_for_account_schema():
-    deadline = time.time() + startup_wait_seconds
-    query = "select to_regclass('account_service.accounts');"
-    while time.time() < deadline:
-        try:
-            table_name = subprocess.check_output(
-                [
-                    "docker",
-                    "exec",
-                    postgres_container,
-                    "psql",
-                    "-U",
-                    "firemud",
-                    "-d",
-                    "firemud",
-                    "-tAc",
-                    query,
-                ],
-                text=True,
-                timeout=timeout_seconds,
-            ).strip()
-            if table_name == "account_service.accounts":
-                print("Confirmed account schema is ready.")
-                return
-        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            pass
-        time.sleep(2)
-    raise RuntimeError("Account schema readiness did not converge before smoke execution")
-
-
-def wait_for_http_readiness(name, base_url):
-    deadline = time.time() + startup_wait_seconds
-    readiness_url = f"{base_url}/actuator/health/readiness"
-    while time.time() < deadline:
-        if http_readiness_up(readiness_url):
-            print(f"Confirmed {name} readiness via {readiness_url}.")
-            return
-        time.sleep(2)
-    raise RuntimeError(f"{name} readiness did not report UP at {readiness_url}")
-
-
-def http_readiness_up(readiness_url):
-    try:
-        with urllib.request.urlopen(readiness_url, timeout=timeout_seconds) as response:
-            body = response.read().decode("utf-8", errors="ignore")
-            return response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", "")
-    except (urllib.error.URLError, OSError):
-        return False
-
-
 def verify_pre_readiness_telnet_admission():
     readiness_url = f"{tcp_proxy_api_base}/actuator/health/readiness"
     deadline = time.time() + startup_wait_seconds
@@ -268,13 +184,13 @@ def verify_pre_readiness_telnet_admission():
 
 try:
     verify_pre_readiness_telnet_admission()
-    wait_for_account_schema()
-    wait_for_http_readiness("account-service", account_api_base)
-    wait_for_http_readiness("game-logic-service", game_logic_api_base)
-    wait_for_http_readiness("game-session-service", game_session_api_base)
-    wait_for_http_readiness("spring-cloud-gateway", gateway_api_base)
-    wait_for_http_readiness("tcp-proxy-service", tcp_proxy_api_base)
-    verify_smoke_account()
+wait_for_account_schema(startup_wait_seconds, timeout_seconds)
+wait_for_http_readiness("account-service", account_api_base, startup_wait_seconds, timeout_seconds)
+wait_for_http_readiness("game-logic-service", game_logic_api_base, startup_wait_seconds, timeout_seconds)
+wait_for_http_readiness("game-session-service", game_session_api_base, startup_wait_seconds, timeout_seconds)
+wait_for_http_readiness("spring-cloud-gateway", gateway_api_base, startup_wait_seconds, timeout_seconds)
+wait_for_http_readiness("tcp-proxy-service", tcp_proxy_api_base, startup_wait_seconds, timeout_seconds)
+verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds)
     with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
         responses = []
         send_and_expect(sock, responses, "WORLDS", [worlds_expect], "WORLDS")

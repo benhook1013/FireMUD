@@ -14,15 +14,12 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
-import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
-import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
+import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
-import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.util.TestSocketUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -48,42 +45,14 @@ class MultiplayerLoadProofCrossServiceTest {
   static final GenericContainer<?> REDIS =
       new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine")).withExposedPorts(6379);
 
-  private static AccountRuntimeStubServer ACCOUNT_STUB;
-  private static WorldManagementStubServer WORLD_STUB;
-  private static EntityManagementStubServer ENTITY_STUB;
-  private static CrossServiceAppHarness.GameLogicHolder GAME_LOGIC;
-  private static CrossServiceAppHarness.GameSessionHolder GAME_SESSION;
+  private static GameplayCrossServiceStack STACK;
 
   @AfterAll
   static synchronized void stopServices() {
-    CrossServiceAppHarness.GameSessionHolder gameSession = GAME_SESSION;
-    GAME_SESSION = null;
-    if (gameSession != null) {
-      gameSession.close();
-    }
-
-    CrossServiceAppHarness.GameLogicHolder gameLogic = GAME_LOGIC;
-    GAME_LOGIC = null;
-    if (gameLogic != null) {
-      gameLogic.close();
-    }
-
-    AccountRuntimeStubServer accountStub = ACCOUNT_STUB;
-    ACCOUNT_STUB = null;
-    if (accountStub != null) {
-      accountStub.close();
-    }
-
-    WorldManagementStubServer worldStub = WORLD_STUB;
-    WORLD_STUB = null;
-    if (worldStub != null) {
-      worldStub.close();
-    }
-
-    EntityManagementStubServer entityStub = ENTITY_STUB;
-    ENTITY_STUB = null;
-    if (entityStub != null) {
-      entityStub.close();
+    GameplayCrossServiceStack stack = STACK;
+    STACK = null;
+    if (stack != null) {
+      stack.close();
     }
   }
 
@@ -91,7 +60,7 @@ class MultiplayerLoadProofCrossServiceTest {
   void tenConcurrentPlayersCanLoginPlayAndLookAgainstRealCrossServiceStack() throws Exception {
     ensureTestServicesStarted();
     List<PlayerSeed> players = prepareGameInstances(CLIENT_COUNT);
-    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
+    URI uri = URI.create("ws://localhost:" + gameSession().port() + "/ws/game");
     CountDownLatch start = new CountDownLatch(1);
 
     ExecutorService executor = Executors.newFixedThreadPool(CLIENT_COUNT);
@@ -122,7 +91,7 @@ class MultiplayerLoadProofCrossServiceTest {
                 assertThat(result.responses()).noneMatch(payload -> payload.startsWith("ERROR "));
               });
 
-      SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
+      SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       for (PlayerSeed player : players) {
         assertThat(sessionContextService.findBySessionId(player.sessionId()))
             .hasValueSatisfying(
@@ -135,7 +104,7 @@ class MultiplayerLoadProofCrossServiceTest {
       }
 
       GameplayAsyncAssertions.assertMetricEventually(
-          GAME_SESSION.bean(io.micrometer.core.instrument.MeterRegistry.class),
+          gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
           COMMAND_WAIT,
           "gamesession.command.look.invocations",
           CLIENT_COUNT);
@@ -146,50 +115,26 @@ class MultiplayerLoadProofCrossServiceTest {
   }
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
-    if (ACCOUNT_STUB == null) {
-      ACCOUNT_STUB = new AccountRuntimeStubServer(0);
-      ACCOUNT_STUB.setDefaultAccountId(ACCOUNT_ID_BASE);
-    }
-    if (WORLD_STUB == null) {
-      WORLD_STUB = new WorldManagementStubServer(TestSocketUtils.findAvailableTcpPort());
-    }
-    if (ENTITY_STUB == null) {
-      ENTITY_STUB = new EntityManagementStubServer(TestSocketUtils.findAvailableTcpPort());
-    }
-    if (GAME_LOGIC == null) {
-      GAME_LOGIC =
-          CrossServiceAppHarness.startGameLogic(
-              WORLD_STUB.endpoint(), ENTITY_STUB.endpoint(), null);
-    }
-    if (GAME_SESSION == null) {
-      GAME_SESSION =
-          CrossServiceAppHarness.startGameSession(
-              GAME_LOGIC.grpcPort(),
-              ACCOUNT_STUB.port(),
-              props -> {
-                props.put("game.logic.default-room-id", LookTestFixtures.ROOM_ID);
-                props.put("firemud.redis.host", REDIS.getHost());
-                props.put("firemud.redis.port", REDIS.getMappedPort(6379));
-                props.put("firemud.postgres.host", POSTGRES.getHost());
-                props.put("firemud.postgres.port", POSTGRES.getMappedPort(5432));
-                props.put("firemud.postgres.database", POSTGRES.getDatabaseName());
-                props.put("firemud.postgres.username", POSTGRES.getUsername());
-                props.put("firemud.postgres.password", POSTGRES.getPassword());
-                props.put("firemud.database.enabled", "true");
-                props.put("spring.jpa.hibernate.ddl-auto", "none");
-              });
+    if (STACK == null) {
+      STACK =
+          GameplayCrossServiceStack.builder()
+              .withPostgres(
+                  POSTGRES.getHost(),
+                  POSTGRES.getMappedPort(5432),
+                  POSTGRES.getDatabaseName(),
+                  POSTGRES.getUsername(),
+                  POSTGRES.getPassword())
+              .withRedis(REDIS.getHost(), REDIS.getMappedPort(6379))
+              .withDefaultAccountId(ACCOUNT_ID_BASE)
+              .start();
     }
   }
 
   private List<PlayerSeed> prepareGameInstances(int count) {
-    JdbcTemplate jdbc = new JdbcTemplate(GAME_SESSION.bean(javax.sql.DataSource.class));
+    JdbcTemplate jdbc = new JdbcTemplate(gameSession().bean(javax.sql.DataSource.class));
     GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
-    GAME_SESSION
-        .bean(org.springframework.data.redis.core.StringRedisTemplate.class)
-        .getConnectionFactory()
-        .getConnection()
-        .serverCommands()
-        .flushAll();
+    STACK.resetScenarioState();
+    STACK.clearRedis();
     jdbc.update("DELETE FROM game_instances");
 
     List<PlayerSeed> players = new ArrayList<>();
@@ -197,7 +142,7 @@ class MultiplayerLoadProofCrossServiceTest {
       long accountId = ACCOUNT_ID_BASE + i + 1;
       long sessionId =
           GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, accountId, 7L);
-      ACCOUNT_STUB.mapAccountId("player" + (i + 1) + "@example.com", accountId);
+      STACK.accountStub().mapAccountId("player" + (i + 1) + "@example.com", accountId);
       players.add(
           new PlayerSeed(
               sessionId, accountId, "player" + (i + 1) + "@example.com", "player-" + (i + 1)));
@@ -226,4 +171,8 @@ class MultiplayerLoadProofCrossServiceTest {
   private record PlayerSeed(long sessionId, long accountId, String username, String label) {}
 
   private record PlayerRunResult(PlayerSeed player, List<String> responses) {}
+
+  private static CrossServiceAppHarness.GameSessionHolder gameSession() {
+    return STACK.gameSession();
+  }
 }

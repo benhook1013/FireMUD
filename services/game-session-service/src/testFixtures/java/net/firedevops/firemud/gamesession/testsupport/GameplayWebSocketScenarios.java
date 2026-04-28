@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.testsupport;
 
+import java.util.List;
+
 /** Shared chained-gameplay websocket scenario helpers for multi-actor proof. */
 public final class GameplayWebSocketScenarios {
 
@@ -18,6 +20,24 @@ public final class GameplayWebSocketScenarios {
 
     public static Admission unnamed(String email, String password, String world, String readyText) {
       return new Admission(email, password, world, null, readyText);
+    }
+  }
+
+  @FunctionalInterface
+  public interface DriverExercise {
+    void accept(GameplayWebSocketDriver driver) throws Exception;
+  }
+
+  public enum DisconnectMode {
+    CLOSE,
+    ABORT
+  }
+
+  public record ReconnectScenario(List<String> firstResponses, GameplayWebSocketDriver reconnecting)
+      implements AutoCloseable {
+    @Override
+    public void close() throws Exception {
+      reconnecting.close();
     }
   }
 
@@ -133,6 +153,31 @@ public final class GameplayWebSocketScenarios {
       return new ThreePlayerScenario(actor, target, observer);
     } catch (Exception ex) {
       closeQuietly(observer, target, actor, ex);
+      throw ex;
+    }
+  }
+
+  public static ReconnectScenario reconnectAfterReady(
+      DriverFactory factory,
+      String firstConnectionId,
+      String reconnectConnectionId,
+      Admission admission,
+      DisconnectMode disconnectMode,
+      DriverExercise firstSessionExercise)
+      throws Exception {
+    GameplayWebSocketDriver first = openReady(factory, firstConnectionId, admission);
+    try {
+      firstSessionExercise.accept(first);
+      List<String> firstResponses = List.copyOf(first.responses());
+      if (disconnectMode == DisconnectMode.ABORT) {
+        first.abort();
+      } else {
+        first.close();
+      }
+      GameplayWebSocketDriver reconnecting = openReady(factory, reconnectConnectionId, admission);
+      return new ReconnectScenario(firstResponses, reconnecting);
+    } catch (Exception ex) {
+      closeQuietly(first, ex);
       throw ex;
     }
   }
