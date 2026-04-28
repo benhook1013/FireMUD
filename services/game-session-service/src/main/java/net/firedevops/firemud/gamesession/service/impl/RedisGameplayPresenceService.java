@@ -73,6 +73,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
             context.gameInstanceId(),
             context.worldSlug(),
             context.realmSlug(),
+            context.pointerVersion(),
             context.accountId(),
             context.characterId(),
             StringUtils.hasText(context.characterName())
@@ -126,6 +127,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
             existing.gameInstanceId(),
             existing.worldSlug(),
             existing.realmSlug(),
+            existing.pointerVersion(),
             existing.accountId(),
             existing.characterId(),
             existing.characterName(),
@@ -157,6 +159,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
             existing.gameInstanceId(),
             existing.worldSlug(),
             existing.realmSlug(),
+            existing.pointerVersion(),
             existing.accountId(),
             existing.characterId(),
             existing.characterName(),

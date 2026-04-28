@@ -103,6 +103,7 @@ public class FriendServiceImpl implements FriendService {
               visibleWorldDisplayName(entry),
               visibleRealmSlug(entry),
               visibleRealmDisplayName(entry),
+              visiblePointerVersion(entry),
               visibleCharacterId(entry),
               visibleCharacterName(entry),
               visibleActivityState(entry),
@@ -118,6 +119,7 @@ public class FriendServiceImpl implements FriendService {
                     new FriendPresenceDto(
                         friendAccountId,
                         false,
+                        null,
                         null,
                         null,
                         null,
@@ -199,6 +201,15 @@ public class FriendServiceImpl implements FriendService {
           ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
           null;
       default -> entry.getRealmDisplayName().isBlank() ? null : entry.getRealmDisplayName();
+    };
+  }
+
+  private Long visiblePointerVersion(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getPointerVersion() > 0 ? entry.getPointerVersion() : null;
     };
   }
 

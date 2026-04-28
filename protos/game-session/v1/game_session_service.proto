@@ -164,6 +164,7 @@ message AccountPresenceEntry {
   string realm_slug = 11;
   string realm_display_name = 12;
   AccountRecentPresenceDisposition recent_disposition = 13;
+  int64 pointer_version = 14;
 }
 
 message QueryAccountPresenceResponse {

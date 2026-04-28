@@ -9,6 +9,7 @@ public record GameplayPresence(
     long gameInstanceId,
     String worldSlug,
     String realmSlug,
+    long pointerVersion,
     long accountId,
     long characterId,
     String characterName,
@@ -19,4 +20,35 @@ public record GameplayPresence(
     Long lastMeaningfulActivityAtEpochMs)
     implements Serializable {
   private static final long serialVersionUID = 1L;
+
+  public GameplayPresence(
+      long sessionId,
+      long tenantId,
+      long gameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      long accountId,
+      long characterId,
+      String characterName,
+      GameplayPresenceRole role,
+      long connectedAtEpochMs,
+      Long explicitAfkSinceEpochMs,
+      Long lastAcceptedCommandAtEpochMs,
+      Long lastMeaningfulActivityAtEpochMs) {
+    this(
+        sessionId,
+        tenantId,
+        gameInstanceId,
+        worldSlug,
+        realmSlug,
+        0L,
+        accountId,
+        characterId,
+        characterName,
+        role,
+        connectedAtEpochMs,
+        explicitAfkSinceEpochMs,
+        lastAcceptedCommandAtEpochMs,
+        lastMeaningfulActivityAtEpochMs);
+  }
 }

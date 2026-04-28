@@ -80,3 +80,13 @@ Entry format:
   - Context: after hardening the WebSocket and Telnet smoke clients to abort immediately on explicit `ERROR` and `DISCONNECT` responses, the clean runtime smoke still failed at the final incompatible-wear assertion even though gameplay behavior was correct and the script intentionally expected `ERROR SLOT_INCOMPATIBLE`.
   - Observation: generic fail-fast transport handling and intentional application-error assertions are different concerns; if the harness does not distinguish them, negative-path proofs become false failures and hide the real product result.
   - Expected pattern: smoke helpers that short-circuit on explicit app errors should allow an expected-error mode whenever a scenario is intentionally proving a rejected command or policy outcome.
+
+- `2026-04-28`: Selective CI must still include one canonical packaging proof for backend changes
+  - Context: open Dependabot PRs showed `CI — Validation` passing for affected services while `Build Runtime Images` later failed compiling `:game-design-service:bootJar`, and a separate automatic dependency submission job failed only on GitHub-side upload.
+  - Observation: a branch can look healthy when service `check` runs but no required job proves the packaged runtime artifact shape that image builds consume; meanwhile external metadata publication failures create noisy red PRs without reflecting source correctness.
+  - Expected pattern: for backend-affecting PRs, always require one canonical generate/compile/package proof in the main validation workflow, and treat external dependency-graph submission as advisory rather than a merge gate.
+
+- `2026-04-28`: WebSocket cross-service transcript assertions can still be flaky even after the underlying behavior is correct
+  - Context: validating the `09.1` account-presence and friend-presence routing bundle carry-through changes with `:game-session-service:check -PfullCheck`.
+  - Observation: `CommunicationWebSocketCrossServiceTest` failed on two different transcript assertions in separate full-suite runs, but each individual failing test reran clean immediately with no code changes, pointing to timing-sensitive live-response capture rather than the presence-routing change itself.
+  - Expected pattern: cross-service websocket transcript tests should either wait on the specific canonical message they are asserting or be treated as retryable/flaky until the harness stops relying on exact live ordering under suite load.

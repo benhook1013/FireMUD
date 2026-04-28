@@ -221,6 +221,9 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
         if (presence.realmDisplayName() != null && !presence.realmDisplayName().isBlank()) {
           entry.setRealmDisplayName(presence.realmDisplayName());
         }
+        if (presence.pointerVersion() != null && presence.pointerVersion() > 0L) {
+          entry.setPointerVersion(presence.pointerVersion());
+        }
         if (presence.characterId() != null) {
           entry.setCharacterId(Long.toString(presence.characterId()));
         }

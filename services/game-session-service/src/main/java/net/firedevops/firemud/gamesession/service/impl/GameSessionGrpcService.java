@@ -502,6 +502,9 @@ public final class GameSessionGrpcService
         if (snapshot.realmDisplayName() != null && !snapshot.realmDisplayName().isBlank()) {
           entry.setRealmDisplayName(snapshot.realmDisplayName());
         }
+        if (snapshot.pointerVersion() != null && snapshot.pointerVersion() > 0L) {
+          entry.setPointerVersion(snapshot.pointerVersion());
+        }
         if (snapshot.characterId() != null) {
           entry.setCharacterId(Long.toString(snapshot.characterId()));
         }

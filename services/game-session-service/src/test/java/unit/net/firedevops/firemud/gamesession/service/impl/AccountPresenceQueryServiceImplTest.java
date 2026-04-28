@@ -76,6 +76,7 @@ class AccountPresenceQueryServiceImplTest {
                     2L,
                     "sandbox",
                     "production",
+                    17L,
                     3L,
                     99L,
                     "Ben",
@@ -97,6 +98,7 @@ class AccountPresenceQueryServiceImplTest {
     assertEquals("Builder Sandbox", result.get(0).worldDisplayName());
     assertEquals("production", result.get(0).realmSlug());
     assertEquals("Live Realm", result.get(0).realmDisplayName());
+    assertEquals(17L, result.get(0).pointerVersion());
     assertEquals("Ben", result.get(0).characterName());
     assertEquals(
         net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState.EXPLICIT_AFK,

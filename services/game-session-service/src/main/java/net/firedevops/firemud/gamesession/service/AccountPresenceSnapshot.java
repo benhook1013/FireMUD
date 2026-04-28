@@ -13,9 +13,41 @@ public record AccountPresenceSnapshot(
     String worldDisplayName,
     String realmSlug,
     String realmDisplayName,
+    Long pointerVersion,
     Long characterId,
     String characterName,
     GameplayPresenceActivityState activityState,
     Instant lastSeenAt,
     AccountRecentPresenceDisposition recentDisposition,
-    AccountPresenceVisibilityPolicy visibilityPolicy) {}
+    AccountPresenceVisibilityPolicy visibilityPolicy) {
+  public AccountPresenceSnapshot(
+      long accountId,
+      boolean online,
+      Long gameInstanceId,
+      String worldSlug,
+      String worldDisplayName,
+      String realmSlug,
+      String realmDisplayName,
+      Long characterId,
+      String characterName,
+      GameplayPresenceActivityState activityState,
+      Instant lastSeenAt,
+      AccountRecentPresenceDisposition recentDisposition,
+      AccountPresenceVisibilityPolicy visibilityPolicy) {
+    this(
+        accountId,
+        online,
+        gameInstanceId,
+        worldSlug,
+        worldDisplayName,
+        realmSlug,
+        realmDisplayName,
+        null,
+        characterId,
+        characterName,
+        activityState,
+        lastSeenAt,
+        recentDisposition,
+        visibilityPolicy);
+  }
+}

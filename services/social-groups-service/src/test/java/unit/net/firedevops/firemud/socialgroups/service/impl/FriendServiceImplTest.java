@@ -98,6 +98,7 @@ class FriendServiceImplTest {
                         .setWorldDisplayName("Demo World")
                         .setRealmSlug("production")
                         .setRealmDisplayName("Live Realm")
+                        .setPointerVersion(17)
                         .setCharacterId("99")
                         .setCharacterName("Ben")
                         .setLastSeenAtMs(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
@@ -121,6 +122,7 @@ class FriendServiceImplTest {
     assertEquals("Demo World", result.get(0).worldDisplayName());
     assertEquals("production", result.get(0).realmSlug());
     assertEquals("Live Realm", result.get(0).realmDisplayName());
+    assertEquals(17L, result.get(0).pointerVersion());
     assertEquals(FriendPresenceActivityState.AUTO_AFK, result.get(0).activityState());
     assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.get(0).lastSeenAt());
     assertEquals(FriendRecentPresenceDisposition.TRANSPORT_LOSS, result.get(0).recentDisposition());

@@ -94,6 +94,7 @@ message FriendPresenceEntry {
   string realm_slug = 10;
   string realm_display_name = 11;
   FriendRecentPresenceDisposition recent_disposition = 12;
+  int64 pointer_version = 13;
 }
 
 message ListFriendPresenceResponse {
