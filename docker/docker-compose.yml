@@ -338,7 +338,6 @@ services:
       POSTGRES_DB: ${FIREMUD_POSTGRES_DB:-firemud}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
     ports:
       - "5432:5432"
     healthcheck:
