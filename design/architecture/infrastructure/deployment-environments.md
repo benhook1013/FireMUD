@@ -96,13 +96,11 @@ FireMUD uses Docker Compose for local development and testing:
 - Docker Compose orchestrates container startup. `depends_on` is configured with
   `condition: service_healthy` so services wait for PostgreSQL and Redis to pass
   health checks before starting.
-- Service discovery is handled by Docker's internal DNS (e.g., `game-session-service:8080`).
-- Route URIs in Spring Cloud Gateway use static hostnames defined in the `dev`
-  profile of `application.yml`.
+- Service discovery is handled by Docker's internal DNS (for example `game-session-service:8080`), with the local stack relying on defaults in each service's `application.yml` plus the Compose override env vars rather than on a separate Spring `dev` profile lane.
 - Connection settings for PostgreSQL and Redis are loaded from a `.env` file.
   A sample `.env.sample` is provided with default credentials. Additional variables are described in [Environment & Secrets Management](./environment-and-secrets.md).
 - Start the stack with `./gradlew devUp` and shut it down with `./gradlew devDown` (see [Developer Setup](../../../DEVELOPER_SETUP.md)).
-- The stack also runs a `pg-dump-cron` container that creates and rotates PostgreSQL dumps under `./backups`.
+- The stack also runs a `pg-dump-cron` container that creates and rotates PostgreSQL dumps under `docker/backups/`.
 - For details on all configuration variables, see [Environment Variables & Secrets Management](./environment-and-secrets.md).
   Standard ports include **8080** for HTTP, **6565** for gRPC, and **2323** for
   the TCP proxy.
