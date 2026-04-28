@@ -766,56 +766,28 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketFirstPartyLoginConsumesVerifiedConnectContext() throws Exception {
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Firemud-Connection-Mode", "first_party_web");
-    headers.add("X-Firemud-Transport-Session-Id", "1");
-    headers.add(
-        "X-Firemud-Connect-Context",
-        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
-            .generateToken(
-                "123",
-                java.util.Map.of(
-                    "tenantId", "22",
-                    "worldSlug", "demo",
-                    "realmSlug", "production",
-                    "gameInstanceId", "1",
-                    "pointerVersion", "1",
-                    "connectScopeId", "scope-1",
-                    "connectTokenJti", "connect-jti-1",
-                    "connectRequestId", "connect-req-1",
-                    "gatewayRequestId", "gateway-req-1")));
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(2);
-    CountDownLatch loginAck = new CountDownLatch(1);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                sessionRef.set(session);
-                session.sendMessage(new TextMessage("LOGIN"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                payloads.add(message.getPayload());
-                if (json(message.getPayload()).path("commandType").asText().equals("LOGIN")) {
-                  loginAck.countDown();
-                }
-                latch.countDown();
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
-    sessionRef.get().sendMessage(new TextMessage("PLAY demo"));
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
-    session.close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client =
+        openFirstPartyDriver(
+            "1",
+            java.util.Map.of(
+                "tenantId", "22",
+                "worldSlug", "demo",
+                "realmSlug", "production",
+                "gameInstanceId", "1",
+                "pointerVersion", "1",
+                "connectScopeId", "scope-1",
+                "connectTokenJti", "connect-jti-1",
+                "connectRequestId", "connect-req-1",
+                "gatewayRequestId", "gateway-req-1"))) {
+      client.send("LOGIN");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      client.send("PLAY demo");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      payloads = client.responses();
+    }
 
     assertThat(json(payloads.get(0)).path("commandType").asText()).isEqualTo("LOGIN");
     assertThat(json(payloads.get(0)).path("accepted").asBoolean()).isTrue();
@@ -877,59 +849,31 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketFirstPartyStructuredLobbyBrowseIncludesRealmAndCharacterViews() throws Exception {
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Firemud-Connection-Mode", "first_party_web");
-    headers.add("X-Firemud-Transport-Session-Id", "1");
-    headers.add(
-        "X-Firemud-Connect-Context",
-        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
-            .generateToken(
-                "123",
-                java.util.Map.of(
-                    "tenantId", "22",
-                    "worldSlug", "demo",
-                    "realmSlug", "production",
-                    "gameInstanceId", "1",
-                    "pointerVersion", "1",
-                    "connectScopeId", "scope-browse-1",
-                    "connectTokenJti", "connect-jti-browse-1",
-                    "connectRequestId", "connect-req-browse-1",
-                    "gatewayRequestId", "gateway-req-browse-1")));
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch loginAck = new CountDownLatch(1);
-    CountDownLatch latch = new CountDownLatch(3);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                sessionRef.set(session);
-                session.sendMessage(new TextMessage("LOGIN"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message)
-                  throws IOException {
-                String payload = message.getPayload();
-                payloads.add(payload);
-                if (isStructuredCommand(payload, "LOGIN")) {
-                  loginAck.countDown();
-                  session.sendMessage(new TextMessage("REALMS demo"));
-                  session.sendMessage(new TextMessage("CHARS demo"));
-                }
-                latch.countDown();
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    future.get(5, TimeUnit.SECONDS);
-    assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
-    assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
-    sessionRef.get().close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client =
+        openFirstPartyDriver(
+            "1",
+            java.util.Map.of(
+                "tenantId", "22",
+                "worldSlug", "demo",
+                "realmSlug", "production",
+                "gameInstanceId", "1",
+                "pointerVersion", "1",
+                "connectScopeId", "scope-browse-1",
+                "connectTokenJti", "connect-jti-browse-1",
+                "connectRequestId", "connect-req-browse-1",
+                "gatewayRequestId", "gateway-req-browse-1"))) {
+      client.send("LOGIN");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      client.send("REALMS demo");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "REALMS"), "structured REALMS result");
+      client.send("CHARS demo");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "CHARS"), "structured CHARS result");
+      payloads = client.responses();
+    }
 
     assertThat(payloads).anyMatch(payload -> isStructuredCommand(payload, "LOGIN"));
     JsonNode realmsResult =
@@ -999,73 +943,42 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketFirstPartyStructuredWhoIncludesActivityState() throws Exception {
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Firemud-Connection-Mode", "first_party_web");
-    headers.add("X-Firemud-Transport-Session-Id", "1");
-    headers.add(
-        "X-Firemud-Connect-Context",
-        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
-            .generateToken(
-                "123",
-                java.util.Map.of(
-                    "tenantId", "22",
-                    "worldSlug", "demo",
-                    "realmSlug", "production",
-                    "gameInstanceId", "1",
-                    "pointerVersion", "1",
-                    "connectScopeId", "scope-who-1",
-                    "connectTokenJti", "connect-jti-who-1",
-                    "connectRequestId", "connect-req-who-1",
-                    "gatewayRequestId", "gateway-req-who-1")));
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch playAck = new CountDownLatch(1);
-    CountDownLatch whoAck = new CountDownLatch(1);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                sessionRef.set(session);
-                session.sendMessage(new TextMessage("LOGIN"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message)
-                  throws IOException {
-                String payload = message.getPayload();
-                payloads.add(payload);
-                if (isStructuredCommand(payload, "LOGIN")) {
-                  session.sendMessage(new TextMessage("PLAY demo"));
-                } else if (isStructuredCommand(payload, "PLAY")) {
-                  playAck.countDown();
-                  session.sendMessage(new TextMessage("AFK"));
-                } else if (isStructuredCommand(payload, "WHO")) {
-                  whoAck.countDown();
-                }
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(playAck.await(5, TimeUnit.SECONDS)).isTrue();
-    await()
-        .atMost(5, TimeUnit.SECONDS)
-        .untilAsserted(
-            () ->
-                assertThat(
-                        gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
-                            .filter(entry -> entry.sessionId() == 1L)
-                            .findFirst()
-                            .orElseThrow()
-                            .explicitAfkSinceEpochMs())
-                    .isNotNull());
-    session.sendMessage(new TextMessage("WHO"));
-    assertThat(whoAck.await(10, TimeUnit.SECONDS)).isTrue();
-    sessionRef.get().close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client =
+        openFirstPartyDriver(
+            "1",
+            java.util.Map.of(
+                "tenantId", "22",
+                "worldSlug", "demo",
+                "realmSlug", "production",
+                "gameInstanceId", "1",
+                "pointerVersion", "1",
+                "connectScopeId", "scope-who-1",
+                "connectTokenJti", "connect-jti-who-1",
+                "connectRequestId", "connect-req-who-1",
+                "gatewayRequestId", "gateway-req-who-1"))) {
+      client.send("LOGIN");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      client.send("PLAY demo");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      client.send("AFK");
+      await()
+          .atMost(5, TimeUnit.SECONDS)
+          .untilAsserted(
+              () ->
+                  assertThat(
+                          gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+                              .filter(entry -> entry.sessionId() == 1L)
+                              .findFirst()
+                              .orElseThrow()
+                              .explicitAfkSinceEpochMs())
+                      .isNotNull());
+      client.send("WHO");
+      client.awaitMatching(payload -> isStructuredCommand(payload, "WHO"), "structured WHO result");
+      payloads = client.responses();
+    }
 
     JsonNode whoResult =
         payloads.stream()
@@ -1104,74 +1017,43 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     2,
                     32L)));
 
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Firemud-Connection-Mode", "first_party_web");
-    headers.add("X-Firemud-Transport-Session-Id", "1");
-    headers.add(
-        "X-Firemud-Connect-Context",
-        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
-            .generateToken(
-                "123",
-                java.util.Map.of(
-                    "tenantId", "22",
-                    "worldSlug", "demo",
-                    "realmSlug", "production",
-                    "gameInstanceId", "1",
-                    "pointerVersion", "1",
-                    "connectScopeId", "scope-2",
-                    "connectTokenJti", "connect-jti-2",
-                    "connectRequestId", "connect-req-2",
-                    "gatewayRequestId", "gateway-req-2")));
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch loginAck = new CountDownLatch(1);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                sessionRef.set(session);
-                session.sendMessage(new TextMessage("LOGIN"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                payloads.add(message.getPayload());
-                if (isStructuredCommand(message.getPayload(), "LOGIN")) {
-                  loginAck.countDown();
-                }
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
-    sessionRef.get().sendMessage(new TextMessage("PLAY demo"));
-    await()
-        .atMost(5, TimeUnit.SECONDS)
-        .untilAsserted(
-            () -> {
-              assertThat(payloads).anyMatch(payload -> isStructuredCommand(payload, "PLAY"));
-              assertThat(payloads)
-                  .anyMatch(
-                      payload ->
-                          "transcript_chunk".equals(json(payload).path("eventType").asText())
-                              && payload.contains("Recent combat line"));
-              assertThat(payloads)
-                  .anyMatch(
-                      payload ->
-                          "player_output".equals(json(payload).path("eventType").asText())
-                              && containsKind(json(payload), "VIEW"));
-              assertThat(payloads)
-                  .anyMatch(
-                      payload ->
-                          "player_output".equals(json(payload).path("eventType").asText())
-                              && containsKind(json(payload), "PROMPT"));
-            });
-    session.close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client =
+        openFirstPartyDriver(
+            "1",
+            java.util.Map.of(
+                "tenantId", "22",
+                "worldSlug", "demo",
+                "realmSlug", "production",
+                "gameInstanceId", "1",
+                "pointerVersion", "1",
+                "connectScopeId", "scope-2",
+                "connectTokenJti", "connect-jti-2",
+                "connectRequestId", "connect-req-2",
+                "gatewayRequestId", "gateway-req-2"))) {
+      client.send("LOGIN");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      client.send("PLAY demo");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      client.awaitMatching(
+          payload ->
+              "transcript_chunk".equals(json(payload).path("eventType").asText())
+                  && payload.contains("Recent combat line"),
+          "replayed transcript chunk");
+      client.awaitMatching(
+          payload ->
+              "player_output".equals(json(payload).path("eventType").asText())
+                  && containsKind(json(payload), "VIEW"),
+          "fresh view output");
+      client.awaitMatching(
+          payload ->
+              "player_output".equals(json(payload).path("eventType").asText())
+                  && containsKind(json(payload), "PROMPT"),
+          "fresh prompt output");
+      payloads = client.responses();
+    }
 
     assertThat(isStructuredCommand(payloads.get(0), "LOGIN")).isTrue();
     assertThat(payloads).anyMatch(payload -> isStructuredCommand(payload, "PLAY"));
@@ -1354,36 +1236,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     3,
                     24L)));
 
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "41");
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(2);
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message)
-                  throws IOException {
-                payloads.add(message.getPayload());
-                if (message.getPayload().startsWith("OK LOGIN")) {
-                  session.sendMessage(new TextMessage("PLAY demo"));
-                }
-                latch.countDown();
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
-    session.close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      payloads = client.responses();
+    }
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(2);
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
@@ -1426,56 +1284,28 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketFirstPartyPlayRejectsScopeMismatch() throws Exception {
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Firemud-Connection-Mode", "first_party_web");
-    headers.add("X-Firemud-Transport-Session-Id", "2");
-    headers.add(
-        "X-Firemud-Connect-Context",
-        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
-            .generateToken(
-                "123",
-                java.util.Map.of(
-                    "tenantId", "22",
-                    "worldSlug", "sandbox",
-                    "realmSlug", "production",
-                    "gameInstanceId", "1",
-                    "pointerVersion", "1",
-                    "connectScopeId", "scope-mismatch",
-                    "connectTokenJti", "connect-jti-2",
-                    "connectRequestId", "connect-req-mismatch",
-                    "gatewayRequestId", "gateway-req-2")));
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(2);
-    CountDownLatch loginAck = new CountDownLatch(1);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                sessionRef.set(session);
-                session.sendMessage(new TextMessage("LOGIN"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                payloads.add(message.getPayload());
-                if (isStructuredCommand(message.getPayload(), "LOGIN")) {
-                  loginAck.countDown();
-                }
-                latch.countDown();
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
-    sessionRef.get().sendMessage(new TextMessage("PLAY sandbox Sora"));
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
-    session.close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client =
+        openFirstPartyDriver(
+            "2",
+            java.util.Map.of(
+                "tenantId", "22",
+                "worldSlug", "sandbox",
+                "realmSlug", "production",
+                "gameInstanceId", "1",
+                "pointerVersion", "1",
+                "connectScopeId", "scope-mismatch",
+                "connectTokenJti", "connect-jti-2",
+                "connectRequestId", "connect-req-mismatch",
+                "gatewayRequestId", "gateway-req-2"))) {
+      client.send("LOGIN");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      client.send("PLAY sandbox Sora");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      payloads = client.responses();
+    }
 
     JsonNode loginFailure = json(payloads.get(0));
     assertThat(loginFailure.path("eventType").asText()).isEqualTo("command_result");
@@ -1494,48 +1324,25 @@ class GameSessionWebSocketHandlerIntegrationTest {
   void websocketFirstPartyLoginRejectsStalePointerAfterCutover() throws Exception {
     bumpProductionAdmissionPointer(2L, true);
 
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Firemud-Connection-Mode", "first_party_web");
-    headers.add("X-Firemud-Transport-Session-Id", "2");
-    headers.add(
-        "X-Firemud-Connect-Context",
-        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
-            .generateToken(
-                "123",
-                java.util.Map.of(
-                    "tenantId", "22",
-                    "worldSlug", "demo",
-                    "realmSlug", "production",
-                    "gameInstanceId", "1",
-                    "pointerVersion", "1",
-                    "connectScopeId", "scope-stale-login",
-                    "connectTokenJti", "connect-jti-stale-login",
-                    "connectRequestId", "connect-req-stale-login",
-                    "gatewayRequestId", "gateway-req-stale-login")));
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(1);
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                session.sendMessage(new TextMessage("LOGIN"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                payloads.add(message.getPayload());
-                latch.countDown();
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
-    session.close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client =
+        openFirstPartyDriver(
+            "2",
+            java.util.Map.of(
+                "tenantId", "22",
+                "worldSlug", "demo",
+                "realmSlug", "production",
+                "gameInstanceId", "1",
+                "pointerVersion", "1",
+                "connectScopeId", "scope-stale-login",
+                "connectTokenJti", "connect-jti-stale-login",
+                "connectRequestId", "connect-req-stale-login",
+                "gatewayRequestId", "gateway-req-stale-login"))) {
+      client.send("LOGIN");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      payloads = client.responses();
+    }
 
     JsonNode loginFailure = json(payloads.getFirst());
     assertThat(loginFailure.path("eventType").asText()).isEqualTo("command_result");
@@ -1546,59 +1353,29 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketFirstPartyPlayRejectsCutoverAfterLogin() throws Exception {
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Firemud-Connection-Mode", "first_party_web");
-    headers.add("X-Firemud-Transport-Session-Id", "2");
-    headers.add(
-        "X-Firemud-Connect-Context",
-        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
-            .generateToken(
-                "123",
-                java.util.Map.of(
-                    "tenantId", "22",
-                    "worldSlug", "demo",
-                    "realmSlug", "production",
-                    "gameInstanceId", "1",
-                    "pointerVersion", "1",
-                    "connectScopeId", "scope-stale-play",
-                    "connectTokenJti", "connect-jti-stale-play",
-                    "connectRequestId", "connect-req-stale-play",
-                    "gatewayRequestId", "gateway-req-stale-play")));
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch loginAck = new CountDownLatch(1);
-    CountDownLatch playFailureLatch = new CountDownLatch(1);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                sessionRef.set(session);
-                session.sendMessage(new TextMessage("LOGIN"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                payloads.add(message.getPayload());
-                if (isStructuredCommand(message.getPayload(), "LOGIN")) {
-                  loginAck.countDown();
-                }
-                if (isStructuredCommand(message.getPayload(), "PLAY")) {
-                  playFailureLatch.countDown();
-                }
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
-    bumpProductionAdmissionPointer(2L, true);
-    sessionRef.get().sendMessage(new TextMessage("PLAY demo"));
-    assertThat(playFailureLatch.await(5, TimeUnit.SECONDS)).isTrue();
-    session.close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client =
+        openFirstPartyDriver(
+            "2",
+            java.util.Map.of(
+                "tenantId", "22",
+                "worldSlug", "demo",
+                "realmSlug", "production",
+                "gameInstanceId", "1",
+                "pointerVersion", "1",
+                "connectScopeId", "scope-stale-play",
+                "connectTokenJti", "connect-jti-stale-play",
+                "connectRequestId", "connect-req-stale-play",
+                "gatewayRequestId", "gateway-req-stale-play"))) {
+      client.send("LOGIN");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      bumpProductionAdmissionPointer(2L, true);
+      client.send("PLAY demo");
+      client.awaitMatching(
+          payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      payloads = client.responses();
+    }
 
     JsonNode loginSuccess = json(payloads.getFirst());
     assertThat(loginSuccess.path("eventType").asText()).isEqualTo("command_result");
@@ -1623,6 +1400,24 @@ class GameSessionWebSocketHandlerIntegrationTest {
     extraHeaders.forEach(headers::put);
     return GameplayWebSocketDriver.connect(
         websocketUri(), java.time.Duration.ofSeconds(10), headers);
+  }
+
+  private GameplayWebSocketDriver openFirstPartyDriver(
+      String transportSessionId, java.util.Map<String, Object> connectClaims) {
+    return GameplayWebSocketDriver.connect(
+        websocketUri(),
+        java.time.Duration.ofSeconds(10),
+        java.util.Map.of(
+            "X-Firemud-Connection-Mode",
+            "first_party_web",
+            "X-Firemud-Transport-Session-Id",
+            transportSessionId,
+            "X-Firemud-Connect-Context",
+            connectContextToken(connectClaims)));
+  }
+
+  private String connectContextToken(java.util.Map<String, Object> claims) {
+    return new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L).generateToken("123", claims);
   }
 
   private WebSocketHttpHeaders gameplayHeaders(String sessionId) {
