@@ -17,7 +17,7 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 
 ## Folder map
 
-- `backups/` – local and operator backup helpers.
+- `backups/` – local and operator backup helpers; see `backups/README.md` for the script map.
 - `certs/` – tracked certificate helper scripts plus ignored generated local TLS material.
 - `deploy/` – deployment preflight, overlay validation, and rollout validation.
 - `hosted/dev-demo/` – fixed `develop` hosted environment helpers.
