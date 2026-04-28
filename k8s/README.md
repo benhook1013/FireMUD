@@ -107,7 +107,7 @@ The top-level `charts/firemud` chart is a narrower support chart rather than the
 
 ## Preview Cluster Prerequisites
 
-The [`preview/`](./preview) directory captures the one-time cluster prerequisites for the hosted `pr-preview` environment, including:
+The [`hosted/preview/`](./preview) directory captures the one-time cluster prerequisites for the hosted `pr-preview` environment, including:
 
 - Let's Encrypt `ClusterIssuer` resources for Traefik-hosted preview URLs
 - the dedicated `preview-deployer` ServiceAccount and RBAC for GitHub Actions
