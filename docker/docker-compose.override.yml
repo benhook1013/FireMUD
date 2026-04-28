@@ -1,6 +1,5 @@
 x-local-java-env: &local-java-env
   FIREMUD_GRPC_PLAINTEXT: "true"
-  GRPC_SERVER_SECURITY_ENABLED: "false"
   GRPC_SERVER_TLS_ENABLED: "false"
 
 services:

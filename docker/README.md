@@ -19,6 +19,7 @@ Use the lane that matches what you are trying to prove:
 - GHCR smoke-image stack
   - Adds `docker/docker-compose.smoke-images.override.yml`
   - Pulls `ghcr.io/benhook1013/*:${SMOKE_IMAGE_TAG}`
+  - Must be driven with `SMOKE_IMAGE_TAG=<tag>`
   - Best for image-tag smoke proof and CI-aligned runtime validation
 
 ## Canonical Commands
@@ -38,6 +39,8 @@ dev-tools/verify-fresh-bootstrap.sh
 dev-tools/verify-restart-state.sh
 SMOKE_IMAGE_TAG=<tag> dev-tools/verify-smoke-images.sh
 ```
+
+Do not treat `docker/docker-compose.smoke-images.override.yml` as a standalone ad hoc compose file. Its contract is to be driven through `SMOKE_IMAGE_TAG=<tag> dev-tools/verify-smoke-images.sh`, which validates the tag, writes the required local env override, and runs the full smoke flow.
 
 Gradle-managed local prebuilt-image stack:
 

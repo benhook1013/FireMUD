@@ -2,7 +2,6 @@ x-local-java-env: &local-java-env
   BPL_JAVA_NMT_ENABLED: "false"
   BPL_JVM_THREAD_COUNT: "20"
   FIREMUD_GRPC_PLAINTEXT: "true"
-  GRPC_SERVER_SECURITY_ENABLED: "false"
   GRPC_SERVER_TLS_ENABLED: "false"
 
 services:
