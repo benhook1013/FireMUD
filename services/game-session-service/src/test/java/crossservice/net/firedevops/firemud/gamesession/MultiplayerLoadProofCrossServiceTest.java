@@ -5,14 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.WebSocket;
-import java.net.http.WebSocket.Listener;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletionStage;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -23,6 +18,7 @@ import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
+import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
@@ -208,14 +204,18 @@ class MultiplayerLoadProofCrossServiceTest {
 
   private PlayerRunResult runPlayerSequence(URI uri, PlayerSeed player, CountDownLatch start)
       throws Exception {
-    try (TrackingClient client = new TrackingClient(uri, player.sessionId())) {
+    try (GameplayWebSocketDriver client =
+        GameplayWebSocketDriver.connect(
+            uri,
+            COMMAND_WAIT,
+            java.util.Map.of(
+                "X-Game-Instance-Id", Long.toString(player.sessionId()),
+                "X-Tenant-Id", Long.toString(TENANT_ID)))) {
       assertThat(start.await(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
-      client.send("LOGIN " + player.username() + " swordfish");
-      client.awaitResponse(payload -> payload.startsWith("OK LOGIN"));
-      client.send("PLAY demo");
-      client.awaitResponse(payload -> payload.startsWith("OK PLAY"));
+      client.login(player.username(), "swordfish");
+      client.play("demo");
       client.send("LOOK");
-      client.awaitResponse(payload -> payload.startsWith("OK LOOK"));
+      client.awaitStartsWith("OK LOOK");
       return new PlayerRunResult(player, List.copyOf(client.responses()));
     }
   }
@@ -240,62 +240,4 @@ class MultiplayerLoadProofCrossServiceTest {
   private record PlayerSeed(long sessionId, long accountId, String username, String label) {}
 
   private record PlayerRunResult(PlayerSeed player, List<String> responses) {}
-
-  private final class TrackingClient implements AutoCloseable {
-    private final CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-    private final WebSocket webSocket;
-
-    private TrackingClient(URI uri, long sessionId) {
-      HttpClient client = HttpClient.newHttpClient();
-      this.webSocket =
-          client
-              .newWebSocketBuilder()
-              .header("X-Game-Instance-Id", Long.toString(sessionId))
-              .header("X-Tenant-Id", Long.toString(TENANT_ID))
-              .buildAsync(
-                  uri,
-                  new Listener() {
-                    @Override
-                    public void onOpen(WebSocket webSocket) {
-                      webSocket.request(1);
-                    }
-
-                    @Override
-                    public CompletionStage<?> onText(
-                        WebSocket webSocket, CharSequence data, boolean last) {
-                      responses.add(data.toString());
-                      webSocket.request(1);
-                      return Listener.super.onText(webSocket, data, last);
-                    }
-                  })
-              .join();
-    }
-
-    private void send(String text) {
-      webSocket.sendText(text, true).join();
-    }
-
-    private List<String> responses() {
-      return responses;
-    }
-
-    private void awaitResponse(java.util.function.Predicate<String> predicate) throws Exception {
-      long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
-      while (System.currentTimeMillis() < deadline) {
-        if (responses.stream().anyMatch(predicate)) {
-          return;
-        }
-        Thread.sleep(50);
-      }
-      throw new AssertionError("Expected a matching response, got " + responses);
-    }
-
-    @Override
-    public void close() {
-      try {
-        webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-      } catch (Exception ignored) {
-      }
-    }
-  }
 }

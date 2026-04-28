@@ -13,9 +13,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -23,6 +20,7 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTestConfiguration;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,11 +32,6 @@ import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.web.socket.TextMessage;
-import org.springframework.web.socket.WebSocketHttpHeaders;
-import org.springframework.web.socket.WebSocketSession;
-import org.springframework.web.socket.client.standard.StandardWebSocketClient;
-import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @SuppressWarnings({"removal"})
 @SpringBootTest(
@@ -108,29 +101,15 @@ class GameSessionLoginIntegrationTest {
 
   @Test
   void loginCallsAccountServiceAndReturnsOk() throws Exception {
-    CountDownLatch latch = new CountDownLatch(1);
-    List<String> payloads = new CopyOnWriteArrayList<>();
-
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "1");
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                payloads.add(message.getPayload());
-                latch.countDown();
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
-    session.close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client =
+        GameplayWebSocketDriver.connect(
+            URI.create("ws://localhost:" + port + "/ws/game"),
+            java.time.Duration.ofSeconds(5),
+            java.util.Map.of("X-Game-Instance-Id", "1"))) {
+      client.login("demo@example.com", "swordfish");
+      payloads = client.responses();
+    }
 
     assertThat(payloads).anyMatch(s -> s.startsWith("OK LOGIN"));
     assertThat(sessionContextService.findByTenantAndSessionId(42L, 1L)).isPresent();
