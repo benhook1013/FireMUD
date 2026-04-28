@@ -6,16 +6,20 @@ APPLY=0
 RUN_GC=1
 INSPECT_CODEX=1
 CODEX_ROOT="${CODEX_ROOT:-$HOME/.codex}"
+PRUNE_INACTIVE_DAYS=""
 
 usage() {
   cat <<'EOF'
 Inspect and optionally prune old T3 Code checkpoint refs while keeping the newest turns per thread.
 
 Usage:
-  scripts/maintenance/prune-t3-checkpoints.sh [options]
+  dev-tools/prune-t3-checkpoints.sh [options]
 
 Options:
   --keep N             Keep the latest N checkpoint refs per thread. Default: 5.
+  --prune-inactive-days N
+                       Delete every checkpoint ref for threads whose latest
+                       checkpoint is older than N days.
   --apply              Delete older refs after reporting the plan. Default is report-only.
   --dry-run            Alias for the default report-only mode.
   --no-gc              Skip reflog expiry and git gc after deleting refs.
@@ -38,6 +42,15 @@ die() {
 validate_positive_integer() {
   local value="$1"
   [[ "$value" =~ ^[1-9][0-9]*$ ]]
+}
+
+format_epoch() {
+  local epoch="$1"
+  if [[ -z "$epoch" || "$epoch" == "0" ]]; then
+    printf 'unknown'
+    return
+  fi
+  date -d "@$epoch" '+%Y-%m-%d %H:%M:%S %z'
 }
 
 inspect_codex_state() {
@@ -186,6 +199,11 @@ while (($# > 0)); do
       KEEP="$2"
       shift 2
       ;;
+    --prune-inactive-days)
+      (($# >= 2)) || die "--prune-inactive-days requires a value"
+      PRUNE_INACTIVE_DAYS="$2"
+      shift 2
+      ;;
     --apply)
       APPLY=1
       shift
@@ -218,23 +236,41 @@ while (($# > 0)); do
 done
 
 validate_positive_integer "$KEEP" || die "--keep must be a positive integer"
+if [[ -n "$PRUNE_INACTIVE_DAYS" ]]; then
+  validate_positive_integer "$PRUNE_INACTIVE_DAYS" || die "--prune-inactive-days must be a positive integer"
+fi
 
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a Git repository"
 
 declare -A THREAD_ENTRIES=()
+declare -A THREAD_LATEST_TS=()
 THREADS_FOUND=0
 VALID_REFS=0
 KEPT_REFS=0
 DELETED_REFS=0
 IGNORED_REFS=0
+INACTIVE_THREADS_MATCHED=0
+INACTIVE_REFS_MATCHED=0
+NOW_EPOCH="$(date +%s)"
+INACTIVE_CUTOFF_EPOCH=0
+if [[ -n "$PRUNE_INACTIVE_DAYS" ]]; then
+  INACTIVE_CUTOFF_EPOCH=$((NOW_EPOCH - PRUNE_INACTIVE_DAYS * 86400))
+fi
 
-mapfile -t ALL_REFS < <(git for-each-ref --format='%(refname)' refs/t3/checkpoints)
+mapfile -t ALL_REFS < <(git for-each-ref --format='%(refname)%09%(creatordate:unix)' refs/t3/checkpoints)
 
-for ref in "${ALL_REFS[@]}"; do
+for ref_with_ts in "${ALL_REFS[@]}"; do
+  ref="${ref_with_ts%%$'\t'*}"
+  ref_ts="${ref_with_ts#*$'\t'}"
+  [[ "$ref_ts" =~ ^[0-9]+$ ]] || ref_ts=0
   if [[ "$ref" =~ ^refs/t3/checkpoints/([^/]+)/turn/([0-9]+)$ ]]; then
     thread_id="${BASH_REMATCH[1]}"
     turn_number="${BASH_REMATCH[2]}"
-    THREAD_ENTRIES["$thread_id"]+="${turn_number}"$'\t'"${ref}"$'\n'
+    THREAD_ENTRIES["$thread_id"]+="${turn_number}"$'\t'"${ref}"$'\t'"${ref_ts}"$'\n'
+    latest_ts="${THREAD_LATEST_TS[$thread_id]:-0}"
+    if ((ref_ts > latest_ts)); then
+      THREAD_LATEST_TS["$thread_id"]="$ref_ts"
+    fi
     VALID_REFS=$((VALID_REFS + 1))
   else
     IGNORED_REFS=$((IGNORED_REFS + 1))
@@ -256,6 +292,10 @@ if ((APPLY)); then
   echo "Apply mode: keeping latest $KEEP checkpoint refs per thread."
 else
   echo "Report-only mode: keeping latest $KEEP checkpoint refs per thread."
+fi
+if [[ -n "$PRUNE_INACTIVE_DAYS" ]]; then
+  echo "Inactive-thread mode: delete all checkpoint refs for threads whose latest checkpoint is older than $PRUNE_INACTIVE_DAYS day(s)."
+  echo "Inactive cutoff: $(format_epoch "$INACTIVE_CUTOFF_EPOCH")"
 fi
 
 THREAD_FILE="$(mktemp)"
@@ -309,7 +349,33 @@ while IFS= read -r thread_id; do
     continue
   fi
 
-  echo "Thread $thread_id: $count checkpoint ref(s)"
+  latest_ts="${THREAD_LATEST_TS[$thread_id]:-0}"
+  latest_ts_human="$(format_epoch "$latest_ts")"
+  echo "Thread $thread_id: $count checkpoint ref(s), latest checkpoint $latest_ts_human"
+
+  if [[ -n "$PRUNE_INACTIVE_DAYS" ]] && ((latest_ts > 0)) && ((latest_ts < INACTIVE_CUTOFF_EPOCH)); then
+    INACTIVE_THREADS_MATCHED=$((INACTIVE_THREADS_MATCHED + 1))
+    INACTIVE_REFS_MATCHED=$((INACTIVE_REFS_MATCHED + count))
+    if ((APPLY)); then
+      echo "  deleting all $count ref(s); thread is inactive past the cutoff"
+    else
+      echo "  would delete all $count ref(s); thread is inactive past the cutoff"
+    fi
+
+    for entry in "${sorted_entries[@]}"; do
+      turn_number="${entry%%$'\t'*}"
+      rest="${entry#*$'\t'}"
+      ref="${rest%%$'\t'*}"
+      if ((APPLY)); then
+        echo "    deleting turn $turn_number: $ref"
+        git update-ref -d "$ref"
+      else
+        echo "    would delete turn $turn_number: $ref"
+      fi
+      DELETED_REFS=$((DELETED_REFS + 1))
+    done
+    continue
+  fi
 
   if ((count <= KEEP)); then
     KEPT_REFS=$((KEPT_REFS + count))
@@ -331,7 +397,8 @@ while IFS= read -r thread_id; do
   for ((i = 0; i < refs_to_delete; i++)); do
     entry="${sorted_entries[$i]}"
     turn_number="${entry%%$'\t'*}"
-    ref="${entry#*$'\t'}"
+    rest="${entry#*$'\t'}"
+    ref="${rest%%$'\t'*}"
     if ((APPLY)); then
       echo "    deleting turn $turn_number: $ref"
       git update-ref -d "$ref"
@@ -354,6 +421,10 @@ else
 fi
 if ((IGNORED_REFS > 0)); then
   echo "  Ignored non-matching refs: $IGNORED_REFS"
+fi
+if [[ -n "$PRUNE_INACTIVE_DAYS" ]]; then
+  echo "  Inactive threads matched: $INACTIVE_THREADS_MATCHED"
+  echo "  Refs deleted via inactive-thread mode: $INACTIVE_REFS_MATCHED"
 fi
 
 if ((APPLY == 0)); then
