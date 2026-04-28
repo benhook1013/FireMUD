@@ -35,6 +35,7 @@ import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetDriver;
+import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetScenarios;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import net.firedevops.firemud.test.HttpTestSupport;
 import org.junit.jupiter.api.AfterAll;
@@ -86,6 +87,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   private static final long ACCOUNT_ID = 7L;
   private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
+  private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
@@ -596,28 +598,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     ensureTestServicesStarted();
     ENTITY_STUB.setRoomEntities(ChatTestFixtures.sampleEntities());
 
-    try (GameplayTelnetDriver actorClient = openTelnetClient();
-        GameplayTelnetDriver targetClient = openTelnetClient();
-        GameplayTelnetDriver observerClient = openTelnetClient()) {
-      actorClient.awaitInitialGuidance();
-      targetClient.awaitInitialGuidance();
-      observerClient.awaitInitialGuidance();
-
-      actorClient.sendLine("LOGIN demo@example.com swordfish");
-      assertThat(actorClient.readBlockContaining("Logged in as demo@example.com"))
-          .contains("Logged in as demo@example.com");
-      actorClient.play("demo");
-
-      targetClient.sendLine("LOGIN demo@example.com swordfish");
-      assertThat(targetClient.readBlockContaining("Logged in as demo@example.com"))
-          .contains("Logged in as demo@example.com");
-      targetClient.play("demo", "Sora");
-
-      observerClient.sendLine("LOGIN demo@example.com swordfish");
-      assertThat(observerClient.readBlockContaining("Logged in as demo@example.com"))
-          .contains("Logged in as demo@example.com");
-      observerClient.play("demo", "Nyx");
-
+    try (GameplayTelnetScenarios.ThreePlayerScenario scenario =
+        GameplayTelnetScenarios.openReadyTrio(
+            this::openTelnetClient,
+            GameplayTelnetScenarios.Admission.unnamed(
+                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            GameplayTelnetScenarios.Admission.named(
+                "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT),
+            GameplayTelnetScenarios.Admission.named(
+                "demo@example.com", "swordfish", "demo", "Nyx", READY_LOOK_TEXT))) {
       SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
           GAME_SESSION.bean(ActiveTransportSessionRegistry.class);
@@ -633,18 +622,19 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       assertThat(sessionRegistry.find(targetContext.sessionId())).isPresent();
       assertThat(sessionRegistry.find(observerContext.sessionId())).isPresent();
 
-      actorClient.sendLine("WHISPER Sora Keep quiet");
+      scenario.actor().sendLine("WHISPER Sora Keep quiet");
       assertBufferedScreenEventuallyContains(
           screenBufferService, targetContext, ChatTestFixtures.canonicalWhisperTargetText());
       assertBufferedScreenEventuallyContains(
           screenBufferService,
           observerContext,
           ChatTestFixtures.canonicalWhisperObserverMetadataText());
-      assertThat(actorClient.readLineContaining(ChatTestFixtures.canonicalWhisperText()))
+      assertThat(scenario.actor().readLineContaining(ChatTestFixtures.canonicalWhisperText()))
           .contains(ChatTestFixtures.canonicalWhisperText());
-      assertThat(targetClient.readLineContaining(ChatTestFixtures.canonicalWhisperTargetText()))
+      assertThat(
+              scenario.target().readLineContaining(ChatTestFixtures.canonicalWhisperTargetText()))
           .contains(ChatTestFixtures.canonicalWhisperTargetText());
-      assertThat(observerClient.readLineContaining("Emberline whispers something to Sora."))
+      assertThat(scenario.observer().readLineContaining("Emberline whispers something to Sora."))
           .contains(ChatTestFixtures.canonicalWhisperObserverMetadataText());
     }
   }
@@ -654,21 +644,13 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     ensureTestServicesStarted();
     ENTITY_STUB.setRoomEntities(ChatTestFixtures.sampleEntities());
 
-    try (GameplayTelnetDriver actorClient = openTelnetClient();
-        GameplayTelnetDriver targetClient = openTelnetClient()) {
-      actorClient.awaitInitialGuidance();
-      targetClient.awaitInitialGuidance();
-
-      actorClient.sendLine("LOGIN demo@example.com swordfish");
-      assertThat(actorClient.readBlockContaining("Logged in as demo@example.com"))
-          .contains("Logged in as demo@example.com");
-      actorClient.play("demo", "Emberline");
-
-      targetClient.sendLine("LOGIN demo@example.com swordfish");
-      assertThat(targetClient.readBlockContaining("Logged in as demo@example.com"))
-          .contains("Logged in as demo@example.com");
-      targetClient.play("demo", "Sora");
-
+    try (GameplayTelnetScenarios.TwoPlayerScenario scenario =
+        GameplayTelnetScenarios.openReadyPair(
+            this::openTelnetClient,
+            GameplayTelnetScenarios.Admission.named(
+                "demo@example.com", "swordfish", "demo", "Emberline", READY_LOOK_TEXT),
+            GameplayTelnetScenarios.Admission.named(
+                "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT))) {
       SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
           GAME_SESSION.bean(ActiveTransportSessionRegistry.class);
@@ -679,12 +661,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
               .orElseThrow();
       assertThat(sessionRegistry.find(targetContext.sessionId())).isPresent();
 
-      actorClient.sendLine("TELL Sora Meet me at the forge");
+      scenario.actor().sendLine("TELL Sora Meet me at the forge");
       assertBufferedScreenEventuallyContains(
           screenBufferService, targetContext, ChatTestFixtures.canonicalTellTargetText());
-      assertThat(actorClient.readLineContaining(ChatTestFixtures.canonicalTellText()))
+      assertThat(scenario.actor().readLineContaining(ChatTestFixtures.canonicalTellText()))
           .contains(ChatTestFixtures.canonicalTellText());
-      assertThat(targetClient.readLineContaining(ChatTestFixtures.canonicalTellTargetText()))
+      assertThat(scenario.target().readLineContaining(ChatTestFixtures.canonicalTellTargetText()))
           .contains(ChatTestFixtures.canonicalTellTargetText());
     }
   }

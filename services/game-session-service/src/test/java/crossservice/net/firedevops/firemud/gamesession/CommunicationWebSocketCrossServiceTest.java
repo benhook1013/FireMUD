@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.test.stubs.ChatEntityManagementStubSer
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
+import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
@@ -209,19 +210,22 @@ class CommunicationWebSocketCrossServiceTest {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
 
-    try (GameplayWebSocketDriver actor = openSessionClient(sessionId, "actor-conn");
-        GameplayWebSocketDriver target = openSessionClient(sessionId, "target-conn");
-        GameplayWebSocketDriver observer = openSessionClient(sessionId, "observer-conn")) {
-      actor.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
-      target.enterGameplayAndWaitReady(
-          "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT);
-      observer.enterGameplayAndWaitReady(
-          "demo@example.com", "swordfish", "demo", "Nyx", READY_LOOK_TEXT);
-
-      actor.send("WHISPER Sora Keep quiet");
-      actor.awaitContains(ChatTestFixtures.canonicalWhisperText());
-      target.awaitContains(ChatTestFixtures.canonicalWhisperTargetText());
-      observer.awaitContains(ChatTestFixtures.canonicalWhisperObserverMetadataText());
+    try (GameplayWebSocketScenarios.ThreePlayerScenario scenario =
+        GameplayWebSocketScenarios.openReadyTrio(
+            connectionId -> openSessionClient(sessionId, connectionId),
+            "actor-conn",
+            GameplayWebSocketScenarios.Admission.unnamed(
+                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            "target-conn",
+            GameplayWebSocketScenarios.Admission.named(
+                "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT),
+            "observer-conn",
+            GameplayWebSocketScenarios.Admission.named(
+                "demo@example.com", "swordfish", "demo", "Nyx", READY_LOOK_TEXT))) {
+      scenario.actor().send("WHISPER Sora Keep quiet");
+      scenario.actor().awaitContains(ChatTestFixtures.canonicalWhisperText());
+      scenario.target().awaitContains(ChatTestFixtures.canonicalWhisperTargetText());
+      scenario.observer().awaitContains(ChatTestFixtures.canonicalWhisperObserverMetadataText());
     }
   }
 
@@ -230,16 +234,18 @@ class CommunicationWebSocketCrossServiceTest {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
 
-    try (GameplayWebSocketDriver actor = openSessionClient(sessionId, "actor-tell-conn");
-        GameplayWebSocketDriver target = openSessionClient(sessionId, "target-tell-conn")) {
-      actor.enterGameplayAndWaitReady(
-          "demo@example.com", "swordfish", "demo", "Emberline", READY_LOOK_TEXT);
-      target.enterGameplayAndWaitReady(
-          "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT);
-
-      actor.send("TELL Sora Meet me at the forge");
-      actor.awaitContains(ChatTestFixtures.canonicalTellText());
-      target.awaitContains(ChatTestFixtures.canonicalTellTargetText());
+    try (GameplayWebSocketScenarios.TwoPlayerScenario scenario =
+        GameplayWebSocketScenarios.openReadyPair(
+            connectionId -> openSessionClient(sessionId, connectionId),
+            "actor-tell-conn",
+            GameplayWebSocketScenarios.Admission.named(
+                "demo@example.com", "swordfish", "demo", "Emberline", READY_LOOK_TEXT),
+            "target-tell-conn",
+            GameplayWebSocketScenarios.Admission.named(
+                "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT))) {
+      scenario.actor().send("TELL Sora Meet me at the forge");
+      scenario.actor().awaitContains(ChatTestFixtures.canonicalTellText());
+      scenario.target().awaitContains(ChatTestFixtures.canonicalTellTargetText());
     }
   }
 
