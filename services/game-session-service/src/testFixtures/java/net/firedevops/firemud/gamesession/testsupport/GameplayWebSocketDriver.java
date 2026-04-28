@@ -6,6 +6,7 @@ import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -78,6 +79,24 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
     return new GameplayWebSocketDriver(webSocket, waitTimeout, responses, closeFuture);
   }
 
+  public static GameplayWebSocketDriver connectGameplaySession(
+      URI uri, Duration waitTimeout, long tenantId, long sessionId) {
+    return connectGameplaySession(uri, waitTimeout, tenantId, sessionId, Map.of());
+  }
+
+  public static GameplayWebSocketDriver connectGameplaySession(
+      URI uri,
+      Duration waitTimeout,
+      long tenantId,
+      long sessionId,
+      Map<String, String> extraHeaders) {
+    Map<String, String> headers = new LinkedHashMap<>();
+    headers.put("X-Game-Instance-Id", Long.toString(sessionId));
+    headers.put("X-Tenant-Id", Long.toString(tenantId));
+    headers.putAll(extraHeaders);
+    return connect(uri, waitTimeout, headers);
+  }
+
   public void send(String text) {
     webSocket.sendText(text, true).join();
   }
@@ -100,6 +119,25 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
   public void lookUntilReady(String expectedLookSubstring) throws Exception {
     send("LOOK");
     awaitContains(expectedLookSubstring);
+  }
+
+  public void enterGameplayAndWaitReady(
+      String email, String password, String world, String expectedLookSubstring) throws Exception {
+    login(email, password);
+    play(world);
+    lookUntilReady(expectedLookSubstring);
+  }
+
+  public void enterGameplayAndWaitReady(
+      String email,
+      String password,
+      String world,
+      String characterName,
+      String expectedLookSubstring)
+      throws Exception {
+    login(email, password);
+    play(world, characterName);
+    lookUntilReady(expectedLookSubstring);
   }
 
   public void awaitStartsWith(String expectedPrefix) throws Exception {

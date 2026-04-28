@@ -40,6 +40,7 @@ class LookWebSocketCrossServiceTest {
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(8);
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = 7L;
+  private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
@@ -125,14 +126,17 @@ class LookWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
     List<String> responses = runQuickLookSequence(sessionId);
 
-    assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(responses).hasSizeGreaterThanOrEqualTo(4);
     assertThat(responses.get(0)).startsWith("OK LOGIN");
     assertThat(responses.get(1)).startsWith("OK PLAY");
-    assertThat(responses.get(2)).startsWith("OK QUICKLOOK");
-    assertThat(responses.get(2)).contains("Room: Candle-lit Antechamber");
-    assertThat(responses.get(2)).contains("Short:");
-    assertThat(responses.get(2)).doesNotContain("Long:");
-    assertThat(responses.get(2)).endsWith("demo> ");
+    assertThat(responses)
+        .anyMatch(
+            response ->
+                response.startsWith("OK QUICKLOOK")
+                    && response.contains("Room: Candle-lit Antechamber")
+                    && response.contains("Short:")
+                    && !response.contains("Long:")
+                    && response.endsWith("demo> "));
   }
 
   @Test
@@ -166,7 +170,7 @@ class LookWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
-    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(4);
     assertThat(firstConnection)
         .anyMatch(
             response ->
@@ -245,10 +249,12 @@ class LookWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
-    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(firstConnection.get(2).trim())
-        .matches(
-            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(firstConnection)
+        .anyMatch(
+            response ->
+                matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+                    .test(response.trim()));
 
     ACCOUNT_STUB.denyGameplayAdmission();
     List<String> reconnectResponses = runPlayAfterReconnect(sessionId);
@@ -265,10 +271,12 @@ class LookWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
-    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(firstConnection.get(2).trim())
-        .matches(
-            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(firstConnection)
+        .anyMatch(
+            response ->
+                matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+                    .test(response.trim()));
 
     GAME_SESSION
         .bean(net.firedevops.firemud.gamesession.service.SessionContextService.class)
@@ -580,17 +588,15 @@ class LookWebSocketCrossServiceTest {
   }
 
   private GameplayWebSocketDriver openSessionClient(long sessionId) {
-    return GameplayWebSocketDriver.connect(
+    return GameplayWebSocketDriver.connectGameplaySession(
         URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game"),
         COMMAND_WAIT,
-        java.util.Map.of(
-            "X-Game-Instance-Id", String.valueOf(sessionId),
-            "X-Tenant-Id", String.valueOf(TENANT_ID)));
+        TENANT_ID,
+        sessionId);
   }
 
   private void enterGameplay(GameplayWebSocketDriver client) throws Exception {
-    client.login("demo@example.com", "swordfish");
-    client.play("demo");
+    client.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
   }
 
   private final class TrackingSocket implements AutoCloseable {

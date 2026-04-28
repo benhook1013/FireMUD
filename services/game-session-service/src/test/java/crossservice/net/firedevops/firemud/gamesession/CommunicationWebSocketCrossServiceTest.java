@@ -212,9 +212,11 @@ class CommunicationWebSocketCrossServiceTest {
     try (GameplayWebSocketDriver actor = openSessionClient(sessionId, "actor-conn");
         GameplayWebSocketDriver target = openSessionClient(sessionId, "target-conn");
         GameplayWebSocketDriver observer = openSessionClient(sessionId, "observer-conn")) {
-      enterGameplayAndWaitReady(actor, "demo");
-      enterGameplayAndWaitReady(target, "demo", "Sora");
-      enterGameplayAndWaitReady(observer, "demo", "Nyx");
+      actor.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
+      target.enterGameplayAndWaitReady(
+          "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT);
+      observer.enterGameplayAndWaitReady(
+          "demo@example.com", "swordfish", "demo", "Nyx", READY_LOOK_TEXT);
 
       actor.send("WHISPER Sora Keep quiet");
       actor.awaitContains(ChatTestFixtures.canonicalWhisperText());
@@ -230,8 +232,10 @@ class CommunicationWebSocketCrossServiceTest {
 
     try (GameplayWebSocketDriver actor = openSessionClient(sessionId, "actor-tell-conn");
         GameplayWebSocketDriver target = openSessionClient(sessionId, "target-tell-conn")) {
-      enterGameplayAndWaitReady(actor, "demo", "Emberline");
-      enterGameplayAndWaitReady(target, "demo", "Sora");
+      actor.enterGameplayAndWaitReady(
+          "demo@example.com", "swordfish", "demo", "Emberline", READY_LOOK_TEXT);
+      target.enterGameplayAndWaitReady(
+          "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT);
 
       actor.send("TELL Sora Meet me at the forge");
       actor.awaitContains(ChatTestFixtures.canonicalTellText());
@@ -246,7 +250,7 @@ class CommunicationWebSocketCrossServiceTest {
     ENTITY_STUB.resetItemState();
 
     try (GameplayWebSocketDriver client = openSessionClient(sessionId, "item-loop-conn")) {
-      enterGameplayAndWaitReady(client, "demo");
+      client.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
 
       client.send("INV HERE");
       client.awaitContains("Room Inventory:");
@@ -329,7 +333,7 @@ class CommunicationWebSocketCrossServiceTest {
     ENTITY_STUB.resetItemState();
 
     try (GameplayWebSocketDriver client = openSessionClient(sessionId, "equipment-loop-conn")) {
-      enterGameplayAndWaitReady(client, "demo");
+      client.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
 
       client.send("EQUIPMENT");
       client.awaitContains("You have nothing equipped.");
@@ -469,7 +473,7 @@ class CommunicationWebSocketCrossServiceTest {
       long sessionId, String commandText, String expectedResponseSubstring) throws Exception {
     try (GameplayWebSocketDriver client =
         openSessionClient(sessionId, "flow-" + commandText.hashCode())) {
-      enterGameplayAndWaitReady(client, "demo");
+      client.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
       client.send(commandText);
       client.awaitContains(expectedResponseSubstring);
       return client.responses();
@@ -477,30 +481,12 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   private GameplayWebSocketDriver openSessionClient(long sessionId, String proxyConnectionId) {
-    return GameplayWebSocketDriver.connect(
+    return GameplayWebSocketDriver.connectGameplaySession(
         URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game"),
         COMMAND_WAIT,
-        java.util.Map.of(
-            "X-Game-Instance-Id",
-            String.valueOf(sessionId),
-            "X-Tenant-Id",
-            String.valueOf(TENANT_ID),
-            "X-Proxy-Connection-Id",
-            proxyConnectionId));
-  }
-
-  private void enterGameplayAndWaitReady(GameplayWebSocketDriver client, String world)
-      throws Exception {
-    client.login("demo@example.com", "swordfish");
-    client.play(world);
-    client.lookUntilReady(READY_LOOK_TEXT);
-  }
-
-  private void enterGameplayAndWaitReady(
-      GameplayWebSocketDriver client, String world, String characterName) throws Exception {
-    client.login("demo@example.com", "swordfish");
-    client.play(world, characterName);
-    client.lookUntilReady(READY_LOOK_TEXT);
+        TENANT_ID,
+        sessionId,
+        java.util.Map.of("X-Proxy-Connection-Id", proxyConnectionId));
   }
 
   private void assertMetricEventually(String meterName, double expectedValue, String... tags)
