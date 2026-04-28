@@ -100,3 +100,15 @@ def wait_for_http_readiness(name, base_url, startup_wait_seconds, timeout_second
             return
         time.sleep(2)
     raise RuntimeError(f"{name} readiness did not report UP at {readiness_url}")
+
+
+def run_command_plan(steps, executor):
+    for step in steps:
+        if len(step) == 3:
+            line, expected_substrings, label = step
+            timeout = None
+        elif len(step) == 4:
+            line, expected_substrings, label, timeout = step
+        else:
+            raise ValueError(f"Unsupported command-plan step: {step!r}")
+        executor(line, expected_substrings, label, timeout)

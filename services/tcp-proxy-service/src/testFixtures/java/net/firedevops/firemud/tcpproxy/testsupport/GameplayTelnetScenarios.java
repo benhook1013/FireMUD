@@ -105,6 +105,25 @@ public final class GameplayTelnetScenarios {
 
   private GameplayTelnetScenarios() {}
 
+  public static GameplayTelnetDriver openAdmitted(DriverFactory factory, Admission admission)
+      throws Exception {
+    GameplayTelnetDriver driver = factory.open();
+    try {
+      driver.awaitInitialGuidance();
+      if (admission.characterName() == null || admission.characterName().isBlank()) {
+        driver.login(admission.email(), admission.password());
+        driver.play(admission.world());
+        return driver;
+      }
+      driver.login(admission.email(), admission.password());
+      driver.play(admission.world(), admission.characterName());
+      return driver;
+    } catch (Exception ex) {
+      closeQuietly(driver, ex);
+      throw ex;
+    }
+  }
+
   public static GameplayTelnetDriver openReady(DriverFactory factory, Admission admission)
       throws Exception {
     GameplayTelnetDriver driver = factory.open();

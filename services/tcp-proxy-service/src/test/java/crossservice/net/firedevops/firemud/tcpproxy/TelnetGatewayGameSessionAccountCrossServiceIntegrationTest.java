@@ -607,16 +607,10 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   private GameplayTelnetDriver openAdmittedTelnetClient() throws Exception {
-    GameplayTelnetDriver client = openTelnetClient();
-    try {
-      client.awaitInitialGuidance();
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
-      return client;
-    } catch (Exception ex) {
-      client.close();
-      throw ex;
-    }
+    return GameplayTelnetScenarios.openAdmitted(
+        this::openTelnetClient,
+        GameplayTelnetScenarios.Admission.unnamed(
+            "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT));
   }
 
   private GameplayTelnetDriver openReadyTelnetClient() throws Exception {

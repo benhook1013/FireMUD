@@ -46,6 +46,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutati
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTestConfiguration;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -595,7 +596,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     GameplayWebSocketDriver firstClient = openAdmittedGameplayDriver("41");
     firstClient.abort();
-    assertThat(waitForPresenceCount(22L, 1L, 0)).isTrue();
+    GameplayAsyncAssertions.assertPresenceCountEventually(
+        gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isPresent();
     assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
 
@@ -603,7 +605,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
       client.awaitContains("RECONNECT REPLAY APPEARS");
       secondPayloads = client.responses();
-      assertThat(waitForPresenceCount(22L, 1L, 1)).isTrue();
+      GameplayAsyncAssertions.assertPresenceCountEventually(
+          gameplayPresenceService, 22L, 1L, 1, java.time.Duration.ofSeconds(5));
       assertThat(gameplayPresenceService.listConnectedByGameInstance(22L, 1L))
           .anySatisfy(presence -> assertThat(presence.sessionId()).isEqualTo(42L));
     }
@@ -1066,7 +1069,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     assertThat(firstCloseEvent.reason()).isEqualTo("LOGOUT");
     assertThat(cleared.get()).isTrue();
-    assertThat(waitForPresenceCount(22L, 1L, 0)).isTrue();
+    GameplayAsyncAssertions.assertPresenceCountEventually(
+        gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
     assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
 
     java.util.List<String> secondPayloads;
@@ -1430,19 +1434,5 @@ class GameSessionWebSocketHandlerIntegrationTest {
         && context.characterId() == characterId
         && context.gameInstanceId() == gameInstanceId
         && roomInstanceId.equals(context.roomInstanceId());
-  }
-
-  private boolean waitForPresenceCount(long tenantId, long gameInstanceId, int expectedCount)
-      throws InterruptedException {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-    while (System.nanoTime() < deadline) {
-      if (gameplayPresenceService.listConnectedByGameInstance(tenantId, gameInstanceId).size()
-          == expectedCount) {
-        return true;
-      }
-      Thread.sleep(25L);
-    }
-    return gameplayPresenceService.listConnectedByGameInstance(tenantId, gameInstanceId).size()
-        == expectedCount;
   }
 }

@@ -47,6 +47,7 @@ sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 
 from smoke_common import (
     http_readiness_up,
+    run_command_plan,
     verify_smoke_account,
     wait_for_account_schema,
     wait_for_http_readiness,
@@ -203,61 +204,45 @@ try:
     verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds)
     with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
         responses = []
-        send_and_expect(sock, responses, "WORLDS", [worlds_expect], "WORLDS")
-        send_and_expect(
-            sock, responses, f"LOGIN {username} {password}", [login_expect], "LOGIN"
-        )
-        send_and_expect(sock, responses, "PLAY demo", [play_expect], "PLAY")
-        send_and_expect(sock, responses, "LOOK", [look_expect], "LOOK")
-        send_and_expect(
-            sock, responses, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE"
-        )
-        send_and_expect(
-            sock, responses, "GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET"
-        )
-        send_and_expect(
-            sock,
-            responses,
-            "CONTAINER Backpack",
-            ["Container: Backpack [backpack#1]", "Ration"],
-            "CONTAINER",
-        )
-        send_and_expect(
-            sock,
-            responses,
-            "PUT Torch INTO Backpack",
-            ["You put Torch into Backpack.", "Container: Backpack [backpack#1]", "Torch"],
-            "PUT",
-        )
-        send_and_expect(
-            sock,
-            responses,
-            "TAKE Torch FROM Backpack",
-            ["You take Torch from Backpack.", "Container: Backpack [backpack#1]", "Ration"],
-            "TAKE",
-        )
-        send_and_expect(sock, responses, "DROP Torch", ["You drop Torch."], "DROP")
-        send_and_expect(
-            sock,
-            responses,
-            "INV HERE",
-            ["Room Inventory:", "Torch", "Backpack"],
-            "INV HERE after DROP",
-        )
-        send_and_expect(
-            sock, responses, "EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty"
-        )
-        send_and_expect(sock, responses, "WEAR Leather Cap", ["You wear Leather Cap."], "WEAR")
-        send_and_expect(
-            sock, responses, "EQUIPMENT", ["Equipment:", "HEAD", "Leather Cap"], "EQUIPMENT worn"
-        )
-        send_and_expect(sock, responses, "REMOVE HEAD", ["You remove Leather Cap."], "REMOVE")
-        send_and_expect(
-            sock,
-            responses,
-            "WEAR Iron Boots",
-            ["ERROR SLOT_INCOMPATIBLE", "Iron Boots cannot be worn by this body layout"],
-            "WEAR incompatible",
+        steps = [
+            ("WORLDS", [worlds_expect], "WORLDS"),
+            (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
+            ("PLAY demo", [play_expect], "PLAY"),
+            ("LOOK", [look_expect], "LOOK"),
+            ("INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE"),
+            ("GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET"),
+            (
+                "CONTAINER Backpack",
+                ["Container: Backpack [backpack#1]", "Ration"],
+                "CONTAINER",
+            ),
+            (
+                "PUT Torch INTO Backpack",
+                ["You put Torch into Backpack.", "Container: Backpack [backpack#1]", "Torch"],
+                "PUT",
+            ),
+            (
+                "TAKE Torch FROM Backpack",
+                ["You take Torch from Backpack.", "Container: Backpack [backpack#1]", "Ration"],
+                "TAKE",
+            ),
+            ("DROP Torch", ["You drop Torch."], "DROP"),
+            ("INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE after DROP"),
+            ("EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty"),
+            ("WEAR Leather Cap", ["You wear Leather Cap."], "WEAR"),
+            ("EQUIPMENT", ["Equipment:", "HEAD", "Leather Cap"], "EQUIPMENT worn"),
+            ("REMOVE HEAD", ["You remove Leather Cap."], "REMOVE"),
+            (
+                "WEAR Iron Boots",
+                ["ERROR SLOT_INCOMPATIBLE", "Iron Boots cannot be worn by this body layout"],
+                "WEAR incompatible",
+            ),
+        ]
+        run_command_plan(
+            steps,
+            lambda line, expected_substrings, label, timeout: send_and_expect(
+                sock, responses, line, expected_substrings, label
+            ),
         )
 
 except OSError as exc:

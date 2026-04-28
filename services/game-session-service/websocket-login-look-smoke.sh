@@ -42,6 +42,7 @@ repo_root = Path(os.environ["FIREMUD_REPO_ROOT"])
 sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 
 from smoke_common import (
+    run_command_plan,
     verify_smoke_account,
     wait_for_account_schema,
     wait_for_http_readiness,
@@ -135,8 +136,6 @@ def send_and_expect(ws, line, expected_substrings, label, timeout=timeout_second
     print(response.strip() or "<empty>")
     return response
 
-
-
 def websocket_smoke():
     ws = websocket.create_connection(
         websocket_url,
@@ -148,43 +147,51 @@ def websocket_smoke():
     )
     ws._smoke_responses = []
     try:
-        send_and_expect(ws, "WORLDS", [worlds_expect], "WORLDS")
-        send_and_expect(ws, f"LOGIN {username} {password}", [login_expect], "LOGIN")
-        send_and_expect(ws, "PLAY demo", [play_expect], "PLAY")
-        send_and_expect(ws, "LOOK", [look_expect], "LOOK", timeout=look_timeout_seconds)
-        send_and_expect(ws, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE")
-        send_and_expect(ws, "GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET")
-        send_and_expect(
-            ws,
-            "CONTAINER Backpack",
-            ["Container: Backpack [backpack#1]", "Ration"],
-            "CONTAINER",
-        )
-        send_and_expect(
-            ws,
-            "PUT Torch INTO Backpack",
-            ["You put Torch into Backpack.", "Container: Backpack [backpack#1]", "Torch"],
-            "PUT",
-        )
-        send_and_expect(
-            ws,
-            "TAKE Torch FROM Backpack",
-            ["You take Torch from Backpack.", "Container: Backpack [backpack#1]", "Ration"],
-            "TAKE",
-        )
-        send_and_expect(ws, "DROP Torch", ["You drop Torch."], "DROP")
-        send_and_expect(ws, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE after DROP")
-        send_and_expect(ws, "EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty")
-        send_and_expect(ws, "WEAR Leather Cap", ["You wear Leather Cap."], "WEAR")
-        send_and_expect(ws, "EQUIPMENT", ["Equipment:", "HEAD", "Leather Cap"], "EQUIPMENT worn")
-        send_and_expect(ws, "REMOVE HEAD", ["You remove Leather Cap."], "REMOVE", timeout=look_timeout_seconds)
-        send_and_expect(ws, "EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty again")
-        send_and_expect(
-            ws,
-            "WEAR Iron Boots",
-            ["ERROR SLOT_INCOMPATIBLE", "Iron Boots cannot be worn by this body layout"],
-            "WEAR incompatible",
-            timeout=look_timeout_seconds,
+        steps = [
+            ("WORLDS", [worlds_expect], "WORLDS"),
+            (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
+            ("PLAY demo", [play_expect], "PLAY"),
+            ("LOOK", [look_expect], "LOOK", look_timeout_seconds),
+            ("INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE"),
+            ("GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET"),
+            (
+                "CONTAINER Backpack",
+                ["Container: Backpack [backpack#1]", "Ration"],
+                "CONTAINER",
+            ),
+            (
+                "PUT Torch INTO Backpack",
+                ["You put Torch into Backpack.", "Container: Backpack [backpack#1]", "Torch"],
+                "PUT",
+            ),
+            (
+                "TAKE Torch FROM Backpack",
+                ["You take Torch from Backpack.", "Container: Backpack [backpack#1]", "Ration"],
+                "TAKE",
+            ),
+            ("DROP Torch", ["You drop Torch."], "DROP"),
+            ("INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE after DROP"),
+            ("EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty"),
+            ("WEAR Leather Cap", ["You wear Leather Cap."], "WEAR"),
+            ("EQUIPMENT", ["Equipment:", "HEAD", "Leather Cap"], "EQUIPMENT worn"),
+            ("REMOVE HEAD", ["You remove Leather Cap."], "REMOVE", look_timeout_seconds),
+            ("EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty again"),
+            (
+                "WEAR Iron Boots",
+                ["ERROR SLOT_INCOMPATIBLE", "Iron Boots cannot be worn by this body layout"],
+                "WEAR incompatible",
+                look_timeout_seconds,
+            ),
+        ]
+        run_command_plan(
+            steps,
+            lambda line, expected_substrings, label, timeout: send_and_expect(
+                ws,
+                line,
+                expected_substrings,
+                label,
+                timeout=timeout_seconds if timeout is None else timeout,
+            ),
         )
     finally:
         ws.close()

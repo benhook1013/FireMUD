@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 
 /** Shared eventual assertions for gameplay cross-service proof and transport tests. */
@@ -70,5 +71,25 @@ public final class GameplayAsyncAssertions {
     String actual = maybeBuffer.map(ScreenBufferService.BufferedScreen::protocolText).orElse("");
     throw new AssertionError(
         "Expected buffered screen to contain '" + expectedSubstring + "', got '" + actual + "'");
+  }
+
+  public static void assertPresenceCountEventually(
+      GameplayPresenceService gameplayPresenceService,
+      long tenantId,
+      long gameInstanceId,
+      int expectedCount,
+      Duration timeout)
+      throws InterruptedException {
+    assertEventually(
+        "presence count "
+            + expectedCount
+            + " for tenant "
+            + tenantId
+            + " instance "
+            + gameInstanceId,
+        timeout,
+        () ->
+            gameplayPresenceService.listConnectedByGameInstance(tenantId, gameInstanceId).size()
+                == expectedCount);
   }
 }
