@@ -95,11 +95,14 @@ public class CommonSecurityAutoConfiguration {
   @ConditionalOnMissingBean(BlockingGrpcStubCustomizer.class)
   BlockingGrpcStubCustomizer blockingGrpcStubCustomizer(
       @Qualifier("jwtUtil") JwtUtil jwtUtil,
+      GrpcAuthProperties grpcAuthProperties,
       ObjectProvider<RuntimeIdentity> runtimeIdentityProvider) {
     return new BlockingGrpcStubCustomizer() {
       @Override
       public <T extends AbstractStub<T>> T customize(T stub) {
-        return GrpcClientAuth.attach(stub, jwtUtil, runtimeIdentityProvider.getIfAvailable());
+        return grpcAuthProperties.isForceInternalServiceOutbound()
+            ? GrpcClientAuth.attachInternal(stub, jwtUtil, runtimeIdentityProvider.getIfAvailable())
+            : GrpcClientAuth.attach(stub, jwtUtil, runtimeIdentityProvider.getIfAvailable());
       }
     };
   }

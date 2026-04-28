@@ -100,6 +100,10 @@ def drain_available(sock, quiet_timeout=0.25):
 
 def wait_for_incremental_text(sock, responses, start_index, expected_substrings, timeout):
     deadline = time.time() + timeout
+    expects_explicit_failure = any(
+        substring.startswith("ERROR ") or substring.startswith("DISCONNECT ")
+        for substring in expected_substrings
+    )
     while time.time() < deadline:
         remaining = max(0.1, deadline - time.time())
         chunk = recv_until(sock, "", remaining)
@@ -107,7 +111,9 @@ def wait_for_incremental_text(sock, responses, start_index, expected_substrings,
             responses.append(chunk)
             response = "".join(responses[start_index:])
             stripped = response.strip()
-            if stripped.startswith("ERROR ") or stripped.startswith("DISCONNECT "):
+            if not expects_explicit_failure and (
+                stripped.startswith("ERROR ") or stripped.startswith("DISCONNECT ")
+            ):
                 raise RuntimeError(f"Command failed explicitly: {stripped}")
             if all(substring in response for substring in expected_substrings):
                 trailing = drain_available(sock)

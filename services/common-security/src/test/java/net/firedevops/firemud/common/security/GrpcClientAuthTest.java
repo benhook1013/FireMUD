@@ -69,4 +69,31 @@ class GrpcClientAuthTest {
     assertEquals("wm-1", claims.get("serviceInstanceId", String.class));
     assertEquals(List.of(), claims.get("globalRoles", List.class));
   }
+
+  @Test
+  void explicitInternalBearerIgnoresCurrentSessionClaims() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of("7", List.of("tenantAdmin")));
+
+    var claims =
+        jwtUtil
+            .parseToken(
+                GrpcClientAuth.createInternalBearerToken(
+                    jwtUtil,
+                    new RuntimeIdentity(
+                        "game-logic-service",
+                        "gl-1",
+                        "localhost",
+                        Instant.now(),
+                        "1.0.0",
+                        "ghi789",
+                        "local")))
+            .getPayload();
+
+    assertEquals("service:game-logic-service", claims.getSubject());
+    assertNull(claims.get("accountId", String.class));
+    assertTrue(Boolean.TRUE.equals(claims.get("internalService", Boolean.class)));
+    assertEquals("game-logic-service", claims.get("serviceName", String.class));
+    assertEquals("gl-1", claims.get("serviceInstanceId", String.class));
+    assertEquals(List.of(), claims.get("globalRoles", List.class));
+  }
 }

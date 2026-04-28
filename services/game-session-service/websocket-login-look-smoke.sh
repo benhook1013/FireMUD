@@ -185,13 +185,19 @@ def drain_available(ws, responses, quiet_timeout=0.25):
 
 def wait_for_incremental_text(ws, responses, start_index, label, expected_substrings, timeout):
     deadline = time.time() + timeout
+    expects_explicit_failure = any(
+        substring.startswith("ERROR ") or substring.startswith("DISCONNECT ")
+        for substring in expected_substrings
+    )
     while time.time() < deadline:
         remaining = max(0.1, deadline - time.time())
         responses.append(
             recv_text(ws, f"{label} response chunk", min(remaining, timeout_seconds)).strip()
         )
         response = "\n".join(chunk for chunk in responses[start_index:] if chunk)
-        if response.startswith("ERROR ") or response.startswith("DISCONNECT "):
+        if not expects_explicit_failure and (
+            response.startswith("ERROR ") or response.startswith("DISCONNECT ")
+        ):
             raise RuntimeError(f"{label} failed explicitly: {response}")
         if all(substring in response for substring in expected_substrings):
             drain_available(ws, responses)
