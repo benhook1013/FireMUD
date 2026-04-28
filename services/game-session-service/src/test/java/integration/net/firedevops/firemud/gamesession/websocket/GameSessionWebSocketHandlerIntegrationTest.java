@@ -1084,6 +1084,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
             eq("123"), eq("22"), org.mockito.ArgumentMatchers.anyString());
     verify(accountClient)
         .getTenantEntitlementsForRuntime(eq("22"), org.mockito.ArgumentMatchers.anyString());
+    assertThat(sessionContextService.findByTenantAndSessionId(22L, 1L))
+        .hasValueSatisfying(
+            context -> {
+              assertThat(context.bootstrapGameInstanceId()).isEqualTo(1L);
+              assertThat(context.worldSlug()).isEqualTo("demo");
+              assertThat(context.realmSlug()).isEqualTo("production");
+              assertThat(context.pointerVersion()).isEqualTo(1L);
+            });
   }
 
   @Test
