@@ -15,7 +15,7 @@ import org.springframework.test.web.servlet.MockMvc;
 /** Startup smoke test for the game-session ping endpoint. */
 @WebMvcTest(PingController.class)
 @Import(PingServiceImpl.class)
-class GameSessionCrossServiceIntegrationTest {
+class GameSessionPingWebMvcTest {
 
   @Autowired private MockMvc mockMvc;
 

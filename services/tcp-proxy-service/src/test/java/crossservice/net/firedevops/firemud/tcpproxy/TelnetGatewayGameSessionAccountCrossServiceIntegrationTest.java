@@ -160,12 +160,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     ensureTestServicesStarted();
     String telnetLoginResponse;
     String telnetLookResponse;
-    try (GameplayTelnetDriver client = openTelnetClient()) {
-      client.awaitInitialGuidance();
-      client.login("demo@example.com", "swordfish");
+    try (GameplayTelnetDriver client = openAdmittedTelnetClient()) {
       telnetLoginResponse = "Logged in as demo@example.com";
       assertThat(telnetLoginResponse).contains("Logged in as demo@example.com");
-      client.play("demo");
       client.sendLine("LOOK");
       telnetLookResponse = client.readBlockContaining("OK LOOK");
     }
@@ -184,11 +181,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void telnetReconnectAfterRevocationFailsPlayAdmission() throws Exception {
     ensureTestServicesStarted();
-    try (GameplayTelnetDriver firstClient = openTelnetClient()) {
-      firstClient.awaitInitialGuidance();
-      firstClient.login("demo@example.com", "swordfish");
-      firstClient.play("demo");
-    }
+    try (GameplayTelnetDriver firstClient = openAdmittedTelnetClient()) {}
 
     accountStub().setGameplayAdmissionAllowed(false);
 
@@ -347,10 +340,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void telnetReconnectAfterRevocationFailsClosed() throws Exception {
     ensureTestServicesStarted();
-    try (GameplayTelnetDriver firstClient = openTelnetClient()) {
-      firstClient.awaitInitialGuidance();
-      firstClient.login("demo@example.com", "swordfish");
-      firstClient.play("demo");
+    try (GameplayTelnetDriver firstClient = openAdmittedTelnetClient()) {
       firstClient.sendLine("MOVE north");
       assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK"))
           .contains(LookTestFixtures.DESTINATION_ROOM_ID);
@@ -374,10 +364,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     String telnetReplayResponse;
     String telnetReconnectLookResponse;
 
-    try (GameplayTelnetDriver client = openTelnetClient()) {
-      client.awaitInitialGuidance();
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
+    try (GameplayTelnetDriver client = openAdmittedTelnetClient()) {
       client.sendLine("MOVE north");
       telnetMoveResponse = client.readBlockContainingOrTimeout("OK LOOK");
     }
@@ -390,10 +377,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             .sessionId();
     sessionContextService.deleteBySessionId(TENANT_ID, activeGameplaySessionId);
 
-    try (GameplayTelnetDriver client = openTelnetClient()) {
-      client.awaitInitialGuidance();
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
+    try (GameplayTelnetDriver client = openAdmittedTelnetClient()) {
       telnetReplayResponse = client.readBlockContainingOrTimeout("OK LOOK");
       client.sendLine("LOOK");
       telnetReconnectLookResponse = client.readBlockContainingOrTimeout("OK LOOK");
@@ -412,22 +396,16 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   void telnetSecondConnectionTakesOverGameplayBinding() throws Exception {
     ensureTestServicesStarted();
 
-    try (GameplayTelnetDriver firstClient = openTelnetClient();
-        GameplayTelnetDriver secondClient = openTelnetClient()) {
-      firstClient.awaitInitialGuidance();
-      secondClient.awaitInitialGuidance();
-
-      firstClient.login("demo@example.com", "swordfish");
-      firstClient.play("demo");
+    try (GameplayTelnetDriver firstClient = openAdmittedTelnetClient()) {
       firstClient.sendLine("LOOK");
       assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK").trim())
           .matches(GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt());
 
-      secondClient.login("demo@example.com", "swordfish");
-      secondClient.play("demo");
-      secondClient.sendLine("LOOK");
-      assertThat(secondClient.readBlockContainingOrTimeout("OK LOOK").trim())
-          .matches(GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt());
+      try (GameplayTelnetDriver secondClient = openAdmittedTelnetClient()) {
+        secondClient.sendLine("LOOK");
+        assertThat(secondClient.readBlockContainingOrTimeout("OK LOOK").trim())
+            .matches(GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt());
+      }
 
       firstClient.sendLine("LOOK");
       assertThat(firstClient.readLineContaining("ERROR LOGIN_REQUIRED"))
@@ -626,6 +604,19 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   private GameplayTelnetDriver openTelnetClient() throws IOException {
     return GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT);
+  }
+
+  private GameplayTelnetDriver openAdmittedTelnetClient() throws Exception {
+    GameplayTelnetDriver client = openTelnetClient();
+    try {
+      client.awaitInitialGuidance();
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      return client;
+    } catch (Exception ex) {
+      client.close();
+      throw ex;
+    }
   }
 
   private GameplayTelnetDriver openReadyTelnetClient() throws Exception {

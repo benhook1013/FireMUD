@@ -30,6 +30,15 @@ public final class GameplayTelnetScenarios {
 
   public record ReconnectScenario(List<String> firstResponses, GameplayTelnetDriver reconnecting)
       implements AutoCloseable {
+    public ReconnectScenario {
+      firstResponses = List.copyOf(firstResponses);
+    }
+
+    @Override
+    public List<String> firstResponses() {
+      return List.copyOf(firstResponses);
+    }
+
     @Override
     public void close() throws Exception {
       reconnecting.close();

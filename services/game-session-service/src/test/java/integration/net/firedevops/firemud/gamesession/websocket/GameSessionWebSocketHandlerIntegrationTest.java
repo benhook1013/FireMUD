@@ -448,9 +448,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @Test
   void websocketLoginThenLookUsesAuthenticatedPath() throws Exception {
     List<String> payloads;
-    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
       client.send("LOOK");
       client.awaitStartsWith("OK LOOK");
       payloads = client.responses();
@@ -503,9 +501,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @Test
   void repeatedLookStillShowsPromptInsideBurstWindow() throws Exception {
     List<String> payloads;
-    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
       client.send("LOOK");
       client.awaitStartsWith("OK LOOK");
       client.send("LOOK");
@@ -529,9 +525,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @Test
   void websocketQuickLookUsesDistinctCommandLabelAndPrompt() throws Exception {
     List<String> payloads;
-    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
       client.send("QUICKLOOK");
       client.awaitStartsWith("OK QUICKLOOK");
       payloads = client.responses();
@@ -550,9 +544,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @Test
   void websocketLogoutClearsReplayStateAndClosesTransport() throws Exception {
     GameplayWebSocketDriver.CloseEvent closeEvent;
-    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
       client.send("LOGOUT");
       closeEvent = client.awaitClosed();
     }
@@ -580,9 +572,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     performLogoutFlow("41");
 
     List<String> secondPayloads;
-    try (GameplayWebSocketDriver client = openGameplayDriver("42")) {
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
       secondPayloads = client.responses();
     }
 
@@ -603,18 +593,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     1,
                     System.currentTimeMillis())));
 
-    GameplayWebSocketDriver firstClient = openGameplayDriver("41");
-    firstClient.login("demo@example.com", "swordfish");
-    firstClient.play("demo");
+    GameplayWebSocketDriver firstClient = openAdmittedGameplayDriver("41");
     firstClient.abort();
     assertThat(waitForPresenceCount(22L, 1L, 0)).isTrue();
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isPresent();
     assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
 
     List<String> secondPayloads;
-    try (GameplayWebSocketDriver client = openGameplayDriver("42")) {
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
       client.awaitContains("RECONNECT REPLAY APPEARS");
       secondPayloads = client.responses();
       assertThat(waitForPresenceCount(22L, 1L, 1)).isTrue();
@@ -630,9 +616,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @Test
   void websocketAfkCommandUpdatesLiveGameplayPresence() throws Exception {
     List<String> payloads;
-    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
       client.send("AFK");
       await()
           .atMost(5, TimeUnit.SECONDS)
@@ -685,9 +669,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     List<String> payloads;
     try (GameplayWebSocketDriver client =
-        openGameplayDriver("41", java.util.Map.of("X-Firemud-Locale", "fr"))) {
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
+        openAdmittedGameplayDriver("41", java.util.Map.of("X-Firemud-Locale", "fr"))) {
       client.send("LOOK");
       client.awaitContains("Salle : Galerie");
       payloads = client.responses();
@@ -708,9 +690,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     when(commandService.enqueue(eq("42"), eq("north"), eq(false)))
         .thenReturn(CommandEnqueueResult.success("cmd-move-1"));
     List<String> payloads;
-    try (GameplayWebSocketDriver client = openGameplayDriver("42")) {
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
       client.send("north");
       await()
           .atMost(5, TimeUnit.SECONDS)
@@ -1276,6 +1256,22 @@ class GameSessionWebSocketHandlerIntegrationTest {
     return openGameplayDriver(sessionId, java.util.Map.of());
   }
 
+  private GameplayWebSocketDriver openAdmittedGameplayDriver(String sessionId) throws Exception {
+    return openAdmittedGameplayDriver(sessionId, java.util.Map.of());
+  }
+
+  private GameplayWebSocketDriver openAdmittedGameplayDriver(
+      String sessionId, java.util.Map<String, String> extraHeaders) throws Exception {
+    GameplayWebSocketDriver client = openGameplayDriver(sessionId, extraHeaders);
+    try {
+      enterGameplay(client);
+      return client;
+    } catch (Exception ex) {
+      client.close();
+      throw ex;
+    }
+  }
+
   private GameplayWebSocketDriver openGameplayDriver(
       String sessionId, java.util.Map<String, String> extraHeaders) {
     java.util.Map<String, String> headers = new java.util.LinkedHashMap<>();
@@ -1313,10 +1309,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
     return URI.create("ws://localhost:" + port + "/ws/game");
   }
 
+  private void enterGameplay(GameplayWebSocketDriver client) throws Exception {
+    client.login("demo@example.com", "swordfish");
+    client.play("demo");
+  }
+
   private void performLogoutFlow(String sessionId) throws Exception {
-    try (GameplayWebSocketDriver client = openGameplayDriver(sessionId)) {
-      client.login("demo@example.com", "swordfish");
-      client.play("demo");
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver(sessionId)) {
       client.send("LOGOUT");
       GameplayWebSocketDriver.CloseEvent closeEvent = client.awaitClosed();
       assertThat(closeEvent.reason()).isEqualTo("LOGOUT");

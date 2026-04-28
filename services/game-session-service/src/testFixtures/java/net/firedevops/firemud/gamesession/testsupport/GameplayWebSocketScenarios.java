@@ -35,6 +35,15 @@ public final class GameplayWebSocketScenarios {
 
   public record ReconnectScenario(List<String> firstResponses, GameplayWebSocketDriver reconnecting)
       implements AutoCloseable {
+    public ReconnectScenario {
+      firstResponses = List.copyOf(firstResponses);
+    }
+
+    @Override
+    public List<String> firstResponses() {
+      return List.copyOf(firstResponses);
+    }
+
     @Override
     public void close() throws Exception {
       reconnecting.close();
