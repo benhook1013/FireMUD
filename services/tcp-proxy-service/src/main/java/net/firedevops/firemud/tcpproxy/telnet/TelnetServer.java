@@ -71,6 +71,9 @@ public final class TelnetServer {
   private final int maxLineBytes;
   private final String defaultGameInstanceId;
   private final String defaultTenantId;
+  private final String defaultWorldSlug;
+  private final String defaultRealmSlug;
+  private final String defaultPointerVersion;
   private final java.util.concurrent.atomic.AtomicInteger activeConnections =
       new java.util.concurrent.atomic.AtomicInteger();
   private final java.util.concurrent.atomic.AtomicInteger bufferDepth =
@@ -112,6 +115,9 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_MAX_LINE_BYTES:4096}") int maxLineBytes,
       @Value("${TCP_PROXY_DEFAULT_GAME_INSTANCE_ID:}") String defaultGameInstanceId,
       @Value("${TCP_PROXY_DEFAULT_TENANT_ID:}") String defaultTenantId,
+      @Value("${TCP_PROXY_DEFAULT_WORLD_SLUG:}") String defaultWorldSlug,
+      @Value("${TCP_PROXY_DEFAULT_REALM_SLUG:}") String defaultRealmSlug,
+      @Value("${TCP_PROXY_DEFAULT_POINTER_VERSION:}") String defaultPointerVersion,
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService,
       GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
@@ -129,6 +135,9 @@ public final class TelnetServer {
     this.maxLineBytes = maxLineBytes;
     this.defaultGameInstanceId = defaultGameInstanceId;
     this.defaultTenantId = defaultTenantId;
+    this.defaultWorldSlug = defaultWorldSlug;
+    this.defaultRealmSlug = defaultRealmSlug;
+    this.defaultPointerVersion = defaultPointerVersion;
     this.meterRegistry = meterRegistry;
     this.connectionCounter = meterRegistry.counter("tcpproxy.connections.total");
     this.discardedCommandCounter = meterRegistry.counter("tcpproxy.telnet.discarded");
@@ -185,6 +194,9 @@ public final class TelnetServer {
         maxConnections,
         maxConnectionsPerIp,
         maxLineBytes,
+        null,
+        null,
+        null,
         null,
         null,
         meterRegistry,
@@ -277,6 +289,9 @@ public final class TelnetServer {
                               bufferDepth,
                               defaultGameInstanceId,
                               defaultTenantId,
+                              defaultWorldSlug,
+                              defaultRealmSlug,
+                              defaultPointerVersion,
                               lookCacheService,
                               runtimeIdentity));
                 }

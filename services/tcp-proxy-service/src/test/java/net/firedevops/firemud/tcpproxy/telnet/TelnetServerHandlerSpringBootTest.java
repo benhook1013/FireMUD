@@ -63,6 +63,9 @@ class TelnetServerHandlerSpringBootTest {
             bufferDepth,
             sessionId,
             tenantId,
+            "demo",
+            "production",
+            "7",
             Mockito.mock(LookCacheService.class));
 
     EmbeddedChannel channel =

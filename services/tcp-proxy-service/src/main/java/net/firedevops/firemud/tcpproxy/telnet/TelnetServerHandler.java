@@ -82,6 +82,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final TcpProxyEventService eventService;
   private final String defaultGameInstanceId;
   private final String defaultTenantId;
+  private final String defaultWorldSlug;
+  private final String defaultRealmSlug;
+  private final String defaultPointerVersion;
   private final RuntimeIdentity runtimeIdentity;
   private final TelnetSessionContext sessionContext = new TelnetSessionContext();
   private final String proxyConnectionId = UUID.randomUUID().toString();
@@ -130,6 +133,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         null,
         null,
         null,
+        null,
+        null,
+        null,
         DEFAULT_RUNTIME_IDENTITY);
   }
 
@@ -160,6 +166,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         null,
         null,
         null,
+        null,
+        null,
+        null,
         DEFAULT_RUNTIME_IDENTITY);
   }
 
@@ -190,6 +199,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         bufferDepth,
         null,
         null,
+        null,
+        null,
+        null,
         lookCacheService,
         DEFAULT_RUNTIME_IDENTITY);
   }
@@ -208,6 +220,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       AtomicInteger bufferDepth,
       String defaultGameInstanceId,
       String defaultTenantId,
+      String defaultWorldSlug,
+      String defaultRealmSlug,
+      String defaultPointerVersion,
       LookCacheService lookCacheService) {
     this(
         gatewayWsUrl,
@@ -223,6 +238,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         bufferDepth,
         defaultGameInstanceId,
         defaultTenantId,
+        defaultWorldSlug,
+        defaultRealmSlug,
+        defaultPointerVersion,
         lookCacheService,
         DEFAULT_RUNTIME_IDENTITY);
   }
@@ -241,6 +259,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       AtomicInteger bufferDepth,
       String defaultGameInstanceId,
       String defaultTenantId,
+      String defaultWorldSlug,
+      String defaultRealmSlug,
+      String defaultPointerVersion,
       LookCacheService lookCacheService,
       RuntimeIdentity runtimeIdentity) {
     this.gatewayWsUrl = gatewayWsUrl;
@@ -256,6 +277,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.bufferDepth = bufferDepth;
     this.defaultGameInstanceId = defaultGameInstanceId;
     this.defaultTenantId = defaultTenantId;
+    this.defaultWorldSlug = defaultWorldSlug;
+    this.defaultRealmSlug = defaultRealmSlug;
+    this.defaultPointerVersion = defaultPointerVersion;
     this.runtimeIdentity = runtimeIdentity;
     this.commandTimer = meterRegistry.timer("tcpproxy.command");
     this.heartbeatTimer = meterRegistry.timer("tcpproxy.heartbeat");
@@ -274,6 +298,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         String proxyConnectionId,
         String gameInstanceId,
         String tenantId,
+        String worldSlug,
+        String realmSlug,
+        String pointerVersion,
         Listener listener);
   }
 
@@ -283,6 +310,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       String proxyConnectionId,
       String gameInstanceId,
       String tenantId,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
       Listener listener) {
     var builder = SHARED_HTTP_CLIENT.newWebSocketBuilder();
     if (clientIp != null) {
@@ -299,6 +329,15 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     if (tenantId != null && !tenantId.isBlank()) {
       builder.header("X-Tenant-Id", tenantId);
       builder.header("X-Proxy-Tenant-Id", tenantId);
+    }
+    if (worldSlug != null && !worldSlug.isBlank()) {
+      builder.header("X-World-Slug", worldSlug);
+    }
+    if (realmSlug != null && !realmSlug.isBlank()) {
+      builder.header("X-Realm-Slug", realmSlug);
+    }
+    if (pointerVersion != null && !pointerVersion.isBlank()) {
+      builder.header("X-Pointer-Version", pointerVersion);
     }
     return builder.buildAsync(URI.create(gatewayWsUrl), listener);
   }
@@ -551,7 +590,12 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     if (!StringUtils.hasText(defaultGameInstanceId) || !StringUtils.hasText(defaultTenantId)) {
       return;
     }
-    sessionContext.bootstrap(defaultGameInstanceId, defaultTenantId);
+    sessionContext.bootstrap(
+        defaultGameInstanceId,
+        defaultTenantId,
+        defaultWorldSlug,
+        defaultRealmSlug,
+        defaultPointerVersion);
     notifyConnectIfReady();
     ensureGatewayConnected();
   }
@@ -594,6 +638,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
             proxyConnectionId,
             sessionContext.gameInstanceId(),
             sessionContext.tenantId(),
+            sessionContext.worldSlug(),
+            sessionContext.realmSlug(),
+            sessionContext.pointerVersion(),
             gatewayListener())
         .whenComplete(
             (socket, error) -> {

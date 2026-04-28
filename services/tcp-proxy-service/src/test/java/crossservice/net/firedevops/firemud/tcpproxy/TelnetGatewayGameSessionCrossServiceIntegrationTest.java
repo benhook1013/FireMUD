@@ -72,6 +72,9 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     ensureTestServicesStarted();
     registry.add("GATEWAY_WS_URL", GATEWAY::websocketUrl);
     registry.add("TCP_PROXY_PORT", () -> 0);
+    registry.add("TCP_PROXY_DEFAULT_WORLD_SLUG", () -> "demo");
+    registry.add("TCP_PROXY_DEFAULT_REALM_SLUG", () -> "production");
+    registry.add("TCP_PROXY_DEFAULT_POINTER_VERSION", () -> "1");
     registry.add("TCP_PROXY_DEFAULT_GAME_INSTANCE_ID", () -> "1");
     registry.add("TCP_PROXY_DEFAULT_TENANT_ID", () -> "1");
   }
