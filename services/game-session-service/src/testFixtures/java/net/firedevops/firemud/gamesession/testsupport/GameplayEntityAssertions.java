@@ -7,6 +7,8 @@ import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
+import net.firedevops.firemud.socialgroups.v1.ChatType;
+import net.firedevops.firemud.socialgroups.v1.SendMessageRequest;
 
 /** Shared explicit entity-management request assertions for chained gameplay proof. */
 public final class GameplayEntityAssertions {
@@ -112,6 +114,23 @@ public final class GameplayEntityAssertions {
     requireNotBlank(request.getEffectId(), "remove effectId");
   }
 
+  public static void assertMessage(
+      Optional<SendMessageRequest> maybeRequest,
+      ChatType chatType,
+      String recipientId,
+      String content,
+      boolean requireEffectId) {
+    SendMessageRequest request = required(maybeRequest, "social message request");
+    requireEquals(request.getType(), chatType, "social chatType");
+    requireEquals(request.getRecipientId(), recipientId, "social recipientId");
+    if (content != null) {
+      requireEquals(request.getContent(), content, "social content");
+    }
+    if (requireEffectId) {
+      requireNotBlank(request.getEffectId(), "social effectId");
+    }
+  }
+
   private static <T> T required(Optional<T> maybeValue, String description) {
     return maybeValue.orElseThrow(() -> new AssertionError("Expected " + description));
   }
@@ -124,6 +143,13 @@ public final class GameplayEntityAssertions {
   }
 
   private static void requireEquals(int actual, int expected, String description) {
+    if (actual != expected) {
+      throw new AssertionError(
+          "Expected " + description + " to be " + expected + " but was " + actual);
+    }
+  }
+
+  private static void requireEquals(ChatType actual, ChatType expected, String description) {
     if (actual != expected) {
       throw new AssertionError(
           "Expected " + description + " to be " + expected + " but was " + actual);

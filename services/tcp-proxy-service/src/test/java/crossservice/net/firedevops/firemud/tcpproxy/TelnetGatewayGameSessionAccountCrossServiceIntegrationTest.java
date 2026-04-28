@@ -517,12 +517,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
       client.sendLine("WHISPER Sora Keep quiet");
       telnetWhisperResponse = client.readLineContaining(ChatTestFixtures.canonicalWhisperText());
-      assertThat(SOCIAL_STUB.lastRequest())
-          .hasValueSatisfying(
-              request -> {
-                assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_WHISPER);
-                assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
-              });
+      GameplayEntityAssertions.assertMessage(
+          SOCIAL_STUB.lastRequest(),
+          ChatType.CHAT_TYPE_WHISPER,
+          ChatTestFixtures.PLAYER_SORA,
+          null,
+          false);
 
       client.sendLine("TELL Sora Meet me at the forge");
       telnetTellResponse = client.readLineContaining(ChatTestFixtures.canonicalTellText());
@@ -530,12 +530,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     assertThat(telnetWhisperResponse).contains(ChatTestFixtures.canonicalWhisperText());
     assertThat(telnetTellResponse).contains(ChatTestFixtures.canonicalTellText());
-    assertThat(SOCIAL_STUB.lastRequest())
-        .hasValueSatisfying(
-            request -> {
-              assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_TELL);
-              assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
-            });
+    GameplayEntityAssertions.assertMessage(
+        SOCIAL_STUB.lastRequest(),
+        ChatType.CHAT_TYPE_TELL,
+        ChatTestFixtures.PLAYER_SORA,
+        null,
+        false);
   }
 
   @Test

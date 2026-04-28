@@ -136,14 +136,12 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses)
         .anyMatch(response -> response.contains(ChatTestFixtures.canonicalWhisperText()));
-    assertThat(SOCIAL_STUB.lastRequest())
-        .hasValueSatisfying(
-            request -> {
-              assertThat(request.getContent()).isEqualTo("keep quiet");
-              assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_WHISPER);
-              assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
-              assertThat(request.getEffectId()).isNotBlank();
-            });
+    GameplayEntityAssertions.assertMessage(
+        SOCIAL_STUB.lastRequest(),
+        ChatType.CHAT_TYPE_WHISPER,
+        ChatTestFixtures.PLAYER_SORA,
+        "keep quiet",
+        true);
 
     assertMetricEventually("gamesession.command.whisper.invocations", 1.0);
   }
@@ -160,14 +158,12 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses)
         .anyMatch(response -> response.contains(ChatTestFixtures.canonicalTellText()));
-    assertThat(SOCIAL_STUB.lastRequest())
-        .hasValueSatisfying(
-            request -> {
-              assertThat(request.getContent()).isEqualTo("meet me at the forge");
-              assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_TELL);
-              assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
-              assertThat(request.getEffectId()).isNotBlank();
-            });
+    GameplayEntityAssertions.assertMessage(
+        SOCIAL_STUB.lastRequest(),
+        ChatType.CHAT_TYPE_TELL,
+        ChatTestFixtures.PLAYER_SORA,
+        "meet me at the forge",
+        true);
 
     assertMetricEventually("gamesession.command.tell.invocations", 1.0);
   }
