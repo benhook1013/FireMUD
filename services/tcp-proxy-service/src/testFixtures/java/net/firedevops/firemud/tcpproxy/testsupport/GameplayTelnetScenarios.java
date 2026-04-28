@@ -81,6 +81,18 @@ public final class GameplayTelnetScenarios {
 
   private GameplayTelnetScenarios() {}
 
+  public static GameplayTelnetDriver openReady(DriverFactory factory, Admission admission)
+      throws Exception {
+    GameplayTelnetDriver driver = factory.open();
+    try {
+      enterReady(driver, admission);
+      return driver;
+    } catch (Exception ex) {
+      closeQuietly(driver, ex);
+      throw ex;
+    }
+  }
+
   public static TwoPlayerScenario openReadyPair(
       DriverFactory factory, Admission actorAdmission, Admission targetAdmission) throws Exception {
     GameplayTelnetDriver actor = factory.open();
