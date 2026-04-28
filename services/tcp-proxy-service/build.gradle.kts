@@ -1,5 +1,6 @@
 
 plugins {
+    `java-test-fixtures`
     id("net.firedevops.firemud.service-conventions")
     id("net.firedevops.firemud.redis-conventions")
 }

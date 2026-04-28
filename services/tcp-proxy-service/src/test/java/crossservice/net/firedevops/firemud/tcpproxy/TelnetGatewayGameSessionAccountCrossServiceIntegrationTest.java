@@ -4,13 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.Tracer;
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
-import java.net.Socket;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
@@ -40,6 +34,7 @@ import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
+import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetDriver;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import net.firedevops.firemud.test.HttpTestSupport;
 import org.junit.jupiter.api.AfterAll;
@@ -201,24 +196,14 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     ensureTestServicesStarted();
     String telnetLoginResponse;
     String telnetLookResponse;
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      writer.println("LOGIN demo@example.com swordfish");
-      telnetLoginResponse = readBlockAfterContains(reader, "Logged in as demo@example.com");
+    try (GameplayTelnetDriver client = openTelnetClient()) {
+      client.awaitInitialGuidance();
+      client.sendLine("LOGIN demo@example.com swordfish");
+      telnetLoginResponse = client.readBlockContaining("Logged in as demo@example.com");
       assertThat(telnetLoginResponse).contains("Logged in as demo@example.com");
-      writer.println("PLAY demo");
-      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
-      writer.println("LOOK");
-      telnetLookResponse = readBlockAfterContains(reader, "OK LOOK");
+      client.play("demo");
+      client.sendLine("LOOK");
+      telnetLookResponse = client.readBlockContaining("OK LOOK");
     }
 
     assertThat(telnetLookResponse.trim()).matches(matchesCanonicalLookWithOptionalPrompt());
@@ -234,43 +219,24 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void telnetReconnectAfterRevocationFailsPlayAdmission() throws Exception {
     ensureTestServicesStarted();
-    try (Socket firstSocket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter firstWriter =
-            new PrintWriter(
-                new OutputStreamWriter(firstSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader firstReader =
-            new BufferedReader(
-                new InputStreamReader(firstSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      firstSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(firstReader);
-      firstWriter.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(firstReader, "Logged in as demo@example.com"))
+    try (GameplayTelnetDriver firstClient = openTelnetClient()) {
+      firstClient.awaitInitialGuidance();
+      firstClient.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(firstClient.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      firstWriter.println("PLAY demo");
-      assertThat(readLineAfterContains(firstReader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
+      firstClient.play("demo");
     }
 
     ACCOUNT_STUB.setGameplayAdmissionAllowed(false);
 
-    try (Socket secondSocket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter secondWriter =
-            new PrintWriter(
-                new OutputStreamWriter(secondSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader secondReader =
-            new BufferedReader(
-                new InputStreamReader(
-                    secondSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      secondSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(secondReader);
-      secondWriter.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(secondReader, "Logged in as demo@example.com"))
+    try (GameplayTelnetDriver secondClient = openTelnetClient()) {
+      secondClient.awaitInitialGuidance();
+      secondClient.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(secondClient.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
 
-      secondWriter.println("PLAY demo");
-      assertThat(readLineAfterContains(secondReader, "ERROR WORLD_ACCESS_DENIED"))
+      secondClient.sendLine("PLAY demo");
+      assertThat(secondClient.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
           .contains("ERROR WORLD_ACCESS_DENIED")
           .contains("You are not allowed to enter that world.");
     }
@@ -282,31 +248,21 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     String telnetMoveResponse;
     String telnetLookResponse;
     String telnetInvalidMoveResponse;
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      writer.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
+    try (GameplayTelnetDriver client = openTelnetClient()) {
+      client.awaitInitialGuidance();
+      client.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(client.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      writer.println("PLAY demo");
-      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
+      client.play("demo");
 
-      writer.println("MOVE north");
-      telnetMoveResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
+      client.sendLine("MOVE north");
+      telnetMoveResponse = client.readBlockContainingOrTimeout("OK LOOK");
 
-      writer.println("LOOK");
-      telnetLookResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
+      client.sendLine("LOOK");
+      telnetLookResponse = client.readBlockContainingOrTimeout("OK LOOK");
 
-      writer.println("MOVE west");
-      telnetInvalidMoveResponse = readLineAfterContains(reader, "ERROR INVALID_EXIT");
+      client.sendLine("MOVE west");
+      telnetInvalidMoveResponse = client.readLineContaining("ERROR INVALID_EXIT");
     }
 
     assertThat(telnetMoveResponse.trim())
@@ -336,51 +292,40 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     String equipmentResponse;
     String removeResponse;
     String incompatibleResponse;
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      writer.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
+    try (GameplayTelnetDriver client = openTelnetClient()) {
+      client.awaitInitialGuidance();
+      client.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(client.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      writer.println("PLAY demo");
-      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
-      writer.println("LOOK");
-      assertThat(readBlockAfterContainsOrTimeout(reader, "OK LOOK"))
-          .contains("Candle-lit Antechamber");
+      client.play("demo");
+      client.sendLine("LOOK");
+      assertThat(client.readBlockContainingOrTimeout("OK LOOK")).contains("Candle-lit Antechamber");
 
-      writer.println("INV HERE");
-      roomInventoryBeforePickup = readBlockAfterContains(reader, "Room Inventory:");
-      writer.println("GET Torch");
-      pickupResponse = readBlockAfterContains(reader, "You pick up Torch.");
-      writer.println("CONTAINER Backpack");
-      containerViewResponse = readBlockAfterContains(reader, "Container: Backpack [backpack#1]");
-      writer.println("PUT Torch INTO Backpack");
-      putResponse = readBlockAfterContains(reader, "You put Torch into Backpack.");
-      writer.println("TAKE Torch FROM Backpack");
-      takeResponse = readBlockAfterContains(reader, "You take Torch from Backpack.");
-      writer.println("DROP Torch");
-      dropResponse = readBlockAfterContains(reader, "You drop Torch.");
-      writer.println("INV HERE");
-      roomInventoryAfterDrop = readBlockAfterContains(reader, "Room Inventory:");
+      client.sendLine("INV HERE");
+      roomInventoryBeforePickup = client.readBlockContaining("Room Inventory:");
+      client.sendLine("GET Torch");
+      pickupResponse = client.readBlockContaining("You pick up Torch.");
+      client.sendLine("CONTAINER Backpack");
+      containerViewResponse = client.readBlockContaining("Container: Backpack [backpack#1]");
+      client.sendLine("PUT Torch INTO Backpack");
+      putResponse = client.readBlockContaining("You put Torch into Backpack.");
+      client.sendLine("TAKE Torch FROM Backpack");
+      takeResponse = client.readBlockContaining("You take Torch from Backpack.");
+      client.sendLine("DROP Torch");
+      dropResponse = client.readBlockContaining("You drop Torch.");
+      client.sendLine("INV HERE");
+      roomInventoryAfterDrop = client.readBlockContaining("Room Inventory:");
 
-      writer.println("EQUIPMENT");
-      emptyEquipmentResponse = readBlockAfterContains(reader, "You have nothing equipped.");
-      writer.println("WEAR Leather Cap");
-      wearResponse = readLineAfterContains(reader, "You wear Leather Cap.");
-      writer.println("EQUIPMENT");
-      equipmentResponse = readBlockAfterContains(reader, "Equipment:");
-      writer.println("REMOVE HEAD");
-      removeResponse = readLineAfterContains(reader, "You remove Leather Cap.");
-      writer.println("WEAR Iron Boots");
-      incompatibleResponse = readLineAfterContains(reader, "ERROR SLOT_INCOMPATIBLE");
+      client.sendLine("EQUIPMENT");
+      emptyEquipmentResponse = client.readBlockContaining("You have nothing equipped.");
+      client.sendLine("WEAR Leather Cap");
+      wearResponse = client.readLineContaining("You wear Leather Cap.");
+      client.sendLine("EQUIPMENT");
+      equipmentResponse = client.readBlockContaining("Equipment:");
+      client.sendLine("REMOVE HEAD");
+      removeResponse = client.readLineContaining("You remove Leather Cap.");
+      client.sendLine("WEAR Iron Boots");
+      incompatibleResponse = client.readLineContaining("ERROR SLOT_INCOMPATIBLE");
     }
 
     assertThat(roomInventoryBeforePickup)
@@ -467,45 +412,26 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void telnetReconnectAfterRevocationFailsClosed() throws Exception {
     ensureTestServicesStarted();
-    try (Socket firstSocket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter firstWriter =
-            new PrintWriter(
-                new OutputStreamWriter(firstSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader firstReader =
-            new BufferedReader(
-                new InputStreamReader(firstSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      firstSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(firstReader);
-      firstWriter.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(firstReader, "Logged in as demo@example.com"))
+    try (GameplayTelnetDriver firstClient = openTelnetClient()) {
+      firstClient.awaitInitialGuidance();
+      firstClient.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(firstClient.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      firstWriter.println("PLAY demo");
-      assertThat(readLineAfterContains(firstReader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
-      firstWriter.println("MOVE north");
-      assertThat(readBlockAfterContainsOrTimeout(firstReader, "OK LOOK"))
+      firstClient.play("demo");
+      firstClient.sendLine("MOVE north");
+      assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK"))
           .contains(LookTestFixtures.DESTINATION_ROOM_ID);
     }
 
     ACCOUNT_STUB.setGameplayAdmissionAllowed(false);
 
-    try (Socket secondSocket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter secondWriter =
-            new PrintWriter(
-                new OutputStreamWriter(secondSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader secondReader =
-            new BufferedReader(
-                new InputStreamReader(
-                    secondSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      secondSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(secondReader);
-      secondWriter.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(secondReader, "Logged in as demo@example.com"))
+    try (GameplayTelnetDriver secondClient = openTelnetClient()) {
+      secondClient.awaitInitialGuidance();
+      secondClient.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(secondClient.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      secondWriter.println("PLAY demo");
-      assertThat(readLineAfterContains(secondReader, "ERROR WORLD_ACCESS_DENIED"))
+      secondClient.sendLine("PLAY demo");
+      assertThat(secondClient.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
           .contains("ERROR WORLD_ACCESS_DENIED");
     }
   }
@@ -517,49 +443,28 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     String telnetReplayResponse;
     String telnetReconnectLookResponse;
 
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      writer.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
+    try (GameplayTelnetDriver client = openTelnetClient()) {
+      client.awaitInitialGuidance();
+      client.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(client.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      writer.println("PLAY demo");
-      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
-      writer.println("MOVE north");
-      telnetMoveResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
+      client.play("demo");
+      client.sendLine("MOVE north");
+      telnetMoveResponse = client.readBlockContainingOrTimeout("OK LOOK");
     }
 
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      writer.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
+    try (GameplayTelnetDriver client = openTelnetClient()) {
+      client.awaitInitialGuidance();
+      client.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(client.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      writer.println("PLAY demo");
-      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
-      telnetReplayResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
-      writer.println("LOOK");
+      client.play("demo");
+      telnetReplayResponse = client.readBlockContainingOrTimeout("OK LOOK");
+      client.sendLine("LOOK");
       telnetReconnectLookResponse =
-          readBlockMatchingOrTimeout(
-              reader,
-              "OK LOOK",
-              matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+          client.readBlockMatching(
+              matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID),
+              "canonical reconnect look");
     }
 
     assertThat(telnetMoveResponse.trim())
@@ -579,24 +484,14 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     String telnetReplayResponse;
     String telnetReconnectLookResponse;
 
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      writer.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
+    try (GameplayTelnetDriver client = openTelnetClient()) {
+      client.awaitInitialGuidance();
+      client.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(client.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      writer.println("PLAY demo");
-      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
-      writer.println("MOVE north");
-      telnetMoveResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
+      client.play("demo");
+      client.sendLine("MOVE north");
+      telnetMoveResponse = client.readBlockContainingOrTimeout("OK LOOK");
     }
 
     SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
@@ -607,26 +502,16 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             .sessionId();
     sessionContextService.deleteBySessionId(TENANT_ID, activeGameplaySessionId);
 
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      writer.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
+    try (GameplayTelnetDriver client = openTelnetClient()) {
+      client.awaitInitialGuidance();
+      client.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(client.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      writer.println("PLAY demo");
-      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
-      telnetReplayResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
-      writer.println("LOOK");
+      client.play("demo");
+      telnetReplayResponse = client.readBlockContainingOrTimeout("OK LOOK");
+      client.sendLine("LOOK");
       telnetReconnectLookResponse =
-          readBlockMatchingOrTimeout(reader, "OK LOOK", matchesCanonicalLookWithOptionalPrompt());
+          client.readBlockMatching(matchesCanonicalLookWithOptionalPrompt(), "canonical look");
     }
 
     assertThat(telnetMoveResponse.trim())
@@ -641,50 +526,29 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   void telnetSecondConnectionTakesOverGameplayBinding() throws Exception {
     ensureTestServicesStarted();
 
-    try (Socket firstSocket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter firstWriter =
-            new PrintWriter(
-                new OutputStreamWriter(firstSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader firstReader =
-            new BufferedReader(
-                new InputStreamReader(firstSocket.getInputStream(), StandardCharsets.ISO_8859_1));
-        Socket secondSocket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter secondWriter =
-            new PrintWriter(
-                new OutputStreamWriter(secondSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader secondReader =
-            new BufferedReader(
-                new InputStreamReader(
-                    secondSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      firstSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      secondSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(firstReader);
-      assertInitialGuidance(secondReader);
+    try (GameplayTelnetDriver firstClient = openTelnetClient();
+        GameplayTelnetDriver secondClient = openTelnetClient()) {
+      firstClient.awaitInitialGuidance();
+      secondClient.awaitInitialGuidance();
 
-      firstWriter.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(firstReader, "Logged in as demo@example.com"))
+      firstClient.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(firstClient.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      firstWriter.println("PLAY demo");
-      assertThat(readLineAfterContains(firstReader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
-      firstWriter.println("LOOK");
-      assertThat(readBlockAfterContainsOrTimeout(firstReader, "OK LOOK").trim())
+      firstClient.play("demo");
+      firstClient.sendLine("LOOK");
+      assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK").trim())
           .matches(matchesCanonicalLookWithOptionalPrompt());
 
-      secondWriter.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(secondReader, "Logged in as demo@example.com"))
+      secondClient.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(secondClient.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      secondWriter.println("PLAY demo");
-      assertThat(readLineAfterContains(secondReader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
-      secondWriter.println("LOOK");
-      assertThat(readBlockAfterContainsOrTimeout(secondReader, "OK LOOK").trim())
+      secondClient.play("demo");
+      secondClient.sendLine("LOOK");
+      assertThat(secondClient.readBlockContainingOrTimeout("OK LOOK").trim())
           .matches(matchesCanonicalLookWithOptionalPrompt());
 
-      firstWriter.println("LOOK");
-      assertThat(readLineAfterContains(firstReader, "ERROR LOGIN_REQUIRED"))
+      firstClient.sendLine("LOOK");
+      assertThat(firstClient.readLineContaining("ERROR LOGIN_REQUIRED"))
           .contains("ERROR LOGIN_REQUIRED");
     }
   }
@@ -697,26 +561,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     String telnetWhisperResponse;
     String telnetTellResponse;
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      writer.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
+    try (GameplayTelnetDriver client = openTelnetClient()) {
+      client.awaitInitialGuidance();
+      client.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(client.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      writer.println("PLAY demo");
-      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
+      client.play("demo");
 
-      writer.println("WHISPER Sora Keep quiet");
-      telnetWhisperResponse =
-          readLineAfterContains(reader, ChatTestFixtures.canonicalWhisperText());
+      client.sendLine("WHISPER Sora Keep quiet");
+      telnetWhisperResponse = client.readLineContaining(ChatTestFixtures.canonicalWhisperText());
       assertThat(SOCIAL_STUB.lastRequest())
           .hasValueSatisfying(
               request -> {
@@ -724,8 +577,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
               });
 
-      writer.println("TELL Sora Meet me at the forge");
-      telnetTellResponse = readLineAfterContains(reader, ChatTestFixtures.canonicalTellText());
+      client.sendLine("TELL Sora Meet me at the forge");
+      telnetTellResponse = client.readLineContaining(ChatTestFixtures.canonicalTellText());
     }
 
     assertThat(telnetWhisperResponse).contains(ChatTestFixtures.canonicalWhisperText());
@@ -743,59 +596,27 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     ensureTestServicesStarted();
     ENTITY_STUB.setRoomEntities(ChatTestFixtures.sampleEntities());
 
-    try (Socket actorSocket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter actorWriter =
-            new PrintWriter(
-                new OutputStreamWriter(actorSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader actorReader =
-            new BufferedReader(
-                new InputStreamReader(actorSocket.getInputStream(), StandardCharsets.ISO_8859_1));
-        Socket targetSocket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter targetWriter =
-            new PrintWriter(
-                new OutputStreamWriter(targetSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader targetReader =
-            new BufferedReader(
-                new InputStreamReader(targetSocket.getInputStream(), StandardCharsets.ISO_8859_1));
-        Socket observerSocket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter observerWriter =
-            new PrintWriter(
-                new OutputStreamWriter(
-                    observerSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader observerReader =
-            new BufferedReader(
-                new InputStreamReader(
-                    observerSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      actorSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      targetSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      observerSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(actorReader);
-      assertInitialGuidance(targetReader);
-      assertInitialGuidance(observerReader);
+    try (GameplayTelnetDriver actorClient = openTelnetClient();
+        GameplayTelnetDriver targetClient = openTelnetClient();
+        GameplayTelnetDriver observerClient = openTelnetClient()) {
+      actorClient.awaitInitialGuidance();
+      targetClient.awaitInitialGuidance();
+      observerClient.awaitInitialGuidance();
 
-      actorWriter.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(actorReader, "Logged in as demo@example.com"))
+      actorClient.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(actorClient.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      actorWriter.println("PLAY demo");
-      assertThat(readLineAfterContains(actorReader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
+      actorClient.play("demo");
 
-      targetWriter.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(targetReader, "Logged in as demo@example.com"))
+      targetClient.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(targetClient.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      targetWriter.println("PLAY demo Sora");
-      assertThat(readLineAfterContains(targetReader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
+      targetClient.play("demo", "Sora");
 
-      observerWriter.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(observerReader, "Logged in as demo@example.com"))
+      observerClient.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(observerClient.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      observerWriter.println("PLAY demo Nyx");
-      assertThat(readLineAfterContains(observerReader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
+      observerClient.play("demo", "Nyx");
 
       SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
@@ -812,18 +633,18 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       assertThat(sessionRegistry.find(targetContext.sessionId())).isPresent();
       assertThat(sessionRegistry.find(observerContext.sessionId())).isPresent();
 
-      actorWriter.println("WHISPER Sora Keep quiet");
+      actorClient.sendLine("WHISPER Sora Keep quiet");
       assertBufferedScreenEventuallyContains(
           screenBufferService, targetContext, ChatTestFixtures.canonicalWhisperTargetText());
       assertBufferedScreenEventuallyContains(
           screenBufferService,
           observerContext,
           ChatTestFixtures.canonicalWhisperObserverMetadataText());
-      assertThat(readLineAfterContains(actorReader, ChatTestFixtures.canonicalWhisperText()))
+      assertThat(actorClient.readLineContaining(ChatTestFixtures.canonicalWhisperText()))
           .contains(ChatTestFixtures.canonicalWhisperText());
-      assertThat(readLineAfterContains(targetReader, ChatTestFixtures.canonicalWhisperTargetText()))
+      assertThat(targetClient.readLineContaining(ChatTestFixtures.canonicalWhisperTargetText()))
           .contains(ChatTestFixtures.canonicalWhisperTargetText());
-      assertThat(readLineAfterContains(observerReader, "Emberline whispers something to Sora."))
+      assertThat(observerClient.readLineContaining("Emberline whispers something to Sora."))
           .contains(ChatTestFixtures.canonicalWhisperObserverMetadataText());
     }
   }
@@ -833,41 +654,20 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     ensureTestServicesStarted();
     ENTITY_STUB.setRoomEntities(ChatTestFixtures.sampleEntities());
 
-    try (Socket actorSocket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter actorWriter =
-            new PrintWriter(
-                new OutputStreamWriter(actorSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader actorReader =
-            new BufferedReader(
-                new InputStreamReader(actorSocket.getInputStream(), StandardCharsets.ISO_8859_1));
-        Socket targetSocket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter targetWriter =
-            new PrintWriter(
-                new OutputStreamWriter(targetSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader targetReader =
-            new BufferedReader(
-                new InputStreamReader(
-                    targetSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      actorSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      targetSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(actorReader);
-      assertInitialGuidance(targetReader);
+    try (GameplayTelnetDriver actorClient = openTelnetClient();
+        GameplayTelnetDriver targetClient = openTelnetClient()) {
+      actorClient.awaitInitialGuidance();
+      targetClient.awaitInitialGuidance();
 
-      actorWriter.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(actorReader, "Logged in as demo@example.com"))
+      actorClient.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(actorClient.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      actorWriter.println("PLAY demo Emberline");
-      assertThat(readLineAfterContains(actorReader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
+      actorClient.play("demo", "Emberline");
 
-      targetWriter.println("LOGIN demo@example.com swordfish");
-      assertThat(readBlockAfterContains(targetReader, "Logged in as demo@example.com"))
+      targetClient.sendLine("LOGIN demo@example.com swordfish");
+      assertThat(targetClient.readBlockContaining("Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
-      targetWriter.println("PLAY demo Sora");
-      assertThat(readLineAfterContains(targetReader, "OK PLAY Entered world: demo"))
-          .contains("OK PLAY Entered world: demo");
+      targetClient.play("demo", "Sora");
 
       SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
@@ -879,12 +679,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
               .orElseThrow();
       assertThat(sessionRegistry.find(targetContext.sessionId())).isPresent();
 
-      actorWriter.println("TELL Sora Meet me at the forge");
+      actorClient.sendLine("TELL Sora Meet me at the forge");
       assertBufferedScreenEventuallyContains(
           screenBufferService, targetContext, ChatTestFixtures.canonicalTellTargetText());
-      assertThat(readLineAfterContains(actorReader, ChatTestFixtures.canonicalTellText()))
+      assertThat(actorClient.readLineContaining(ChatTestFixtures.canonicalTellText()))
           .contains(ChatTestFixtures.canonicalTellText());
-      assertThat(readLineAfterContains(targetReader, ChatTestFixtures.canonicalTellTargetText()))
+      assertThat(targetClient.readLineContaining(ChatTestFixtures.canonicalTellTargetText()))
           .contains(ChatTestFixtures.canonicalTellTargetText());
     }
   }
@@ -1084,94 +884,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         .toArray(String[]::new);
   }
 
-  private static String readBlockAfterContains(BufferedReader reader, String expectedSubstring)
-      throws IOException {
-    StringBuilder builder = new StringBuilder();
-    boolean matched = false;
-    while (true) {
-      String line;
-      try {
-        line = reader.readLine();
-      } catch (java.net.SocketTimeoutException ex) {
-        if (matched) {
-          return builder.toString();
-        }
-        throw ex;
-      }
-      if (line == null) {
-        return builder.toString();
-      }
-      builder.append(line).append("\n");
-      if (!matched && line.contains(expectedSubstring)) {
-        matched = true;
-      } else if (matched && line.isEmpty()) {
-        return builder.toString();
-      }
-    }
-  }
-
-  private static void assertInitialGuidance(BufferedReader reader) throws IOException {
-    assertThat(reader.readLine()).isEqualTo("OK CONNECTED");
-    assertThat(reader.readLine()).isEqualTo("Type WORLDS to list available worlds.");
-    assertThat(reader.readLine()).isEqualTo("Type LOGIN <email> <password> to authenticate.");
-    assertThat(reader.readLine()).isEqualTo("Type PLAY <world> after LOGIN to enter a world.");
-    assertThat(reader.readLine()).isEqualTo("Type HELP for commands.");
-  }
-
-  private static String readLineAfterContains(BufferedReader reader, String expectedSubstring)
-      throws IOException {
-    String line;
-    while ((line = reader.readLine()) != null) {
-      if (line.contains(expectedSubstring)) {
-        return line;
-      }
-    }
-    return "";
-  }
-
-  private static String readBlockAfterContainsOrTimeout(
-      BufferedReader reader, String expectedSubstring) throws IOException {
-    StringBuilder builder = new StringBuilder();
-    boolean matched = false;
-    while (true) {
-      String line;
-      try {
-        line = reader.readLine();
-      } catch (java.net.SocketTimeoutException ex) {
-        return builder.toString();
-      }
-      if (line == null) {
-        return builder.toString();
-      }
-      builder.append(line).append("\n");
-      if (!matched && line.contains(expectedSubstring)) {
-        matched = true;
-      } else if (matched && line.isEmpty()) {
-        return builder.toString();
-      }
-    }
-  }
-
-  private static String readBlockMatchingOrTimeout(
-      BufferedReader reader, String expectedSubstring, Predicate<String> matcher)
-      throws IOException {
-    StringBuilder builder = new StringBuilder();
-    while (true) {
-      String line;
-      try {
-        line = reader.readLine();
-      } catch (java.net.SocketTimeoutException ex) {
-        return builder.toString();
-      }
-      if (line == null) {
-        return builder.toString();
-      }
-      builder.append(line).append("\n");
-      String candidate = builder.toString().trim();
-      if (candidate.contains(expectedSubstring) && matcher.test(candidate)) {
-        return builder.toString();
-      }
-    }
+  private GameplayTelnetDriver openTelnetClient() throws IOException {
+    return GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT);
   }
 
   private static void assertBufferedScreenEventuallyContains(

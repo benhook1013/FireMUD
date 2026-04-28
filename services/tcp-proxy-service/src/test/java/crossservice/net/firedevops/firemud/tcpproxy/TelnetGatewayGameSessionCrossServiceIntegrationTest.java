@@ -2,17 +2,10 @@ package net.firedevops.firemud.tcpproxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
-import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -27,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
+import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetDriver;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.AfterAll;
@@ -106,33 +100,22 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     String body = HttpTestSupport.getBody("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
 
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      String worldsResponse = sendAndExpectExactLine(writer, reader, "WORLDS", "processed:WORLDS");
+    try (GameplayTelnetDriver client =
+        GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT)) {
+      client.awaitInitialGuidance();
+      String worldsResponse = client.sendAndExpectExactLine("WORLDS", "processed:WORLDS");
       assertThat(worldsResponse).isEqualTo("processed:WORLDS");
 
       String loginResponse =
-          sendAndExpectExactLine(
-              writer,
-              reader,
-              "LOGIN demo@example.com swordfish",
-              "processed:LOGIN demo@example.com swordfish");
+          client.sendAndExpectExactLine(
+              "LOGIN demo@example.com swordfish", "processed:LOGIN demo@example.com swordfish");
       assertThat(loginResponse).isEqualTo("processed:LOGIN demo@example.com swordfish");
 
-      String playResponse =
-          sendAndExpectExactLine(writer, reader, "PLAY demo", "processed:PLAY demo");
+      String playResponse = client.sendAndExpectExactLine("PLAY demo", "processed:PLAY demo");
       assertThat(playResponse).isEqualTo("processed:PLAY demo");
 
-      writer.println("look");
-      String response = readMultiLineResponse(reader);
+      client.sendLine("look");
+      String response = client.readMultiLineResponse();
       assertThat(response.trim()).isEqualTo(LookTestFixtures.canonicalLookText().trim());
     }
 
@@ -152,30 +135,19 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     String telnetLoginResponse;
     String telnetPlayResponse;
     String telnetLookResponse;
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      telnetWorldsResponse = sendAndExpectExactLine(writer, reader, "WORLDS", "processed:WORLDS");
+    try (GameplayTelnetDriver client =
+        GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT)) {
+      client.awaitInitialGuidance();
+      telnetWorldsResponse = client.sendAndExpectExactLine("WORLDS", "processed:WORLDS");
       assertThat(telnetWorldsResponse).isNotNull();
       telnetLoginResponse =
-          sendAndExpectExactLine(
-              writer,
-              reader,
-              "LOGIN demo@example.com swordfish",
-              "processed:LOGIN demo@example.com swordfish");
+          client.sendAndExpectExactLine(
+              "LOGIN demo@example.com swordfish", "processed:LOGIN demo@example.com swordfish");
       assertThat(telnetLoginResponse).isNotNull();
-      telnetPlayResponse =
-          sendAndExpectExactLine(writer, reader, "PLAY demo", "processed:PLAY demo");
+      telnetPlayResponse = client.sendAndExpectExactLine("PLAY demo", "processed:PLAY demo");
       assertThat(telnetPlayResponse).isNotNull();
-      writer.println("LOOK");
-      telnetLookResponse = readMultiLineResponse(reader);
+      client.sendLine("LOOK");
+      telnetLookResponse = client.readMultiLineResponse();
     }
 
     assertThat(websocketResponses).hasSizeGreaterThanOrEqualTo(4);
@@ -191,31 +163,19 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     ensureTestServicesStarted();
     assertThat(runGatewayWebSocketCommands("WORLDS")).containsExactly("processed:WORLDS");
 
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      assertThat(sendAndExpectExactLine(writer, reader, "WORLDS", "processed:WORLDS"))
+    try (GameplayTelnetDriver client =
+        GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT)) {
+      client.awaitInitialGuidance();
+      assertThat(client.sendAndExpectExactLine("WORLDS", "processed:WORLDS"))
           .isEqualTo("processed:WORLDS");
       assertThat(
-              sendAndExpectExactLine(
-                  writer,
-                  reader,
-                  "LOGIN demo@example.com swordfish",
-                  "processed:LOGIN demo@example.com swordfish"))
+              client.sendAndExpectExactLine(
+                  "LOGIN demo@example.com swordfish", "processed:LOGIN demo@example.com swordfish"))
           .isEqualTo("processed:LOGIN demo@example.com swordfish");
-      assertThat(sendAndExpectExactLine(writer, reader, "PLAY demo", "processed:PLAY demo"))
+      assertThat(client.sendAndExpectExactLine("PLAY demo", "processed:PLAY demo"))
           .isEqualTo("processed:PLAY demo");
       assertThat(
-              sendAndExpectExactLine(
-                  writer,
-                  reader,
+              client.sendAndExpectExactLine(
                   "FORCE_CLOSE_GATEWAY_RESTART",
                   "DISCONNECT logout;subreason=gateway_restart Gameplay session ended; please reconnect"))
           .isEqualTo(
@@ -238,53 +198,6 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
       }
     }
     assertThat(GAME_SESSION_STUB.stub().receivedCommands()).contains(expected);
-  }
-
-  private static void assertInitialGuidance(BufferedReader reader) throws IOException {
-    assertThat(reader.readLine()).isEqualTo("OK CONNECTED");
-    assertThat(reader.readLine()).isEqualTo("Type WORLDS to list available worlds.");
-    assertThat(reader.readLine()).isEqualTo("Type LOGIN <email> <password> to authenticate.");
-    assertThat(reader.readLine()).isEqualTo("Type PLAY <world> after LOGIN to enter a world.");
-    assertThat(reader.readLine()).isEqualTo("Type HELP for commands.");
-  }
-
-  private static String sendAndExpectExactLine(
-      PrintWriter writer, BufferedReader reader, String command, String expectedLine)
-      throws IOException {
-    for (int attempt = 1; attempt <= 2; attempt++) {
-      writer.println(command);
-      StringBuilder received = new StringBuilder();
-      while (true) {
-        final String line;
-        try {
-          line = reader.readLine();
-        } catch (java.net.SocketTimeoutException ex) {
-          if (attempt == 1 && received.isEmpty()) {
-            break;
-          }
-          throw ex;
-        }
-        if (line == null) {
-          throw new AssertionError(
-              "Expected line '"
-                  + expectedLine
-                  + "' for command '"
-                  + command
-                  + "' but stream closed after receiving:\n"
-                  + received);
-        }
-        received.append(line).append("\n");
-        if (expectedLine.equals(line)) {
-          return line;
-        }
-      }
-    }
-    throw new AssertionError(
-        "Expected line '"
-            + expectedLine
-            + "' for command '"
-            + command
-            + "' but no response was received");
   }
 
   private static synchronized void ensureTestServicesStarted() {
@@ -437,18 +350,6 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     List<String> receivedCommands() {
       return new ArrayList<>(commands);
     }
-  }
-
-  private static String readMultiLineResponse(BufferedReader reader) throws IOException {
-    StringBuilder builder = new StringBuilder();
-    String line;
-    while ((line = reader.readLine()) != null) {
-      builder.append(line).append("\n");
-      if (line.isEmpty()) {
-        break;
-      }
-    }
-    return builder.toString();
   }
 
   private List<String> runGatewayWebSocketCommands(String... commands) throws Exception {

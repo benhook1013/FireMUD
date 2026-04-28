@@ -115,3 +115,8 @@ Entry format:
   - Context: reviewing `dev-tools/` after smoke, preview, preflight, backup, validation, observability, and one-off maintenance helpers had all accumulated under the same tree.
   - Observation: subfolders can still be mostly reasonable while the tool root becomes hard to navigate if policy checkers, operational helpers, generated-material lanes, and personal maintenance scripts all sit beside the canonical human-facing entrypoints.
   - Expected pattern: keep a small set of root entrypoints, move category-specific tools into named subfolders such as `validation/` or `maintenance/`, and add a `README` index once the tool surface becomes large enough that contributors would otherwise reopen scripts to infer ownership.
+
+- `2026-04-29`: Shared gameplay harnesses must preserve full prompt-and-block transcript semantics, not just command markers
+  - Context: migrating the large Telnet chained gameplay/account suite onto a shared `GameplayTelnetDriver` initially caused several false regressions because the first driver version returned as soon as it saw `OK LOOK`, truncating the rest of the multiline room/inventory transcript and breaking reconnect prompt-only paths.
+  - Observation: transport helpers that optimize for marker detection can silently change the behavior under test when the real contract is a whole transcript block including prompt placement, blank-line boundaries, and timeout-returned partial output.
+  - Expected pattern: FireMUD gameplay transport drivers should model canonical transcript boundaries deliberately, and any `...OrTimeout` helpers should preserve the old behavior of returning partial or prompt-only transcript truth when that is the thing the test is proving.
