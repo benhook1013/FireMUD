@@ -65,8 +65,8 @@ The next hosted preview milestone is:
 ## Current secrets and JWT stance
 
 - Preview target state requires PR-unique JWT signing material and JWKS data for each preview namespace so tokens minted in one PR environment cannot validate in another.
-- The current checked-in Helm values still include static inline `FIREMUD_AUTH_JWT_SECRET` material for preview bring-up. That value is a bootstrap placeholder, not the compliant target-state preview contract.
-- The current preview render script does not generate per-namespace JWT signing material or a namespace-local JWKS resource. Until that wiring exists, preview JWT/JWKS isolation is not proven by the default workflow.
+- The current checked-in Helm values mount signing material through `jwt-signing-keys` and `jwt-jwks` resources and point services at file-mounted JWT paths. That matches the broader Kubernetes application contract better than the older inline-secret model.
+- The remaining gap is namespace uniqueness and lifecycle ownership: the checked-in example values still use placeholder signing-key/JWKS content, and the default preview workflow does not yet prove per-namespace generation or rotation of distinct JWT material. Until that wiring exists, preview JWT/JWKS isolation is not fully proven by the default workflow.
 - The target preview contract is to create or inject a namespace-local signing-key Secret and matching JWKS resource during preview namespace preparation, then mount or reference those resources through the same application-level contract used by the rest of the Kubernetes-backed stack, with ConfigMap JWKS allowed only because preview keys are explicitly test-only material.
 
 ## Current transport stance
