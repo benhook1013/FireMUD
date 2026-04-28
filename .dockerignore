@@ -1,3 +1,5 @@
+# Intentionally minimal: service image builds use service-local jar contexts and
+# only copy a small allowlisted helper set from repo_root.
 *
 
 !docker/
