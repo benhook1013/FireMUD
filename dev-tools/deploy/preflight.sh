@@ -62,7 +62,12 @@ if [ "$ENV_CLASS" = "hobby-self-hosted" ]; then
     exit 1
   fi
 else
-  OVERLAY_PATH="$ROOT_DIR/k8s/overlays/${ENV_CLASS/staging/stage}"
+  case "$ENV_CLASS" in
+    staging) OVERLAY_NAME="stage" ;;
+    production) OVERLAY_NAME="prod" ;;
+    *) OVERLAY_NAME="$ENV_CLASS" ;;
+  esac
+  OVERLAY_PATH="$ROOT_DIR/k8s/overlays/${OVERLAY_NAME}"
   RENDERED="$(kubectl kustomize "$OVERLAY_PATH")"
 fi
 RENDERED_PATH="$(mktemp)"

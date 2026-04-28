@@ -58,5 +58,6 @@ helm upgrade --install pr-123 ./firemud \
 
 Current limitation:
 
-- The umbrella chart now renders the core backend/stateful preview topology and passes server-side validation against the preview cluster API.
-- Final preview deployment is still intentionally gated in `preview.yml` while the frontend/runtime delivery path and first-create data bootstrap remain under implementation.
+- The umbrella chart is now the real hosted deploy path for preview and dev-demo, including Helm apply and hosted smoke.
+- Hosted environments still intentionally clean-redeploy today rather than preserving mutable state across updates.
+- The broader frontend/runtime delivery path remains under implementation even though the TCP-first hosted proof path is live.

@@ -81,6 +81,11 @@ Entry format:
   - Observation: generic fail-fast transport handling and intentional application-error assertions are different concerns; if the harness does not distinguish them, negative-path proofs become false failures and hide the real product result.
   - Expected pattern: smoke helpers that short-circuit on explicit app errors should allow an expected-error mode whenever a scenario is intentionally proving a rejected command or policy outcome.
 
+- `2026-04-28`: Kubernetes docs drift quickly when hosted workflows become the real source of truth before the declared canonical path converges
+  - Context: re-reviewing `k8s/` after preview/dev-demo became real Helm deploy paths showed `k8s/preview/README.md`, Helm docs, and deployment architecture docs still describing render-only preview milestones and persistent PR state while the live workflow was already doing namespace-reset redeploys and hosted smoke.
+  - Observation: once workflows and helper scripts become the exercised deployment truth, repo docs that still describe the earlier intended state become actively misleading rather than merely stale.
+  - Expected pattern: when a hosted environment becomes live before the broader canonical deployment path is finished, update the environment docs immediately to reflect real workflow behavior and move the larger “make the canonical path real” work into an explicit follow-on slice.
+
 - `2026-04-28`: Selective CI must still include one canonical packaging proof for backend changes
   - Context: open Dependabot PRs showed `CI — Validation` passing for affected services while `Build Runtime Images` later failed compiling `:game-design-service:bootJar`, and a separate automatic dependency submission job failed only on GitHub-side upload.
   - Observation: a branch can look healthy when service `check` runs but no required job proves the packaged runtime artifact shape that image builds consume; meanwhile external metadata publication failures create noisy red PRs without reflecting source correctness.

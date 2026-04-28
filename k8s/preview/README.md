@@ -55,18 +55,21 @@ These manifests prepare the preview cluster itself. The repository now also cont
 - create/update preview gRPC TLS secrets
 - render preview manifests
 - validate those manifests against the live cluster API with server-side dry-run
+- deploy or upgrade a real Helm release into `pr-*` namespaces
+- seed the preview bootstrap state needed for reviewer proof
+- run hosted smoke against the TCP/Telnet path
 
-The next hosted preview milestone is:
+Current implementation limitations:
 
-- real Helm apply into `pr-*` namespaces
-- real reviewer-accessible preview traffic
-- manual `LOGIN -> PLAY -> LOOK` proof over the TCP/Telnet path first
+- preview redeploy is intentionally clean-state today; the workflow resets the namespace before deploy rather than preserving mutable PR state across updates
+- the first hosted proof target remains manual and smoke-backed `LOGIN -> PLAY -> LOOK` over the TCP/Telnet path, not a broader browser-first environment contract
+- the dedicated first-party frontend/runtime delivery path remains later work
 
 ## Current secrets and JWT stance
 
 - Preview target state requires PR-unique JWT signing material and JWKS data for each preview namespace so tokens minted in one PR environment cannot validate in another.
 - The current checked-in Helm values mount signing material through `jwt-signing-keys` and `jwt-jwks` resources and point services at file-mounted JWT paths. That matches the broader Kubernetes application contract better than the older inline-secret model.
-- The remaining gap is namespace uniqueness and lifecycle ownership: the checked-in example values still use placeholder signing-key/JWKS content, and the default preview workflow does not yet prove per-namespace generation or rotation of distinct JWT material. Until that wiring exists, preview JWT/JWKS isolation is not fully proven by the default workflow.
+- The preview value renderer now generates namespace-local signing-key and JWKS content for each rendered deployment, so preview no longer depends on one static inline shared JWT secret. The remaining gap is lifecycle ownership and rotation proof, not generation itself.
 - The target preview contract is to create or inject a namespace-local signing-key Secret and matching JWKS resource during preview namespace preparation, then mount or reference those resources through the same application-level contract used by the rest of the Kubernetes-backed stack, with ConfigMap JWKS allowed only because preview keys are explicitly test-only material.
 
 ## Current transport stance
