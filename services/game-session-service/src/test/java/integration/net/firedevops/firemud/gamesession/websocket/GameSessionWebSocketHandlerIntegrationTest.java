@@ -19,7 +19,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
@@ -49,6 +48,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutati
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTestConfiguration;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
@@ -453,40 +453,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketLoginThenLookUsesAuthenticatedPath() throws Exception {
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "41");
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(3);
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-                session.sendMessage(new TextMessage("PLAY demo"));
-                session.sendMessage(new TextMessage("LOOK"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                payloads.add(message.getPayload());
-                latch.countDown();
-              }
-
-              @Override
-              public void handleTransportError(WebSocketSession session, Throwable exception) {
-                latch.countDown();
-                throw new RuntimeException(exception);
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
-    session.close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      client.send("LOOK");
+      client.awaitStartsWith("OK LOOK");
+      payloads = client.responses();
+    }
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
@@ -534,46 +508,21 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void repeatedLookStillShowsPromptInsideBurstWindow() throws Exception {
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "41");
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(4);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-    AtomicInteger lookResponses = new AtomicInteger();
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                sessionRef.set(session);
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message)
-                  throws IOException {
-                String payload = message.getPayload();
-                payloads.add(payload);
-                if (payload.startsWith("OK LOGIN")) {
-                  session.sendMessage(new TextMessage("PLAY demo"));
-                } else if (payload.startsWith("OK PLAY")) {
-                  session.sendMessage(new TextMessage("LOOK"));
-                } else if (payload.startsWith("OK LOOK") && lookResponses.incrementAndGet() == 1) {
-                  session.sendMessage(new TextMessage("LOOK"));
-                }
-                latch.countDown();
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    future.get(5, TimeUnit.SECONDS);
-    assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
-    WebSocketSession currentSession = sessionRef.get();
-    if (currentSession != null && currentSession.isOpen()) {
-      currentSession.close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      client.send("LOOK");
+      client.awaitStartsWith("OK LOOK");
+      client.send("LOOK");
+      client.awaitMatching(
+          payload ->
+              client.responses().stream()
+                      .filter(response -> response.startsWith("OK LOOK") && response.endsWith("> "))
+                      .count()
+                  >= 2,
+          "two prompt-terminated LOOK responses");
+      payloads = client.responses();
     }
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
@@ -585,34 +534,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketQuickLookUsesDistinctCommandLabelAndPrompt() throws Exception {
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "41");
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(3);
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-                session.sendMessage(new TextMessage("PLAY demo"));
-                session.sendMessage(new TextMessage("QUICKLOOK"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                payloads.add(message.getPayload());
-                latch.countDown();
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
-    session.close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      client.send("QUICKLOOK");
+      client.awaitStartsWith("OK QUICKLOOK");
+      payloads = client.responses();
+    }
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
     assertThat(payloads)
@@ -626,14 +555,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketLogoutClearsReplayStateAndClosesTransport() throws Exception {
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "41");
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch responseLatch = new CountDownLatch(2);
-    CountDownLatch closedLatch = new CountDownLatch(1);
     AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
 
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = gameplayHeaders("41");
+    CountDownLatch closedLatch = new CountDownLatch(1);
     var future =
         client.execute(
             new TextWebSocketHandler() {
@@ -647,7 +574,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
               @Override
               protected void handleTextMessage(WebSocketSession session, TextMessage message) {
                 payloads.add(message.getPayload());
-                responseLatch.countDown();
               }
 
               @Override
@@ -657,10 +583,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
               }
             },
             headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
+            websocketUri());
 
     WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(responseLatch.await(10, TimeUnit.SECONDS)).isTrue();
+    await()
+        .atMost(10, TimeUnit.SECONDS)
+        .untilAsserted(
+            () -> assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY")));
     assertThat(closedLatch.await(10, TimeUnit.SECONDS)).isTrue();
     if (session.isOpen()) {
       session.close();
@@ -687,68 +616,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     1,
                     System.currentTimeMillis())));
 
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders firstHeaders = new WebSocketHttpHeaders();
-    firstHeaders.add("X-Game-Instance-Id", "41");
-    CountDownLatch firstResponseLatch = new CountDownLatch(2);
-    CountDownLatch firstClosedLatch = new CountDownLatch(1);
+    performLogoutFlow("41");
 
-    var firstFuture =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-                session.sendMessage(new TextMessage("PLAY demo"));
-                session.sendMessage(new TextMessage("LOGOUT"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                firstResponseLatch.countDown();
-              }
-
-              @Override
-              public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-                firstClosedLatch.countDown();
-              }
-            },
-            firstHeaders,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession firstSession = firstFuture.get(5, TimeUnit.SECONDS);
-    assertThat(firstResponseLatch.await(10, TimeUnit.SECONDS)).isTrue();
-    assertThat(firstClosedLatch.await(10, TimeUnit.SECONDS)).isTrue();
-    if (firstSession.isOpen()) {
-      firstSession.close();
+    List<String> secondPayloads;
+    try (GameplayWebSocketDriver client = openGameplayDriver("42")) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      secondPayloads = client.responses();
     }
-
-    WebSocketHttpHeaders secondHeaders = new WebSocketHttpHeaders();
-    secondHeaders.add("X-Game-Instance-Id", "42");
-    List<String> secondPayloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch secondResponseLatch = new CountDownLatch(2);
-
-    var secondFuture =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-                session.sendMessage(new TextMessage("PLAY demo"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                secondPayloads.add(message.getPayload());
-                secondResponseLatch.countDown();
-              }
-            },
-            secondHeaders,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession secondSession = secondFuture.get(5, TimeUnit.SECONDS);
-    assertThat(secondResponseLatch.await(10, TimeUnit.SECONDS)).isTrue();
-    secondSession.close();
 
     assertThat(secondPayloads)
         .noneMatch(payload -> payload.contains("STALE REPLAY SHOULD NOT APPEAR"));
@@ -767,106 +642,42 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     1,
                     System.currentTimeMillis())));
 
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders firstHeaders = new WebSocketHttpHeaders();
-    firstHeaders.add("X-Game-Instance-Id", "41");
-    CountDownLatch firstResponseLatch = new CountDownLatch(2);
-
-    var firstFuture =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-                session.sendMessage(new TextMessage("PLAY demo"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                firstResponseLatch.countDown();
-              }
-            },
-            firstHeaders,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession firstSession = firstFuture.get(5, TimeUnit.SECONDS);
-    assertThat(firstResponseLatch.await(10, TimeUnit.SECONDS)).isTrue();
-    firstSession.close();
+    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+    }
     assertThat(waitForPresenceCount(22L, 1L, 0)).isTrue();
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isPresent();
     assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
 
-    WebSocketHttpHeaders secondHeaders = new WebSocketHttpHeaders();
-    secondHeaders.add("X-Game-Instance-Id", "42");
-    List<String> secondPayloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch secondResponseLatch = new CountDownLatch(3);
-
-    var secondFuture =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-                session.sendMessage(new TextMessage("PLAY demo"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                secondPayloads.add(message.getPayload());
-                secondResponseLatch.countDown();
-              }
-            },
-            secondHeaders,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession secondSession = secondFuture.get(5, TimeUnit.SECONDS);
-    assertThat(secondResponseLatch.await(10, TimeUnit.SECONDS)).isTrue();
+    List<String> secondPayloads;
+    try (GameplayWebSocketDriver client = openGameplayDriver("42")) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      client.awaitContains("RECONNECT REPLAY APPEARS");
+      secondPayloads = client.responses();
+    }
     assertThat(secondPayloads).anyMatch(payload -> payload.contains("RECONNECT REPLAY APPEARS"));
     assertThat(secondPayloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
     assertThat(waitForPresenceCount(22L, 1L, 1)).isTrue();
     assertThat(gameplayPresenceService.listConnectedByGameInstance(22L, 1L))
         .anySatisfy(presence -> assertThat(presence.sessionId()).isEqualTo(42L));
-    secondSession.close();
     verify(screenBufferService).get(22L, 1L, 123L);
     verify(screenBufferService, never()).clear(22L, 1L, 123L);
   }
 
   @Test
   void websocketAfkCommandUpdatesLiveGameplayPresence() throws Exception {
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "41");
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                sessionRef.set(session);
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message)
-                  throws IOException {
-                String payload = message.getPayload();
-                payloads.add(payload);
-                if (payload.startsWith("OK LOGIN")) {
-                  session.sendMessage(new TextMessage("PLAY demo"));
-                } else if (payload.startsWith("OK PLAY")) {
-                  session.sendMessage(new TextMessage("AFK"));
-                }
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    await()
-        .atMost(5, TimeUnit.SECONDS)
-        .untilAsserted(() -> verify(commandService).enqueue("41", "AFK", false));
+    List<String> payloads;
+    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      client.send("AFK");
+      await()
+          .atMost(5, TimeUnit.SECONDS)
+          .untilAsserted(() -> verify(commandService).enqueue("41", "AFK", false));
+      payloads = client.responses();
+    }
     GameplayPresence presence =
         gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
             .filter(entry -> entry.sessionId() == 41L)
@@ -874,10 +685,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
             .orElseThrow();
     assertThat(presence.explicitAfkSinceEpochMs()).isNotNull();
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
-    session = sessionRef.get();
-    if (session != null && session.isOpen()) {
-      session.close();
-    }
   }
 
   @Test
@@ -915,43 +722,15 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
                         .EXPLICIT_LOOK)));
 
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "41");
-    headers.add("X-Firemud-Locale", "fr");
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(3);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-    java.util.concurrent.atomic.AtomicBoolean lookSent =
-        new java.util.concurrent.atomic.AtomicBoolean();
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                sessionRef.set(session);
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-                session.sendMessage(new TextMessage("PLAY demo"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message)
-                  throws Exception {
-                String payload = message.getPayload();
-                payloads.add(payload);
-                if (payload.startsWith("OK PLAY") && lookSent.compareAndSet(false, true)) {
-                  session.sendMessage(new TextMessage("LOOK"));
-                }
-                latch.countDown();
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
-    session.close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client =
+        openGameplayDriver("41", java.util.Map.of("X-Firemud-Locale", "fr"))) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      client.send("LOOK");
+      client.awaitContains("Salle : Galerie");
+      payloads = client.responses();
+    }
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
     assertThat(payloads)
@@ -967,46 +746,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
   void websocketMoveEnqueuesDurableCommandAfterPlay() throws Exception {
     when(commandService.enqueue(eq("42"), eq("north"), eq(false)))
         .thenReturn(CommandEnqueueResult.success("cmd-move-1"));
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "42");
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch playAck = new CountDownLatch(1);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                sessionRef.set(session);
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-                session.sendMessage(new TextMessage("PLAY demo"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                payloads.add(message.getPayload());
-                if (message.getPayload().startsWith("OK PLAY")) {
-                  playAck.countDown();
-                }
-              }
-
-              @Override
-              public void handleTransportError(WebSocketSession session, Throwable exception) {
-                throw new RuntimeException(exception);
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(playAck.await(5, TimeUnit.SECONDS)).isTrue();
-    sessionRef.get().sendMessage(new TextMessage("north"));
-    await()
-        .atMost(5, TimeUnit.SECONDS)
-        .untilAsserted(() -> verify(commandService).enqueue("42", "north", false));
-    session.close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client = openGameplayDriver("42")) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      client.send("north");
+      await()
+          .atMost(5, TimeUnit.SECONDS)
+          .untilAsserted(() -> verify(commandService).enqueue("42", "north", false));
+      payloads = client.responses();
+    }
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(2);
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
@@ -1096,43 +845,15 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketLoginCanBrowseRealmsAndCharactersBeforePlay() throws Exception {
-    StandardWebSocketClient client = new StandardWebSocketClient();
-    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "41");
-    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch loginAck = new CountDownLatch(1);
-    CountDownLatch latch = new CountDownLatch(3);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-
-    var future =
-        client.execute(
-            new TextWebSocketHandler() {
-              @Override
-              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
-                sessionRef.set(session);
-                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-              }
-
-              @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message)
-                  throws IOException {
-                String payload = message.getPayload();
-                payloads.add(payload);
-                if (payload.startsWith("OK LOGIN")) {
-                  loginAck.countDown();
-                  session.sendMessage(new TextMessage("REALMS demo"));
-                  session.sendMessage(new TextMessage("CHARS demo"));
-                }
-                latch.countDown();
-              }
-            },
-            headers,
-            URI.create("ws://localhost:" + port + "/ws/game"));
-
-    future.get(5, TimeUnit.SECONDS);
-    assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
-    assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
-    sessionRef.get().close();
+    List<String> payloads;
+    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
+      client.login("demo@example.com", "swordfish");
+      client.send("REALMS demo");
+      client.awaitStartsWith("OK REALMS");
+      client.send("CHARS demo");
+      client.awaitStartsWith("OK CHARS");
+      payloads = client.responses();
+    }
 
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
     assertThat(payloads)
@@ -1889,6 +1610,56 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(playFailure.path("commandType").asText()).isEqualTo("PLAY");
     assertThat(playFailure.path("accepted").asBoolean()).isFalse();
     assertThat(playFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+  }
+
+  private GameplayWebSocketDriver openGameplayDriver(String sessionId) {
+    return openGameplayDriver(sessionId, java.util.Map.of());
+  }
+
+  private GameplayWebSocketDriver openGameplayDriver(
+      String sessionId, java.util.Map<String, String> extraHeaders) {
+    java.util.Map<String, String> headers = new java.util.LinkedHashMap<>();
+    headers.put("X-Game-Instance-Id", sessionId);
+    extraHeaders.forEach(headers::put);
+    return GameplayWebSocketDriver.connect(
+        websocketUri(), java.time.Duration.ofSeconds(10), headers);
+  }
+
+  private WebSocketHttpHeaders gameplayHeaders(String sessionId) {
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Game-Instance-Id", sessionId);
+    return headers;
+  }
+
+  private URI websocketUri() {
+    return URI.create("ws://localhost:" + port + "/ws/game");
+  }
+
+  private void performLogoutFlow(String sessionId) throws Exception {
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    CountDownLatch closedLatch = new CountDownLatch(1);
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
+                session.sendMessage(new TextMessage("PLAY demo"));
+                session.sendMessage(new TextMessage("LOGOUT"));
+              }
+
+              @Override
+              public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+                closedLatch.countDown();
+              }
+            },
+            gameplayHeaders(sessionId),
+            websocketUri());
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(closedLatch.await(10, TimeUnit.SECONDS)).isTrue();
+    if (session.isOpen()) {
+      session.close();
+    }
   }
 
   private void bumpProductionAdmissionPointer(

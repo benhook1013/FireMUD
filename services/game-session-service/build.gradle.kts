@@ -61,6 +61,7 @@ dependencies {
     testFixturesImplementation("com.google.protobuf:protobuf-java:${libs.versions.protobuf.get()}")
     testFixturesImplementation(libs.spring.boot.starter.jdbc)
     testImplementation(libs.grpc.inprocess)
+    testImplementation(testFixtures(project(":game-session-service")))
     testImplementation(project(":game-logic-service"))
 }
 
