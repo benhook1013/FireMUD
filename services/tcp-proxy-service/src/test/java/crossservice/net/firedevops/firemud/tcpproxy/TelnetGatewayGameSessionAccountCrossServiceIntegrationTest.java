@@ -29,6 +29,7 @@ import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
+import net.firedevops.firemud.gamesession.testsupport.GameplayEntityAssertions;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
@@ -339,60 +340,45 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(incompatibleResponse)
         .contains("ERROR SLOT_INCOMPATIBLE")
         .contains("Iron Boots cannot be worn by this body layout.");
-    assertThat(ENTITY_STUB.lastPickupRequest())
-        .hasValueSatisfying(
-            request -> {
-              assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
-              assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
-              assertThat(request.getRoomInstanceId()).isEqualTo(LookTestFixtures.ROOM_ID);
-              assertThat(request.getItemId()).isEqualTo("torch");
-              assertThat(request.getEffectId()).isNotBlank();
-            });
-    assertThat(ENTITY_STUB.lastDropRequest())
-        .hasValueSatisfying(
-            request -> {
-              assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
-              assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
-              assertThat(request.getRoomInstanceId()).isEqualTo(LookTestFixtures.ROOM_ID);
-              assertThat(request.getItemId()).isEqualTo("torch");
-              assertThat(request.getEffectId()).isNotBlank();
-            });
-    assertThat(ENTITY_STUB.lastPutRequest())
-        .hasValueSatisfying(
-            request -> {
-              assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
-              assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
-              assertThat(request.getContainerInstanceId()).isEqualTo("container-backpack-1");
-              assertThat(request.getItemId()).isEqualTo("torch");
-              assertThat(request.getItemInstanceId()).isEqualTo("torch-ground-1");
-              assertThat(request.getEffectId()).isNotBlank();
-            });
-    assertThat(ENTITY_STUB.lastTakeRequest())
-        .hasValueSatisfying(
-            request -> {
-              assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
-              assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
-              assertThat(request.getContainerInstanceId()).isEqualTo("container-backpack-1");
-              assertThat(request.getItemId()).isEqualTo("torch");
-              assertThat(request.getItemInstanceId()).isBlank();
-              assertThat(request.getEffectId()).isNotBlank();
-            });
-    assertThat(ENTITY_STUB.lastRemoveRequest())
-        .hasValueSatisfying(
-            request -> {
-              assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
-              assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
-              assertThat(request.getSlot()).isEqualTo("HEAD");
-              assertThat(request.getEffectId()).isNotBlank();
-            });
-    assertThat(ENTITY_STUB.lastWearRequest())
-        .hasValueSatisfying(
-            request -> {
-              assertThat(request.getTenantId()).isEqualTo(String.valueOf(TENANT_ID));
-              assertThat(request.getCharacterId()).isEqualTo(ChatTestFixtures.PLAYER_EMBERLINE);
-              assertThat(request.getItemId()).isEqualTo("iron-boots");
-              assertThat(request.getEffectId()).isNotBlank();
-            });
+    GameplayEntityAssertions.assertPickup(
+        ENTITY_STUB.lastPickupRequest(),
+        String.valueOf(TENANT_ID),
+        ChatTestFixtures.PLAYER_EMBERLINE,
+        null,
+        LookTestFixtures.ROOM_ID,
+        "torch");
+    GameplayEntityAssertions.assertDrop(
+        ENTITY_STUB.lastDropRequest(),
+        String.valueOf(TENANT_ID),
+        ChatTestFixtures.PLAYER_EMBERLINE,
+        null,
+        LookTestFixtures.ROOM_ID,
+        "torch");
+    GameplayEntityAssertions.assertPut(
+        ENTITY_STUB.lastPutRequest(),
+        String.valueOf(TENANT_ID),
+        ChatTestFixtures.PLAYER_EMBERLINE,
+        "container-backpack-1",
+        "torch",
+        "torch-ground-1");
+    GameplayEntityAssertions.assertTake(
+        ENTITY_STUB.lastTakeRequest(),
+        String.valueOf(TENANT_ID),
+        ChatTestFixtures.PLAYER_EMBERLINE,
+        "container-backpack-1",
+        "torch",
+        "");
+    GameplayEntityAssertions.assertRemove(
+        ENTITY_STUB.lastRemoveRequest(),
+        String.valueOf(TENANT_ID),
+        ChatTestFixtures.PLAYER_EMBERLINE,
+        "HEAD");
+    GameplayEntityAssertions.assertWear(
+        ENTITY_STUB.lastWearRequest(),
+        String.valueOf(TENANT_ID),
+        ChatTestFixtures.PLAYER_EMBERLINE,
+        "iron-boots",
+        null);
   }
 
   @Test
