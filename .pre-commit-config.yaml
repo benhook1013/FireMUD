@@ -11,19 +11,7 @@ repos:
         name: markdownlint --fix
         entry: ./gradlew lintMarkdownFix
         language: system
-        pass_filenames: false
-
-      - id: checkstyle
-        name: Checkstyle
-        entry: ./gradlew -PfullCheck=true checkstyleMain
-        language: system
-        pass_filenames: false
-
-      - id: spotbugs
-        name: SpotBugs
-        entry: ./gradlew -PfullCheck=true spotbugsMain
-        language: system
-        pass_filenames: false
+        files: \.md$
 
       - id: hadolint
         name: Dockerfile Lint
@@ -32,20 +20,8 @@ repos:
         files: (?i)^Dockerfile$|\.Dockerfile$
         args: ["-c", "config/hadolint/hadolint.yaml"]
 
-      - id: frontend-lint
-        name: Frontend ESLint
-        entry: bash -c 'cd web-client && npm run lint && npm run format:fix'
-        language: system
-        pass_filenames: false
-
-      - id: link-check
-        name: Link Check
-        entry: ./dev-tools/docs/link-check.sh
-        language: script
-        pass_filenames: false
-
       - id: shellcheck
         name: ShellCheck
-        entry: bash -c 'find dev-tools -name "*.sh" -print0 | xargs -0 shellcheck'
+        entry: shellcheck
         language: system
-        pass_filenames: false
+        files: ^(dev-tools/.*\.sh|scripts/.*\.sh|config/git-hooks/.*|codex-.*\.sh)$

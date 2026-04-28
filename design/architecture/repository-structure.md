@@ -85,7 +85,7 @@ root
 - `.gitattributes` – Source control line-ending defaults and attribute rules.
 - `.gitignore` – Git ignore rules for build outputs, IDE files, and dependencies.
 - `.lycheeignore` – Ignore rules for the lychee link checker.
-- `.pre-commit-config.yaml` – Configuration for automated formatting and lint checks.
+- `.pre-commit-config.yaml` – Configuration for lightweight pre-commit formatting and file-scoped lint checks.
 - `.windsurfrules` – Compatibility link to the local AI rules.
 - `AGENTS.md` – Contribution guide pointing to project AI rules.
 - `build.gradle.kts` – Root Gradle build file that aggregates all modules.

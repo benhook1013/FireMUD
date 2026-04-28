@@ -28,19 +28,18 @@ Once your environment is running you can create a feature branch and submit a PR
 - Favor immutable data structures, clear method names, and concise classes.
 - Backend code targets Java 21+ with Spring Boot 4.x; frontend code follows standard React/TypeScript conventions.
 - Document public methods and classes with brief Javadoc comments.
-- Install the git hook in `config/git-hooks/pre-commit` to automatically format and lint your commits.
+- Install the repository pre-commit hooks with `pre-commit install` if you want lightweight local formatting and file-scoped lint checks on commit.
 
 ## Pre-commit Hooks
 
-The repository includes a `.pre-commit-config.yaml` that runs Spotless,
-markdownlint, Checkstyle, SpotBugs, and ShellCheck. Install the pre-commit tool and set up the hooks with:
+The repository includes a `.pre-commit-config.yaml` for lightweight local commit hygiene. Install the pre-commit tool and set up the hooks with:
 
 ```bash
 pip install pre-commit
 pre-commit install
 ```
 
-Hooks automatically format code, lint Markdown, run ShellCheck on our `dev-tools` scripts, and perform other static analysis before each commit.
+Hooks run `spotlessApply` on commit and then run file-scoped fixes/checks for Markdown, shell scripts, and Dockerfiles when those file types are staged. Heavier validation stays in explicit local proof commands and CI.
 
 ## Testing Requirements
 

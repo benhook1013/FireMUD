@@ -183,6 +183,24 @@ To manually fix correctable issues, run:
 
 Linting rules are defined in `config/markdownlint/.markdownlint-cli2.jsonc`. Auto-fixing is not part of the `check` phase so that CI runs remain non-destructive.
 
+## Pre-commit Hooks
+
+If you want lightweight commit-time hygiene, install the pre-commit hooks:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+The configured hooks intentionally stay lightweight:
+
+- `spotlessApply` always runs.
+- `lintMarkdownFix` runs when staged Markdown files are present.
+- `shellcheck` runs on staged shell scripts in repo-owned script paths.
+- `hadolint` runs on staged Dockerfiles.
+
+Heavier checks such as full Gradle `check`, SpotBugs, Checkstyle, broad link validation, and smoke proofs remain explicit local validation steps rather than commit hooks.
+
 ### Frontend Lint & Accessibility
 
 The React client in `web-client` provides npm scripts for linting, formatting, and running an accessibility audit. Install dependencies with Linux-native npm from the `web-client` directory:
