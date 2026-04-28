@@ -89,13 +89,13 @@ The production Terraform modules provision persistent volumes for PostgreSQL plu
 
 ## Helm Charts
 
-The main Helm deployment path in this repository is [`k8s/helm/firemud`](./helm/firemud), which is used for the hosted preview and dev-demo environments. Use `values-local.yaml` or `values-dev.yaml` to override connection details and feature flags when deploying locally. `values-local.yaml` also reduces replica counts to 1 so a Kind or minikube cluster doesn't run out of resources:
+The main Helm deployment path in this repository is [`k8s/helm/firemud`](./helm/firemud), which is used for the hosted preview and dev-demo environments. The top-level `k8s/helm/values-local.yaml` and `values-dev.yaml` files belong to the narrower example service charts under `k8s/helm/`; they are not the full-stack hosted chart contract.
 
 ```bash
 helm install game-session ./helm/game-session-service -f helm/values-local.yaml
 ```
 
-For the hosted full-stack chart path, use:
+For the hosted full-stack chart path, start from the environment-specific example values under `k8s/helm/firemud`:
 
 ```bash
 helm upgrade --install firemud ./helm/firemud -f helm/firemud/values-preview.example.yaml -n firemud --create-namespace

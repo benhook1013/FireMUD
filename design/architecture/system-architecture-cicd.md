@@ -8,7 +8,7 @@ This document describes the continuous integration strategy for FireMUD using **
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed by running the [`ci.yml`](../../.github/workflows/ci.yml) workflow.
 - **Build Docker images** and push them to GitHub Container Registry (GHCR).
-- **Deploy to Kubernetes development/demo clusters** by triggering the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default. Staging and production clusters use Kustomize overlays as described in the Deployment Runbook and are applied via `kubectl` from a secure admin environment rather than directly from CI.
+- **Deploy hosted Kubernetes development/demo environments** through the dedicated preview and dev-demo workflows. [`preview.yml`](../../.github/workflows/preview.yml) manages per-PR hosted preview releases, and [`dev-demo.yml`](../../.github/workflows/dev-demo.yml) manages the fixed `develop` dev-demo environment. Staging and production clusters use Kustomize overlays as described in the Deployment Runbook and are applied via `kubectl` from a secure admin environment rather than directly from CI.
 - Treat `dev-demo-cluster` as validation-only infrastructure that is excluded from production promotion evidence.
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
@@ -161,28 +161,13 @@ The mutable `firemud-base:latest` tag is a branch-publication convenience tag fo
 
 ## Deploying to Kubernetes
 
-Kubernetes rollouts for local and development clusters are triggered through the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow. The job runs `helm upgrade` using the charts in [`k8s/helm`](../../k8s/helm) and `values-local.yaml` by default. Cluster credentials and registry secrets must be configured beforehand. The example below mirrors the deployment steps. Staging and production deployments rely on environment-specific overlays (for example `k8s/overlays/stage` and `k8s/overlays/prod`) applied according to the Deployment Runbook by operators using `kubectl` from a secured workstation or bastion host.
+Hosted Kubernetes rollouts use environment-specific GitHub Actions workflows rather than a generic manual Helm button:
 
-```yaml
-name: Manual Helm Deploy
+- [`preview.yml`](../../.github/workflows/preview.yml) renders and deploys the full-stack chart in `k8s/helm/firemud` for per-PR preview namespaces on the hosted preview cluster.
+- [`dev-demo.yml`](../../.github/workflows/dev-demo.yml) renders and deploys the same chart for the fixed `develop` dev-demo environment.
+- Local Kubernetes iteration uses direct `helm template`, `helm lint`, `helm install`, and `kubectl apply -k` commands rather than a GitHub-hosted workflow wrapper.
 
-on:
-  workflow_dispatch:
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-      - name: Deploy with Helm
-        run: |
-          helm upgrade --install firemud ./k8s/helm/firemud \
-            -f k8s/helm/values-local.yaml
-```
+Staging and production deployments rely on environment-specific overlays (for example `k8s/overlays/stage` and `k8s/overlays/prod`) applied according to the Deployment Runbook by operators using `kubectl` from a secured workstation or bastion host.
 
 ### Rollback Strategy
 
@@ -393,7 +378,7 @@ Enforcement workflow contract:
 CI workflows and operators use distinct credentials for each Kubernetes environment:
 
 - **Development clusters**
-  - May use a kubeconfig or token that is available to a wider set of workflows (for example `manual-helm-deploy.yml` and preview environments).
+  - May use a kubeconfig or token that is available to a wider set of workflows (for example the hosted preview and dev-demo environments).
   - Intended for non-player-facing stacks where rapid iteration is more important than strict change control.
 - **Staging cluster**
   - Uses credentials limited to operator `kubectl` access and, if introduced later, dedicated staging deployment workflows.

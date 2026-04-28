@@ -6,11 +6,7 @@ This directory contains Helm charts for deploying FireMUD services.
 - `account-service/` and `game-session-service/` are narrower service-specific example charts.
 - The top-level `charts/firemud` chart elsewhere in the repository is a separate support chart, not the main full-stack Helm surface described here.
 
-The files `values-local.yaml` and `values-dev.yaml` demonstrate how runtime
-settings such as Redis connection info, tick interval, and feature flags can be
-overridden per environment.
-Replica counts and resource limits are also defined in the chart `values.yaml`
-so they can be tuned without modifying the templates.
+The top-level `values-local.yaml` and `values-dev.yaml` files in this directory are for the narrower example service charts in this folder, not for the hosted full-stack `firemud/` chart. Replica counts and resource limits are also defined in each chart's own `values.yaml` so they can be tuned without modifying templates.
 
 Install the example chart with:
 
@@ -28,14 +24,14 @@ helm install account-service ./account-service \
   -f values-local.yaml
 ```
 
-To deploy all services at once through the full-stack chart path:
+To deploy all services at once through the full-stack chart path, start from the environment-specific example values shipped with that chart:
 
 ```bash
-helm install firemud ./firemud \
-  -f values-local.yaml
+helm upgrade --install firemud ./firemud \
+  -f firemud/values-preview.example.yaml
 ```
 
-For the future hosted PR preview environment, start from:
+For hosted PR preview environments, start from:
 
 ```bash
 helm upgrade --install pr-123 ./firemud \
