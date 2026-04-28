@@ -45,7 +45,7 @@ jobs:
         run: |
           python3 dev-tools/docs/build_pages_site.py
           python3 -m mkdocs build --clean
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: ./build/public-site
 
