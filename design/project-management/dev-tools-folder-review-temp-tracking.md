@@ -15,4 +15,4 @@ Purpose: track the once-off `dev-tools/` cleanup so the reorganization lands as 
 
 ## Outcome
 
-The `dev-tools/` root now keeps the small set of direct operator/developer entrypoints, while category-specific helpers live under `validation/`, `certs/`, and `maintenance/`. The generated local certificate outputs remain ignored, but the helper scripts that own that lane are now tracked and documented.
+The `dev-tools/` root now keeps the small set of direct operator/developer entrypoints, while category-specific helpers live under `validation/`, `deploy/`, `certs/`, and `maintenance/`. The generated local certificate outputs remain ignored, but the helper scripts that own that lane are now tracked and documented.

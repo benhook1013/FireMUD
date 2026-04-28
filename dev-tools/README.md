@@ -19,8 +19,7 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 
 - `backups/` – local and operator backup helpers.
 - `certs/` – tracked certificate helper scripts plus ignored generated local TLS material.
-- `ci/` – CI-specific orchestration helpers.
-- `deploy/` – deployment preflight and rollout validation.
+- `deploy/` – deployment preflight, overlay validation, and rollout validation.
 - `dev-demo/` – fixed `develop` hosted environment helpers.
 - `docs/` – documentation generation and validation helpers.
 - `insomnia/` – Insomnia client assets.
