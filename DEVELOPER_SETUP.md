@@ -7,10 +7,10 @@ This guide explains how to configure a local development environment for the Fir
 Install the following tools before building the services:
 
 - **Java 21+** – required for all Spring Boot microservices.
-- **Gradle** – used to build and test each service.
 - **Node.js** (latest LTS) – needed if you plan to build the React frontend.
 - **Docker** and **Docker Compose** – run the full stack locally.
 - **Git** – version control for cloning and contributing.
+- **Gradle** – optional; only needed if you must regenerate the wrapper.
 
 ## Optional Developer Tooling
 
@@ -49,7 +49,9 @@ Expected result:
 
 ## Building Services
 
-Each microservice includes a `Dockerfile` and a Gradle build script. After cloning the repository, generate the Gradle wrapper scripts if they are not already present:
+The repository ships with a root Gradle wrapper. In normal use, run tasks with `./gradlew`.
+
+If the wrapper JAR is missing and you need to regenerate it, run:
 
 ```bash
 gradle wrapper --gradle-version 8.14.3 --distribution-type bin
@@ -58,24 +60,15 @@ gradle wrapper --gradle-version 8.14.3 --distribution-type bin
 Run this command any time the wrapper JAR is missing. It downloads the
 required `gradle-wrapper.jar` into `gradle/wrapper/`.
 
-This creates `gradlew`, `gradlew.bat`, and the wrapper JAR under `gradle/wrapper/`. You only need to run it once after cloning.
-
-If you're on Windows, a PowerShell script is available to generate wrappers for every service:
-
-```powershell
-./dev-tools/init-gradle-wrappers.ps1
-```
-
-Run this script after cloning if the wrapper files are missing from the individual service folders.
+This recreates `gradlew`, `gradlew.bat`, and the wrapper JAR under `gradle/wrapper/`.
 
 Build all modules with:
 
 ```bash
-# Build all images
 ./gradlew build
 ```
 
-Gradle compiles the services and prepares Docker images using the included Dockerfiles.
+This compiles the repository modules and runs the build lifecycle. It does not build the service container images.
 
 ### Running Tests for a Single Service
 
@@ -236,23 +229,9 @@ Run this command from the project root after installing dependencies with
 
 ## Lombok and MapStruct
 
-The microservices use **Lombok** to cut down on boilerplate and **MapStruct** for DTO mapping. Each service's `build.gradle.kts` already declares these dependencies:
+The microservices use **Lombok** to reduce boilerplate and **MapStruct** for DTO mapping. Versions are managed centrally through the Gradle version catalog and each service's `build.gradle.kts`.
 
-```kotlin
-dependencies {
-    implementation("org.mapstruct:mapstruct:1.5.5.Final")
-    annotationProcessor("org.mapstruct:mapstruct-processor:1.5.5.Final")
-
-    compileOnly("org.projectlombok:lombok:1.18.30")
-    annotationProcessor("org.projectlombok:lombok:1.18.30")
-}
-```
-
-Make sure annotation processing is enabled in your IDE (e.g., IntelliJ IDEA) so Lombok and MapStruct can generate code during compilation.
-
-## Spring Profiles and Databases
-
-Local dev and CI tasks default to the `dev` or `test` Spring profiles. These profiles disable Flyway and point the services at an in-memory H2 datasource so `bootRun` and unit tests start without a running PostgreSQL instance. Use the `prod` profile (for example, `SPRING_PROFILES_ACTIVE=prod ./gradlew :service:bootRun` or via Docker Compose) when you need Flyway migrations against PostgreSQL.
+Make sure annotation processing is enabled in your IDE (for example, IntelliJ IDEA) so Lombok and MapStruct can generate code during compilation.
 
 ## Running with Docker Compose
 

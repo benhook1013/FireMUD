@@ -20,20 +20,20 @@ Once resolved, credit will be given in the release notes unless you prefer to re
 
 ## Supported Versions
 
-Security fixes are applied to the `main` branch and the most recent stable release. Older versions are not supported. Please ensure you're using the latest version before reporting.
+Security fixes are applied to actively maintained branches. In practice this means the main development line and any explicitly supported release line. Older versions are not supported.
 
 ## Security Practices
 
 The FireMUD architecture is designed around the following controls:
 
-- **Secret management** – JWT signing keys and mTLS certificates are stored as Kubernetes Secrets and rotated automatically by cert-manager. Services hot‑reload secrets without downtime. See [Security Architecture](design/architecture/system-architecture-security.md).
+- **Secret management** – JWT signing keys and mTLS certificates are stored as Kubernetes Secrets and rotated automatically by cert-manager. See [Security Architecture](design/architecture/system-architecture-security.md).
 - **Encrypted transport** – TLS is terminated at the load balancer; internal gRPC calls use mutual TLS. NetworkPolicies restrict access between services.
 - **Abuse detection** – Login attempts are tracked and rate-limited per IP. Suspicious behavior triggers blacklisting and notifications.
-- **Logging and auditing** – Admin actions and failed logins are logged in Elasticsearch and surfaced via the Admin Service dashboard.
+- **Logging and auditing** – Admin actions and failed logins are logged and surfaced through the Logging & Admin workflows and observability stack.
 - **Rate limiting** – Spring Cloud Gateway applies IP-based rate limits on public endpoints.
-- **Container and dependency scanning** – Trivy filesystem scans run on pull requests and pushes to `main` and `develop`, with separate weekly scans of published container images. CodeQL runs on pull requests, pushes to `main` and `develop`, and a weekly schedule.
-- **Web security testing** – OWASP ZAP baseline scans run in CI against the built web client preview. Gateway-target scanning can be added once the gateway exposes a stable CI scan target.
-- **Dependency advisory and license review** – ORT runs license scans in CI and separate weekly advisory scans for Gradle and NPM dependencies.
+- **Container and dependency scanning** – CI includes container and dependency security scanning, including scheduled review of published artifacts and dependencies.
+- **Web security testing** – CI includes automated web security scanning for the web client surface.
+- **Dependency advisory and license review** – CI includes license scanning and dependency advisory review.
 - **Dependabot** – Automatically keeps dependencies patched via security PRs.
 
 ## References
