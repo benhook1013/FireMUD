@@ -123,14 +123,21 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
 
   private AccountPresenceSnapshot offline(
       long tenantId, long accountId, AccountRecentPresenceState recentState) {
+    GameplayWorldCatalog.RuntimeRealmTarget runtimeTarget =
+        recentState == null
+            ? null
+            : gameplayWorldCatalog
+                .resolveRealmTarget(recentState.worldSlug(), recentState.realmSlug())
+                .orElse(null);
     return new AccountPresenceSnapshot(
         accountId,
         false,
-        null,
-        null,
-        null,
-        null,
-        null,
+        recentState == null ? null : recentState.gameInstanceId(),
+        recentState == null ? null : recentState.worldSlug(),
+        runtimeTarget == null ? null : runtimeTarget.worldDisplayName(),
+        recentState == null ? null : recentState.realmSlug(),
+        runtimeTarget == null ? null : runtimeTarget.realmDisplayName(),
+        recentState == null ? null : recentState.pointerVersion(),
         null,
         null,
         null,

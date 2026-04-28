@@ -67,17 +67,13 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     if (context == null || context.tenantId() <= 0 || context.accountId() <= 0) {
       return;
     }
+    GameplayPresence presence =
+        gameplayPresenceService.findConnectedBySessionId(context.sessionId()).orElse(null);
     AccountPresenceVisibilityPolicy policy =
         visibilityPolicyResolver.resolve(
-            context.tenantId(),
-            context.accountId(),
-            gameplayPresenceService
-                .findConnectedBySessionId(context.sessionId())
-                .map(GameplayPresence::role)
-                .orElse(null));
+            context.tenantId(), context.accountId(), presence == null ? null : presence.role());
     write(
-        context.tenantId(),
-        context.accountId(),
+        routingSnapshot(context, presence),
         AccountRecentPresenceDisposition.TRANSPORT_LOSS,
         policy,
         currentTimeMillisSupplier.getAsLong());
@@ -88,19 +84,21 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     sessionContextService
         .findBySessionId(sessionId)
         .ifPresent(
-            context ->
-                write(
-                    context.tenantId(),
-                    context.accountId(),
-                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
-                    visibilityPolicyResolver.resolve(
-                        context.tenantId(),
-                        context.accountId(),
-                        gameplayPresenceService
-                            .findConnectedBySessionId(sessionId)
-                            .map(GameplayPresence::role)
-                            .orElse(null)),
-                    currentTimeMillisSupplier.getAsLong()));
+            context -> {
+              GameplayPresence presence =
+                  gameplayPresenceService.findConnectedBySessionId(sessionId).orElse(null);
+              RoutingSnapshot snapshot = routingSnapshot(context, presence);
+              AccountPresenceVisibilityPolicy policy =
+                  visibilityPolicyResolver.resolve(
+                      context.tenantId(),
+                      context.accountId(),
+                      presence == null ? null : presence.role());
+              write(
+                  snapshot,
+                  AccountRecentPresenceDisposition.TRANSPORT_LOSS,
+                  policy,
+                  currentTimeMillisSupplier.getAsLong());
+            });
   }
 
   @Override
@@ -108,19 +106,17 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     sessionContextService
         .findBySessionId(sessionId)
         .ifPresent(
-            context ->
-                write(
-                    context.tenantId(),
-                    context.accountId(),
-                    disposition,
-                    visibilityPolicyResolver.resolve(
-                        context.tenantId(),
-                        context.accountId(),
-                        gameplayPresenceService
-                            .findConnectedBySessionId(sessionId)
-                            .map(GameplayPresence::role)
-                            .orElse(null)),
-                    currentTimeMillisSupplier.getAsLong()));
+            context -> {
+              GameplayPresence presence =
+                  gameplayPresenceService.findConnectedBySessionId(sessionId).orElse(null);
+              RoutingSnapshot snapshot = routingSnapshot(context, presence);
+              AccountPresenceVisibilityPolicy policy =
+                  visibilityPolicyResolver.resolve(
+                      context.tenantId(),
+                      context.accountId(),
+                      presence == null ? null : presence.role());
+              write(snapshot, disposition, policy, currentTimeMillisSupplier.getAsLong());
+            });
   }
 
   @Override
@@ -142,23 +138,73 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
   }
 
   private void write(
-      long tenantId,
-      long accountId,
+      RoutingSnapshot snapshot,
       AccountRecentPresenceDisposition disposition,
       AccountPresenceVisibilityPolicy visibilityPolicy,
       long timestampMs) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
-    if (valueOps == null) {
+    if (valueOps == null || snapshot == null) {
       return;
     }
     valueOps.set(
-        key(tenantId, accountId),
+        key(snapshot.tenantId(), snapshot.accountId()),
         new AccountRecentPresenceState(
-            tenantId, accountId, timestampMs, disposition, visibilityPolicy),
+            snapshot.tenantId(),
+            snapshot.accountId(),
+            snapshot.gameInstanceId(),
+            snapshot.worldSlug(),
+            snapshot.realmSlug(),
+            snapshot.pointerVersion(),
+            timestampMs,
+            disposition,
+            visibilityPolicy),
         ttl);
+  }
+
+  private RoutingSnapshot routingSnapshot(SessionContext context, GameplayPresence presence) {
+    if (context == null || context.tenantId() <= 0 || context.accountId() <= 0) {
+      return null;
+    }
+    long gameInstanceId =
+        presence != null && presence.gameInstanceId() > 0
+            ? presence.gameInstanceId()
+            : context.gameInstanceId() > 0 ? context.gameInstanceId() : 0L;
+    return new RoutingSnapshot(
+        context.tenantId(),
+        context.accountId(),
+        gameInstanceId > 0 ? gameInstanceId : null,
+        firstNonBlank(presence == null ? null : presence.worldSlug(), context.worldSlug()),
+        firstNonBlank(presence == null ? null : presence.realmSlug(), context.realmSlug()),
+        pointerVersion(context, presence));
+  }
+
+  private Long pointerVersion(SessionContext context, GameplayPresence presence) {
+    long pointerVersion =
+        presence != null && presence.pointerVersion() > 0
+            ? presence.pointerVersion()
+            : context.pointerVersion();
+    return pointerVersion > 0 ? pointerVersion : null;
+  }
+
+  private String firstNonBlank(String primary, String fallback) {
+    if (primary != null && !primary.isBlank()) {
+      return primary;
+    }
+    if (fallback != null && !fallback.isBlank()) {
+      return fallback;
+    }
+    return null;
   }
 
   private String key(long tenantId, long accountId) {
     return String.format(RECENT_PRESENCE_KEY_TEMPLATE, tenantId, accountId);
   }
+
+  private record RoutingSnapshot(
+      long tenantId,
+      long accountId,
+      Long gameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      Long pointerVersion) {}
 }

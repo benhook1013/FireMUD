@@ -6,9 +6,31 @@ import java.io.Serializable;
 public record AccountRecentPresenceState(
     long tenantId,
     long accountId,
+    Long gameInstanceId,
+    String worldSlug,
+    String realmSlug,
+    Long pointerVersion,
     long lastSeenAtEpochMs,
     AccountRecentPresenceDisposition disposition,
     AccountPresenceVisibilityPolicy visibilityPolicy)
     implements Serializable {
   private static final long serialVersionUID = 1L;
+
+  public AccountRecentPresenceState(
+      long tenantId,
+      long accountId,
+      long lastSeenAtEpochMs,
+      AccountRecentPresenceDisposition disposition,
+      AccountPresenceVisibilityPolicy visibilityPolicy) {
+    this(
+        tenantId,
+        accountId,
+        null,
+        null,
+        null,
+        null,
+        lastSeenAtEpochMs,
+        disposition,
+        visibilityPolicy);
+  }
 }

@@ -64,6 +64,10 @@ class AccountPresenceQueryServiceImplTest {
                 new AccountRecentPresenceState(
                     1L,
                     4L,
+                    2L,
+                    "sandbox",
+                    "production",
+                    17L,
                     Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
                     AccountRecentPresenceDisposition.TRANSPORT_LOSS,
                     AccountPresenceVisibilityPolicy.PRIVATE)));
@@ -107,6 +111,12 @@ class AccountPresenceQueryServiceImplTest {
     assertEquals(AccountPresenceVisibilityPolicy.FRIENDS_ONLY, result.get(0).visibilityPolicy());
     assertEquals(4L, result.get(1).accountId());
     assertEquals(false, result.get(1).online());
+    assertEquals(2L, result.get(1).gameInstanceId());
+    assertEquals("sandbox", result.get(1).worldSlug());
+    assertEquals("Builder Sandbox", result.get(1).worldDisplayName());
+    assertEquals("production", result.get(1).realmSlug());
+    assertEquals("Live Realm", result.get(1).realmDisplayName());
+    assertEquals(17L, result.get(1).pointerVersion());
     assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.get(1).lastSeenAt());
     assertEquals(
         AccountRecentPresenceDisposition.TRANSPORT_LOSS, result.get(1).recentDisposition());
