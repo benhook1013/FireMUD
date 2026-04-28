@@ -255,8 +255,7 @@ class CommunicationWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
     ENTITY_STUB.resetItemState();
 
-    try (GameplayWebSocketDriver client = openSessionClient(sessionId, "item-loop-conn")) {
-      client.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
+    try (GameplayWebSocketDriver client = openReadySessionClient(sessionId, "item-loop-conn")) {
 
       client.send("INV HERE");
       client.awaitContains("Room Inventory:");
@@ -338,8 +337,8 @@ class CommunicationWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
     ENTITY_STUB.resetItemState();
 
-    try (GameplayWebSocketDriver client = openSessionClient(sessionId, "equipment-loop-conn")) {
-      client.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
+    try (GameplayWebSocketDriver client =
+        openReadySessionClient(sessionId, "equipment-loop-conn")) {
 
       client.send("EQUIPMENT");
       client.awaitContains("You have nothing equipped.");
@@ -478,12 +477,20 @@ class CommunicationWebSocketCrossServiceTest {
   private List<String> runCommunicationSequence(
       long sessionId, String commandText, String expectedResponseSubstring) throws Exception {
     try (GameplayWebSocketDriver client =
-        openSessionClient(sessionId, "flow-" + commandText.hashCode())) {
-      client.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
+        openReadySessionClient(sessionId, "flow-" + commandText.hashCode())) {
       client.send(commandText);
       client.awaitContains(expectedResponseSubstring);
       return client.responses();
     }
+  }
+
+  private GameplayWebSocketDriver openReadySessionClient(long sessionId, String proxyConnectionId)
+      throws Exception {
+    return GameplayWebSocketScenarios.openReady(
+        connectionId -> openSessionClient(sessionId, connectionId),
+        proxyConnectionId,
+        GameplayWebSocketScenarios.Admission.unnamed(
+            "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT));
   }
 
   private GameplayWebSocketDriver openSessionClient(long sessionId, String proxyConnectionId) {
