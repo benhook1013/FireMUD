@@ -26,6 +26,7 @@ Use this file as the canonical AI instruction source for this repository.
 - Optimize for token efficiency and continuity of reasoning over parallel delegation.
 - Treat subagent use as off by default; do not use subagents unless a human explicitly asks for them for a specific task.
 - When working on a large problem, keep the context in one thread and progress in coherent committed batches rather than splitting the work across delegated workers.
+- Be proactive within scope. When the current task exposes related breakage, drift, or weak assumptions in the same area, resolve them in the same pass when practical instead of stopping at the narrowest possible patch.
 
 ## Working Tree Safety
 

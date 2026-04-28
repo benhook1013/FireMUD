@@ -105,3 +105,8 @@ Entry format:
   - Context: finishing the `k8s/` audit required removing checked-in bootstrap JWT/Postgres/TLS placeholder data from the staging/production Kustomize renders while keeping `preflight.sh` and overlay CI meaningful.
   - Observation: once player-facing bootstrap bindings are supposed to be environment-owned, leaving fake Secret manifests in the canonical render path teaches the wrong operator contract and masks whether preflight is validating real external ownership versus inline sample data.
   - Expected pattern: keep player-facing overlays free of placeholder Secret content, validate secret names/mount contracts statically from rendered workloads, and let operator-mode preflight prove that the expected environment-owned bindings exist in the target cluster.
+
+- `2026-04-29`: Repository guidance should explicitly permit proactive in-scope cleanup instead of relying on that behavior emerging indirectly from persistence and convergence rules
+  - Context: reviewing why a pragmatic “fix nearby fallout while converging the current area” response felt good in practice but was only implied by the existing AI instructions.
+  - Observation: without one short explicit rule, agents can over-index on the narrowest interpretation of a task even when the repo’s initial-development model would benefit from resolving clearly related breakage and drift in the same pass.
+  - Expected pattern: keep one compact instruction that tells agents to be proactive within scope and resolve clearly related fallout when practical, without turning that into permission for broad opportunistic refactors.
