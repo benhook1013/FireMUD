@@ -112,6 +112,7 @@ jobs:
     needs: [image-meta, build-base-image]
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         service:
           - account-service

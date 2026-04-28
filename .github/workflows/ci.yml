@@ -546,8 +546,8 @@ jobs:
       - name: 🧪 Run Gradle Checks
         id: checks
         run: |
-          echo "::group::Run Tests"
-          ./gradlew :${{ matrix.service }}:check -PfullCheck
+          echo "::group::Run Service Validation"
+          ./gradlew :${{ matrix.service }}:check :${{ matrix.service }}:bootJar -PfullCheck
           echo "::endgroup::"
 
       - name: 📈 Parse Coverage %
