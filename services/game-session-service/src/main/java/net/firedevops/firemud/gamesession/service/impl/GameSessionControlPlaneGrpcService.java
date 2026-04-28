@@ -10,6 +10,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
 import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -70,11 +71,14 @@ import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasRequest;
+import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasResponse;
 import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityRequest;
 import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -90,11 +94,13 @@ public final class GameSessionControlPlaneGrpcService
   private final InstanceCutoverCompatibilityService instanceCutoverCompatibilityService;
   private final VersionUpgradePreparationService versionUpgradePreparationService;
   private final TickService tickService;
+  private final BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver;
   private final MeterRegistry meterRegistry;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "Injected repository/services are internal Spring collaborators")
+  @Autowired
   public GameSessionControlPlaneGrpcService(
       GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
@@ -102,6 +108,7 @@ public final class GameSessionControlPlaneGrpcService
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
       VersionUpgradePreparationService versionUpgradePreparationService,
+      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
       TickService tickService,
       MeterRegistry meterRegistry) {
     this.gameInstanceRepository = gameInstanceRepository;
@@ -110,8 +117,30 @@ public final class GameSessionControlPlaneGrpcService
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.instanceCutoverCompatibilityService = instanceCutoverCompatibilityService;
     this.versionUpgradePreparationService = versionUpgradePreparationService;
+    this.builtInTextCommandAliasResolver = builtInTextCommandAliasResolver;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
+  }
+
+  GameSessionControlPlaneGrpcService(
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
+      VersionUpgradePreparationService versionUpgradePreparationService,
+      TickService tickService,
+      MeterRegistry meterRegistry) {
+    this(
+        gameInstanceRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        gameplayAdmissionPointerAuthorityService,
+        instanceCutoverCompatibilityService,
+        versionUpgradePreparationService,
+        BuiltInTextCommandAliasResolver.unsupported(),
+        tickService,
+        meterRegistry);
   }
 
   private long parseTenantId(String tenantId) {
@@ -721,6 +750,54 @@ public final class GameSessionControlPlaneGrpcService
       logger.error("GetGameInstanceRuntimeState failed", ex);
       GetGameInstanceRuntimeStateResponse response =
           GetGameInstanceRuntimeStateResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.validateBuiltInCommandAlias")
+  public void validateBuiltInCommandAlias(
+      ValidateBuiltInCommandAliasRequest request,
+      StreamObserver<ValidateBuiltInCommandAliasResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      String alias = request.getAlias();
+      if (alias == null || alias.isBlank()) {
+        throw new IllegalArgumentException("alias is required");
+      }
+      ValidateBuiltInCommandAliasResponse response =
+          builtInTextCommandAliasResolver
+              .resolve(alias)
+              .map(
+                  normalized ->
+                      ValidateBuiltInCommandAliasResponse.newBuilder()
+                          .setSupported(true)
+                          .setNormalizedAlias(normalized)
+                          .build())
+              .orElseGet(() -> ValidateBuiltInCommandAliasResponse.newBuilder().build());
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      ValidateBuiltInCommandAliasResponse response =
+          ValidateBuiltInCommandAliasResponse.newBuilder()
+              .setError(authorizationError("ValidateBuiltInCommandAlias", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ValidateBuiltInCommandAliasResponse response =
+          ValidateBuiltInCommandAliasResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("ValidateBuiltInCommandAlias failed", ex);
+      ValidateBuiltInCommandAliasResponse response =
+          ValidateBuiltInCommandAliasResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build();
       responseObserver.onNext(response);

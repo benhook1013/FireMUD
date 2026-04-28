@@ -36,6 +36,8 @@ service GameSessionControlPlaneService {
       returns (GetGameSessionPinConvergenceResponse);
   rpc GetGameInstanceRuntimeState(GetGameInstanceRuntimeStateRequest)
       returns (GetGameInstanceRuntimeStateResponse);
+  rpc ValidateBuiltInCommandAlias(ValidateBuiltInCommandAliasRequest)
+      returns (ValidateBuiltInCommandAliasResponse);
   rpc ListAdmissionPointers(ListAdmissionPointersRequest)
       returns (ListAdmissionPointersResponse);
   rpc ListAdmissionPointerAudit(ListAdmissionPointerAuditRequest)
@@ -331,6 +333,16 @@ message GameInstanceRuntimeState {
 message GetGameInstanceRuntimeStateResponse {
   GameInstanceRuntimeState runtime_state = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message ValidateBuiltInCommandAliasRequest {
+  string alias = 1;
+}
+
+message ValidateBuiltInCommandAliasResponse {
+  bool supported = 1;
+  string normalized_alias = 2;
+  shared.v1.ErrorDetail error = 3;
 }
 
 message AdmissionPointerControlPlaneEntry {

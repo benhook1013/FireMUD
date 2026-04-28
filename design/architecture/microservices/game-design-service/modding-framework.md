@@ -367,7 +367,7 @@ Validation responsibilities:
 
 - Game Design validates that all declared bindings are structurally valid and resolvable against the targeted `baseVersionId`.
 - Game Design validates that `entrypointGraphId` references a declared graph, `orderIndex` is in the bounded platform range, `requiresExclusiveEvent` is allowed by policy, and the typed `targetSelector` can be resolved by the owner service under the exact `baseVersionId`.
-- Automation & Scripting consumes the validated binding set during activation and registry load; it must not invent additional bindings or infer missing targets from runtime state.
+- Automation & Scripting consumes the validated binding set during activation and registry load; it must not invent additional bindings or infer missing targets from runtime state. The current activation path now re-checks built-in `COMMAND_ALIAS` bindings against Game Session's authoritative built-in command registry and rejects instance-scoped alias/exclusive-binding conflicts against the currently pinned script patch plus already-enabled plugins before mutating runtime state.
 
 ### Plugin Component Policy Management
 

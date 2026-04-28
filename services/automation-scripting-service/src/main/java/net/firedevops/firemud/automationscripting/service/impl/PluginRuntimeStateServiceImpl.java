@@ -11,6 +11,7 @@ import net.firedevops.firemud.automationscripting.entity.PluginRuntimeEvent;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeEventRepository;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
+import net.firedevops.firemud.automationscripting.service.PluginActivationPreflightService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
@@ -19,6 +20,7 @@ import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,18 +40,37 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
   private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptScheduleInstanceService scriptScheduleInstanceService;
+  private final PluginActivationPreflightService pluginActivationPreflightService;
 
+  @Autowired
   public PluginRuntimeStateServiceImpl(
       PluginRuntimeStateRepository repository,
       PluginRuntimeEventRepository eventRepository,
       GameDesignControlPlaneClient gameDesignControlPlaneClient,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
-      ScriptScheduleInstanceService scriptScheduleInstanceService) {
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      PluginActivationPreflightService pluginActivationPreflightService) {
     this.repository = repository;
     this.eventRepository = eventRepository;
     this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.scriptScheduleInstanceService = scriptScheduleInstanceService;
+    this.pluginActivationPreflightService = pluginActivationPreflightService;
+  }
+
+  PluginRuntimeStateServiceImpl(
+      PluginRuntimeStateRepository repository,
+      PluginRuntimeEventRepository eventRepository,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      ScriptScheduleInstanceService scriptScheduleInstanceService) {
+    this(
+        repository,
+        eventRepository,
+        gameDesignControlPlaneClient,
+        gameSessionControlPlaneClient,
+        scriptScheduleInstanceService,
+        (tenantId, gameInstanceId, scriptPatchVersion, pluginId, pluginVersionId) -> {});
   }
 
   @Override
@@ -185,6 +206,12 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     }
     requireAbilitySchemaMatch(
         command, runtimeVersionId, publication.getPluginVersion().getAbilitySchemaDigest());
+    pluginActivationPreflightService.validateActivation(
+        command.tenantId(),
+        command.gameInstanceId(),
+        runtime.getRuntimeState().getPinnedScriptPatchVersion(),
+        command.pluginId(),
+        command.targetPluginVersionId());
   }
 
   private void requireAbilitySchemaMatch(
@@ -305,7 +332,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       return Optional.of("signer_revoked");
     }
     return switch (publication.getPluginVersion().getComponentPolicyDecision()) {
-      case PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED -> Optional.empty();
+      case PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED, PLUGIN_COMPONENT_POLICY_DECISION_REPORT_ONLY ->
+          Optional.empty();
       case PLUGIN_COMPONENT_POLICY_DECISION_BLOCKED ->
           Optional.of("plugin_component_policy_blocked");
       default -> Optional.of("component_policy_unavailable");

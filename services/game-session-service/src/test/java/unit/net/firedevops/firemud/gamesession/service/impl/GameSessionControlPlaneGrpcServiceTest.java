@@ -14,6 +14,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
@@ -57,6 +58,8 @@ import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasRequest;
+import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasResponse;
 import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityRequest;
 import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityResponse;
 import org.junit.jupiter.api.AfterEach;
@@ -254,6 +257,36 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("roll-forward", responseRef.get().getRuntimeState().getScriptPatchPinnedReason());
     assertEquals(
         "req-77", responseRef.get().getRuntimeState().getScriptPatchPinnedControlPlaneRequestId());
+  }
+
+  @Test
+  void validateBuiltInCommandAliasReturnsUnsupportedWhenAliasIsUnknown() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            BuiltInTextCommandAliasResolver.unsupported(),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ValidateBuiltInCommandAliasResponse> responseRef = new AtomicReference<>();
+    service.validateBuiltInCommandAlias(
+        ValidateBuiltInCommandAliasRequest.newBuilder().setAlias("LoGoFf").build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ValidateBuiltInCommandAliasResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals(false, responseRef.get().getSupported());
+    assertEquals("", responseRef.get().getNormalizedAlias());
   }
 
   @Test
@@ -1577,6 +1610,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
         Mockito.mock(InstanceCutoverCompatibilityService.class),
         Mockito.mock(VersionUpgradePreparationService.class),
+        BuiltInTextCommandAliasResolver.unsupported(),
         Mockito.mock(TickService.class),
         meterRegistry);
   }
