@@ -17,7 +17,6 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 
 ## Folder map
 
-- `analysis/` – optional one-off repo analysis helpers such as `cloc-report.sh`.
 - `backups/` – local and operator backup helpers.
 - `certs/` – tracked certificate helper scripts plus ignored generated local TLS material.
 - `ci/` – CI-specific orchestration helpers.
@@ -27,7 +26,7 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 - `insomnia/` – Insomnia client assets.
 - `kreya/` – Kreya gRPC client assets.
 - `load-testing/` – Gatling load-testing module.
-- `maintenance/` – non-canonical maintenance utilities that should not shape repo workflow.
+- `maintenance/` – non-canonical maintenance and analysis utilities that should not shape repo workflow.
 - `observability/` – observability contract and evidence validators.
 - `preview/` – hosted PR preview orchestration helpers.
 - `release/` – release/notice generation utilities.
