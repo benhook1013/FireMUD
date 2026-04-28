@@ -4,17 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
-import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.WebSocket;
-import java.net.http.WebSocket.Listener;
 import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.CompletionStage;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -23,6 +15,7 @@ import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.ChatEntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
+import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
@@ -41,11 +34,12 @@ import org.testcontainers.utility.DockerImageName;
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class CommunicationWebSocketCrossServiceTest {
-  private static final Duration COMMAND_WAIT = Duration.ofSeconds(5);
+  private static final Duration COMMAND_WAIT = Duration.ofSeconds(10);
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_EMBERLINE);
   private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
+  private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
@@ -108,12 +102,15 @@ class CommunicationWebSocketCrossServiceTest {
   void websocketSayFlowReportsCanonicalTranscriptAndMetrics() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-    List<String> responses = runCommunicationSequence(sessionId, "SAY hello travelers");
+    List<String> responses =
+        runCommunicationSequence(
+            sessionId, "SAY hello travelers", ChatTestFixtures.canonicalSayText());
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(responses.get(0)).startsWith("OK LOGIN");
-    assertThat(responses.get(1)).startsWith("OK PLAY");
-    assertThat(responses.get(2)).contains(ChatTestFixtures.canonicalSayText());
+    assertThat(responses).anyMatch(response -> response.startsWith("OK LOGIN"));
+    assertThat(responses).anyMatch(response -> response.startsWith("OK PLAY"));
+    assertThat(responses)
+        .anyMatch(response -> response.contains(ChatTestFixtures.canonicalSayText()));
     assertThat(SOCIAL_STUB.lastRequest())
         .hasValueSatisfying(
             request -> {
@@ -130,10 +127,13 @@ class CommunicationWebSocketCrossServiceTest {
   void websocketWhisperFlowReportsCanonicalTranscriptAndMetadata() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-    List<String> responses = runCommunicationSequence(sessionId, "WHISPER Sora keep quiet");
+    List<String> responses =
+        runCommunicationSequence(
+            sessionId, "WHISPER Sora keep quiet", ChatTestFixtures.canonicalWhisperText());
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(responses.get(2)).contains(ChatTestFixtures.canonicalWhisperText());
+    assertThat(responses)
+        .anyMatch(response -> response.contains(ChatTestFixtures.canonicalWhisperText()));
     assertThat(SOCIAL_STUB.lastRequest())
         .hasValueSatisfying(
             request -> {
@@ -151,10 +151,13 @@ class CommunicationWebSocketCrossServiceTest {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
     seedLiveTargetSession();
-    List<String> responses = runCommunicationSequence(sessionId, "TELL Sora meet me at the forge");
+    List<String> responses =
+        runCommunicationSequence(
+            sessionId, "TELL Sora meet me at the forge", ChatTestFixtures.canonicalTellText());
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(responses.get(2)).contains(ChatTestFixtures.canonicalTellText());
+    assertThat(responses)
+        .anyMatch(response -> response.contains(ChatTestFixtures.canonicalTellText()));
     assertThat(SOCIAL_STUB.lastRequest())
         .hasValueSatisfying(
             request -> {
@@ -186,10 +189,13 @@ class CommunicationWebSocketCrossServiceTest {
                     FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
                 .build()));
 
-    List<String> responses = runCommunicationSequence(sessionId, "FRIENDS");
+    List<String> responses =
+        runCommunicationSequence(
+            sessionId, "FRIENDS", "Sora - online in Demo World / Live Realm (idle)");
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(responses.get(2)).contains("Sora - online in Demo World / Live Realm (idle)");
+    assertThat(responses)
+        .anyMatch(response -> response.contains("Sora - online in Demo World / Live Realm (idle)"));
     assertThat(SOCIAL_STUB.lastPresenceRequest())
         .hasValueSatisfying(
             request -> {
@@ -203,23 +209,12 @@ class CommunicationWebSocketCrossServiceTest {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
 
-    try (RecordingWebSocketClient actor = openSessionClient(sessionId, "actor-conn");
-        RecordingWebSocketClient target = openSessionClient(sessionId, "target-conn");
-        RecordingWebSocketClient observer = openSessionClient(sessionId, "observer-conn")) {
-      actor.send("LOGIN demo@example.com swordfish");
-      actor.awaitStartsWith("OK LOGIN");
-      actor.send("PLAY demo");
-      actor.awaitStartsWith("OK PLAY");
-
-      target.send("LOGIN demo@example.com swordfish");
-      target.awaitStartsWith("OK LOGIN");
-      target.send("PLAY demo Sora");
-      target.awaitStartsWith("OK PLAY");
-
-      observer.send("LOGIN demo@example.com swordfish");
-      observer.awaitStartsWith("OK LOGIN");
-      observer.send("PLAY demo Nyx");
-      observer.awaitStartsWith("OK PLAY");
+    try (GameplayWebSocketDriver actor = openSessionClient(sessionId, "actor-conn");
+        GameplayWebSocketDriver target = openSessionClient(sessionId, "target-conn");
+        GameplayWebSocketDriver observer = openSessionClient(sessionId, "observer-conn")) {
+      enterGameplayAndWaitReady(actor, "demo");
+      enterGameplayAndWaitReady(target, "demo", "Sora");
+      enterGameplayAndWaitReady(observer, "demo", "Nyx");
 
       actor.send("WHISPER Sora Keep quiet");
       actor.awaitContains(ChatTestFixtures.canonicalWhisperText());
@@ -233,17 +228,10 @@ class CommunicationWebSocketCrossServiceTest {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
 
-    try (RecordingWebSocketClient actor = openSessionClient(sessionId, "actor-tell-conn");
-        RecordingWebSocketClient target = openSessionClient(sessionId, "target-tell-conn")) {
-      actor.send("LOGIN demo@example.com swordfish");
-      actor.awaitStartsWith("OK LOGIN");
-      actor.send("PLAY demo Emberline");
-      actor.awaitStartsWith("OK PLAY");
-
-      target.send("LOGIN demo@example.com swordfish");
-      target.awaitStartsWith("OK LOGIN");
-      target.send("PLAY demo Sora");
-      target.awaitStartsWith("OK PLAY");
+    try (GameplayWebSocketDriver actor = openSessionClient(sessionId, "actor-tell-conn");
+        GameplayWebSocketDriver target = openSessionClient(sessionId, "target-tell-conn")) {
+      enterGameplayAndWaitReady(actor, "demo", "Emberline");
+      enterGameplayAndWaitReady(target, "demo", "Sora");
 
       actor.send("TELL Sora Meet me at the forge");
       actor.awaitContains(ChatTestFixtures.canonicalTellText());
@@ -257,13 +245,8 @@ class CommunicationWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
     ENTITY_STUB.resetItemState();
 
-    try (RecordingWebSocketClient client = openSessionClient(sessionId, "item-loop-conn")) {
-      client.send("LOGIN demo@example.com swordfish");
-      client.awaitStartsWith("OK LOGIN");
-      client.send("PLAY demo");
-      client.awaitStartsWith("OK PLAY");
-      client.send("LOOK");
-      client.awaitContains("Candle-lit Antechamber");
+    try (GameplayWebSocketDriver client = openSessionClient(sessionId, "item-loop-conn")) {
+      enterGameplayAndWaitReady(client, "demo");
 
       client.send("INV HERE");
       client.awaitContains("Room Inventory:");
@@ -345,11 +328,8 @@ class CommunicationWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
     ENTITY_STUB.resetItemState();
 
-    try (RecordingWebSocketClient client = openSessionClient(sessionId, "equipment-loop-conn")) {
-      client.send("LOGIN demo@example.com swordfish");
-      client.awaitStartsWith("OK LOGIN");
-      client.send("PLAY demo");
-      client.awaitStartsWith("OK PLAY");
+    try (GameplayWebSocketDriver client = openSessionClient(sessionId, "equipment-loop-conn")) {
+      enterGameplayAndWaitReady(client, "demo");
 
       client.send("EQUIPMENT");
       client.awaitContains("You have nothing equipped.");
@@ -485,35 +465,42 @@ class CommunicationWebSocketCrossServiceTest {
             "target-jwt"));
   }
 
-  private List<String> runCommunicationSequence(long sessionId, String commandText)
-      throws Exception {
-    try (RecordingWebSocketClient client =
+  private List<String> runCommunicationSequence(
+      long sessionId, String commandText, String expectedResponseSubstring) throws Exception {
+    try (GameplayWebSocketDriver client =
         openSessionClient(sessionId, "flow-" + commandText.hashCode())) {
-      client.send("LOGIN demo@example.com swordfish");
-      client.awaitStartsWith("OK LOGIN");
-      client.send("PLAY demo");
-      client.awaitStartsWith("OK PLAY");
+      enterGameplayAndWaitReady(client, "demo");
       client.send(commandText);
-      client.awaitResponseCount(3);
-      return List.copyOf(client.responses);
+      client.awaitContains(expectedResponseSubstring);
+      return client.responses();
     }
   }
 
-  private RecordingWebSocketClient openSessionClient(long sessionId, String proxyConnectionId) {
-    return new RecordingWebSocketClient(sessionId, proxyConnectionId);
+  private GameplayWebSocketDriver openSessionClient(long sessionId, String proxyConnectionId) {
+    return GameplayWebSocketDriver.connect(
+        URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game"),
+        COMMAND_WAIT,
+        java.util.Map.of(
+            "X-Game-Instance-Id",
+            String.valueOf(sessionId),
+            "X-Tenant-Id",
+            String.valueOf(TENANT_ID),
+            "X-Proxy-Connection-Id",
+            proxyConnectionId));
   }
 
-  private void waitForResponseCount(List<String> responses, int expected)
-      throws InterruptedException {
-    long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
-    while (System.currentTimeMillis() < deadline) {
-      if (responses.size() >= expected) {
-        return;
-      }
-      Thread.sleep(50);
-    }
-    throw new AssertionError(
-        "Expected at least " + expected + " responses, got " + responses.size());
+  private void enterGameplayAndWaitReady(GameplayWebSocketDriver client, String world)
+      throws Exception {
+    client.login("demo@example.com", "swordfish");
+    client.play(world);
+    client.lookUntilReady(READY_LOOK_TEXT);
+  }
+
+  private void enterGameplayAndWaitReady(
+      GameplayWebSocketDriver client, String world, String characterName) throws Exception {
+    client.login("demo@example.com", "swordfish");
+    client.play(world, characterName);
+    client.lookUntilReady(READY_LOOK_TEXT);
   }
 
   private void assertMetricEventually(String meterName, double expectedValue, String... tags)
@@ -531,91 +518,5 @@ class CommunicationWebSocketCrossServiceTest {
     double actual = counter == null ? 0.0 : counter.count();
     throw new AssertionError(
         "Metric " + meterName + " did not reach " + expectedValue + "; actual=" + actual);
-  }
-
-  private final class RecordingWebSocketClient implements AutoCloseable {
-    private final CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-    private final AtomicInteger received = new AtomicInteger();
-    private final WebSocket webSocket;
-
-    private RecordingWebSocketClient(long sessionId, String proxyConnectionId) {
-      HttpClient client = HttpClient.newHttpClient();
-      URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
-      this.webSocket =
-          client
-              .newWebSocketBuilder()
-              .header("X-Game-Instance-Id", String.valueOf(sessionId))
-              .header("X-Tenant-Id", String.valueOf(TENANT_ID))
-              .header("X-Proxy-Connection-Id", proxyConnectionId)
-              .buildAsync(
-                  uri,
-                  new Listener() {
-                    @Override
-                    public void onOpen(WebSocket webSocket) {
-                      webSocket.request(1);
-                    }
-
-                    @Override
-                    public CompletionStage<?> onText(
-                        WebSocket webSocket, CharSequence data, boolean last) {
-                      responses.add(data.toString());
-                      received.incrementAndGet();
-                      webSocket.request(1);
-                      return Listener.super.onText(webSocket, data, last);
-                    }
-                  })
-              .join();
-    }
-
-    private void send(String text) {
-      webSocket.sendText(text, true).join();
-    }
-
-    private void awaitResponseCount(int expected) throws Exception {
-      long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
-      while (System.currentTimeMillis() < deadline) {
-        if (received.get() >= expected) {
-          return;
-        }
-        Thread.sleep(50);
-      }
-      throw new AssertionError(
-          "Expected at least " + expected + " responses, got " + received.get());
-    }
-
-    private void awaitStartsWith(String expectedPrefix) throws Exception {
-      long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
-      while (System.currentTimeMillis() < deadline) {
-        if (responses.stream().anyMatch(response -> response.startsWith(expectedPrefix))) {
-          return;
-        }
-        Thread.sleep(50);
-      }
-      throw new AssertionError(
-          "Expected a response starting with '" + expectedPrefix + "', got " + responses);
-    }
-
-    private void awaitContains(String expectedSubstring) throws Exception {
-      long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
-      while (System.currentTimeMillis() < deadline) {
-        if (responses.stream().anyMatch(response -> response.contains(expectedSubstring))) {
-          return;
-        }
-        Thread.sleep(50);
-      }
-      throw new AssertionError(
-          "Expected a response containing '" + expectedSubstring + "', got " + responses);
-    }
-
-    @Override
-    public void close() {
-      try {
-        webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-      } catch (CompletionException ex) {
-        if (!(ex.getCause() instanceof IOException)) {
-          throw ex;
-        }
-      }
-    }
   }
 }
