@@ -184,21 +184,37 @@ def verify_pre_readiness_telnet_admission():
 
 try:
     verify_pre_readiness_telnet_admission()
-wait_for_account_schema(startup_wait_seconds, timeout_seconds)
-wait_for_http_readiness("account-service", account_api_base, startup_wait_seconds, timeout_seconds)
-wait_for_http_readiness("game-logic-service", game_logic_api_base, startup_wait_seconds, timeout_seconds)
-wait_for_http_readiness("game-session-service", game_session_api_base, startup_wait_seconds, timeout_seconds)
-wait_for_http_readiness("spring-cloud-gateway", gateway_api_base, startup_wait_seconds, timeout_seconds)
-wait_for_http_readiness("tcp-proxy-service", tcp_proxy_api_base, startup_wait_seconds, timeout_seconds)
-verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds)
+    wait_for_account_schema(startup_wait_seconds, timeout_seconds)
+    wait_for_http_readiness(
+        "account-service", account_api_base, startup_wait_seconds, timeout_seconds
+    )
+    wait_for_http_readiness(
+        "game-logic-service", game_logic_api_base, startup_wait_seconds, timeout_seconds
+    )
+    wait_for_http_readiness(
+        "game-session-service", game_session_api_base, startup_wait_seconds, timeout_seconds
+    )
+    wait_for_http_readiness(
+        "spring-cloud-gateway", gateway_api_base, startup_wait_seconds, timeout_seconds
+    )
+    wait_for_http_readiness(
+        "tcp-proxy-service", tcp_proxy_api_base, startup_wait_seconds, timeout_seconds
+    )
+    verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds)
     with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
         responses = []
         send_and_expect(sock, responses, "WORLDS", [worlds_expect], "WORLDS")
-        send_and_expect(sock, responses, f"LOGIN {username} {password}", [login_expect], "LOGIN")
+        send_and_expect(
+            sock, responses, f"LOGIN {username} {password}", [login_expect], "LOGIN"
+        )
         send_and_expect(sock, responses, "PLAY demo", [play_expect], "PLAY")
         send_and_expect(sock, responses, "LOOK", [look_expect], "LOOK")
-        send_and_expect(sock, responses, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE")
-        send_and_expect(sock, responses, "GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET")
+        send_and_expect(
+            sock, responses, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE"
+        )
+        send_and_expect(
+            sock, responses, "GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET"
+        )
         send_and_expect(
             sock,
             responses,
@@ -221,10 +237,20 @@ verify_smoke_account(account_api_base, tenant_id, username, password, timeout_se
             "TAKE",
         )
         send_and_expect(sock, responses, "DROP Torch", ["You drop Torch."], "DROP")
-        send_and_expect(sock, responses, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE after DROP")
-        send_and_expect(sock, responses, "EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty")
+        send_and_expect(
+            sock,
+            responses,
+            "INV HERE",
+            ["Room Inventory:", "Torch", "Backpack"],
+            "INV HERE after DROP",
+        )
+        send_and_expect(
+            sock, responses, "EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty"
+        )
         send_and_expect(sock, responses, "WEAR Leather Cap", ["You wear Leather Cap."], "WEAR")
-        send_and_expect(sock, responses, "EQUIPMENT", ["Equipment:", "HEAD", "Leather Cap"], "EQUIPMENT worn")
+        send_and_expect(
+            sock, responses, "EQUIPMENT", ["Equipment:", "HEAD", "Leather Cap"], "EQUIPMENT worn"
+        )
         send_and_expect(sock, responses, "REMOVE HEAD", ["You remove Leather Cap."], "REMOVE")
         send_and_expect(
             sock,
