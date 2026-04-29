@@ -51,6 +51,11 @@ Entry format:
   - Observation: repo-local placement makes a personal maintenance utility look like shared project tooling, creates avoidable review churn, and pushes machine-specific defaults toward tracked files.
   - Expected pattern: helpers for one user's Codex/T3 environment should live under `~/bin` or `~/.local/bin`, source a local config file, and only leave repo-facing notes when there is a reusable process lesson.
 
+- `2026-04-29`: Repository `AGENTS.md` should stay an entrypoint and rule index, not the full system of record
+  - Context: reviewing FireMUD's top-level AI instructions against current frontier-model guidance and the repo's existing architecture and workflow docs.
+  - Observation: once `AGENTS.md` starts acting like the canonical authority for architecture, workflow variants, and operational detail, it duplicates deeper docs, increases instruction conflict risk, and spends model context on material that is better maintained elsewhere.
+  - Expected pattern: keep `AGENTS.md` short, preserve only non-negotiable workflow and safety rules there, and route the agent to canonical docs and scripts for subsystem detail.
+
 - `2026-04-27`: Docker Desktop compose teardown is safer from Codex without a PTY, and smoke proofs should not parallelize shared-session clients
   - Context: running `dev-tools/verify-fresh-bootstrap.sh` from WSL against the source-built Docker stack while validating `account-service`, `spring-cloud-gateway`, and `tcp-proxy-service` follow-up fixes.
   - Observation: the canonical smoke script hung in `docker compose ... down` when launched through a PTY-backed Codex exec session, while the same compose commands completed immediately in plain-output mode. Separately, running the WebSocket and Telnet smoke scripts in parallel against the same demo account/session produced a false failure on the Telnet path even though the underlying gameplay commands succeeded.
