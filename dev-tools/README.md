@@ -21,7 +21,7 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 - `certs/` – tracked certificate helper scripts plus ignored generated local TLS material.
 - `deploy/` – deployment preflight and overlay validation; see `deploy/README.md` for the script map.
 - `hosted/dev-demo/` – fixed `develop` hosted environment helpers.
-- `docs/` – documentation generation and validation helpers.
+- `docs/` – documentation generation and validation helpers; see `docs/README.md` for the script map.
 - `insomnia/` – Insomnia client assets.
 - `kreya/` – Kreya gRPC client assets.
 - `load-testing/` – Gatling load-testing module.
