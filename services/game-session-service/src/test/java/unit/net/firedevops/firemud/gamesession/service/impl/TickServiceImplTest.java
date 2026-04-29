@@ -542,6 +542,19 @@ class TickServiceImplTest {
         .thenReturn(List.of("N|cmd-1|say hello"));
     net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
     command.setSourceType("AUTOMATION");
+    command.setAutomationDispatchId("dispatch-1");
+    command.setAutomationWorkItemId("work-1");
+    command.setScriptId("script-1");
+    command.setScriptPatchVersion("patch-1");
+    command.setPluginId("plugin-1");
+    command.setPluginVersionId("plugin-v1");
+    command.setTargetEntityId("entity-1");
+    command.setRegionId("region-1");
+    command.setRegionEpoch(4L);
+    command.setPlayableStateScope("SHARED");
+    command.setWorldSlug("demo");
+    command.setRealmSlug("production");
+    command.setPointerVersion(17L);
     command.setDueTickId(14L);
     command.setEnqueueSeq(77L);
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
@@ -562,7 +575,35 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"sourceType\":\"AUTOMATION\""));
     org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch
+            .getSelectedWorkManifestJson()
+            .contains("\"automationDispatchId\":\"dispatch-1\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"automationWorkItemId\":\"work-1\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"scriptId\":\"script-1\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"scriptPatchVersion\":\"patch-1\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"pluginId\":\"plugin-1\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"pluginVersionId\":\"plugin-v1\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"targetEntityId\":\"entity-1\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"regionId\":\"region-1\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"regionEpoch\":4"));
+    org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"dueTickId\":14"));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"playableStateScope\":\"SHARED\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"worldSlug\":\"demo\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"realmSlug\":\"production\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"pointerVersion\":17"));
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch
             .getSelectedWorkManifestJson()
@@ -580,6 +621,9 @@ class TickServiceImplTest {
     command.setCommandText("retry look");
     command.setSanitizedCommandText("retry look");
     command.setSourceType("AUTOMATION");
+    command.setAutomationDispatchId("dispatch-2");
+    command.setScriptPatchVersion("patch-2");
+    command.setTargetEntityId("entity-2");
     command.setDueTickId(21L);
     command.setEnqueueSeq(78L);
     command.setExecutionOutcome("RETRY_QUEUED");
@@ -602,6 +646,14 @@ class TickServiceImplTest {
         stagedBatch
             .getSelectedWorkManifestJson()
             .contains("\"sourceState\":\"REDIS_RETRY_CLAIMED\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch
+            .getSelectedWorkManifestJson()
+            .contains("\"automationDispatchId\":\"dispatch-2\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"scriptPatchVersion\":\"patch-2\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"targetEntityId\":\"entity-2\""));
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"dueTickId\":21"));
   }

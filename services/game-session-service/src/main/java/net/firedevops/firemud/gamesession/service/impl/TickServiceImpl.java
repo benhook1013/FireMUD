@@ -1136,24 +1136,36 @@ public class TickServiceImpl implements TickService {
       } else {
         builder.append('"').append(jsonEscape(entry.commandId())).append('"');
       }
-      builder.append(",\"sourceType\":");
-      if (command == null || command.getSourceType() == null || command.getSourceType().isBlank()) {
-        builder.append("null");
-      } else {
-        builder.append('"').append(jsonEscape(command.getSourceType())).append('"');
-      }
-      builder.append(",\"enqueueSeq\":");
-      if (command == null || command.getEnqueueSeq() == null) {
-        builder.append("null");
-      } else {
-        builder.append(command.getEnqueueSeq());
-      }
-      builder.append(",\"dueTickId\":");
-      if (command == null || command.getDueTickId() == null) {
-        builder.append("null");
-      } else {
-        builder.append(command.getDueTickId());
-      }
+      appendJsonStringField(
+          builder, "sourceType", command == null ? null : command.getSourceType());
+      appendJsonStringField(
+          builder,
+          "automationDispatchId",
+          command == null ? null : command.getAutomationDispatchId());
+      appendJsonStringField(
+          builder,
+          "automationWorkItemId",
+          command == null ? null : command.getAutomationWorkItemId());
+      appendJsonStringField(builder, "scriptId", command == null ? null : command.getScriptId());
+      appendJsonStringField(
+          builder, "scriptPatchVersion", command == null ? null : command.getScriptPatchVersion());
+      appendJsonStringField(builder, "pluginId", command == null ? null : command.getPluginId());
+      appendJsonStringField(
+          builder, "pluginVersionId", command == null ? null : command.getPluginVersionId());
+      appendJsonStringField(
+          builder, "targetEntityId", command == null ? null : command.getTargetEntityId());
+      appendJsonStringField(builder, "regionId", command == null ? null : command.getRegionId());
+      appendJsonNumberField(
+          builder, "regionEpoch", command == null ? null : command.getRegionEpoch());
+      appendJsonNumberField(
+          builder, "enqueueSeq", command == null ? null : command.getEnqueueSeq());
+      appendJsonNumberField(builder, "dueTickId", command == null ? null : command.getDueTickId());
+      appendJsonStringField(
+          builder, "playableStateScope", command == null ? null : command.getPlayableStateScope());
+      appendJsonStringField(builder, "worldSlug", command == null ? null : command.getWorldSlug());
+      appendJsonStringField(builder, "realmSlug", command == null ? null : command.getRealmSlug());
+      appendJsonNumberField(
+          builder, "pointerVersion", command == null ? null : command.getPointerVersion());
       builder
           .append(",\"requiresSoloTick\":")
           .append(entry.requiresSoloTick())
@@ -1179,7 +1191,25 @@ public class TickServiceImpl implements TickService {
     return "REDIS_PENDING_CLAIMED";
   }
 
-  private String jsonEscape(String value) {
+  private static void appendJsonStringField(StringBuilder builder, String fieldName, String value) {
+    builder.append(",\"").append(fieldName).append("\":");
+    if (value == null || value.isBlank()) {
+      builder.append("null");
+      return;
+    }
+    builder.append('"').append(jsonEscape(value)).append('"');
+  }
+
+  private static void appendJsonNumberField(StringBuilder builder, String fieldName, Number value) {
+    builder.append(",\"").append(fieldName).append("\":");
+    if (value == null) {
+      builder.append("null");
+      return;
+    }
+    builder.append(value);
+  }
+
+  private static String jsonEscape(String value) {
     StringBuilder builder = new StringBuilder(value.length());
     for (int index = 0; index < value.length(); index++) {
       char current = value.charAt(index);
