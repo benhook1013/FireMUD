@@ -23,6 +23,7 @@ import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetDriver;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
+import net.firedevops.firemud.test.TestAsyncAssertions;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -188,19 +189,16 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
   private static void awaitCommand(String expected) {
     ensureTestServicesStarted();
-    long deadline = System.nanoTime() + COMMAND_WAIT.toNanos();
-    while (System.nanoTime() < deadline) {
-      if (GAME_SESSION_STUB.stub().receivedCommands().contains(expected)) {
-        return;
-      }
-      try {
-        TimeUnit.MILLISECONDS.sleep(50);
-      } catch (InterruptedException ex) {
-        Thread.currentThread().interrupt();
-        throw new RuntimeException(ex);
-      }
+    try {
+      TestAsyncAssertions.assertQueueContains(
+          GAME_SESSION_STUB.stub().receivedCommands(),
+          expected,
+          COMMAND_WAIT,
+          "gateway stub command " + expected);
+    } catch (InterruptedException ex) {
+      Thread.currentThread().interrupt();
+      throw new RuntimeException(ex);
     }
-    assertThat(GAME_SESSION_STUB.stub().receivedCommands()).contains(expected);
   }
 
   private static synchronized void ensureTestServicesStarted() {

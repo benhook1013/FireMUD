@@ -23,7 +23,6 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
@@ -48,6 +47,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
+import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
 import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTestConfiguration;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
@@ -712,18 +712,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   void websocketFirstPartyLoginConsumesVerifiedConnectContext() throws Exception {
     List<String> payloads;
     try (GameplayWebSocketDriver client =
-        openFirstPartyDriver(
-            "1",
-            java.util.Map.of(
-                "tenantId", "22",
-                "worldSlug", "demo",
-                "realmSlug", "production",
-                "gameInstanceId", "1",
-                "pointerVersion", "1",
-                "connectScopeId", "scope-1",
-                "connectTokenJti", "connect-jti-1",
-                "connectRequestId", "connect-req-1",
-                "gatewayRequestId", "gateway-req-1"))) {
+        openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "1"))) {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
@@ -795,18 +784,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   void websocketFirstPartyStructuredLobbyBrowseIncludesRealmAndCharacterViews() throws Exception {
     List<String> payloads;
     try (GameplayWebSocketDriver client =
-        openFirstPartyDriver(
-            "1",
-            java.util.Map.of(
-                "tenantId", "22",
-                "worldSlug", "demo",
-                "realmSlug", "production",
-                "gameInstanceId", "1",
-                "pointerVersion", "1",
-                "connectScopeId", "scope-browse-1",
-                "connectTokenJti", "connect-jti-browse-1",
-                "connectRequestId", "connect-req-browse-1",
-                "gatewayRequestId", "gateway-req-browse-1"))) {
+        openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "browse-1"))) {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
@@ -889,18 +867,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   void websocketFirstPartyStructuredWhoIncludesActivityState() throws Exception {
     List<String> payloads;
     try (GameplayWebSocketDriver client =
-        openFirstPartyDriver(
-            "1",
-            java.util.Map.of(
-                "tenantId", "22",
-                "worldSlug", "demo",
-                "realmSlug", "production",
-                "gameInstanceId", "1",
-                "pointerVersion", "1",
-                "connectScopeId", "scope-who-1",
-                "connectTokenJti", "connect-jti-who-1",
-                "connectRequestId", "connect-req-who-1",
-                "gatewayRequestId", "gateway-req-who-1"))) {
+        openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "who-1"))) {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
@@ -963,18 +930,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     List<String> payloads;
     try (GameplayWebSocketDriver client =
-        openFirstPartyDriver(
-            "1",
-            java.util.Map.of(
-                "tenantId", "22",
-                "worldSlug", "demo",
-                "realmSlug", "production",
-                "gameInstanceId", "1",
-                "pointerVersion", "1",
-                "connectScopeId", "scope-2",
-                "connectTokenJti", "connect-jti-2",
-                "connectRequestId", "connect-req-2",
-                "gatewayRequestId", "gateway-req-2"))) {
+        openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "2"))) {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
@@ -1045,18 +1001,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     GameplayWebSocketDriver.CloseEvent firstCloseEvent;
     try (GameplayWebSocketDriver client =
-        openFirstPartyDriver(
-            "1",
-            java.util.Map.of(
-                "tenantId", "22",
-                "worldSlug", "demo",
-                "realmSlug", "production",
-                "gameInstanceId", "1",
-                "pointerVersion", "1",
-                "connectScopeId", "scope-logout-1",
-                "connectTokenJti", "connect-jti-logout-1",
-                "connectRequestId", "connect-req-logout-1",
-                "gatewayRequestId", "gateway-req-logout-1"))) {
+        openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "logout-1"))) {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
@@ -1075,18 +1020,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     java.util.List<String> secondPayloads;
     try (GameplayWebSocketDriver client =
-        openFirstPartyDriver(
-            "2",
-            java.util.Map.of(
-                "tenantId", "22",
-                "worldSlug", "demo",
-                "realmSlug", "production",
-                "gameInstanceId", "1",
-                "pointerVersion", "1",
-                "connectScopeId", "scope-logout-2",
-                "connectTokenJti", "connect-jti-logout-2",
-                "connectRequestId", "connect-req-logout-2",
-                "gatewayRequestId", "gateway-req-logout-2"))) {
+        openFirstPartyDriver("2", firstPartyClaims("demo", "production", "1", "1", "logout-2"))) {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
@@ -1154,17 +1088,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     List<String> payloads;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver(
-            "2",
-            java.util.Map.of(
-                "tenantId", "22",
-                "worldSlug", "sandbox",
-                "realmSlug", "production",
-                "gameInstanceId", "1",
-                "pointerVersion", "1",
-                "connectScopeId", "scope-mismatch",
-                "connectTokenJti", "connect-jti-2",
-                "connectRequestId", "connect-req-mismatch",
-                "gatewayRequestId", "gateway-req-2"))) {
+            "2", firstPartyClaims("sandbox", "production", "1", "1", "mismatch"))) {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
@@ -1194,17 +1118,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     List<String> payloads;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver(
-            "2",
-            java.util.Map.of(
-                "tenantId", "22",
-                "worldSlug", "demo",
-                "realmSlug", "production",
-                "gameInstanceId", "1",
-                "pointerVersion", "1",
-                "connectScopeId", "scope-stale-login",
-                "connectTokenJti", "connect-jti-stale-login",
-                "connectRequestId", "connect-req-stale-login",
-                "gatewayRequestId", "gateway-req-stale-login"))) {
+            "2", firstPartyClaims("demo", "production", "1", "1", "stale-login"))) {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
@@ -1222,18 +1136,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   void websocketFirstPartyPlayRejectsCutoverAfterLogin() throws Exception {
     List<String> payloads;
     try (GameplayWebSocketDriver client =
-        openFirstPartyDriver(
-            "2",
-            java.util.Map.of(
-                "tenantId", "22",
-                "worldSlug", "demo",
-                "realmSlug", "production",
-                "gameInstanceId", "1",
-                "pointerVersion", "1",
-                "connectScopeId", "scope-stale-play",
-                "connectTokenJti", "connect-jti-stale-play",
-                "connectRequestId", "connect-req-stale-play",
-                "gatewayRequestId", "gateway-req-stale-play"))) {
+        openFirstPartyDriver("2", firstPartyClaims("demo", "production", "1", "1", "stale-play"))) {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
@@ -1266,14 +1169,11 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   private GameplayWebSocketDriver openAdmittedGameplayDriver(
       String sessionId, java.util.Map<String, String> extraHeaders) throws Exception {
-    GameplayWebSocketDriver client = openGameplayDriver(sessionId, extraHeaders);
-    try {
-      enterGameplay(client);
-      return client;
-    } catch (Exception ex) {
-      client.close();
-      throw ex;
-    }
+    return GameplayWebSocketScenarios.openAdmitted(
+        ignored -> openGameplayDriver(sessionId, extraHeaders),
+        "session-" + sessionId,
+        GameplayWebSocketScenarios.Admission.unnamed(
+            "demo@example.com", "swordfish", "demo", "Candle-lit Antechamber"));
   }
 
   private GameplayWebSocketDriver openGameplayDriver(
@@ -1287,20 +1187,39 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   private GameplayWebSocketDriver openFirstPartyDriver(
       String transportSessionId, java.util.Map<String, Object> connectClaims) {
-    return GameplayWebSocketDriver.connect(
+    return GameplayWebSocketDriver.connectFirstPartyWeb(
         websocketUri(),
         java.time.Duration.ofSeconds(10),
-        java.util.Map.of(
-            "X-Firemud-Connection-Mode",
-            "first_party_web",
-            "X-Firemud-Transport-Session-Id",
-            transportSessionId,
-            "X-Firemud-Connect-Context",
-            connectContextToken(connectClaims)));
+        transportSessionId,
+        "testsecretkeytestsecretkeytest1234",
+        connectClaims);
   }
 
-  private String connectContextToken(java.util.Map<String, Object> claims) {
-    return new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L).generateToken("123", claims);
+  private java.util.Map<String, Object> firstPartyClaims(
+      String worldSlug,
+      String realmSlug,
+      String gameInstanceId,
+      String pointerVersion,
+      String suffix) {
+    return java.util.Map.of(
+        "tenantId",
+        "22",
+        "worldSlug",
+        worldSlug,
+        "realmSlug",
+        realmSlug,
+        "gameInstanceId",
+        gameInstanceId,
+        "pointerVersion",
+        pointerVersion,
+        "connectScopeId",
+        "scope-" + suffix,
+        "connectTokenJti",
+        "connect-jti-" + suffix,
+        "connectRequestId",
+        "connect-req-" + suffix,
+        "gatewayRequestId",
+        "gateway-req-" + suffix);
   }
 
   private WebSocketHttpHeaders gameplayHeaders(String sessionId) {
@@ -1311,11 +1230,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   private URI websocketUri() {
     return URI.create("ws://localhost:" + port + "/ws/game");
-  }
-
-  private void enterGameplay(GameplayWebSocketDriver client) throws Exception {
-    client.login("demo@example.com", "swordfish");
-    client.play("demo");
   }
 
   private void performLogoutFlow(String sessionId) throws Exception {

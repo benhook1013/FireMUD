@@ -45,6 +45,40 @@ public final class GameplayTelnetScenarios {
     }
   }
 
+  public record TakeoverScenario(
+      List<String> firstResponses, GameplayTelnetDriver first, GameplayTelnetDriver takeover)
+      implements AutoCloseable {
+    public TakeoverScenario {
+      firstResponses = List.copyOf(firstResponses);
+    }
+
+    @Override
+    public List<String> firstResponses() {
+      return List.copyOf(firstResponses);
+    }
+
+    @Override
+    public void close() throws Exception {
+      Exception firstFailure = null;
+      try {
+        takeover.close();
+      } catch (Exception ex) {
+        firstFailure = ex;
+      }
+      try {
+        first.close();
+      } catch (Exception ex) {
+        if (firstFailure != null) {
+          ex.addSuppressed(firstFailure);
+        }
+        throw ex;
+      }
+      if (firstFailure != null) {
+        throw firstFailure;
+      }
+    }
+  }
+
   public record TwoPlayerScenario(GameplayTelnetDriver actor, GameplayTelnetDriver target)
       implements AutoCloseable {
     @Override
@@ -176,9 +210,25 @@ public final class GameplayTelnetScenarios {
     GameplayTelnetDriver first = openReady(factory, admission);
     try {
       firstSessionExercise.accept(first);
+      List<String> firstResponses = List.copyOf(first.responses());
       first.close();
       GameplayTelnetDriver reconnecting = openReady(factory, admission);
-      return new ReconnectScenario(List.of(), reconnecting);
+      return new ReconnectScenario(firstResponses, reconnecting);
+    } catch (Exception ex) {
+      closeQuietly(first, ex);
+      throw ex;
+    }
+  }
+
+  public static TakeoverScenario takeoverAfterAdmitted(
+      DriverFactory factory, Admission admission, DriverExercise firstSessionExercise)
+      throws Exception {
+    GameplayTelnetDriver first = openAdmitted(factory, admission);
+    try {
+      firstSessionExercise.accept(first);
+      List<String> firstResponses = List.copyOf(first.responses());
+      GameplayTelnetDriver takeover = openAdmitted(factory, admission);
+      return new TakeoverScenario(firstResponses, first, takeover);
     } catch (Exception ex) {
       closeQuietly(first, ex);
       throw ex;

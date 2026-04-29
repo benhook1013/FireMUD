@@ -41,6 +41,12 @@ public final class GameplayTranscriptMatchers {
     return promptTolerantMatcher(canonicalMoveRefresh(roomId));
   }
 
+  public static Predicate<String> matchesCanonicalMoveOrLookWithOptionalPrompt(String roomId) {
+    Predicate<String> moveRefresh = matchesCanonicalMoveRefreshWithOptionalPrompt(roomId);
+    Predicate<String> canonicalLook = matchesCanonicalLookWithOptionalPrompt(roomId);
+    return response -> moveRefresh.test(response) || canonicalLook.test(response);
+  }
+
   private static Predicate<String> promptTolerantMatcher(String canonical) {
     String leadingPrompt = "demo> \n" + canonical;
     String trailingPrompt = canonical + "\n\ndemo>";

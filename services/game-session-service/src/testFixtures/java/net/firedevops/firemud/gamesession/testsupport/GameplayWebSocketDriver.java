@@ -16,6 +16,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
+import net.firedevops.firemud.common.security.JwtUtil;
 
 /** FireMUD-specific websocket gameplay test driver for chained login/play/command flows. */
 public final class GameplayWebSocketDriver implements AutoCloseable {
@@ -95,6 +96,23 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
     headers.put("X-Tenant-Id", Long.toString(tenantId));
     headers.putAll(extraHeaders);
     return connect(uri, waitTimeout, headers);
+  }
+
+  public static GameplayWebSocketDriver connectFirstPartyWeb(
+      URI uri,
+      Duration waitTimeout,
+      String transportSessionId,
+      String jwtSecret,
+      Map<String, Object> connectClaims) {
+    String connectContextToken =
+        new JwtUtil(jwtSecret, 60_000L).generateToken("123", connectClaims);
+    return connect(
+        uri,
+        waitTimeout,
+        Map.of(
+            "X-Firemud-Connection-Mode", "first_party_web",
+            "X-Firemud-Transport-Session-Id", transportSessionId,
+            "X-Firemud-Connect-Context", connectContextToken));
   }
 
   public void send(String text) {

@@ -135,6 +135,7 @@ class MultiplayerLoadProofCrossServiceTest {
     GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
     STACK.resetScenarioState();
     STACK.clearRedis();
+    STACK.clearScreenBuffers(TENANT_ID, 1L);
     jdbc.update("DELETE FROM game_instances");
 
     List<PlayerSeed> players = new ArrayList<>();

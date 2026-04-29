@@ -8,6 +8,8 @@ import java.util.Objects;
 import javax.sql.DataSource;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.CrossServiceAppHarness;
+import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
@@ -127,6 +129,28 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     for (long characterId : characterIds) {
       screenBufferService.clear(tenantId, gameInstanceId, characterId);
     }
+  }
+
+  public long freshGameplayBaseline(
+      long tenantId,
+      long gameplayInstanceId,
+      long ownerAccountId,
+      long gameTemplateId,
+      long... characterIds) {
+    resetScenarioState();
+    clearRedis();
+    JdbcTemplate jdbc = jdbc();
+    GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
+    jdbc.update("DELETE FROM game_instances");
+    if (characterIds.length > 0) {
+      clearScreenBuffers(tenantId, gameplayInstanceId, characterIds);
+    }
+    return GameInstanceTestFixtures.insertRunningGameInstance(
+        jdbc, tenantId, ownerAccountId, gameTemplateId);
+  }
+
+  public void seedLiveSession(SessionContext context) {
+    gameSession.bean(SessionContextService.class).save(context);
   }
 
   public long insertRunningGameInstance(

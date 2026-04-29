@@ -340,10 +340,18 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void telnetReconnectAfterRevocationFailsClosed() throws Exception {
     ensureTestServicesStarted();
-    try (GameplayTelnetDriver firstClient = openAdmittedTelnetClient()) {
-      firstClient.sendLine("MOVE north");
-      assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK"))
-          .contains(LookTestFixtures.DESTINATION_ROOM_ID);
+    try (GameplayTelnetScenarios.ReconnectScenario scenario =
+        GameplayTelnetScenarios.reconnectAfterReady(
+            this::openTelnetClient,
+            GameplayTelnetScenarios.Admission.unnamed(
+                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            firstClient -> {
+              firstClient.sendLine("MOVE north");
+              assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK"))
+                  .contains(LookTestFixtures.DESTINATION_ROOM_ID);
+            })) {
+      assertThat(scenario.firstResponses())
+          .anyMatch(response -> response.contains(LookTestFixtures.DESTINATION_ROOM_ID));
     }
 
     accountStub().setGameplayAdmissionAllowed(false);
@@ -395,20 +403,21 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void telnetSecondConnectionTakesOverGameplayBinding() throws Exception {
     ensureTestServicesStarted();
-
-    try (GameplayTelnetDriver firstClient = openAdmittedTelnetClient()) {
-      firstClient.sendLine("LOOK");
-      assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK").trim())
+    try (GameplayTelnetScenarios.TakeoverScenario scenario =
+        GameplayTelnetScenarios.takeoverAfterAdmitted(
+            this::openTelnetClient,
+            GameplayTelnetScenarios.Admission.unnamed(
+                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            firstClient -> {
+              firstClient.sendLine("LOOK");
+              assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK").trim())
+                  .matches(GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt());
+            })) {
+      scenario.takeover().sendLine("LOOK");
+      assertThat(scenario.takeover().readBlockContainingOrTimeout("OK LOOK").trim())
           .matches(GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt());
-
-      try (GameplayTelnetDriver secondClient = openAdmittedTelnetClient()) {
-        secondClient.sendLine("LOOK");
-        assertThat(secondClient.readBlockContainingOrTimeout("OK LOOK").trim())
-            .matches(GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt());
-      }
-
-      firstClient.sendLine("LOOK");
-      assertThat(firstClient.readLineContaining("ERROR LOGIN_REQUIRED"))
+      scenario.first().sendLine("LOOK");
+      assertThat(scenario.first().readLineContaining("ERROR LOGIN_REQUIRED"))
           .contains("ERROR LOGIN_REQUIRED");
     }
   }
@@ -575,19 +584,17 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   private void seedLiveTargetSession() {
-    gameSession()
-        .bean(SessionContextService.class)
-        .save(
-            new SessionContext(
-                90210L,
-                TENANT_ID,
-                Long.parseLong(ChatTestFixtures.PLAYER_SORA),
-                "sora@example.com",
-                Long.parseLong(ChatTestFixtures.PLAYER_SORA),
-                "Sora",
-                DEMO_WORLD_INSTANCE_ID,
-                LookTestFixtures.ROOM_ID,
-                "target-jwt"));
+    STACK.seedLiveSession(
+        new SessionContext(
+            90210L,
+            TENANT_ID,
+            Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+            "sora@example.com",
+            Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+            "Sora",
+            DEMO_WORLD_INSTANCE_ID,
+            LookTestFixtures.ROOM_ID,
+            "target-jwt"));
   }
 
   private static GatewayHolder startGateway(int gameSessionPort) {

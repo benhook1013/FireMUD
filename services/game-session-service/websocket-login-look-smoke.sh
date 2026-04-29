@@ -42,6 +42,7 @@ repo_root = Path(os.environ["FIREMUD_REPO_ROOT"])
 sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 
 from smoke_common import (
+    gameplay_item_container_equipment_steps,
     run_command_plan,
     verify_smoke_account,
     wait_for_account_schema,
@@ -147,42 +148,15 @@ def websocket_smoke():
     )
     ws._smoke_responses = []
     try:
-        steps = [
-            ("WORLDS", [worlds_expect], "WORLDS"),
-            (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
-            ("PLAY demo", [play_expect], "PLAY"),
-            ("LOOK", [look_expect], "LOOK", look_timeout_seconds),
-            ("INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE"),
-            ("GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET"),
-            (
-                "CONTAINER Backpack",
-                ["Container: Backpack [backpack#1]", "Ration"],
-                "CONTAINER",
-            ),
-            (
-                "PUT Torch INTO Backpack",
-                ["You put Torch into Backpack.", "Container: Backpack [backpack#1]", "Torch"],
-                "PUT",
-            ),
-            (
-                "TAKE Torch FROM Backpack",
-                ["You take Torch from Backpack.", "Container: Backpack [backpack#1]", "Ration"],
-                "TAKE",
-            ),
-            ("DROP Torch", ["You drop Torch."], "DROP"),
-            ("INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE after DROP"),
-            ("EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty"),
-            ("WEAR Leather Cap", ["You wear Leather Cap."], "WEAR"),
-            ("EQUIPMENT", ["Equipment:", "HEAD", "Leather Cap"], "EQUIPMENT worn"),
-            ("REMOVE HEAD", ["You remove Leather Cap."], "REMOVE", look_timeout_seconds),
-            ("EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty again"),
-            (
-                "WEAR Iron Boots",
-                ["ERROR SLOT_INCOMPATIBLE", "Iron Boots cannot be worn by this body layout"],
-                "WEAR incompatible",
-                look_timeout_seconds,
-            ),
-        ]
+        steps = gameplay_item_container_equipment_steps(
+            username,
+            password,
+            worlds_expect,
+            login_expect,
+            play_expect,
+            look_expect,
+            look_timeout_seconds,
+        )
         run_command_plan(
             steps,
             lambda line, expected_substrings, label, timeout: send_and_expect(

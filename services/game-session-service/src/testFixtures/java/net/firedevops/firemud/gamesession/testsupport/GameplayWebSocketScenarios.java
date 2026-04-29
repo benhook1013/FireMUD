@@ -50,6 +50,40 @@ public final class GameplayWebSocketScenarios {
     }
   }
 
+  public record TakeoverScenario(
+      List<String> firstResponses, GameplayWebSocketDriver first, GameplayWebSocketDriver takeover)
+      implements AutoCloseable {
+    public TakeoverScenario {
+      firstResponses = List.copyOf(firstResponses);
+    }
+
+    @Override
+    public List<String> firstResponses() {
+      return List.copyOf(firstResponses);
+    }
+
+    @Override
+    public void close() throws Exception {
+      Exception firstFailure = null;
+      try {
+        takeover.close();
+      } catch (Exception ex) {
+        firstFailure = ex;
+      }
+      try {
+        first.close();
+      } catch (Exception ex) {
+        if (firstFailure != null) {
+          ex.addSuppressed(firstFailure);
+        }
+        throw ex;
+      }
+      if (firstFailure != null) {
+        throw firstFailure;
+      }
+    }
+  }
+
   public record TwoPlayerScenario(GameplayWebSocketDriver actor, GameplayWebSocketDriver target)
       implements AutoCloseable {
     @Override
@@ -124,6 +158,18 @@ public final class GameplayWebSocketScenarios {
     }
   }
 
+  public static GameplayWebSocketDriver openAdmitted(
+      DriverFactory factory, String connectionId, Admission admission) throws Exception {
+    GameplayWebSocketDriver driver = factory.open(connectionId);
+    try {
+      enterAdmitted(driver, admission);
+      return driver;
+    } catch (Exception ex) {
+      closeQuietly(driver, ex);
+      throw ex;
+    }
+  }
+
   public static TwoPlayerScenario openReadyPair(
       DriverFactory factory,
       String actorConnectionId,
@@ -191,19 +237,39 @@ public final class GameplayWebSocketScenarios {
     }
   }
 
-  private static void enterReady(GameplayWebSocketDriver driver, Admission admission)
+  public static TakeoverScenario takeoverAfterReady(
+      DriverFactory factory,
+      String firstConnectionId,
+      String takeoverConnectionId,
+      Admission admission,
+      DriverExercise firstSessionExercise)
       throws Exception {
+    GameplayWebSocketDriver first = openReady(factory, firstConnectionId, admission);
+    try {
+      firstSessionExercise.accept(first);
+      List<String> firstResponses = List.copyOf(first.responses());
+      GameplayWebSocketDriver takeover = openReady(factory, takeoverConnectionId, admission);
+      return new TakeoverScenario(firstResponses, first, takeover);
+    } catch (Exception ex) {
+      closeQuietly(first, ex);
+      throw ex;
+    }
+  }
+
+  private static void enterAdmitted(GameplayWebSocketDriver driver, Admission admission)
+      throws Exception {
+    driver.login(admission.email(), admission.password());
     if (admission.characterName() == null || admission.characterName().isBlank()) {
-      driver.enterGameplayAndWaitReady(
-          admission.email(), admission.password(), admission.world(), admission.readyText());
+      driver.play(admission.world());
       return;
     }
-    driver.enterGameplayAndWaitReady(
-        admission.email(),
-        admission.password(),
-        admission.world(),
-        admission.characterName(),
-        admission.readyText());
+    driver.play(admission.world(), admission.characterName());
+  }
+
+  private static void enterReady(GameplayWebSocketDriver driver, Admission admission)
+      throws Exception {
+    enterAdmitted(driver, admission);
+    driver.lookUntilReady(admission.readyText());
   }
 
   private static void closeQuietly(

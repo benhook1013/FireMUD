@@ -112,3 +112,57 @@ def run_command_plan(steps, executor):
         else:
             raise ValueError(f"Unsupported command-plan step: {step!r}")
         executor(line, expected_substrings, label, timeout)
+
+
+def gameplay_item_container_equipment_steps(
+    username,
+    password,
+    worlds_expect,
+    login_expect,
+    play_expect,
+    look_expect,
+    look_timeout=None,
+):
+    steps = [
+        ("WORLDS", [worlds_expect], "WORLDS"),
+        (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
+        ("PLAY demo", [play_expect], "PLAY"),
+        ("LOOK", [look_expect], "LOOK"),
+        ("INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE"),
+        ("GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET"),
+        (
+            "CONTAINER Backpack",
+            ["Container: Backpack [backpack#1]", "Ration"],
+            "CONTAINER",
+        ),
+        (
+            "PUT Torch INTO Backpack",
+            ["You put Torch into Backpack.", "Container: Backpack [backpack#1]", "Torch"],
+            "PUT",
+        ),
+        (
+            "TAKE Torch FROM Backpack",
+            ["You take Torch from Backpack.", "Container: Backpack [backpack#1]", "Ration"],
+            "TAKE",
+        ),
+        ("DROP Torch", ["You drop Torch."], "DROP"),
+        ("INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE after DROP"),
+        ("EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty"),
+        ("WEAR Leather Cap", ["You wear Leather Cap."], "WEAR"),
+        ("EQUIPMENT", ["Equipment:", "HEAD", "Leather Cap"], "EQUIPMENT worn"),
+        ("REMOVE HEAD", ["You remove Leather Cap."], "REMOVE"),
+        ("EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty again"),
+        (
+            "WEAR Iron Boots",
+            ["ERROR SLOT_INCOMPATIBLE", "Iron Boots cannot be worn by this body layout"],
+            "WEAR incompatible",
+        ),
+    ]
+    if look_timeout is None:
+        return steps
+    return [
+        (line, expected, label, look_timeout)
+        if label in {"LOOK", "REMOVE", "WEAR incompatible"}
+        else (line, expected, label)
+        for (line, expected, label) in steps
+    ]

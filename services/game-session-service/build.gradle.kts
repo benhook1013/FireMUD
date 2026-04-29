@@ -56,6 +56,7 @@ dependencies {
     testFixturesApi(project(":social-groups-service"))
     testFixturesApi(project(":world-management-service"))
     testFixturesImplementation(testFixtures(project(":common-test-support")))
+    testFixturesImplementation(project(":common-security"))
     testFixturesImplementation(project(":common-data-runtime"))
     testFixturesImplementation(libs.spring.boot.starter.actuator)
     testFixturesImplementation(libs.spring.boot.starter.data.redis)

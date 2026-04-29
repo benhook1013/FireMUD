@@ -8,15 +8,13 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.springcloudgateway.health.GameplayRouteReadinessHealthIndicator;
+import net.firedevops.firemud.springcloudgateway.testsupport.GatewayTestApplicationSupport;
 import net.firedevops.firemud.springcloudgateway.testsupport.GatewayWebSocketProbe;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.boot.webflux.autoconfigure.WebFluxProperties;
-import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -34,7 +32,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 class GatewayLookCommandIntegrationTest {
-  private static volatile GatewayHolder GATEWAY;
+  private static volatile GatewayTestApplicationSupport.ReactiveAppHolder GATEWAY;
 
   @AfterAll
   static void stopGateway() {
@@ -105,35 +103,14 @@ class GatewayLookCommandIntegrationTest {
     }
   }
 
-  private static GatewayHolder startGateway() {
-    ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(GatewayStubApplication.class)
-            .properties(
-                "server.port=0",
-                "spring.main.web-application-type=reactive",
-                "spring.main.allow-bean-definition-overriding=true",
-                "management.endpoint.health.group.readiness.include=readinessState")
-            .run();
-    int port = ((WebServerApplicationContext) context).getWebServer().getPort();
-    return new GatewayHolder(context, port);
-  }
-
-  private static final class GatewayHolder {
-    private final ConfigurableApplicationContext context;
-    private final int port;
-
-    private GatewayHolder(ConfigurableApplicationContext context, int port) {
-      this.context = context;
-      this.port = port;
-    }
-
-    String websocketUrl() {
-      return "ws://localhost:" + port + "/ws/game";
-    }
-
-    void close() {
-      context.close();
-    }
+  private static GatewayTestApplicationSupport.ReactiveAppHolder startGateway() {
+    return GatewayTestApplicationSupport.startReactiveApp(
+        Map.of(
+            "spring.main.allow-bean-definition-overriding",
+            "true",
+            "management.endpoint.health.group.readiness.include",
+            "readinessState"),
+        GatewayStubApplication.class);
   }
 
   @SpringBootConfiguration

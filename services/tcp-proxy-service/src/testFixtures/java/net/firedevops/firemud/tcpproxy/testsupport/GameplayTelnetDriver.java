@@ -20,6 +20,7 @@ public final class GameplayTelnetDriver implements AutoCloseable {
   private final PrintWriter writer;
   private final BufferedReader reader;
   private final Duration waitTimeout;
+  private final List<String> responses = new ArrayList<>();
 
   private GameplayTelnetDriver(
       Socket socket, PrintWriter writer, BufferedReader reader, Duration waitTimeout) {
@@ -84,6 +85,10 @@ public final class GameplayTelnetDriver implements AutoCloseable {
     writer.println(command);
   }
 
+  public List<String> responses() {
+    return List.copyOf(responses);
+  }
+
   public String sendAndExpectExactLine(String command, String expectedLine) throws IOException {
     for (int attempt = 1; attempt <= 2; attempt++) {
       sendLine(command);
@@ -91,7 +96,7 @@ public final class GameplayTelnetDriver implements AutoCloseable {
       while (true) {
         final String line;
         try {
-          line = reader.readLine();
+          line = readRecordedLine();
         } catch (java.net.SocketTimeoutException ex) {
           if (attempt == 1 && received.isEmpty()) {
             break;
@@ -124,7 +129,7 @@ public final class GameplayTelnetDriver implements AutoCloseable {
   public String readLineContaining(String expectedSubstring) throws IOException {
     long deadline = System.nanoTime() + waitTimeout.toNanos();
     while (System.nanoTime() < deadline) {
-      String line = reader.readLine();
+      String line = readRecordedLine();
       if (line == null) {
         throw new AssertionError("Expected line containing '" + expectedSubstring + "'");
       }
@@ -144,7 +149,7 @@ public final class GameplayTelnetDriver implements AutoCloseable {
     long deadline = System.nanoTime() + waitTimeout.toNanos();
     StringBuilder block = new StringBuilder();
     while (System.nanoTime() < deadline) {
-      String line = reader.readLine();
+      String line = readRecordedLine();
       if (line == null) {
         break;
       }
@@ -164,7 +169,7 @@ public final class GameplayTelnetDriver implements AutoCloseable {
   public String readMultiLineResponse() throws IOException {
     List<String> lines = new ArrayList<>();
     String line;
-    while ((line = reader.readLine()) != null) {
+    while ((line = readRecordedLine()) != null) {
       lines.add(line);
       if (line.isEmpty()) {
         break;
@@ -174,10 +179,18 @@ public final class GameplayTelnetDriver implements AutoCloseable {
   }
 
   private void expectExactLine(String expected) throws IOException {
-    String line = reader.readLine();
+    String line = readRecordedLine();
     if (!expected.equals(line)) {
       throw new AssertionError("Expected line '" + expected + "' but got '" + line + "'");
     }
+  }
+
+  private String readRecordedLine() throws IOException {
+    String line = reader.readLine();
+    if (line != null) {
+      responses.add(line);
+    }
+    return line;
   }
 
   private String readBlockContaining(String expectedSubstring, boolean returnOnTimeout)
@@ -188,7 +201,7 @@ public final class GameplayTelnetDriver implements AutoCloseable {
     while (System.nanoTime() < deadline) {
       final String line;
       try {
-        line = reader.readLine();
+        line = readRecordedLine();
       } catch (java.net.SocketTimeoutException ex) {
         if (returnOnTimeout) {
           return block.toString();

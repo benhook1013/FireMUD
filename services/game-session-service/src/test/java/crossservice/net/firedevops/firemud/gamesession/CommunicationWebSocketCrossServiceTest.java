@@ -5,11 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
-import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
-import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
 import net.firedevops.firemud.gamesession.testsupport.GameplayEntityAssertions;
@@ -20,7 +17,6 @@ import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -351,26 +347,18 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   private long prepareGameInstance() {
-    STACK.resetScenarioState();
-    STACK.clearRedis();
-    gameSession()
-        .bean(ScreenBufferService.class)
-        .clear(TENANT_ID, DEMO_WORLD_INSTANCE_ID, ACCOUNT_ID);
-    gameSession()
-        .bean(ScreenBufferService.class)
-        .clear(TENANT_ID, DEMO_WORLD_INSTANCE_ID, Long.parseLong(ChatTestFixtures.PLAYER_SORA));
-    gameSession()
-        .bean(ScreenBufferService.class)
-        .clear(TENANT_ID, DEMO_WORLD_INSTANCE_ID, Long.parseLong(ChatTestFixtures.PLAYER_NYX));
-    JdbcTemplate jdbc = new JdbcTemplate(gameSession().bean(javax.sql.DataSource.class));
-    GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
-    jdbc.update("DELETE FROM game_instances");
-    return GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, ACCOUNT_ID, 7L);
+    return STACK.freshGameplayBaseline(
+        TENANT_ID,
+        DEMO_WORLD_INSTANCE_ID,
+        ACCOUNT_ID,
+        7L,
+        ACCOUNT_ID,
+        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+        Long.parseLong(ChatTestFixtures.PLAYER_NYX));
   }
 
   private void seedLiveTargetSession() {
-    SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
-    sessionContextService.save(
+    STACK.seedLiveSession(
         new SessionContext(
             90210L,
             TENANT_ID,
