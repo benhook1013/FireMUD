@@ -14,6 +14,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -213,6 +214,8 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void getGameInstanceRuntimeStateReturnsCanonicalVersionAndPinMetadata() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
@@ -228,9 +231,35 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setScriptPatchPinnedReason("roll-forward");
     instance.setScriptPatchPinnedControlPlaneRequestId("req-77");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    Mockito.when(authorityService.findByRuntimeTarget(1L, 7L))
+        .thenReturn(
+            Optional.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Production",
+                    1L,
+                    7L,
+                    11L,
+                    true,
+                    true,
+                    true,
+                    "SHARED",
+                    "CREATE_ALLOWED")));
 
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
-    GameSessionControlPlaneGrpcService service = newService(repository);
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            repository,
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            authorityService,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            BuiltInTextCommandAliasResolver.unsupported(),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
 
     AtomicReference<GetGameInstanceRuntimeStateResponse> responseRef = new AtomicReference<>();
     service.getGameInstanceRuntimeState(
@@ -257,6 +286,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("roll-forward", responseRef.get().getRuntimeState().getScriptPatchPinnedReason());
     assertEquals(
         "req-77", responseRef.get().getRuntimeState().getScriptPatchPinnedControlPlaneRequestId());
+    assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getRuntimeState().getPlayableStateScope());
   }
 
   @Test

@@ -28,6 +28,7 @@ import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -158,6 +159,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setRegionId(normalize(request.getRegionId()));
     audit.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L);
     audit.setEntityId(normalize(request.getEntityId()));
+    audit.setPlayableStateScope(normalizePlayableStateScope(request.getPlayableStateScope()));
     audit.setScriptId(normalize(request.getScriptId()));
     audit.setPluginId(normalize(request.getPluginId()));
     audit.setPluginVersionId(normalize(request.getPluginVersionId()));
@@ -368,6 +370,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setRegionId(normalize(request.getRegionId()));
     item.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L);
     item.setEntityId(normalize(request.getEntityId()));
+    item.setPlayableStateScope(normalizePlayableStateScope(request.getPlayableStateScope()));
     item.setScriptId(binding.getScriptId());
     item.setPluginId(normalize(request.getPluginId()));
     item.setPluginVersionId(normalize(request.getPluginVersionId()));
@@ -409,6 +412,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setRegionId(normalize(request.getRegionId()));
     audit.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L);
     audit.setEntityId(normalize(request.getEntityId()));
+    audit.setPlayableStateScope(normalizePlayableStateScope(request.getPlayableStateScope()));
     audit.setScriptId(binding.getScriptId());
     audit.setEventType(request.getEventType());
     audit.setEventSchemaVersion(schemaVersion);
@@ -427,12 +431,13 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private boolean handlerAuditExists(
       TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
     return eventAuditRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             request.getTenantId(),
             normalize(request.getGameInstanceId()),
             normalize(request.getRegionId()),
             request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
             normalize(request.getEntityId()),
+            normalizePlayableStateScope(request.getPlayableStateScope()),
             binding.getScriptId(),
             request.getEventType(),
             schemaVersion,
@@ -444,12 +449,13 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private boolean workItemExists(
       TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
     return workItemRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             request.getTenantId(),
             normalize(request.getGameInstanceId()),
             normalize(request.getRegionId()),
             request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
             normalize(request.getEntityId()),
+            normalizePlayableStateScope(request.getPlayableStateScope()),
             binding.getScriptId(),
             request.getEventType(),
             schemaVersion,
@@ -477,12 +483,13 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     }
     var existing =
         repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 request.getTenantId(),
                 normalize(request.getGameInstanceId()),
                 normalize(request.getRegionId()),
                 request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
                 normalize(request.getEntityId()),
+                normalizePlayableStateScope(request.getPlayableStateScope()),
                 request.getEventType(),
                 schemaVersion,
                 request.getScriptPatchVersion(),
@@ -518,6 +525,17 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
           : "service:" + serviceName + ":" + serviceInstanceId;
     }
     return SessionContext.hasGlobalPrivilegedRole() ? "operator" : "";
+  }
+
+  private static String normalizePlayableStateScope(PlayableStateScope playableStateScope) {
+    if (playableStateScope == null) {
+      return "";
+    }
+    return switch (playableStateScope) {
+      case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
+      case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
+      case PLAYABLE_STATE_SCOPE_UNSPECIFIED, UNRECOGNIZED -> "";
+    };
   }
 
   private static String requiredText(String value, String fieldName) {

@@ -29,6 +29,7 @@ import net.firedevops.firemud.automationscripting.service.AutomationAdmissionSta
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -110,6 +111,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setRuntimeVersionId("runtime-v2")
             .setScriptPatchPinnedControlPlaneRequestId("req-1")
             .setScriptPatchPinnedAtMs(1_000L)
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .build());
 
     @SuppressWarnings("unchecked")
@@ -126,6 +128,7 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(6_000L));
               assertThat(instance.getObservedRuntimeVersionId()).isEqualTo("runtime-v2");
               assertThat(instance.getLastObservedControlPlaneRequestId()).isEqualTo("req-1");
+              assertThat(instance.getPlayableStateScope()).isEqualTo("SHARED");
               assertThat(instance.getTargetScopeType()).isEqualTo("ENTITY");
               assertThat(instance.getTargetScopeId()).isEqualTo("guard-1");
               assertThat(instance.getBindingPriority()).isEqualTo(10);
@@ -215,6 +218,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .build());
 
     @SuppressWarnings("unchecked")
@@ -288,6 +292,7 @@ class ScriptScheduleInstanceServiceImplTest {
     tickInstance.setPriorityTag("high");
     tickInstance.setTargetScopeType("ENTITY");
     tickInstance.setTargetScopeId("guard-1");
+    tickInstance.setPlayableStateScope("SHARED");
     tickInstance.setMaterializationStatus("READY");
     tickInstance.setRuntimeRegionId("region-1");
     tickInstance.setRuntimeRegionEpoch(12L);
@@ -318,6 +323,7 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getRegionId()).isEqualTo("region-1");
     assertThat(workItem.getRegionEpoch()).isEqualTo(12L);
     assertThat(workItem.getEntityId()).isEqualTo("guard-1");
+    assertThat(workItem.getPlayableStateScope()).isEqualTo("SHARED");
     assertThat(workItem.getTriggerMode()).isEqualTo("TRIGGER_MODE_CATCH_UP");
     assertThat(workItem.getPriorityTag()).isEqualTo("high");
     assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
@@ -351,6 +357,7 @@ class ScriptScheduleInstanceServiceImplTest {
     timerInstance.setPriorityTag("normal");
     timerInstance.setTargetScopeType("ENTITY");
     timerInstance.setTargetScopeId("guard-1");
+    timerInstance.setPlayableStateScope("SHARED");
     timerInstance.setMaterializationStatus("READY");
     timerInstance.setNextDueAt(Instant.ofEpochMilli(5_000L));
     timerInstance.setScheduleMetadataJson("{}");
@@ -410,6 +417,7 @@ class ScriptScheduleInstanceServiceImplTest {
     timerInstance.setPriorityTag("normal");
     timerInstance.setTargetScopeType("ENTITY");
     timerInstance.setTargetScopeId("guard-1");
+    timerInstance.setPlayableStateScope("SHARED");
     timerInstance.setMaterializationStatus("READY");
     timerInstance.setRuntimeRegionId("region-old");
     timerInstance.setRuntimeRegionEpoch(11L);
@@ -522,6 +530,7 @@ class ScriptScheduleInstanceServiceImplTest {
     tickInstance.setPriorityTag("high");
     tickInstance.setTargetScopeType("ENTITY");
     tickInstance.setTargetScopeId("guard-1");
+    tickInstance.setPlayableStateScope("SHARED");
     tickInstance.setMaterializationStatus("READY");
     tickInstance.setRuntimeRegionId("region-1");
     tickInstance.setRuntimeRegionEpoch(12L);
@@ -543,6 +552,7 @@ class ScriptScheduleInstanceServiceImplTest {
     timerInstance.setPriorityTag("normal");
     timerInstance.setTargetScopeType("ENTITY");
     timerInstance.setTargetScopeId("guard-1");
+    timerInstance.setPlayableStateScope("SHARED");
     timerInstance.setMaterializationStatus("READY");
     timerInstance.setNextDueAt(Instant.ofEpochMilli(5_000L));
     timerInstance.setScheduleMetadataJson("{}");
@@ -663,6 +673,7 @@ class ScriptScheduleInstanceServiceImplTest {
     instance.setPriorityTag("normal");
     instance.setTargetScopeType("ENTITY");
     instance.setTargetScopeId(targetScopeId);
+    instance.setPlayableStateScope("SHARED");
     instance.setMaterializationStatus("READY");
     instance.setRuntimeRegionId("region-1");
     instance.setRuntimeRegionEpoch(12L);

@@ -100,12 +100,13 @@ class ScriptEventIngressServiceImplTest {
     when(workItemRepository.save(Mockito.any(ScriptWorkItem.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 "1",
                 "game-1",
                 "region-1",
                 7L,
                 "entity-1",
+                "SHARED",
                 "onCommand",
                 "v1",
                 "patch-1",
@@ -151,6 +152,9 @@ class ScriptEventIngressServiceImplTest {
                 .setRegionId("region-1")
                 .setRegionEpoch(7)
                 .setEntityId("entity-1")
+                .setPlayableStateScope(
+                    net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                        .PLAYABLE_STATE_SCOPE_SHARED)
                 .setScriptId("script-1")
                 .setPluginId("plugin-1")
                 .setPluginVersionId("plugin-v1")
@@ -175,6 +179,7 @@ class ScriptEventIngressServiceImplTest {
     assertThat(workItemCaptor.getValue().getScriptId()).isEqualTo("script-1");
     assertThat(workItemCaptor.getValue().getPluginId()).isEqualTo("plugin-1");
     assertThat(workItemCaptor.getValue().getPluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(workItemCaptor.getValue().getPlayableStateScope()).isEqualTo("SHARED");
     assertThat(workItemCaptor.getValue().getPriorityTag()).isEqualTo("high");
     assertThat(workItemCaptor.getValue().getStatus()).isEqualTo("PENDING_EVALUATION");
     ArgumentCaptor<ScriptEventAudit> eventAuditCaptor =
@@ -346,12 +351,13 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptQuotaService quotaService = Mockito.mock(ScriptQuotaService.class);
     when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 "1",
                 "game-1",
                 "region-1",
                 7L,
                 "entity-1",
+                "",
                 "onCommand",
                 "v1",
                 "patch-1",
@@ -425,12 +431,13 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptDryRunQuotaService dryRunQuotaService = Mockito.mock(ScriptDryRunQuotaService.class);
     when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 "1",
                 "game-1",
                 "region-1",
                 7L,
                 "entity-1",
+                "",
                 "onCommand",
                 "v1",
                 "patch-1",
@@ -650,12 +657,13 @@ class ScriptEventIngressServiceImplTest {
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 "1",
                 "game-1",
                 "region-1",
                 7L,
                 "entity-1",
+                "",
                 "onCommand",
                 "v1",
                 "patch-1",

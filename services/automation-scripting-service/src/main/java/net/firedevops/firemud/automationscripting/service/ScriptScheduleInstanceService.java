@@ -30,6 +30,7 @@ public interface ScriptScheduleInstanceService {
       String gameInstanceId,
       String scriptPatchVersion,
       String scriptId,
+      String playableStateScope,
       String pluginId,
       String pluginVersionId,
       String eventType,

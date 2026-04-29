@@ -34,6 +34,9 @@ public class ScriptPatchPinProjection {
   @Column(nullable = false, length = 128)
   private String observedPinnedScriptPatchVersion = "";
 
+  @Column(nullable = false, length = 32)
+  private String playableStateScope = "";
+
   @Column(nullable = false, length = 128)
   private String lastObservedControlPlaneRequestId = "";
 

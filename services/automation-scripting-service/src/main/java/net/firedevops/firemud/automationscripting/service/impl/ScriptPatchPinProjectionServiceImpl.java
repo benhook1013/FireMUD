@@ -10,6 +10,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProje
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.springframework.context.annotation.Lazy;
@@ -108,6 +109,8 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     projection.setTenantId(tenantId);
     projection.setGameInstanceId(gameInstanceId);
     projection.setObservedPinnedScriptPatchVersion(runtimeState.getPinnedScriptPatchVersion());
+    projection.setPlayableStateScope(
+        normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
     projection.setLastObservedControlPlaneRequestId(
         runtimeState.getScriptPatchPinnedControlPlaneRequestId());
     projection.setObservedAt(
@@ -143,5 +146,16 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(fieldName + " is required");
     }
+  }
+
+  private static String normalizePlayableStateScope(PlayableStateScope playableStateScope) {
+    if (playableStateScope == null) {
+      return "";
+    }
+    return switch (playableStateScope) {
+      case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
+      case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
+      case PLAYABLE_STATE_SCOPE_UNSPECIFIED, UNRECOGNIZED -> "";
+    };
   }
 }

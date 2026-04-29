@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -40,9 +41,7 @@ class AutomationScriptEventPublisherTest {
         new AutomationScriptEventPublisher(
             client, statusRepository, gameInstanceRepository, Runnable::run);
 
-    publisher.publishCommandEvent(
-        new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room", "jwt"),
-        command("cmd-1", "LOOK"));
+    publisher.publishCommandEvent(sharedGameplayContext("room"), command("cmd-1", "LOOK"));
 
     ArgumentCaptor<TriggerScriptEventRequest> captor =
         ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
@@ -53,6 +52,8 @@ class AutomationScriptEventPublisherTest {
     assertThat(request.getRegionId()).isEqualTo("99");
     assertThat(request.getRegionEpoch()).isEqualTo(7L);
     assertThat(request.getEntityId()).isEqualTo("44");
+    assertThat(request.getPlayableStateScope())
+        .isEqualTo(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     assertThat(request.getEventType()).isEqualTo("onCommand");
     assertThat(request.getScriptPatchVersion()).isEqualTo("patch-1");
     assertThat(request.getScriptEventId()).isEqualTo("cmd-1");
@@ -74,9 +75,7 @@ class AutomationScriptEventPublisherTest {
         new AutomationScriptEventPublisher(
             client, statusRepository, gameInstanceRepository, Runnable::run);
 
-    publisher.publishCommandEvent(
-        new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room", "jwt"),
-        command("cmd-1", "LOOK"));
+    publisher.publishCommandEvent(sharedGameplayContext("room"), command("cmd-1", "LOOK"));
 
     verify(client, never()).triggerScriptEvent(Mockito.any());
   }
@@ -100,9 +99,7 @@ class AutomationScriptEventPublisherTest {
             client, statusRepository, gameInstanceRepository, Runnable::run);
 
     publisher.publishRegionTransitionEvents(
-        new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room-a", "jwt"),
-        new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room-b", "jwt"),
-        "effect-1");
+        sharedGameplayContext("room-a"), sharedGameplayContext("room-b"), "effect-1");
 
     ArgumentCaptor<TriggerScriptEventRequest> captor =
         ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
@@ -113,6 +110,9 @@ class AutomationScriptEventPublisherTest {
     assertThat(captor.getAllValues())
         .extracting(TriggerScriptEventRequest::getScriptEventId)
         .containsExactly("effect-1:leave", "effect-1:enter");
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getPlayableStateScope)
+        .containsOnly(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     assertThat(captor.getAllValues())
         .extracting(TriggerScriptEventRequest::getPayloadJson)
         .allSatisfy(
@@ -128,5 +128,24 @@ class AutomationScriptEventPublisherTest {
     command.setCommandName(commandName);
     command.setAcceptedAt(Instant.now());
     return command;
+  }
+
+  private static SessionContext sharedGameplayContext(String roomId) {
+    return new SessionContext(
+        17L,
+        9L,
+        3L,
+        "demo",
+        44L,
+        "char",
+        99L,
+        roomId,
+        "jwt",
+        null,
+        99L,
+        "demo",
+        "production",
+        7L,
+        "SHARED");
   }
 }

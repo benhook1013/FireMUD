@@ -503,6 +503,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         item.getRegionId(),
         item.getRegionEpoch(),
         item.getEntityId(),
+        blankToEmpty(item.getPlayableStateScope()),
         item.getScriptId(),
         item.getEventType(),
         item.getScriptPatchVersion(),
@@ -527,6 +528,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         event.getAutomationDispatchId(),
         blankToEmpty(event.getGameSessionCommandId()),
         event.getTargetEntityId(),
+        blankToEmpty(event.getPlayableStateScope()),
         event.getEmittedCommandText(),
         event.getHandoffOutcome(),
         event.getHandoffReason(),
@@ -583,12 +585,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     }
     Optional<ScriptEventIngressAudit> audit =
         ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 item.getTenantId(),
                 item.getGameInstanceId(),
                 item.getRegionId(),
                 item.getRegionEpoch(),
                 item.getEntityId(),
+                blankToEmpty(item.getPlayableStateScope()),
                 item.getEventType(),
                 item.getEventSchemaVersion(),
                 item.getScriptPatchVersion(),

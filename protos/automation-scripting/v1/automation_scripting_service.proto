@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package automation_scripting.v1;
 
+import "entity-management/v1/entity_management_service.proto";
 import "shared/v1/errors.proto";
 
 option java_package = "net.firedevops.firemud.automationscripting.v1";
@@ -266,6 +267,7 @@ message ScriptDeadLetterEntry {
   string reason = 12;
   int64 created_at_ms = 13;
   int64 updated_at_ms = 14;
+  entity_management.v1.PlayableStateScope playable_state_scope = 15;
 }
 
 message ListScriptDeadLettersResponse {
@@ -364,6 +366,11 @@ message TriggerScriptEventRequest {
   // Required when the event registry marks the event as producer-supplied
   // authoritative snapshot. The token format is registry/event-specific.
   string read_snapshot_token = 18;
+
+  // Gameplay-originated triggers should carry the resolved playable-state namespace explicitly so
+  // downstream scripting work does not infer shared-vs-isolated roster policy from instance ids
+  // alone. Non-gameplay/global triggers may leave this unspecified.
+  entity_management.v1.PlayableStateScope playable_state_scope = 19;
 }
 
 message TriggerScriptEventResponse {
@@ -540,6 +547,7 @@ message ScriptScheduleInstanceEntry {
   int64 runtime_region_epoch = 26;
   int64 last_observed_tick_id = 27;
   int64 last_runtime_progress_observed_at_ms = 28;
+  entity_management.v1.PlayableStateScope playable_state_scope = 29;
 }
 
 message ListScriptScheduleInstancesResponse {
@@ -627,6 +635,7 @@ message ScriptHandoffEventEntry {
   string handoff_outcome = 14;
   string handoff_reason = 15;
   int64 observed_at_ms = 16;
+  entity_management.v1.PlayableStateScope playable_state_scope = 17;
 }
 
 message ListScriptHandoffEventsResponse {

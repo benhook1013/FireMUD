@@ -54,6 +54,9 @@ public class ScriptHandoffEvent {
   @Column(nullable = false, length = 64)
   private String targetEntityId;
 
+  @Column(nullable = false, length = 32)
+  private String playableStateScope = "";
+
   @Column(nullable = false, length = 1024)
   private String emittedCommandText;
 

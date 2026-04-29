@@ -19,12 +19,13 @@ public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, 
   }
 
   boolean
-      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
           String tenantId,
           String gameInstanceId,
           String regionId,
           Long regionEpoch,
           String entityId,
+          String playableStateScope,
           String scriptId,
           String eventType,
           String eventSchemaVersion,

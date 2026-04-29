@@ -33,6 +33,7 @@ import net.firedevops.firemud.automationscripting.service.AutomationQueueService
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -118,6 +119,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     for (ScriptScheduleInstance instance : existing) {
       existingByKey.put(
           scopeKey(
+              instance.getPlayableStateScope(),
               instance.getPluginId(),
               instance.getPluginVersionId(),
               instance.getScheduleDefinitionId(),
@@ -140,6 +142,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       for (ScriptEventBinding binding : matchingBindings(bindingsByScriptEvent, definition)) {
         String key =
             scopeKey(
+                normalizePlayableStateScope(runtimeState.getPlayableStateScope()),
                 definition.getPluginId(),
                 definition.getPluginVersionId(),
                 definition.getScheduleDefinitionId(),
@@ -167,6 +170,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 instance ->
                     !desiredKeys.contains(
                         scopeKey(
+                            instance.getPlayableStateScope(),
                             instance.getPluginId(),
                             instance.getPluginVersionId(),
                             instance.getScheduleDefinitionId(),
@@ -194,6 +198,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               .setTenantId(projection.getTenantId())
               .setGameInstanceId(projection.getGameInstanceId())
               .setPinnedScriptPatchVersion(projection.getObservedPinnedScriptPatchVersion())
+              .setPlayableStateScope(toPlayableStateScope(projection.getPlayableStateScope()))
               .setScriptPatchPinnedControlPlaneRequestId(
                   projection.getLastObservedControlPlaneRequestId())
               .setScriptPatchPinnedAtMs(projection.getObservedAt().toEpochMilli())
@@ -374,6 +379,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setGameInstanceId(gameInstanceId);
     instance.setScriptPatchVersion(definition.getScriptPatchVersion());
     instance.setScriptId(definition.getScriptId());
+    instance.setPlayableStateScope(
+        normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
     instance.setPluginId(blankToEmpty(definition.getPluginId()));
     instance.setPluginVersionId(blankToEmpty(definition.getPluginVersionId()));
     instance.setEventType(definition.getEventType());
@@ -565,12 +572,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     String entityId = targetEntityId(instance);
     String scriptEventId = timerScriptEventId(candidate);
     if (eventAuditRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             instance.getTenantId(),
             instance.getGameInstanceId(),
             candidate.regionId(),
             candidate.regionEpoch(),
             entityId,
+            blankToEmpty(instance.getPlayableStateScope()),
             instance.getScriptId(),
             instance.getEventType(),
             DEFAULT_SCHEMA_VERSION,
@@ -585,6 +593,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setRegionId(candidate.regionId());
     audit.setRegionEpoch(candidate.regionEpoch());
     audit.setEntityId(entityId);
+    audit.setPlayableStateScope(blankToEmpty(instance.getPlayableStateScope()));
     audit.setScriptId(instance.getScriptId());
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
@@ -669,12 +678,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     String entityId = targetEntityId(instance);
     String scriptEventId = timerScriptEventId(candidate);
     if (workItemRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             instance.getTenantId(),
             instance.getGameInstanceId(),
             candidate.regionId(),
             candidate.regionEpoch(),
             entityId,
+            blankToEmpty(instance.getPlayableStateScope()),
             instance.getScriptId(),
             instance.getEventType(),
             DEFAULT_SCHEMA_VERSION,
@@ -692,6 +702,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setRegionId(candidate.regionId());
     item.setRegionEpoch(candidate.regionEpoch());
     item.setEntityId(entityId);
+    item.setPlayableStateScope(blankToEmpty(instance.getPlayableStateScope()));
     item.setScriptId(instance.getScriptId());
     item.setPluginId(blankToEmpty(instance.getPluginId()));
     item.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
@@ -731,6 +742,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setRegionId(candidate.regionId());
     audit.setRegionEpoch(candidate.regionEpoch());
     audit.setEntityId(workItem.getEntityId());
+    audit.setPlayableStateScope(blankToEmpty(workItem.getPlayableStateScope()));
     audit.setScriptId(instance.getScriptId());
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
@@ -802,7 +814,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   private static String scheduleKey(ScriptScheduleInstance instance) {
-    return blankToEmpty(instance.getPluginId())
+    return blankToEmpty(instance.getPlayableStateScope())
+        + "|"
+        + blankToEmpty(instance.getPluginId())
         + "|"
         + blankToEmpty(instance.getPluginVersionId())
         + "|"
@@ -837,6 +851,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         instance.getGameInstanceId(),
         instance.getScriptPatchVersion(),
         instance.getScriptId(),
+        blankToEmpty(instance.getPlayableStateScope()),
         instance.getPluginId(),
         instance.getPluginVersionId(),
         instance.getEventType(),
@@ -868,12 +883,15 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   private static String scopeKey(
+      String playableStateScope,
       String pluginId,
       String pluginVersionId,
       String scheduleDefinitionId,
       String targetScopeType,
       String targetScopeId) {
-    return blankToEmpty(pluginId)
+    return blankToEmpty(playableStateScope)
+        + "\u0000"
+        + blankToEmpty(pluginId)
         + "\u0000"
         + blankToEmpty(pluginVersionId)
         + "\u0000"
@@ -886,6 +904,25 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private static String bindingKey(String scriptId, String eventType) {
     return blankToEmpty(scriptId) + "\u0000" + blankToEmpty(eventType);
+  }
+
+  private static String normalizePlayableStateScope(PlayableStateScope playableStateScope) {
+    if (playableStateScope == null) {
+      return "";
+    }
+    return switch (playableStateScope) {
+      case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
+      case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
+      case PLAYABLE_STATE_SCOPE_UNSPECIFIED, UNRECOGNIZED -> "";
+    };
+  }
+
+  private static PlayableStateScope toPlayableStateScope(String playableStateScope) {
+    return switch (blankToEmpty(playableStateScope)) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+    };
   }
 
   private record TickAdvanceResult(

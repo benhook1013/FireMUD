@@ -68,6 +68,7 @@ import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionReque
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
@@ -899,6 +900,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setRegionId(summary.regionId())
         .setRegionEpoch(summary.regionEpoch())
         .setEntityId(summary.entityId())
+        .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
         .setScriptId(summary.scriptId())
         .setEventType(summary.eventType())
         .setScriptPatchVersion(summary.scriptPatchVersion())
@@ -970,6 +972,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setRuntimeRegionEpoch(summary.runtimeRegionEpoch())
         .setLastObservedTickId(summary.lastObservedTickId())
         .setLastRuntimeProgressObservedAtMs(summary.lastRuntimeProgressObservedAtMs())
+        .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
         .build();
   }
 
@@ -988,10 +991,23 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setAutomationDispatchId(summary.automationDispatchId())
         .setGameSessionCommandId(summary.gameSessionCommandId())
         .setTargetEntityId(summary.targetEntityId())
+        .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
         .setEmittedCommandText(summary.emittedCommandText())
         .setHandoffOutcome(summary.handoffOutcome())
         .setHandoffReason(summary.handoffReason())
         .setObservedAtMs(summary.observedAtMs())
         .build();
+  }
+
+  private static PlayableStateScope toPlayableStateScope(String playableStateScope) {
+    return switch (normalize(playableStateScope)) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+    };
+  }
+
+  private static String normalize(String value) {
+    return value == null ? "" : value.trim().toUpperCase(java.util.Locale.ROOT);
   }
 }

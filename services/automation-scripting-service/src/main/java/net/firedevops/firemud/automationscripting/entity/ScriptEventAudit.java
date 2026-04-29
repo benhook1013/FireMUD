@@ -33,6 +33,9 @@ public class ScriptEventAudit {
   @Column(nullable = false, length = 64)
   private String entityId;
 
+  @Column(nullable = false, length = 32)
+  private String playableStateScope = "";
+
   @Column(nullable = false, length = 128)
   private String scriptId;
 

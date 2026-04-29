@@ -10,6 +10,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
 import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -728,6 +729,7 @@ public final class GameSessionControlPlaneGrpcService
                           instance.getScriptPatchPinnedControlPlaneRequestId() == null
                               ? ""
                               : instance.getScriptPatchPinnedControlPlaneRequestId())
+                      .setPlayableStateScope(resolvePlayableStateScope(instance))
                       .build())
               .build();
       responseObserver.onNext(response);
@@ -1385,6 +1387,20 @@ public final class GameSessionControlPlaneGrpcService
 
   private String normalizeBlank(String value) {
     return value == null || value.isBlank() ? "" : value;
+  }
+
+  private PlayableStateScope resolvePlayableStateScope(GameInstance instance) {
+    return gameplayAdmissionPointerAuthorityService
+        .findByRuntimeTarget(instance.getTenantId(), instance.getId())
+        .map(GameplayAdmissionPointerSnapshot::stateScope)
+        .map(
+            stateScope ->
+                switch (normalizeBlank(stateScope)) {
+                  case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+                  case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+                  default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+                })
+        .orElse(PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED);
   }
 
   private void requireText(String value, String message) {

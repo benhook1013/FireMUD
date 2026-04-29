@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package game_session.v1;
 
+import "entity-management/v1/entity_management_service.proto";
 import "shared/v1/errors.proto";
 
 option java_package = "net.firedevops.firemud.gamesession.v1";
@@ -329,6 +330,7 @@ message GameInstanceRuntimeState {
   string script_patch_pinned_by = 11;
   string script_patch_pinned_reason = 12;
   string script_patch_pinned_control_plane_request_id = 13;
+  entity_management.v1.PlayableStateScope playable_state_scope = 14;
 }
 
 message GetGameInstanceRuntimeStateResponse {

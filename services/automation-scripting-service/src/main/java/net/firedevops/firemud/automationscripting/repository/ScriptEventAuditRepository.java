@@ -8,12 +8,13 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface ScriptEventAuditRepository extends JpaRepository<ScriptEventAudit, Long> {
   boolean
-      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
           String tenantId,
           String gameInstanceId,
           String regionId,
           Long regionEpoch,
           String entityId,
+          String playableStateScope,
           String scriptId,
           String eventType,
           String eventSchemaVersion,

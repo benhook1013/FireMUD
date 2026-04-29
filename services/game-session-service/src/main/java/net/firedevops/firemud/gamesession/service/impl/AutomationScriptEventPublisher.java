@@ -4,6 +4,7 @@ import java.util.concurrent.Executor;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -58,6 +59,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                   .setScriptPatchVersion(scope.scriptPatchVersion())
                   .setScriptEventId(command.getCommandId())
                   .setTriggerMode(TriggerMode.TRIGGER_MODE_NORMAL)
+                  .setPlayableStateScope(scope.playableStateScope())
                   .setReadSnapshotToken(
                       "game-session:onCommand:"
                           + scope.gameInstanceId()
@@ -149,6 +151,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
             .setScriptPatchVersion(scope.scriptPatchVersion())
             .setScriptEventId(scriptEventId)
             .setTriggerMode(TriggerMode.TRIGGER_MODE_NORMAL)
+            .setPlayableStateScope(scope.playableStateScope())
             .setReadSnapshotToken(readSnapshotToken)
             .setPayloadJson(payloadJson)
             .build();
@@ -224,6 +227,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         Long.toString(context.gameInstanceId()),
         ownership.getRegionEpoch(),
         Long.toString(context.characterId()),
+        resolvePlayableStateScope(context),
         scriptPatchVersion);
   }
 
@@ -245,5 +249,19 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       String regionId,
       long regionEpoch,
       String entityId,
+      PlayableStateScope playableStateScope,
       String scriptPatchVersion) {}
+
+  private static PlayableStateScope resolvePlayableStateScope(SessionContext context) {
+    if (!StringUtils.hasText(context.playableStateScope())) {
+      return PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+    }
+    return switch (context.playableStateScope()) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default ->
+          throw new IllegalArgumentException(
+              "Unsupported playableStateScope=" + context.playableStateScope());
+    };
+  }
 }
