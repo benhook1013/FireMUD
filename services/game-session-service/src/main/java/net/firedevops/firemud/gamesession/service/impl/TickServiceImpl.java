@@ -587,7 +587,7 @@ public class TickServiceImpl implements TickService {
     batch.setSelectedWorkManifestDigest(shortHash(selectedWorkManifest));
     batch.setStagedAt(now);
     TickBatch savedBatch = tickBatchRepository.save(batch);
-    persistEffects(savedBatch, gameInstanceId, now, entries);
+    persistEffects(savedBatch, gameInstanceId, now, selections);
     bumpGameplayCommandAttempts(entries, now);
     logger.info(
         "Staged durable tick batch tickBatchId={} tenantId={} gameInstanceId={} source={} commandCount={}",
@@ -706,26 +706,37 @@ public class TickServiceImpl implements TickService {
   }
 
   private void persistEffects(
-      TickBatch batch, Long gameInstanceId, Instant stagedAt, List<QueuedCommandEnvelope> entries) {
-    if (entries.isEmpty()) {
+      TickBatch batch, Long gameInstanceId, Instant stagedAt, List<CommandSelection> selections) {
+    if (selections.isEmpty()) {
       return;
     }
-    List<TickEffect> effects = new ArrayList<>(entries.size());
-    for (int index = 0; index < entries.size(); index++) {
-      QueuedCommandEnvelope entry = entries.get(index);
-      String effectKey = effectKey(entry, index);
+    List<TickEffect> effects = new ArrayList<>(selections.size());
+    for (CommandSelection selection : selections) {
+      QueuedCommandEnvelope entry = selection.entry();
       TickEffect effect = new TickEffect();
-      effect.setEffectId(effectId(batch.getTickBatchId(), effectKey));
+      effect.setEffectId(effectId(batch.getTickBatchId(), selection.effectKey()));
       effect.setTickBatchId(batch.getTickBatchId());
       effect.setCommandId(entry.commandId());
-      effect.setEffectKey(effectKey);
+      effect.setEffectKey(selection.effectKey());
       effect.setEffectType("GAMEPLAY_COMMAND");
-      effect.setTargetAggregate("game-instance:" + gameInstanceId);
+      effect.setTargetAggregate(effectTargetAggregate(gameInstanceId, selection.command()));
       effect.setStatus("STAGED");
       effect.setStagedAt(stagedAt);
       effects.add(effect);
     }
     tickEffectRepository.saveAll(effects);
+  }
+
+  private static String effectTargetAggregate(Long gameInstanceId, GameplayCommand command) {
+    if (command != null) {
+      if (command.getCharacterId() != null && command.getCharacterId() > 0) {
+        return "character:" + command.getCharacterId();
+      }
+      if (command.getTargetEntityId() != null && !command.getTargetEntityId().isBlank()) {
+        return "entity:" + command.getTargetEntityId();
+      }
+    }
+    return "game-instance:" + gameInstanceId;
   }
 
   private void bumpGameplayCommandAttempts(

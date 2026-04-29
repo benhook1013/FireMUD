@@ -608,6 +608,12 @@ class TickServiceImplTest {
         stagedBatch
             .getSelectedWorkManifestJson()
             .contains("\"sourceState\":\"REDIS_PENDING_CLAIMED\""));
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<net.firedevops.firemud.gamesession.entity.TickEffect>> effectCaptor =
+        ArgumentCaptor.forClass(List.class);
+    verify(tickEffectRepository).saveAll(effectCaptor.capture());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "entity:entity-1", effectCaptor.getValue().get(0).getTargetAggregate());
   }
 
   @Test
@@ -656,6 +662,30 @@ class TickServiceImplTest {
         stagedBatch.getSelectedWorkManifestJson().contains("\"targetEntityId\":\"entity-2\""));
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"dueTickId\":21"));
+  }
+
+  @Test
+  void processTickPersistsCharacterTargetAggregateWhenCharacterIdentityIsKnown() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|say hello");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-1|say hello"));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
+    command.setSourceType("AUTOMATION");
+    command.setCharacterId(44L);
+    command.setTargetEntityId("44");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(command));
+
+    service.processTick(1L, 2L);
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<net.firedevops.firemud.gamesession.entity.TickEffect>> effectCaptor =
+        ArgumentCaptor.forClass(List.class);
+    verify(tickEffectRepository).saveAll(effectCaptor.capture());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "character:44", effectCaptor.getValue().get(0).getTargetAggregate());
   }
 
   @Test
