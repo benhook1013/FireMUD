@@ -12,6 +12,7 @@ SMOKE_WORLDS_EXPECT=${SMOKE_WORLDS_EXPECT:-OK WORLDS}
 SMOKE_LOGIN_EXPECT=${SMOKE_LOGIN_EXPECT:-OK LOGIN}
 SMOKE_PLAY_EXPECT=${SMOKE_PLAY_EXPECT:-OK PLAY}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-OK LOOK}
+FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON=python3
@@ -28,6 +29,12 @@ import os
 import socket
 import sys
 import time
+from pathlib import Path
+
+repo_root = Path(os.environ["FIREMUD_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
+
+from smoke_common import run_command_plan, wait_for_incremental_response
 
 host = os.environ["SMOKE_TELNET_HOST"]
 port = int(os.environ["TCP_PORT"])
@@ -60,34 +67,54 @@ def recv_until(sock, expected_substring, timeout):
     return "".join(chunks)
 
 
-def expect_contains(label, payload, expected):
+def drain_available(sock, quiet_timeout=0.25):
+    deadline = time.time() + quiet_timeout
+    chunks = []
+    while time.time() < deadline:
+        try:
+            sock.settimeout(max(0.05, deadline - time.time()))
+            data = sock.recv(4096)
+        except (socket.timeout, BlockingIOError):
+            break
+        if not data:
+            break
+        chunks.append(data.decode("iso-8859-1", errors="ignore"))
+    return "".join(chunks)
+
+
+def send_and_expect(sock, responses, line, expected_substrings, label):
+    start_index = len(responses)
+    sock.sendall(f"{line}\r\n".encode("iso-8859-1"))
+    response = wait_for_incremental_response(
+        lambda: recv_until(sock, "", 0.5),
+        responses,
+        start_index,
+        expected_substrings,
+        timeout_seconds,
+        "".join,
+        lambda: drain_available(sock),
+    )
     print(f"=== {label} response ===")
-    print(payload.strip() or "<no data>")
-    if expected not in payload:
-        raise SystemExit(
-            f"Expected substring {expected!r} in {label} response but did not find it."
-        )
+    print(response.strip() or "<no data>")
+    return response
 
 
 last_error = None
 while time.time() < session_retry_deadline:
     try:
         with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
-            sock.sendall(b"WORLDS\r\n")
-            expect_contains(
-                "WORLDS", recv_until(sock, worlds_expect, timeout_seconds), worlds_expect
+            responses = []
+            run_command_plan(
+                [
+                    ("WORLDS", [worlds_expect], "WORLDS"),
+                    (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
+                    (f"PLAY {world}", [play_expect], "PLAY"),
+                    ("LOOK", [look_expect], "LOOK"),
+                ],
+                lambda line, expected_substrings, label, timeout: send_and_expect(
+                    sock, responses, line, expected_substrings, label
+                ),
             )
-
-            sock.sendall(f"LOGIN {username} {password}\r\n".encode("iso-8859-1"))
-            expect_contains(
-                "LOGIN", recv_until(sock, login_expect, timeout_seconds), login_expect
-            )
-
-            sock.sendall(f"PLAY {world}\r\n".encode("iso-8859-1"))
-            expect_contains("PLAY", recv_until(sock, play_expect, timeout_seconds), play_expect)
-
-            sock.sendall(b"LOOK\r\n")
-            expect_contains("LOOK", recv_until(sock, look_expect, timeout_seconds), look_expect)
             last_error = None
             break
     except OSError as exc:
