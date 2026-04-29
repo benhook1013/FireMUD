@@ -1227,6 +1227,7 @@ public final class GameSessionControlPlaneGrpcService
     command.setRealmSlug(normalizeBlank(request.getRealmSlug()));
     command.setPointerVersion(parsePointerVersionClaim(request.getPointerVersion()));
     command.setTargetEntityId(request.getTargetEntityId());
+    command.setCharacterId(parseGameplayCharacterId(request.getTargetEntityId()));
     command.setRegionId(request.getRegionId());
     command.setRegionEpoch(request.getRegionEpoch());
     command.setDueTickId(request.getDueTickId() > 0 ? request.getDueTickId() : null);
@@ -1432,6 +1433,17 @@ public final class GameSessionControlPlaneGrpcService
       return null;
     }
     return Long.parseLong(pointerVersion);
+  }
+
+  private static Long parseGameplayCharacterId(String targetEntityId) {
+    if (targetEntityId == null || targetEntityId.isBlank()) {
+      return null;
+    }
+    try {
+      return Long.parseLong(targetEntityId);
+    } catch (NumberFormatException ex) {
+      return null;
+    }
   }
 
   private record GameplayRoutingBundle(
