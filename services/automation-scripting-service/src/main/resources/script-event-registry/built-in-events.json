@@ -32,9 +32,10 @@
       "game-logic-service"
     ],
     "requiredTriggerIdentityFields": [
-      "tenantId",
-      "gameInstanceId",
-      "regionId",
+        "tenantId",
+        "gameInstanceId",
+        "playableStateScope",
+        "regionId",
       "regionEpoch",
       "entityId",
       "scriptPatchVersion",
@@ -63,9 +64,10 @@
       "world-management-service"
     ],
     "requiredTriggerIdentityFields": [
-      "tenantId",
-      "gameInstanceId",
-      "regionId",
+        "tenantId",
+        "gameInstanceId",
+        "playableStateScope",
+        "regionId",
       "regionEpoch",
       "entityId",
       "scriptPatchVersion",
@@ -94,9 +96,10 @@
       "world-management-service"
     ],
     "requiredTriggerIdentityFields": [
-      "tenantId",
-      "gameInstanceId",
-      "regionId",
+        "tenantId",
+        "gameInstanceId",
+        "playableStateScope",
+        "regionId",
       "regionEpoch",
       "entityId",
       "scriptPatchVersion",
@@ -125,9 +128,10 @@
       "world-management-service"
     ],
     "requiredTriggerIdentityFields": [
-      "tenantId",
-      "gameInstanceId",
-      "regionId",
+        "tenantId",
+        "gameInstanceId",
+        "playableStateScope",
+        "regionId",
       "regionEpoch",
       "entityId",
       "scriptPatchVersion",
@@ -155,9 +159,10 @@
       "automation-scripting-service"
     ],
     "requiredTriggerIdentityFields": [
-      "tenantId",
-      "gameInstanceId",
-      "regionId",
+        "tenantId",
+        "gameInstanceId",
+        "playableStateScope",
+        "regionId",
       "regionEpoch",
       "entityId",
       "scriptPatchVersion",
@@ -185,9 +190,10 @@
       "automation-scripting-service"
     ],
     "requiredTriggerIdentityFields": [
-      "tenantId",
-      "gameInstanceId",
-      "regionId",
+        "tenantId",
+        "gameInstanceId",
+        "playableStateScope",
+        "regionId",
       "regionEpoch",
       "entityId",
       "scriptPatchVersion",

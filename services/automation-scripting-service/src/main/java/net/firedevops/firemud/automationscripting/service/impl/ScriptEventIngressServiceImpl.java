@@ -213,6 +213,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         return rejected("missing_trigger_identity");
       }
     }
+    if (definition.requiredTriggerIdentityFields().contains("playableStateScope")
+        && (request.getPlayableStateScopeValue() == 0
+            || request.getPlayableStateScope().name().equals("UNRECOGNIZED"))) {
+      return rejected("missing_trigger_identity");
+    }
     TriggerAdmission pinAdmission = validatePinnedPatch(request);
     if (pinAdmission != null) {
       return pinAdmission;
@@ -255,6 +260,12 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         .getScriptPatchVersion()
         .equals(runtime.getRuntimeState().getPinnedScriptPatchVersion())) {
       return new TriggerAdmission(false, OUTCOME_VERSION_UNAVAILABLE, "version_unavailable", 0);
+    }
+    if (request.getPlayableStateScopeValue() != 0
+        && runtime.getRuntimeState().getPlayableStateScopeValue() != 0
+        && request.getPlayableStateScope() != runtime.getRuntimeState().getPlayableStateScope()) {
+      return new TriggerAdmission(
+          false, OUTCOME_VERSION_UNAVAILABLE, "playable_state_scope_mismatch", 0);
     }
     return null;
   }
