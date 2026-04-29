@@ -146,7 +146,7 @@ PY
       FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-production.json \
       FIREMUD_PROMOTION_ATTESTATION="$promotion_attestation" \
       FIREMUD_BACKUP_READINESS_EVIDENCE="$backup_readiness" \
-      bash "$ROOT_DIR/dev-tools/deploy/preflight.sh" production
+      python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" production
   else
     echo "Skipping static preflight policy enforcement because no production attestation context is present."
     echo "Overlay render and image validation still run below."

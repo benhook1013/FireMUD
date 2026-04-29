@@ -7,7 +7,7 @@ on:
       - "design/operations/deployments/production/attestations/**"
       - "design/operations/deployments/production/backup-readiness/**"
       - "dev-tools/deploy/validate-kustomize-overlays.sh"
-      - "dev-tools/deploy/preflight.sh"
+      - "dev-tools/deploy/preflight.py"
       - ".github/workflows/validate-kustomize-overlays.yml"
   workflow_dispatch:
 

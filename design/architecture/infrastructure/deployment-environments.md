@@ -26,7 +26,7 @@ This document outlines how FireMUD is deployed across environments including loc
 
 The environment matrix below is the canonical target state. Current repository implementation has partial support only for several deployment gates:
 
-- `./dev-tools/deploy/preflight.sh` is the intended entrypoint, but it does not yet enforce every player-facing policy listed in `system-architecture-deploy-preflight-policy.md`; missing enforcement remains a blocker for first player-facing deployment and traffic-open events.
+- `./dev-tools/deploy/preflight.py` is the intended entrypoint, but it does not yet enforce every player-facing policy listed in `system-architecture-deploy-preflight-policy.md`; missing enforcement remains a blocker for first player-facing deployment and traffic-open events.
 - The player-facing expected-binding manifests under `design/operations/environments/` currently describe the intended shape but are not yet complete authoritative inputs for preflight or restore validation.
 - Hosted `pr-preview` and `dev-demo-cluster` currently reuse the preview Helm values path, and the live preview value renderer now injects per-render signing-key and JWKS content rather than relying on one static inline shared JWT secret. The remaining JWT/JWKS gap is lifecycle/rotation proof, not generation or resource wiring.
 - The player-facing Kustomize path (`k8s/overlays/*` over `k8s/base`) now carries digest-pinned workload images and relies on externally managed bootstrap secrets/TLS bindings enforced through expected-bindings plus preflight, rather than shipping placeholder bootstrap secrets inside the rendered player-facing manifests.

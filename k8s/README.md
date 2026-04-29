@@ -40,7 +40,7 @@ Player-facing bootstrap bindings are intentionally environment-owned rather than
 - `base/firemud-db-env.yaml` for the shared `firemud-config` `ConfigMap`
 - externally managed `postgres-credentials`, `jwt-signing-keys`, and `jwt-jwks` Secrets
 - externally managed workload mTLS material such as `firemud-grpc-tls`
-- expected-binding manifests under `design/operations/environments/*` plus `dev-tools/deploy/preflight.sh` to validate that those bindings match the target environment contract
+- expected-binding manifests under `design/operations/environments/*` plus `dev-tools/deploy/preflight.py` to validate that those bindings match the target environment contract
 
 The base manifests and overlays expect those names unless you intentionally customize them together with the matching expected-binding and operator bootstrap evidence.
 

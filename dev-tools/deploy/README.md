@@ -11,7 +11,7 @@ They are not generic CI utilities. They enforce the deployment contract for play
 
 ## Script Map
 
-- `preflight.sh`
+- `preflight.py`
   - Canonical deployment pre-check entrypoint for a real target environment.
   - Use this before trusting a rendered deployment, before apply/promotion, or before reopening traffic after a major environment change.
   - It renders the target manifests, validates FireMUD deployment policy, writes a JSON report, and fails when required policy checks do not pass.
@@ -25,7 +25,7 @@ They are not generic CI utilities. They enforce the deployment contract for play
 
 ## Choosing The Right Script
 
-- Use `preflight.sh` when the question is: "Is this environment/deployment valid enough to proceed?"
+- Use `preflight.py` when the question is: "Is this environment/deployment valid enough to proceed?"
 - Use `validate-kustomize-overlays.sh` when the question is: "Did we define the repo's `stage`/`prod` overlays correctly?"
 - Do not treat `validate-kustomize-overlays.sh` as a substitute for operator preflight on real deployments.
 

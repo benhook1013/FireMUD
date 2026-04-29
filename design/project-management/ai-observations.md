@@ -46,6 +46,11 @@ Entry format:
   - Observation: checkpoint thread IDs are base64-encoded UUIDs, but they do not necessarily line up with Codex `threads.id` values in `state_5.sqlite`, so deleting "inactive" checkpoints from Git refs alone risks false assumptions about session state.
   - Expected pattern: classification-based checkpoint cleanup should start with a reporting mode that inspects the actual local metadata layout, reports active/archived/orphaned candidates, and only enables destructive cleanup after the mapping is confirmed.
 
+- `2026-04-29`: Workstation-specific AI maintenance helpers should live in user-local CLI locations, not inside the repo
+  - Context: the T3 checkpoint pruning helper started in `dev-tools/maintenance/ai/` even though it manages local Codex/T3 session state and hidden Git refs for one developer workstation.
+  - Observation: repo-local placement makes a personal maintenance utility look like shared project tooling, creates avoidable review churn, and pushes machine-specific defaults toward tracked files.
+  - Expected pattern: helpers for one user's Codex/T3 environment should live under `~/bin` or `~/.local/bin`, source a local config file, and only leave repo-facing notes when there is a reusable process lesson.
+
 - `2026-04-27`: Docker Desktop compose teardown is safer from Codex without a PTY, and smoke proofs should not parallelize shared-session clients
   - Context: running `dev-tools/verify-fresh-bootstrap.sh` from WSL against the source-built Docker stack while validating `account-service`, `spring-cloud-gateway`, and `tcp-proxy-service` follow-up fixes.
   - Observation: the canonical smoke script hung in `docker compose ... down` when launched through a PTY-backed Codex exec session, while the same compose commands completed immediately in plain-output mode. Separately, running the WebSocket and Telnet smoke scripts in parallel against the same demo account/session produced a false failure on the Telnet path even though the underlying gameplay commands succeeded.
@@ -102,7 +107,7 @@ Entry format:
   - Expected pattern: top-level environment and `k8s/` docs should mark each deployment lane as exercised, staged, or reference-only, and any hosted exceptions such as missing network policies or temporary transport relaxations should be called out in place rather than left to workflow inspection.
 
 - `2026-04-28`: Player-facing Kubernetes overlays should validate external secret ownership, not embed placeholder Secret content
-  - Context: finishing the `k8s/` audit required removing checked-in bootstrap JWT/Postgres/TLS placeholder data from the staging/production Kustomize renders while keeping `preflight.sh` and overlay CI meaningful.
+  - Context: finishing the `k8s/` audit required removing checked-in bootstrap JWT/Postgres/TLS placeholder data from the staging/production Kustomize renders while keeping `preflight.py` and overlay CI meaningful.
   - Observation: once player-facing bootstrap bindings are supposed to be environment-owned, leaving fake Secret manifests in the canonical render path teaches the wrong operator contract and masks whether preflight is validating real external ownership versus inline sample data.
   - Expected pattern: keep player-facing overlays free of placeholder Secret content, validate secret names/mount contracts statically from rendered workloads, and let operator-mode preflight prove that the expected environment-owned bindings exist in the target cluster.
 
@@ -130,3 +135,8 @@ Entry format:
   - Context: the second-pass gameplay proof convergence work introduced a shared `GameplayCrossServiceStack`, and the first generic reset path silently reset the Entity Management stub back to the default room/entity fixture even for suites that intentionally booted chat-specific entities.
   - Observation: once mutable stub ownership moves into a shared stack, a generic `reset()` that restores only one global default can break unrelated suites by erasing their configured baseline room state, character identities, or names while still looking like a harmless cleanup helper.
   - Expected pattern: shared gameplay stack reset helpers should preserve or reapply the suite-specific baseline fixtures captured at stack construction time, and mutable stub reset should be treated as part of scenario isolation rather than a hardcoded global default.
+
+- `2026-04-29`: Shared gameplay cross-service stacks also need a canonical clean-baseline helper, not just startup helpers
+  - Context: re-auditing the converged gameplay proof showed `GameplayCrossServiceStack` now owns the expensive nested app bootstrap, but large websocket and telnet suites still hand-roll per-suite cleanup around it, including Redis flushes, `game_instances` deletion, screen-buffer clears, and first/default session seeding.
+  - Observation: once startup is shared but reset-to-known-state remains local, new suites still copy slightly different isolation steps and the harness convergence stalls one layer short of the real repeated pattern.
+  - Expected pattern: shared gameplay stack fixtures should expose one canonical “fresh gameplay baseline” helper that resets mutable stubs, clears Redis and replay buffers, wipes seeded runtime rows, and optionally seeds the default running game instance so cross-service suites do not keep rebuilding that cleanup choreography inline.
