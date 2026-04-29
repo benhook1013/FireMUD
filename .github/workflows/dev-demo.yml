@@ -175,7 +175,7 @@ jobs:
 
       - name: Render dev-demo values
         run: |
-          bash ./dev-tools/hosted/dev-demo/render-dev-demo-values.sh \
+          python3 ./dev-tools/hosted/dev-demo/render-dev-demo-values.py \
             k8s/helm/firemud/values-dev-demo.example.yaml \
             /tmp/dev-demo-values.yaml \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \

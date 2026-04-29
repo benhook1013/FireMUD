@@ -332,7 +332,7 @@ jobs:
 
       - name: Render preview values
         run: |
-          bash ./dev-tools/hosted/preview/render-preview-values.sh \
+          python3 ./dev-tools/hosted/preview/render-preview-values.py \
             k8s/helm/firemud/values-preview.example.yaml \
             /tmp/preview-values.yaml \
             "${{ needs.preview-plan.outputs.pr_number }}" \
