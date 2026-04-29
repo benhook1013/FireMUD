@@ -193,7 +193,7 @@ The following examples illustrate how to apply the version-aware guidelines to c
 - Execute this task from the service directory or prefix the project name (e.g.,
   `./gradlew :account-service:flywayMigrate`).
 - You can also run `./gradlew :service:flywayInfo`, `flywayClean`, or `flywayRepair` to troubleshoot local databases. **Use `flywayClean` with caution** because it drops tables.
-- For service-scoped local rebuilds, use [`dev-tools/reset-service-db.sh`](../../dev-tools/reset-service-db.sh) instead of `flywayClean`. It drops only the tables created by that service's migrations plus that service's Flyway history table, then reruns `flywayMigrate` for the same service. Pass `--dry-run` first if you want to inspect the destructive scope.
+- For service-scoped local rebuilds, use [`dev-tools/restores/reset-service-db.sh`](../../dev-tools/restores/reset-service-db.sh) instead of `flywayClean`. It drops only the tables created by that service's migrations plus that service's Flyway history table, then reruns `flywayMigrate` for the same service. Pass `--dry-run` first if you want to inspect the destructive scope.
 - Run `./gradlew :service:flywayValidate` to verify migrations before committing.
 - The CI pipeline runs `flywayValidate` for all services to catch migration issues early.
 - See [DEVELOPER_SETUP.md](../../DEVELOPER_SETUP.md) for the environment variables needed to connect to your local PostgreSQL instance. Copy the `FIREMUD_POSTGRES_*` values from `.env.sample` into `.env` so Flyway can connect locally.

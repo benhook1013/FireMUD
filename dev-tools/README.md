@@ -12,7 +12,6 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 - `verify-smoke-images.sh` – canonical GHCR/image-tag Docker smoke proof.
 - `build-compose-service-jars.sh` – rebuilds the service boot jars consumed by the source-built Compose stack.
 - `verify-compose-health.sh` – shared health gate used by the smoke entrypoints.
-- `reset-service-db.sh` – local service-scoped schema reset helper.
 - `wait-for-it.sh` – shared Docker image/runtime helper.
 
 ## Folder map
@@ -27,7 +26,7 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 - `maintenance/` – non-canonical maintenance and analysis utilities that should not shape repo workflow.
 - `observability/` – observability contract and evidence validators.
 - `release/` – release/notice generation utilities.
-- `restores/` – restore and external-credential validation helpers.
+- `restores/` – restore, state-reset, and external-credential validation helpers; see `restores/README.md` for the script map.
 - `seed/` – local and test data seeding helpers.
 - `tests/` – contract tests for repo-owned tooling.
 - `validation/` – repo policy and static validation scripts used by Gradle and CI.
