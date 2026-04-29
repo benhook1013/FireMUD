@@ -19,7 +19,7 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 
 - `backups/` – local and operator backup helpers; see `backups/README.md` for the script map.
 - `certs/` – tracked certificate helper scripts plus ignored generated local TLS material.
-- `deploy/` – deployment preflight, overlay validation, and rollout validation.
+- `deploy/` – deployment preflight and overlay validation; see `deploy/README.md` for the script map.
 - `hosted/dev-demo/` – fixed `develop` hosted environment helpers.
 - `docs/` – documentation generation and validation helpers.
 - `insomnia/` – Insomnia client assets.
