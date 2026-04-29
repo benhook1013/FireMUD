@@ -56,6 +56,7 @@ Required semantics for those fields:
   - The authoritative schema or proto reference for the payload shape.
 - `requiredTriggerIdentityFields`
   - The exact Trigger Identity fields that must be present, such as `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, or `scriptEventId`.
+  - For gameplay-originated events whose producer already resolved shared-versus-isolated realm state, this set must also include `playableStateScope` so durable ingress/work-item identity, timer follow-up work, and operator read models do not collapse distinct playable-state namespaces that happen to share the same tenant and instance identifiers.
 - `snapshotAuthority`
   - One of:
     - `PRODUCER_SUPPLIED_TOKEN`

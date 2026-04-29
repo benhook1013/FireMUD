@@ -13,6 +13,7 @@ This document defines the Automation & Scripting Service runtime model, persiste
 - Runtime execution is instance-aware even when patch readiness is tenant-scoped: a tenant-level `READY` patch is only eligible for pinning, while admission, timer scheduling, rollback pause, and plugin activation are evaluated per `<tenantId, gameInstanceId>`.
 - Patch reload now also persists a first durable `script_schedule_definitions` catalog for scheduler-owned handlers such as `onInterval` / `onTimerExpire`, keyed by `scheduleDefinitionId` with cadence/unit metadata and normalized schedule hash. That is patch-scoped schedule metadata only; it is not yet the later instance/region timer-runtime table.
 - Authoritative gameplay reads within one handler-scoped run must share the same runtime-issued `readSnapshotToken` captured at admission. In practice, a `TriggerScriptEvent`-style ingress may carry an opaque `readSnapshotToken` equivalent to `<tenantId=T1, gameInstanceId=G7, regionId=R2, regionEpoch=14, tickId=981223>`, and every downstream gameplay-affecting read made during that run must forward the same token rather than silently reading a fresher tick midway through evaluation.
+- For gameplay-originated events, ingress and durable runtime state now also persist the resolved `playableStateScope` alongside `tenantId`, `gameInstanceId`, and `entityId`, so shared-state and isolated-state realms remain distinct through work-item identity, timer/schedule materialization, replay checks, dead letters, and operator reads even when they share the same tenant.
 - Each game’s scripts live in tables keyed by `tenantId`, ensuring automation for one game cannot access another’s data. Derived Redis coordination and index keys must preserve runtime instance isolation as well, not just tenant isolation.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
@@ -29,7 +30,7 @@ Tick-driven automation and event handling never use Sagas; they follow the Redis
 
 - `script` holds compiled component definitions and version metadata.
 - `npc_memory` stores persistent state for NPC behaviors.
-- Admitted script work items are persisted durably in a PostgreSQL-backed outbox keyed by Trigger Identity plus sequencing fields as needed, including the resolved binding `priorityTag` used for live tenant-budget reservation.
+- Admitted script work items are persisted durably in a PostgreSQL-backed outbox keyed by Trigger Identity plus sequencing fields as needed, including the resolved binding `priorityTag` used for live tenant-budget reservation. For gameplay/runtime triggers, that Trigger Identity includes the resolved `playableStateScope` rather than inferring scope later from `gameInstanceId` conventions or payload internals.
 - `automation:queue:{tenantInstanceTag}:<entityId>` keys in Redis buffer work-item indexes or pointers after a script runs and its work item is persisted durably. Each entry includes enough identity to locate the durable work item and must not be treated as an authoritative log of commands.
 - Queue activity must be surfaced through the canonical observability contract metric families rather than through an unsupported parallel metric surface.
 - Player reputation data is stored in the Social & Groups Service; this service reads those scores to drive NPC morale and aggression behavior.
@@ -85,6 +86,7 @@ Quota and queue-related caches are best-effort TTL-only caches unless this servi
 To avoid “DSL evaluated successfully but effects were silently dropped”, the service must persist admitted script work items durably before they are considered successful:
 
 - Admitted triggers produce script work items which are written to a PostgreSQL-backed outbox table keyed by Trigger Identity plus sequencing fields as needed.
+- Materialized `script_schedule_instances`, timer-generated work items, handoff events, and dead-letter rows preserve the same gameplay `playableStateScope` so scheduler-driven follow-up work stays in the same shared-versus-isolated state namespace as the original admitted event.
 - `automation:queue:*` keys are derived coordination indexes that accelerate draining and batching, not the authoritative record of pending work.
 - On restart, failover, or Cache/Rate-Limit Redis resets, the service can rebuild `automation:queue:*` indexes by scanning the outbox for pending items and re-projecting them.
 
