@@ -18,7 +18,6 @@ The following tools are not strictly required to build or run the stack, but the
 
 - **GitHub CLI (`gh`)** – recommended for managing pull requests from the command line and enabling AI tooling (such as Codex) to inspect or update PR metadata. See [GitHub CLI Integration for PRs](#github-cli-integration-for-prs) for setup details.
 - **Python 3**, **`pip`**, and **`pre-commit`** – used to run the repository’s pre-commit hooks (`pip install pre-commit && pre-commit install`) as described in `CONTRIBUTING.md`.
-- **Insomnia** – a desktop client for REST and WebSocket testing. An Insomnia project is provided in `dev-tools/insomnia/` to exercise login, registration, and gateway admin routes.
 - **Kreya** – a gRPC client configured via `dev-tools/kreya/.kreya-project.yaml` for calling services like `AccountService`, `EntityService`, and `PlayerService` on `localhost:6565`.
 - **Redis CLI (`redis-cli`)** and **RedisInsight** – useful for inspecting transient gameplay/session state in the local Redis instance and browsing keys like `session:*`, `tick:*`, and `timer:*`.
 - **Kubernetes CLI (`kubectl`)** and optionally **Helm** – install `kubectl` if you work on `k8s/`, Kustomize overlays, or overlay validation CI. Local validation uses `kubectl kustomize`, so this is effectively required for Kubernetes-related changes.
@@ -337,24 +336,6 @@ rely on their own durability/failover behavior and scoped coordination resets
 as described in the Redis architecture and runbooks.
 
 ## Manual Testing Tools
-
-### Insomnia for REST and WebSocket
-
-An Insomnia project is included under `dev-tools/insomnia/`. From the
-**Import/Export** menu choose **Import From File** and select
-`firemud-insomnia.json` to quickly test login, registration, and gateway admin routes. The project defines a **Base Environment** with `base_url` and an optional `jwt` variable for admin endpoints. If you populate the variable, Insomnia injects `Authorization: Bearer {{ jwt }}` on calls that need authorization.
-
-WebSocket testing is also configured. Use the `WebSocket Login` request to send
-raw commands like:
-
-```text
-LOGIN user pass
-LOOK
-SAY Hello travelers
-```
-
-Add or modify requests directly in Insomnia and re-export the workspace if you
-need to share updates.
 
 ### Kreya for gRPC APIs
 

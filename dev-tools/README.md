@@ -22,7 +22,6 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 - `deploy/` – deployment preflight and overlay validation; see `deploy/README.md` for the script map.
 - `hosted/` – hosted Kubernetes environment tooling; see `hosted/README.md` for the lane split.
 - `docs/` – documentation generation and validation helpers; see `docs/README.md` for the script map.
-- `insomnia/` – Insomnia client assets.
 - `kreya/` – Kreya gRPC client assets.
 - `load-testing/` – Gatling load-testing module.
 - `maintenance/` – non-canonical maintenance and analysis utilities that should not shape repo workflow.
