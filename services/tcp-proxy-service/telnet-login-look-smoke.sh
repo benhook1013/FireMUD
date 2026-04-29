@@ -49,6 +49,7 @@ from smoke_common import (
     gameplay_item_container_equipment_steps,
     http_readiness_up,
     run_command_plan,
+    wait_for_incremental_response,
     verify_smoke_account,
     wait_for_account_schema,
     wait_for_http_readiness,
@@ -105,43 +106,17 @@ def drain_available(sock, quiet_timeout=0.25):
         chunks.append(data.decode("iso-8859-1", errors="ignore"))
     return "".join(chunks)
 
-
-def wait_for_incremental_text(sock, responses, start_index, expected_substrings, timeout):
-    deadline = time.time() + timeout
-    expects_explicit_failure = any(
-        substring.startswith("ERROR ") or substring.startswith("DISCONNECT ")
-        for substring in expected_substrings
-    )
-    while time.time() < deadline:
-        remaining = max(0.1, deadline - time.time())
-        chunk = recv_until(sock, "", remaining)
-        if chunk:
-            responses.append(chunk)
-            response = "".join(responses[start_index:])
-            stripped = response.strip()
-            if not expects_explicit_failure and (
-                stripped.startswith("ERROR ") or stripped.startswith("DISCONNECT ")
-            ):
-                raise RuntimeError(f"Command failed explicitly: {stripped}")
-            if all(substring in response for substring in expected_substrings):
-                trailing = drain_available(sock)
-                if trailing:
-                    responses.append(trailing)
-                    response += trailing
-                return response
-        else:
-            time.sleep(0.05)
-    response = "".join(responses[start_index:])
-    raise RuntimeError(
-        f"Expected response containing {expected_substrings}, got '{response}'"
-    )
-
-
 def send_and_expect(sock, responses, line, expected_substrings, label):
     start_index = len(responses)
     sock.sendall(f"{line}\r\n".encode("iso-8859-1"))
-    response = wait_for_incremental_text(
-        sock, responses, start_index, expected_substrings, timeout_seconds
+    response = wait_for_incremental_response(
+        lambda: recv_until(sock, "", 0.5),
+        responses,
+        start_index,
+        expected_substrings,
+        timeout_seconds,
+        "".join,
+        lambda: drain_available(sock),
     )
     print(f"=== {label} response ===")
     print(response.strip() or "<no data>")

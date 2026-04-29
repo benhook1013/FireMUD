@@ -1,4 +1,4 @@
-package net.firedevops.firemud.springcloudgateway.testsupport;
+package net.firedevops.firemud.test;
 
 import java.io.IOException;
 import java.net.URI;
@@ -16,18 +16,18 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
-/** Shared low-level gateway websocket probe for integration tests. */
-public final class GatewayWebSocketProbe implements AutoCloseable {
+/** Shared low-level websocket probe for integration and cross-service tests. */
+public final class WebSocketTestProbe implements AutoCloseable {
   private final List<String> responses = new CopyOnWriteArrayList<>();
   private final AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
   private final AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
   private final AtomicBoolean downstreamClosed = new AtomicBoolean(false);
 
-  private GatewayWebSocketProbe() {}
+  private WebSocketTestProbe() {}
 
-  public static GatewayWebSocketProbe connect(String websocketUrl, WebSocketHttpHeaders headers)
+  public static WebSocketTestProbe connect(String websocketUrl, WebSocketHttpHeaders headers)
       throws Exception {
-    GatewayWebSocketProbe probe = new GatewayWebSocketProbe();
+    WebSocketTestProbe probe = new WebSocketTestProbe();
     StandardWebSocketClient client = new StandardWebSocketClient();
     client
         .execute(

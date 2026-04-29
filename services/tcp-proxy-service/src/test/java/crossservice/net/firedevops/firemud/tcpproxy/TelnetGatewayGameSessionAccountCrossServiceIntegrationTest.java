@@ -544,15 +544,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     if (STACK == null) {
       try {
         STACK =
-            GameplayCrossServiceStack.builder()
-                .withPostgres(
-                    POSTGRES.getHost(),
-                    POSTGRES.getMappedPort(5432),
-                    POSTGRES.getDatabaseName(),
-                    POSTGRES.getUsername(),
-                    POSTGRES.getPassword())
-                .withRedis(REDIS.getHost(), REDIS.getMappedPort(6379))
-                .withDefaultAccountId(ACCOUNT_ID)
+            GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID)
                 .mapAccountId("sora@example.com", SORA_ACCOUNT_ID)
                 .withSocialEnabled(true)
                 .withGameLogicProps(

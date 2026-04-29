@@ -14,10 +14,10 @@ import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
 import net.firedevops.firemud.springcloudgateway.config.GameplayWebSocketBridgeProperties;
 import net.firedevops.firemud.springcloudgateway.health.GameplayRouteReadinessHealthIndicator;
-import net.firedevops.firemud.springcloudgateway.testsupport.GatewayWebSocketProbe;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.ReactiveTestApplicationSupport;
+import net.firedevops.firemud.test.WebSocketTestProbe;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -74,8 +74,7 @@ class GatewayGameplayBridgeIntegrationTest {
     headers.add("X-Proxy-Tenant-Id", "22");
     headers.add("X-Proxy-Connection-Id", "bridge-test-conn");
 
-    try (GatewayWebSocketProbe probe =
-        GatewayWebSocketProbe.connect(GATEWAY.websocketUrl(), headers)) {
+    try (WebSocketTestProbe probe = WebSocketTestProbe.connect(GATEWAY.websocketUrl(), headers)) {
       probe.awaitStartsWith("UPSTREAM_READY", Duration.ofSeconds(5));
       probe.send("LOOK");
       probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(5));
@@ -102,8 +101,7 @@ class GatewayGameplayBridgeIntegrationTest {
     headers.add("X-Proxy-Tenant-Id", "22");
     headers.add("X-Proxy-Connection-Id", "bridge-test-conn");
 
-    try (GatewayWebSocketProbe probe =
-        GatewayWebSocketProbe.connect(GATEWAY.websocketUrl(), headers)) {
+    try (WebSocketTestProbe probe = WebSocketTestProbe.connect(GATEWAY.websocketUrl(), headers)) {
       probe.awaitStartsWith("UPSTREAM_READY", Duration.ofSeconds(5));
       probe.send("LOOK");
       probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(5));

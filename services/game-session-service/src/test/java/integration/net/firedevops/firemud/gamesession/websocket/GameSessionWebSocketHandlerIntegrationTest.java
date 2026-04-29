@@ -1,7 +1,6 @@
 package net.firedevops.firemud.gamesession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.awaitility.Awaitility.await;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.eq;
@@ -17,7 +16,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
@@ -621,9 +619,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
     List<String> payloads;
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
       client.send("AFK");
-      await()
-          .atMost(5, TimeUnit.SECONDS)
-          .untilAsserted(() -> verify(commandService).enqueue("41", "AFK", false));
+      GameplayAsyncAssertions.assertEventually(
+          "AFK command enqueue",
+          java.time.Duration.ofSeconds(5),
+          () -> {
+            verify(commandService).enqueue("41", "AFK", false);
+            return true;
+          });
       payloads = client.responses();
     }
     GameplayPresence presence =
@@ -695,9 +697,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
     List<String> payloads;
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
       client.send("north");
-      await()
-          .atMost(5, TimeUnit.SECONDS)
-          .untilAsserted(() -> verify(commandService).enqueue("42", "north", false));
+      GameplayAsyncAssertions.assertEventually(
+          "movement command enqueue",
+          java.time.Duration.ofSeconds(5),
+          () -> {
+            verify(commandService).enqueue("42", "north", false);
+            return true;
+          });
       payloads = client.responses();
     }
 
@@ -875,17 +881,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
       client.send("AFK");
-      await()
-          .atMost(5, TimeUnit.SECONDS)
-          .untilAsserted(
-              () ->
-                  assertThat(
-                          gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
-                              .filter(entry -> entry.sessionId() == 1L)
-                              .findFirst()
-                              .orElseThrow()
-                              .explicitAfkSinceEpochMs())
-                      .isNotNull());
+      GameplayAsyncAssertions.assertEventually(
+          "AFK gameplay presence update",
+          java.time.Duration.ofSeconds(5),
+          () ->
+              gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+                      .filter(entry -> entry.sessionId() == 1L)
+                      .findFirst()
+                      .orElseThrow()
+                      .explicitAfkSinceEpochMs()
+                  != null);
       client.send("WHO");
       client.awaitMatching(payload -> isStructuredCommand(payload, "WHO"), "structured WHO result");
       payloads = client.responses();

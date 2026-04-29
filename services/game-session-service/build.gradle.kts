@@ -69,6 +69,8 @@ dependencies {
     testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")
     testFixturesImplementation("com.google.protobuf:protobuf-java:${libs.versions.protobuf.get()}")
     testFixturesImplementation(libs.spring.boot.starter.jdbc)
+    testFixturesCompileOnly(libs.testcontainers.postgresql)
+    testFixturesCompileOnly("org.testcontainers:testcontainers:${libs.versions.testcontainers.get()}")
     testImplementation(libs.grpc.inprocess)
     testImplementation(testFixtures(project(":game-session-service")))
     testImplementation(project(":game-logic-service"))

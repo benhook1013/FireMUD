@@ -114,6 +114,47 @@ def run_command_plan(steps, executor):
         executor(line, expected_substrings, label, timeout)
 
 
+def wait_for_incremental_response(
+    next_chunk,
+    responses,
+    start_index,
+    expected_substrings,
+    timeout,
+    combine_responses,
+    drain_remaining=None,
+    explicit_failure_prefixes=("ERROR ", "DISCONNECT "),
+    idle_sleep_seconds=0.05,
+):
+    deadline = time.time() + timeout
+    expects_explicit_failure = any(
+        any(substring.startswith(prefix) for prefix in explicit_failure_prefixes)
+        for substring in expected_substrings
+    )
+    response = combine_responses(responses[start_index:])
+    while time.time() < deadline:
+        chunk = next_chunk()
+        if chunk:
+            responses.append(chunk)
+            response = combine_responses(responses[start_index:])
+            stripped = response.strip()
+            if not expects_explicit_failure and any(
+                stripped.startswith(prefix) for prefix in explicit_failure_prefixes
+            ):
+                raise RuntimeError(f"Command failed explicitly: {stripped}")
+            if all(substring in response for substring in expected_substrings):
+                if drain_remaining is not None:
+                    trailing = drain_remaining()
+                    if trailing:
+                        responses.append(trailing)
+                        response = combine_responses(responses[start_index:])
+                return response
+        else:
+            time.sleep(idle_sleep_seconds)
+    raise RuntimeError(
+        f"Expected response containing {expected_substrings}, got '{response}'"
+    )
+
+
 def gameplay_item_container_equipment_steps(
     username,
     password,

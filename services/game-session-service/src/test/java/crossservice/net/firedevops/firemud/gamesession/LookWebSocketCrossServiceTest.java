@@ -302,17 +302,7 @@ class LookWebSocketCrossServiceTest {
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (STACK == null) {
-      STACK =
-          GameplayCrossServiceStack.builder()
-              .withPostgres(
-                  POSTGRES.getHost(),
-                  POSTGRES.getMappedPort(5432),
-                  POSTGRES.getDatabaseName(),
-                  POSTGRES.getUsername(),
-                  POSTGRES.getPassword())
-              .withRedis(REDIS.getHost(), REDIS.getMappedPort(6379))
-              .withDefaultAccountId(ACCOUNT_ID)
-              .start();
+      STACK = GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID).start();
     }
   }
 

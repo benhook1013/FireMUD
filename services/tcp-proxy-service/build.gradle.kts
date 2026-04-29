@@ -22,6 +22,7 @@ dependencies {
     testImplementation(libs.spring.boot.starter.data.redis)
     testImplementation(libs.spring.boot.starter.data.jpa)
     testImplementation(libs.spring.boot.starter.jdbc)
+    testImplementation(testFixtures(project(":common-test-support")))
     testImplementation(project(":game-session-service"))
     testImplementation(testFixtures(project(":game-session-service")))
     testImplementation(project(":game-logic-service"))

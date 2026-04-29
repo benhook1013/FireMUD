@@ -1,6 +1,6 @@
 # LOOK Smoke Tests
 
-These lightweight scripts document the manual sequence of `LOGIN` + `LOOK` commands for both WebSocket and Telnet transports so developers can verify the vertical slice while the wired cross-service tests are still in progress.
+These lightweight scripts document the manual sequence of `LOGIN` + `LOOK` commands for both WebSocket and Telnet transports so developers can verify the vertical slice alongside the now-wired automated cross-service tests and canonical smoke helpers.
 
 ## 1. WebSocket smoke script
 

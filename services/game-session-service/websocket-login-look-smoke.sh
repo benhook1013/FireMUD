@@ -44,6 +44,7 @@ sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 from smoke_common import (
     gameplay_item_container_equipment_steps,
     run_command_plan,
+    wait_for_incremental_response,
     verify_smoke_account,
     wait_for_account_schema,
     wait_for_http_readiness,
@@ -100,38 +101,19 @@ def drain_available(ws, responses, quiet_timeout=0.25):
         except RuntimeError:
             return
 
-
-def wait_for_incremental_text(ws, responses, start_index, label, expected_substrings, timeout):
-    deadline = time.time() + timeout
-    expects_explicit_failure = any(
-        substring.startswith("ERROR ") or substring.startswith("DISCONNECT ")
-        for substring in expected_substrings
-    )
-    while time.time() < deadline:
-        remaining = max(0.1, deadline - time.time())
-        responses.append(
-            recv_text(ws, f"{label} response chunk", min(remaining, timeout_seconds)).strip()
-        )
-        response = "\n".join(chunk for chunk in responses[start_index:] if chunk)
-        if not expects_explicit_failure and (
-            response.startswith("ERROR ") or response.startswith("DISCONNECT ")
-        ):
-            raise RuntimeError(f"{label} failed explicitly: {response}")
-        if all(substring in response for substring in expected_substrings):
-            drain_available(ws, responses)
-            return response
-    raise RuntimeError(
-        f"Expected {label} response containing {expected_substrings}, got '{response}'"
-    )
-
-
 def send_and_expect(ws, line, expected_substrings, label, timeout=timeout_seconds):
     if not hasattr(ws, "_smoke_responses"):
         ws._smoke_responses = []
     start_index = len(ws._smoke_responses)
     ws.send(line)
-    response = wait_for_incremental_text(
-        ws, ws._smoke_responses, start_index, label, expected_substrings, timeout
+    response = wait_for_incremental_response(
+        lambda: recv_text(ws, f"{label} response chunk", min(0.5, timeout)).strip(),
+        ws._smoke_responses,
+        start_index,
+        expected_substrings,
+        timeout,
+        lambda parts: "\n".join(chunk for chunk in parts if chunk),
+        lambda: drain_available(ws, ws._smoke_responses),
     )
     print(f"=== {label} response ===")
     print(response.strip() or "<empty>")

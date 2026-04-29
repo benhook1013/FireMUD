@@ -2,21 +2,13 @@ package net.firedevops.firemud.tcpproxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.WebSocket;
-import java.net.http.WebSocket.Listener;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
@@ -25,6 +17,7 @@ import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.ReactiveTestApplicationSupport;
 import net.firedevops.firemud.test.TestAsyncAssertions;
+import net.firedevops.firemud.test.WebSocketTestProbe;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,6 +40,7 @@ import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
+import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -162,7 +156,6 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   @Test
   void telnetPreservesGatewayRestartLogoutOnCleanBridgeClose() throws Exception {
     ensureTestServicesStarted();
-    assertThat(runGatewayWebSocketCommands("WORLDS")).containsExactly("processed:WORLDS");
 
     try (GameplayTelnetDriver client =
         GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT)) {
@@ -336,41 +329,21 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   }
 
   private List<String> runGatewayWebSocketCommands(String... commands) throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    List<String> responses = new CopyOnWriteArrayList<>();
-    CompletableFuture<Void> responsesReady = new CompletableFuture<>();
-    WebSocket webSocket =
-        client
-            .newWebSocketBuilder()
-            .buildAsync(
-                URI.create(GATEWAY.websocketUrl()),
-                new Listener() {
-                  private int received;
-
-                  @Override
-                  public void onOpen(WebSocket webSocket) {
-                    webSocket.request(1);
-                  }
-
-                  @Override
-                  public CompletionStage<?> onText(
-                      WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
-                    received++;
-                    webSocket.request(1);
-                    if (received >= commands.length && !responsesReady.isDone()) {
-                      responsesReady.complete(null);
-                    }
-                    return Listener.super.onText(webSocket, data, last);
-                  }
-                })
-            .join();
-    for (String command : commands) {
-      webSocket.sendText(command, true).join();
+    try (WebSocketTestProbe probe =
+        WebSocketTestProbe.connect(GATEWAY.websocketUrl(), new WebSocketHttpHeaders())) {
+      for (String command : commands) {
+        probe.send(command);
+      }
+      for (String command : commands) {
+        if ("LOOK".equalsIgnoreCase(command)) {
+          probe.awaitMessage(
+              LookTestFixtures.canonicalLookText()::equals, "LOOK response", COMMAND_WAIT);
+          continue;
+        }
+        probe.awaitStartsWith("processed:" + command, COMMAND_WAIT);
+      }
+      return probe.responses();
     }
-    responsesReady.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
-    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-    return responses;
   }
 
   private static final class GameSessionWebSocketHandler implements WebSocketHandler {

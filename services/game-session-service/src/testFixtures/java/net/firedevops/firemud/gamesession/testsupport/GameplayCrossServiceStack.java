@@ -18,6 +18,8 @@ import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.PostgreSQLContainer;
 
 /** Shared gameplay-oriented cross-service bootstrap fixture above the lower-level app harness. */
 public final class GameplayCrossServiceStack implements AutoCloseable {
@@ -49,6 +51,19 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
 
   public static Builder builder() {
     return new Builder();
+  }
+
+  public static Builder defaultDemoBuilder(
+      PostgreSQLContainer<?> postgres, GenericContainer<?> redis, long defaultAccountId) {
+    return builder()
+        .withPostgres(
+            postgres.getHost(),
+            postgres.getMappedPort(5432),
+            postgres.getDatabaseName(),
+            postgres.getUsername(),
+            postgres.getPassword())
+        .withRedis(redis.getHost(), redis.getMappedPort(6379))
+        .withDefaultAccountId(defaultAccountId);
   }
 
   @SuppressFBWarnings(

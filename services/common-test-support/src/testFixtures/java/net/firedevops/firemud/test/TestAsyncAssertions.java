@@ -6,7 +6,7 @@ import java.util.function.BooleanSupplier;
 
 /** Shared low-level eventual assertions for integration and cross-service tests. */
 public final class TestAsyncAssertions {
-  private static final Duration DEFAULT_POLL_INTERVAL = Duration.ofMillis(50);
+  public static final Duration DEFAULT_POLL_INTERVAL = Duration.ofMillis(50);
 
   private TestAsyncAssertions() {}
 

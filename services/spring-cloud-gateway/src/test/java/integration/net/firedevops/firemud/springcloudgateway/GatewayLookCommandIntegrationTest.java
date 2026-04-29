@@ -8,8 +8,8 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.springcloudgateway.health.GameplayRouteReadinessHealthIndicator;
-import net.firedevops.firemud.springcloudgateway.testsupport.GatewayWebSocketProbe;
 import net.firedevops.firemud.test.ReactiveTestApplicationSupport;
+import net.firedevops.firemud.test.WebSocketTestProbe;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringBootConfiguration;
@@ -49,8 +49,7 @@ class GatewayLookCommandIntegrationTest {
 
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Game-Instance-Id", "42");
-    try (GatewayWebSocketProbe probe =
-        GatewayWebSocketProbe.connect(GATEWAY.websocketUrl(), headers)) {
+    try (WebSocketTestProbe probe = WebSocketTestProbe.connect(GATEWAY.websocketUrl(), headers)) {
       probe.send("LOOK");
       assertThat(
               probe.awaitMessage(
@@ -69,8 +68,7 @@ class GatewayLookCommandIntegrationTest {
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Game-Instance-Id", "42");
 
-    try (GatewayWebSocketProbe probe =
-        GatewayWebSocketProbe.connect(GATEWAY.websocketUrl(), headers)) {
+    try (WebSocketTestProbe probe = WebSocketTestProbe.connect(GATEWAY.websocketUrl(), headers)) {
       probe.send("FORCE_CLOSE_GATEWAY_RESTART");
       assertThat(probe.awaitClosed(Duration.ofSeconds(5))).isTrue();
       assertThat(probe.closeStatus()).isNotNull();
@@ -87,8 +85,7 @@ class GatewayLookCommandIntegrationTest {
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Game-Instance-Id", "42");
 
-    try (GatewayWebSocketProbe probe =
-        GatewayWebSocketProbe.connect(GATEWAY.websocketUrl(), headers)) {
+    try (WebSocketTestProbe probe = WebSocketTestProbe.connect(GATEWAY.websocketUrl(), headers)) {
       probe.send("FORCE_CLOSE_INTERNAL_ERROR");
       assertThat(probe.awaitClosed(Duration.ofSeconds(5))).isTrue();
       assertThat(probe.closeStatus()).isNotNull();
