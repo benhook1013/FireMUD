@@ -2123,6 +2123,7 @@ public class EntityManagementGrpcService
       String roomInstanceId,
       PlayableStateScope playableStateScope) {
     GameplaySessionAttestationClaims claims = gameplaySessionAttestationService.requireValid(token);
+    gameplaySessionAttestationService.requireAdmittedRoutingBundle(claims);
     gameplaySessionAttestationService.requireGameplaySessionMatch(
         token,
         tenantId,

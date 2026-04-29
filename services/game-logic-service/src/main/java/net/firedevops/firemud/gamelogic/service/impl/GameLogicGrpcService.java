@@ -183,7 +183,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   @Timed(value = "gamelogicGrpc.resolveLook")
   public void resolveLook(LookRequest request, StreamObserver<LookResult> responseObserver) {
     try {
-      gameplaySessionAttestationService.requireGameplaySessionMatch(
+      requireGameplayRoutingAttestation(
           request.getSessionAttestation(),
           request.getTenantId(),
           request.getSessionId(),
@@ -240,7 +240,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       SendCommunicationRequest request,
       StreamObserver<SendCommunicationResponse> responseObserver) {
     try {
-      gameplaySessionAttestationService.requireGameplaySessionMatch(
+      requireGameplayRoutingAttestation(
           request.getSessionAttestation(),
           request.getTenantId(),
           request.getSessionId(),
@@ -267,7 +267,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   @Timed(value = "gamelogicGrpc.resolveMove")
   public void resolveMove(MoveRequest request, StreamObserver<MoveResult> responseObserver) {
     try {
-      gameplaySessionAttestationService.requireGameplaySessionMatch(
+      requireGameplayRoutingAttestation(
           request.getSessionAttestation(),
           request.getTenantId(),
           request.getSessionId(),
@@ -338,16 +338,76 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   public void pickupVisibleRoomItem(
       PickupVisibleRoomItemRequest request,
       StreamObserver<PickupItemFromRoomResponse> responseObserver) {
-    responseObserver.onNext(itemRuntimeService.pickupVisibleRoomItem(request));
-    responseObserver.onCompleted();
+    try {
+      requireGameplayRoutingAttestation(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getSessionId(),
+          request.getAccountId(),
+          request.getCharacterId(),
+          request.getGameInstanceId(),
+          request.getRoomInstanceId());
+      responseObserver.onNext(itemRuntimeService.pickupVisibleRoomItem(request));
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      responseObserver.onNext(
+          PickupItemFromRoomResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "PickupVisibleRoomItem",
+                      ex.getCode(),
+                      ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    }
   }
 
   @Override
   @Timed(value = "gamelogicGrpc.dropCarriedItem")
   public void dropCarriedItem(
       DropCarriedItemRequest request, StreamObserver<DropItemToRoomResponse> responseObserver) {
-    responseObserver.onNext(itemRuntimeService.dropCarriedItem(request));
-    responseObserver.onCompleted();
+    try {
+      requireGameplayRoutingAttestation(
+          request.getSessionAttestation(),
+          request.getTenantId(),
+          request.getSessionId(),
+          request.getAccountId(),
+          request.getCharacterId(),
+          request.getGameInstanceId(),
+          request.getRoomInstanceId());
+      responseObserver.onNext(itemRuntimeService.dropCarriedItem(request));
+      responseObserver.onCompleted();
+    } catch (GameplaySessionAttestationException ex) {
+      responseObserver.onNext(
+          DropItemToRoomResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "DropCarriedItem", ex.getCode(), ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    }
+  }
+
+  private void requireGameplayRoutingAttestation(
+      String sessionAttestation,
+      String tenantId,
+      String sessionId,
+      String accountId,
+      String characterId,
+      String gameInstanceId,
+      String roomInstanceId) {
+    gameplaySessionAttestationService.requireGameplaySessionMatch(
+        sessionAttestation,
+        tenantId,
+        sessionId,
+        accountId,
+        characterId,
+        gameInstanceId,
+        roomInstanceId);
+    gameplaySessionAttestationService.requireAdmittedRoutingBundle(
+        gameplaySessionAttestationService.requireValid(sessionAttestation));
   }
 
   @Override

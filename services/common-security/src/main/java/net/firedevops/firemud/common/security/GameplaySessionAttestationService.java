@@ -109,6 +109,13 @@ public class GameplaySessionAttestationService {
         playableStateScope);
   }
 
+  public void requireAdmittedRoutingBundle(GameplaySessionAttestationClaims claims) {
+    requireClaimsType(claims, GAMEPLAY_SESSION);
+    requirePresent(claims.worldSlug(), "worldSlug");
+    requirePresent(claims.realmSlug(), "realmSlug");
+    requirePresent(claims.pointerVersion(), "pointerVersion");
+  }
+
   public void requireGameplaySessionMatch(
       String token,
       String tenantId,
@@ -179,6 +186,20 @@ public class GameplaySessionAttestationService {
   private void requireOptionalEquals(String actual, String expected, String fieldName) {
     if (StringUtils.hasText(expected)) {
       requireEquals(actual, expected, fieldName);
+    }
+  }
+
+  private void requireClaimsType(GameplaySessionAttestationClaims claims, String expectedType) {
+    if (claims == null || !expectedType.equals(claims.attestationType())) {
+      throw new GameplaySessionAttestationException(
+          "SESSION_ATTESTATION_INVALID", "Gameplay session attestation type is unsupported");
+    }
+  }
+
+  private void requirePresent(String value, String fieldName) {
+    if (!StringUtils.hasText(value)) {
+      throw new GameplaySessionAttestationException(
+          "SESSION_ATTESTATION_INVALID", "Gameplay session attestation is missing " + fieldName);
     }
   }
 

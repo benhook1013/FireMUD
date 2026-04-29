@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationClaims;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
@@ -1241,6 +1242,71 @@ class EntityManagementGrpcServiceTest {
     assertEquals(2, ref.get().getItems(0).getQuantity());
     assertEquals("55", ref.get().getItems(0).getContainerInstanceId());
     assertEquals("torch12", ref.get().getItems(0).getVisibleRef());
+  }
+
+  @Test
+  void queryInventoryRejectsGameplayAttestationMissingRoutingBundle() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry =
+        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+    io.micrometer.core.instrument.Counter counter =
+        Mockito.mock(io.micrometer.core.instrument.Counter.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(counter);
+    GameplaySessionAttestationService attestationService = attestationService();
+    Mockito.doThrow(
+            new GameplaySessionAttestationException(
+                "SESSION_ATTESTATION_INVALID",
+                "Gameplay session attestation is missing pointerVersion"))
+        .when(attestationService)
+        .requireAdmittedRoutingBundle(Mockito.any());
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            Mockito.mock(ActorStateService.class),
+            Mockito.mock(ActorConditionMutationService.class),
+            Mockito.mock(EntityDraftDesignDigestService.class),
+            equipmentService,
+            inventoryService,
+            Mockito.mock(ContainerService.class),
+            roomEntityService,
+            Mockito.mock(EntityMutationEffectReplayService.class),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService,
+            meterRegistry);
+
+    AtomicReference<QueryInventoryResponse> ref = new AtomicReference<>();
+    service.queryInventory(
+        QueryInventoryRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setSessionAttestation("attestation")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryInventoryResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("SESSION_ATTESTATION_INVALID", ref.get().getError().getCode());
   }
 
   @Test

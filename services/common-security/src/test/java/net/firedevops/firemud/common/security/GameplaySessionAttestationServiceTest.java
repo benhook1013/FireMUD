@@ -74,4 +74,30 @@ class GameplaySessionAttestationServiceTest {
 
     assertDoesNotThrow(() -> service.requireGameplayOrProbeMatch(token, "22", "1", "1021"));
   }
+
+  @Test
+  void requireAdmittedRoutingBundleAcceptsGameplayAttestationWithRoutingClaims() {
+    GameplaySessionAttestationClaims claims =
+        service.requireValid(
+            service.issueGameplaySessionAttestation(
+                "22", "41", "7", "123", "1", "1021", "demo", "production", "17", "SHARED"));
+
+    assertDoesNotThrow(() -> service.requireAdmittedRoutingBundle(claims));
+  }
+
+  @Test
+  void requireAdmittedRoutingBundleRejectsGameplayAttestationMissingPointerVersion() {
+    GameplaySessionAttestationClaims claims =
+        service.requireValid(
+            service.issueGameplaySessionAttestation(
+                "22", "41", "7", "123", "1", "1021", "demo", "production", null, "SHARED"));
+
+    GameplaySessionAttestationException ex =
+        assertThrows(
+            GameplaySessionAttestationException.class,
+            () -> service.requireAdmittedRoutingBundle(claims));
+
+    assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
+    assertEquals("Gameplay session attestation is missing pointerVersion", ex.getMessage());
+  }
 }
