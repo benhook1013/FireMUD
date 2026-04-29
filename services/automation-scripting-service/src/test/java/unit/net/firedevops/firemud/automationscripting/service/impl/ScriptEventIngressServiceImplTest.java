@@ -101,13 +101,16 @@ class ScriptEventIngressServiceImplTest {
     when(workItemRepository.save(Mockito.any(ScriptWorkItem.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 "1",
                 "game-1",
                 "region-1",
                 7L,
                 "entity-1",
                 "SHARED",
+                "demo",
+                "production",
+                "17",
                 "onCommand",
                 "v1",
                 "patch-1",
@@ -147,7 +150,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -173,12 +176,18 @@ class ScriptEventIngressServiceImplTest {
     assertThat(auditCaptor.getValue().getSourceService()).isEqualTo("game-session-service");
     assertThat(auditCaptor.getValue().isAdmitted()).isTrue();
     assertThat(auditCaptor.getValue().getResolvedHandlerCount()).isEqualTo(1);
+    assertThat(auditCaptor.getValue().getWorldSlug()).isEqualTo("demo");
+    assertThat(auditCaptor.getValue().getRealmSlug()).isEqualTo("production");
+    assertThat(auditCaptor.getValue().getPointerVersion()).isEqualTo("17");
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(workItemRepository).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getValue().getScriptId()).isEqualTo("script-1");
     assertThat(workItemCaptor.getValue().getPluginId()).isEqualTo("plugin-1");
     assertThat(workItemCaptor.getValue().getPluginVersionId()).isEqualTo("plugin-v1");
     assertThat(workItemCaptor.getValue().getPlayableStateScope()).isEqualTo("SHARED");
+    assertThat(workItemCaptor.getValue().getWorldSlug()).isEqualTo("demo");
+    assertThat(workItemCaptor.getValue().getRealmSlug()).isEqualTo("production");
+    assertThat(workItemCaptor.getValue().getPointerVersion()).isEqualTo("17");
     assertThat(workItemCaptor.getValue().getPriorityTag()).isEqualTo("high");
     assertThat(workItemCaptor.getValue().getStatus()).isEqualTo("PENDING_EVALUATION");
     ArgumentCaptor<ScriptEventAudit> eventAuditCaptor =
@@ -240,7 +249,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -314,7 +323,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -352,13 +361,16 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptQuotaService quotaService = Mockito.mock(ScriptQuotaService.class);
     when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 "1",
                 "game-1",
                 "region-1",
                 7L,
                 "entity-1",
                 "SHARED",
+                "demo",
+                "production",
+                "17",
                 "onCommand",
                 "v1",
                 "patch-1",
@@ -399,7 +411,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -433,13 +445,16 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptDryRunQuotaService dryRunQuotaService = Mockito.mock(ScriptDryRunQuotaService.class);
     when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 "1",
                 "game-1",
                 "region-1",
                 7L,
                 "entity-1",
                 "SHARED",
+                "demo",
+                "production",
+                "17",
                 "onCommand",
                 "v1",
                 "patch-1",
@@ -478,7 +493,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -529,7 +544,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -577,7 +592,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -628,7 +643,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -663,13 +678,16 @@ class ScriptEventIngressServiceImplTest {
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 "1",
                 "game-1",
                 "region-1",
                 7L,
                 "entity-1",
                 "SHARED",
+                "demo",
+                "production",
+                "17",
                 "onCommand",
                 "v1",
                 "patch-1",
@@ -695,7 +713,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -740,7 +758,7 @@ class ScriptEventIngressServiceImplTest {
         IllegalArgumentException.class,
         () ->
             service.admit(
-                TriggerScriptEventRequest.newBuilder()
+                gameplayRequestBuilder()
                     .setEventType("onCommand")
                     .setScriptPatchVersion("patch-1")
                     .setScriptEventId("event-1")
@@ -785,7 +803,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -843,7 +861,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -898,7 +916,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -969,7 +987,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -1014,7 +1032,7 @@ class ScriptEventIngressServiceImplTest {
 
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(
-            TriggerScriptEventRequest.newBuilder()
+            gameplayRequestBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setRegionId("region-1")
@@ -1031,6 +1049,52 @@ class ScriptEventIngressServiceImplTest {
         .isEqualTo(
             TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
     assertThat(admission.reason()).isEqualTo("missing_trigger_identity");
+    verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
+  }
+
+  @Test
+  void rejectsGameplayTriggerWhenRoutingBundleIsMissing() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            Mockito.mock(ScriptEventBindingRepository.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            new BuiltInScriptEventRegistryService(),
+            Mockito.mock(AutomationQueueService.class),
+            outputProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            TriggerScriptEventRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-missing-routing")
+                .setReadSnapshotToken("snapshot-1")
+                .build());
+
+    assertThat(admission.admitted()).isFalse();
+    assertThat(admission.outcome())
+        .isEqualTo(
+            TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
+    assertThat(admission.reason()).isEqualTo("missing_gameplay_routing_bundle");
     verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
   }
 
@@ -1051,5 +1115,12 @@ class ScriptEventIngressServiceImplTest {
 
   private static ScriptOutputProperties outputProperties() {
     return new ScriptOutputProperties();
+  }
+
+  private static TriggerScriptEventRequest.Builder gameplayRequestBuilder() {
+    return TriggerScriptEventRequest.newBuilder()
+        .setWorldSlug("demo")
+        .setRealmSlug("production")
+        .setPointerVersion("17");
   }
 }

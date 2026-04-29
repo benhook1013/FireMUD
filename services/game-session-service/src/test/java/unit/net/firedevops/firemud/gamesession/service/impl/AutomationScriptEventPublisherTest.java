@@ -54,6 +54,9 @@ class AutomationScriptEventPublisherTest {
     assertThat(request.getEntityId()).isEqualTo("44");
     assertThat(request.getPlayableStateScope())
         .isEqualTo(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    assertThat(request.getWorldSlug()).isEqualTo("demo");
+    assertThat(request.getRealmSlug()).isEqualTo("production");
+    assertThat(request.getPointerVersion()).isEqualTo("7");
     assertThat(request.getEventType()).isEqualTo("onCommand");
     assertThat(request.getScriptPatchVersion()).isEqualTo("patch-1");
     assertThat(request.getScriptEventId()).isEqualTo("cmd-1");
@@ -113,6 +116,15 @@ class AutomationScriptEventPublisherTest {
     assertThat(captor.getAllValues())
         .extracting(TriggerScriptEventRequest::getPlayableStateScope)
         .containsOnly(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getWorldSlug)
+        .containsOnly("demo");
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getRealmSlug)
+        .containsOnly("production");
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getPointerVersion)
+        .containsOnly("7");
     assertThat(captor.getAllValues())
         .extracting(TriggerScriptEventRequest::getPayloadJson)
         .allSatisfy(

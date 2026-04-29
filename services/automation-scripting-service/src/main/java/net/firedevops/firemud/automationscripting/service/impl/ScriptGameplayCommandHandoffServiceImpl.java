@@ -197,6 +197,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setGameSessionCommandId(normalize(gameSessionCommandId));
     event.setTargetEntityId(command.targetEntityId());
     event.setPlayableStateScope(normalize(workItem.getPlayableStateScope()));
+    event.setWorldSlug(normalize(workItem.getWorldSlug()));
+    event.setRealmSlug(normalize(workItem.getRealmSlug()));
+    event.setPointerVersion(normalize(workItem.getPointerVersion()));
     event.setEmittedCommandText(command.commandText());
     event.setHandoffOutcome(outcome);
     event.setHandoffReason(reason);

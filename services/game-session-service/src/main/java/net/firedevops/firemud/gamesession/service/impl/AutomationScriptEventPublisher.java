@@ -60,6 +60,9 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                   .setScriptEventId(command.getCommandId())
                   .setTriggerMode(TriggerMode.TRIGGER_MODE_NORMAL)
                   .setPlayableStateScope(scope.playableStateScope())
+                  .setWorldSlug(scope.worldSlug())
+                  .setRealmSlug(scope.realmSlug())
+                  .setPointerVersion(scope.pointerVersion())
                   .setReadSnapshotToken(
                       "game-session:onCommand:"
                           + scope.gameInstanceId()
@@ -152,6 +155,9 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
             .setScriptEventId(scriptEventId)
             .setTriggerMode(TriggerMode.TRIGGER_MODE_NORMAL)
             .setPlayableStateScope(scope.playableStateScope())
+            .setWorldSlug(scope.worldSlug())
+            .setRealmSlug(scope.realmSlug())
+            .setPointerVersion(scope.pointerVersion())
             .setReadSnapshotToken(readSnapshotToken)
             .setPayloadJson(payloadJson)
             .build();
@@ -228,7 +234,10 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         ownership.getRegionEpoch(),
         Long.toString(context.characterId()),
         resolvePlayableStateScope(context),
-        scriptPatchVersion);
+        scriptPatchVersion,
+        normalize(context.worldSlug()),
+        normalize(context.realmSlug()),
+        context.pointerVersion() > 0 ? Long.toString(context.pointerVersion()) : "");
   }
 
   private static String regionTransitionPayload(String fromRegionId, String toRegionId) {
@@ -250,7 +259,10 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       long regionEpoch,
       String entityId,
       PlayableStateScope playableStateScope,
-      String scriptPatchVersion) {}
+      String scriptPatchVersion,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion) {}
 
   private static PlayableStateScope resolvePlayableStateScope(SessionContext context) {
     if (!StringUtils.hasText(context.playableStateScope())) {

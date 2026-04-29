@@ -504,6 +504,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         item.getRegionEpoch(),
         item.getEntityId(),
         blankToEmpty(item.getPlayableStateScope()),
+        blankToEmpty(item.getWorldSlug()),
+        blankToEmpty(item.getRealmSlug()),
+        blankToEmpty(item.getPointerVersion()),
         item.getScriptId(),
         item.getEventType(),
         item.getScriptPatchVersion(),
@@ -529,6 +532,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         blankToEmpty(event.getGameSessionCommandId()),
         event.getTargetEntityId(),
         blankToEmpty(event.getPlayableStateScope()),
+        blankToEmpty(event.getWorldSlug()),
+        blankToEmpty(event.getRealmSlug()),
+        blankToEmpty(event.getPointerVersion()),
         event.getEmittedCommandText(),
         event.getHandoffOutcome(),
         event.getHandoffReason(),
@@ -585,13 +591,16 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     }
     Optional<ScriptEventIngressAudit> audit =
         ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 item.getTenantId(),
                 item.getGameInstanceId(),
                 item.getRegionId(),
                 item.getRegionEpoch(),
                 item.getEntityId(),
                 blankToEmpty(item.getPlayableStateScope()),
+                blankToEmpty(item.getWorldSlug()),
+                blankToEmpty(item.getRealmSlug()),
+                blankToEmpty(item.getPointerVersion()),
                 item.getEventType(),
                 item.getEventSchemaVersion(),
                 item.getScriptPatchVersion(),

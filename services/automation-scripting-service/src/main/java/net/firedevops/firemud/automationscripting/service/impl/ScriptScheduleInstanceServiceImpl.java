@@ -572,13 +572,16 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     String entityId = targetEntityId(instance);
     String scriptEventId = timerScriptEventId(candidate);
     if (eventAuditRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             instance.getTenantId(),
             instance.getGameInstanceId(),
             candidate.regionId(),
             candidate.regionEpoch(),
             entityId,
             blankToEmpty(instance.getPlayableStateScope()),
+            "",
+            "",
+            "",
             instance.getScriptId(),
             instance.getEventType(),
             DEFAULT_SCHEMA_VERSION,
@@ -594,6 +597,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setRegionEpoch(candidate.regionEpoch());
     audit.setEntityId(entityId);
     audit.setPlayableStateScope(blankToEmpty(instance.getPlayableStateScope()));
+    audit.setWorldSlug("");
+    audit.setRealmSlug("");
+    audit.setPointerVersion("");
     audit.setScriptId(instance.getScriptId());
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
@@ -678,13 +684,16 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     String entityId = targetEntityId(instance);
     String scriptEventId = timerScriptEventId(candidate);
     if (workItemRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             instance.getTenantId(),
             instance.getGameInstanceId(),
             candidate.regionId(),
             candidate.regionEpoch(),
             entityId,
             blankToEmpty(instance.getPlayableStateScope()),
+            "",
+            "",
+            "",
             instance.getScriptId(),
             instance.getEventType(),
             DEFAULT_SCHEMA_VERSION,
@@ -703,6 +712,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setRegionEpoch(candidate.regionEpoch());
     item.setEntityId(entityId);
     item.setPlayableStateScope(blankToEmpty(instance.getPlayableStateScope()));
+    item.setWorldSlug("");
+    item.setRealmSlug("");
+    item.setPointerVersion("");
     item.setScriptId(instance.getScriptId());
     item.setPluginId(blankToEmpty(instance.getPluginId()));
     item.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
@@ -743,6 +755,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setRegionEpoch(candidate.regionEpoch());
     audit.setEntityId(workItem.getEntityId());
     audit.setPlayableStateScope(blankToEmpty(workItem.getPlayableStateScope()));
+    audit.setWorldSlug(blankToEmpty(workItem.getWorldSlug()));
+    audit.setRealmSlug(blankToEmpty(workItem.getRealmSlug()));
+    audit.setPointerVersion(blankToEmpty(workItem.getPointerVersion()));
     audit.setScriptId(instance.getScriptId());
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);

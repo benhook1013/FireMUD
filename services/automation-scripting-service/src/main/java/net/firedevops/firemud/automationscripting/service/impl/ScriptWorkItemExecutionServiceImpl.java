@@ -388,6 +388,10 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     variables.put("regionId", workItem.getRegionId());
     variables.put("regionEpoch", Long.toString(workItem.getRegionEpoch()));
     variables.put("entityId", workItem.getEntityId());
+    variables.put("worldSlug", workItem.getWorldSlug() == null ? "" : workItem.getWorldSlug());
+    variables.put("realmSlug", workItem.getRealmSlug() == null ? "" : workItem.getRealmSlug());
+    variables.put(
+        "pointerVersion", workItem.getPointerVersion() == null ? "" : workItem.getPointerVersion());
     variables.put("scriptId", workItem.getScriptId());
     variables.put("eventType", workItem.getEventType());
     variables.put("scriptPatchVersion", workItem.getScriptPatchVersion());

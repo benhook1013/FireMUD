@@ -160,6 +160,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L);
     audit.setEntityId(normalize(request.getEntityId()));
     audit.setPlayableStateScope(normalizePlayableStateScope(request.getPlayableStateScope()));
+    audit.setWorldSlug(normalize(request.getWorldSlug()));
+    audit.setRealmSlug(normalize(request.getRealmSlug()));
+    audit.setPointerVersion(normalize(request.getPointerVersion()));
     audit.setScriptId(normalize(request.getScriptId()));
     audit.setPluginId(normalize(request.getPluginId()));
     audit.setPluginVersionId(normalize(request.getPluginVersionId()));
@@ -218,6 +221,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             || request.getPlayableStateScope().name().equals("UNRECOGNIZED"))) {
       return rejected("missing_trigger_identity");
     }
+    TriggerAdmission routingAdmission = validateGameplayRoutingBundle(request, sourceService);
+    if (routingAdmission != null) {
+      return routingAdmission;
+    }
     TriggerAdmission pinAdmission = validatePinnedPatch(request);
     if (pinAdmission != null) {
       return pinAdmission;
@@ -239,6 +246,21 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private TriggerAdmission rejected(String reason) {
     return new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, reason, 0);
+  }
+
+  private TriggerAdmission validateGameplayRoutingBundle(
+      TriggerScriptEventRequest request, String sourceService) {
+    if (!"game-session-service".equals(sourceService)
+        || request.getGameInstanceId().isBlank()
+        || request.getPlayableStateScopeValue() == 0) {
+      return null;
+    }
+    if (request.getWorldSlug().isBlank()
+        || request.getRealmSlug().isBlank()
+        || request.getPointerVersion().isBlank()) {
+      return rejected("missing_gameplay_routing_bundle");
+    }
+    return null;
   }
 
   private TriggerAdmission validatePinnedPatch(TriggerScriptEventRequest request) {
@@ -382,6 +404,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L);
     item.setEntityId(normalize(request.getEntityId()));
     item.setPlayableStateScope(normalizePlayableStateScope(request.getPlayableStateScope()));
+    item.setWorldSlug(normalize(request.getWorldSlug()));
+    item.setRealmSlug(normalize(request.getRealmSlug()));
+    item.setPointerVersion(normalize(request.getPointerVersion()));
     item.setScriptId(binding.getScriptId());
     item.setPluginId(normalize(request.getPluginId()));
     item.setPluginVersionId(normalize(request.getPluginVersionId()));
@@ -424,6 +449,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L);
     audit.setEntityId(normalize(request.getEntityId()));
     audit.setPlayableStateScope(normalizePlayableStateScope(request.getPlayableStateScope()));
+    audit.setWorldSlug(normalize(request.getWorldSlug()));
+    audit.setRealmSlug(normalize(request.getRealmSlug()));
+    audit.setPointerVersion(normalize(request.getPointerVersion()));
     audit.setScriptId(binding.getScriptId());
     audit.setEventType(request.getEventType());
     audit.setEventSchemaVersion(schemaVersion);
@@ -442,13 +470,16 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private boolean handlerAuditExists(
       TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
     return eventAuditRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             request.getTenantId(),
             normalize(request.getGameInstanceId()),
             normalize(request.getRegionId()),
             request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
             normalize(request.getEntityId()),
             normalizePlayableStateScope(request.getPlayableStateScope()),
+            normalize(request.getWorldSlug()),
+            normalize(request.getRealmSlug()),
+            normalize(request.getPointerVersion()),
             binding.getScriptId(),
             request.getEventType(),
             schemaVersion,
@@ -460,13 +491,16 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private boolean workItemExists(
       TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
     return workItemRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             request.getTenantId(),
             normalize(request.getGameInstanceId()),
             normalize(request.getRegionId()),
             request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
             normalize(request.getEntityId()),
             normalizePlayableStateScope(request.getPlayableStateScope()),
+            normalize(request.getWorldSlug()),
+            normalize(request.getRealmSlug()),
+            normalize(request.getPointerVersion()),
             binding.getScriptId(),
             request.getEventType(),
             schemaVersion,
@@ -494,13 +528,16 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     }
     var existing =
         repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 request.getTenantId(),
                 normalize(request.getGameInstanceId()),
                 normalize(request.getRegionId()),
                 request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
                 normalize(request.getEntityId()),
                 normalizePlayableStateScope(request.getPlayableStateScope()),
+                normalize(request.getWorldSlug()),
+                normalize(request.getRealmSlug()),
+                normalize(request.getPointerVersion()),
                 request.getEventType(),
                 schemaVersion,
                 request.getScriptPatchVersion(),

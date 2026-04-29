@@ -268,6 +268,9 @@ message ScriptDeadLetterEntry {
   int64 created_at_ms = 13;
   int64 updated_at_ms = 14;
   entity_management.v1.PlayableStateScope playable_state_scope = 15;
+  string world_slug = 16;
+  string realm_slug = 17;
+  string pointer_version = 18;
 }
 
 message ListScriptDeadLettersResponse {
@@ -371,6 +374,13 @@ message TriggerScriptEventRequest {
   // downstream scripting work does not infer shared-vs-isolated roster policy from instance ids
   // alone. Non-gameplay/global triggers may leave this unspecified.
   entity_management.v1.PlayableStateScope playable_state_scope = 19;
+
+  // Gameplay-originated triggers should also preserve the admitted routing bundle minted during
+  // login/bootstrap/PLAY so later scripting retries, dead letters, and handoffs do not collapse
+  // back to runtime-id-only identity.
+  string world_slug = 20;
+  string realm_slug = 21;
+  string pointer_version = 22;
 }
 
 message TriggerScriptEventResponse {
@@ -636,6 +646,9 @@ message ScriptHandoffEventEntry {
   string handoff_reason = 15;
   int64 observed_at_ms = 16;
   entity_management.v1.PlayableStateScope playable_state_scope = 17;
+  string world_slug = 18;
+  string realm_slug = 19;
+  string pointer_version = 20;
 }
 
 message ListScriptHandoffEventsResponse {

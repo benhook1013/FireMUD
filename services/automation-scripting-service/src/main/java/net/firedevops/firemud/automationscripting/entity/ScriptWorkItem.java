@@ -36,6 +36,15 @@ public class ScriptWorkItem {
   @Column(nullable = false, length = 32)
   private String playableStateScope = "";
 
+  @Column(nullable = false, length = 64)
+  private String worldSlug = "";
+
+  @Column(nullable = false, length = 64)
+  private String realmSlug = "";
+
+  @Column(nullable = false, length = 64)
+  private String pointerVersion = "";
+
   @Column(nullable = false, length = 128)
   private String scriptId;
 

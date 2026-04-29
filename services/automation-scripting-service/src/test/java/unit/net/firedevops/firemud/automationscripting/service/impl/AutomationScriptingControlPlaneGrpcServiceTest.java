@@ -621,6 +621,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "command-1",
                     "target-1",
                     "SHARED",
+                    "demo",
+                    "production",
+                    "17",
                     "LOOK AT old chest",
                     "enqueued",
                     "game_session_accepted",
@@ -650,6 +653,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEventsList()).hasSize(1);
     assertThat(ref.get().getEvents(0).getAutomationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(ref.get().getEvents(0).getGameSessionCommandId()).isEqualTo("command-1");
+    assertThat(ref.get().getEvents(0).getWorldSlug()).isEqualTo("demo");
+    assertThat(ref.get().getEvents(0).getRealmSlug()).isEqualTo("production");
+    assertThat(ref.get().getEvents(0).getPointerVersion()).isEqualTo("17");
     assertThat(ref.get().getEvents(0).getEmittedCommandText()).isEqualTo("LOOK AT old chest");
     assertThat(ref.get().getEvents(0).getHandoffOutcome()).isEqualTo("enqueued");
   }
@@ -669,6 +675,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     12L,
                     "entity-1",
                     "SHARED",
+                    "demo",
+                    "production",
+                    "17",
                     "script-1",
                     "onCommand",
                     "patch-1",
@@ -697,6 +706,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getDeadLettersList()).hasSize(1);
     assertThat(ref.get().getDeadLetters(0).getWorkItemId()).isEqualTo("99");
+    assertThat(ref.get().getDeadLetters(0).getWorldSlug()).isEqualTo("demo");
+    assertThat(ref.get().getDeadLetters(0).getRealmSlug()).isEqualTo("production");
+    assertThat(ref.get().getDeadLetters(0).getPointerVersion()).isEqualTo("17");
     assertThat(ref.get().getDeadLetters(0).getReason()).isEqualTo("STALE_TIMELINE");
   }
 
