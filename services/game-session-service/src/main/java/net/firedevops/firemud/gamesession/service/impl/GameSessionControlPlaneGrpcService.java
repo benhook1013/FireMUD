@@ -1222,6 +1222,10 @@ public final class GameSessionControlPlaneGrpcService
     command.setScriptPatchVersion(request.getScriptPatchVersion());
     command.setPluginId(normalizeBlank(request.getPluginId()));
     command.setPluginVersionId(normalizeBlank(request.getPluginVersionId()));
+    command.setPlayableStateScope(normalizePlayableStateScope(request.getPlayableStateScope()));
+    command.setWorldSlug(normalizeBlank(request.getWorldSlug()));
+    command.setRealmSlug(normalizeBlank(request.getRealmSlug()));
+    command.setPointerVersion(parsePointerVersionClaim(request.getPointerVersion()));
     command.setTargetEntityId(request.getTargetEntityId());
     command.setRegionId(request.getRegionId());
     command.setRegionEpoch(request.getRegionEpoch());
@@ -1410,6 +1414,24 @@ public final class GameSessionControlPlaneGrpcService
         .orElse(
             new GameplayRoutingBundle(
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED, "", "", 0L));
+  }
+
+  private static String normalizePlayableStateScope(PlayableStateScope playableStateScope) {
+    if (playableStateScope == null) {
+      return "";
+    }
+    return switch (playableStateScope) {
+      case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
+      case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
+      case PLAYABLE_STATE_SCOPE_UNSPECIFIED, UNRECOGNIZED -> "";
+    };
+  }
+
+  private static Long parsePointerVersionClaim(String pointerVersion) {
+    if (pointerVersion == null || pointerVersion.isBlank()) {
+      return null;
+    }
+    return Long.parseLong(pointerVersion);
   }
 
   private record GameplayRoutingBundle(

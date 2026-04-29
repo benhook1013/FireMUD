@@ -13,6 +13,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepos
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import org.springframework.stereotype.Service;
@@ -123,6 +124,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
+        .setPlayableStateScope(toPlayableStateScope(workItem.getPlayableStateScope()))
+        .setWorldSlug(normalize(workItem.getWorldSlug()))
+        .setRealmSlug(normalize(workItem.getRealmSlug()))
+        .setPointerVersion(normalize(workItem.getPointerVersion()))
         .setTargetEntityId(command.targetEntityId())
         .setCommand(command.commandText())
         .setRequiresSoloTick(command.requiresSoloTick())
@@ -209,6 +214,14 @@ public class ScriptGameplayCommandHandoffServiceImpl
 
   private static String normalize(String value) {
     return value == null ? "" : value;
+  }
+
+  private static PlayableStateScope toPlayableStateScope(String playableStateScope) {
+    return switch (normalize(playableStateScope)) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+    };
   }
 
   private static void requireWorkItem(ScriptWorkItem workItem) {

@@ -1130,6 +1130,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("patch-1", staged.getScriptPatchVersion());
     assertEquals("plugin-1", staged.getPluginId());
     assertEquals("plugin-v1", staged.getPluginVersionId());
+    assertEquals("SHARED", staged.getPlayableStateScope());
+    assertEquals("demo", staged.getWorldSlug());
+    assertEquals("production", staged.getRealmSlug());
+    assertEquals(17L, staged.getPointerVersion());
     assertEquals("entity-1", staged.getTargetEntityId());
     assertEquals("region-1", staged.getRegionId());
     assertEquals(12L, staged.getRegionEpoch());
@@ -1663,6 +1667,10 @@ class GameSessionControlPlaneGrpcServiceTest {
         .setScriptPatchVersion("patch-1")
         .setPluginId("plugin-1")
         .setPluginVersionId("plugin-v1")
+        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+        .setWorldSlug("demo")
+        .setRealmSlug("production")
+        .setPointerVersion("17")
         .setTargetEntityId("entity-1")
         .setCommand("say hello")
         .build();

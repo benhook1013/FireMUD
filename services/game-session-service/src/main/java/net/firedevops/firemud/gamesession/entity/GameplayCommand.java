@@ -105,6 +105,18 @@ public class GameplayCommand {
   @Column(name = "plugin_version_id", length = 128)
   private String pluginVersionId;
 
+  @Column(name = "playable_state_scope", length = 32)
+  private String playableStateScope;
+
+  @Column(name = "world_slug", length = 64)
+  private String worldSlug;
+
+  @Column(name = "realm_slug", length = 64)
+  private String realmSlug;
+
+  @Column(name = "pointer_version")
+  private Long pointerVersion;
+
   @Column(name = "target_entity_id", length = 64)
   private String targetEntityId;
 

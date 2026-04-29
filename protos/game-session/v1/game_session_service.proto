@@ -661,6 +661,10 @@ message EnqueueAutomationCommandIfAbsentRequest {
   bool requires_solo_tick = 12;
   string plugin_id = 13;
   string plugin_version_id = 14;
+  entity_management.v1.PlayableStateScope playable_state_scope = 15;
+  string world_slug = 16;
+  string realm_slug = 17;
+  string pointer_version = 18;
 }
 
 message EnqueueAutomationCommandIfAbsentResponse {
