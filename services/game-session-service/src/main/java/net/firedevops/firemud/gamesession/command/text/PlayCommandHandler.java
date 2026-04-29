@@ -23,6 +23,7 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDispositi
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -53,6 +54,7 @@ public class PlayCommandHandler {
   private final ModerationPolicyClient moderationPolicyClient;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
+  private final ScriptEventPublisher scriptEventPublisher;
   private final MeterRegistry meterRegistry;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
@@ -67,6 +69,7 @@ public class PlayCommandHandler {
       ModerationPolicyClient moderationPolicyClient,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
+      ScriptEventPublisher scriptEventPublisher,
       MeterRegistry meterRegistry) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
@@ -88,6 +91,8 @@ public class PlayCommandHandler {
     this.gameplayPresenceLifecycleService =
         Objects.requireNonNull(
             gameplayPresenceLifecycleService, "gameplayPresenceLifecycleService must not be null");
+    this.scriptEventPublisher =
+        Objects.requireNonNull(scriptEventPublisher, "scriptEventPublisher must not be null");
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
     this.takeoverCounter = this.meterRegistry.counter(TAKEOVER_METRIC);
     this.resumeCounter = this.meterRegistry.counter(RESUME_METRIC);
@@ -290,6 +295,9 @@ public class PlayCommandHandler {
                   selectedRealm.getStateScope().name());
           sessionContextService.save(updated);
           gameplayPresenceLifecycleService.registerConnected(updated);
+          if (!resumedOrTookOver) {
+            publishSpawnEvent(updated);
+          }
 
           return new PlayCommandHandlingResult(
               CommandEnqueueResult.success(),
@@ -484,6 +492,30 @@ public class PlayCommandHandler {
 
   private String normalizeName(String value) {
     return value == null ? null : value.trim().toLowerCase(java.util.Locale.ROOT);
+  }
+
+  private void publishSpawnEvent(SessionContext context) {
+    try {
+      scriptEventPublisher.publishSpawnEvent(
+          context,
+          "play_entry",
+          "play-spawn:"
+              + context.sessionId()
+              + ":"
+              + context.gameInstanceId()
+              + ":"
+              + context.characterId()
+              + ":"
+              + context.pointerVersion());
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "PLAY spawn event publish failed tenantId={} gameInstanceId={} characterId={} sessionId={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.characterId(),
+          context.sessionId(),
+          ex);
+    }
   }
 
   private Optional<PlayCommandHandlingResult> validateRuntimeAdmission(

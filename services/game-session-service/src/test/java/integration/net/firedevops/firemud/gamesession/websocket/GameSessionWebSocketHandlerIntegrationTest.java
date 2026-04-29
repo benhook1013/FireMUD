@@ -55,6 +55,7 @@ import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -623,17 +624,29 @@ class GameSessionWebSocketHandlerIntegrationTest {
           "AFK command enqueue",
           java.time.Duration.ofSeconds(5),
           () -> {
-            verify(commandService).enqueue("41", "AFK", false);
-            return true;
+            return Mockito.mockingDetails(commandService).getInvocations().stream()
+                .anyMatch(
+                    invocation ->
+                        invocation.getMethod().getName().equals("enqueue")
+                            && invocation.getArguments().length == 3
+                            && "41".equals(invocation.getArguments()[0])
+                            && "AFK".equals(invocation.getArguments()[1])
+                            && Boolean.FALSE.equals(invocation.getArguments()[2]));
           });
+      GameplayAsyncAssertions.assertEventually(
+          "AFK presence state",
+          java.time.Duration.ofSeconds(5),
+          () ->
+              gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+                  .anyMatch(entry -> entry.sessionId() == 41L));
       payloads = client.responses();
+      GameplayPresence presence =
+          gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+              .filter(entry -> entry.sessionId() == 41L)
+              .findFirst()
+              .orElseThrow();
+      assertThat(presence.explicitAfkSinceEpochMs()).isNotNull();
     }
-    GameplayPresence presence =
-        gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
-            .filter(entry -> entry.sessionId() == 41L)
-            .findFirst()
-            .orElseThrow();
-    assertThat(presence.explicitAfkSinceEpochMs()).isNotNull();
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
   }
 

@@ -84,6 +84,43 @@ class AutomationScriptEventPublisherTest {
   }
 
   @Test
+  void publishesSpawnEventWithGameplayRoutingBundle() {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    when(client.triggerScriptEvent(Mockito.any()))
+        .thenReturn(TriggerScriptEventResponse.newBuilder().setAdmitted(true).build());
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client, statusRepository, gameInstanceRepository, Runnable::run);
+
+    publisher.publishSpawnEvent(
+        sharedGameplayContext("room"), "play_entry", "play-spawn:17:99:44:7");
+
+    ArgumentCaptor<TriggerScriptEventRequest> captor =
+        ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
+    verify(client).triggerScriptEvent(captor.capture());
+    TriggerScriptEventRequest request = captor.getValue();
+    assertThat(request.getEventType()).isEqualTo("onSpawn");
+    assertThat(request.getScriptEventId()).isEqualTo("play-spawn:17:99:44:7");
+    assertThat(request.getPlayableStateScope())
+        .isEqualTo(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    assertThat(request.getWorldSlug()).isEqualTo("demo");
+    assertThat(request.getRealmSlug()).isEqualTo("production");
+    assertThat(request.getPointerVersion()).isEqualTo("7");
+    assertThat(request.getReadSnapshotToken())
+        .isEqualTo("game-session:onSpawn:99:7:play-spawn:17:99:44:7");
+    assertThat(request.getPayloadJson()).isEqualTo("{\"spawnReason\":\"play_entry\"}");
+  }
+
+  @Test
   void publishesRegionTransitionEventsWithDeterministicIds() {
     AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
     RuntimeRegionStatusRepository statusRepository =

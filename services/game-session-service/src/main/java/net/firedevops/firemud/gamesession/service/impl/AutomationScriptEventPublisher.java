@@ -81,6 +81,31 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
   }
 
   @Override
+  public void publishSpawnEvent(SessionContext context, String spawnReason, String scriptEventId) {
+    submitBestEffort(
+        () -> {
+          if (!StringUtils.hasText(scriptEventId)) {
+            return;
+          }
+          PublishingScope scope = resolvePublishingScope(context);
+          if (scope == null) {
+            return;
+          }
+          publishLifecycleEvent(
+              scope,
+              "onSpawn",
+              scriptEventId,
+              "game-session:onSpawn:"
+                  + scope.gameInstanceId()
+                  + ":"
+                  + scope.regionEpoch()
+                  + ":"
+                  + scriptEventId,
+              spawnPayload(spawnReason));
+        });
+  }
+
+  @Override
   public void publishRegionTransitionEvents(
       SessionContext previousContext, SessionContext currentContext, String effectId) {
     submitBestEffort(
@@ -246,6 +271,10 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         + "\",\"toRegionId\":\""
         + escape(toRegionId)
         + "\"}";
+  }
+
+  private static String spawnPayload(String spawnReason) {
+    return "{\"spawnReason\":\"" + escape(normalize(spawnReason)) + "\"}";
   }
 
   private static String normalize(String value) {

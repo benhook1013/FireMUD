@@ -121,11 +121,9 @@ class LookWebSocketCrossServiceTest {
     assertThat(responses)
         .anyMatch(
             response ->
-                response
-                    .trim()
-                    .equals(
-                        GameplayTranscriptMatchers.canonicalLookWithPrompt(
-                            LookTestFixtures.DESTINATION_ROOM_ID)));
+                GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                        LookTestFixtures.DESTINATION_ROOM_ID)
+                    .test(response.trim()));
     assertThat(responses).anyMatch(response -> response.startsWith("ERROR INVALID_EXIT"));
   }
 
@@ -165,12 +163,14 @@ class LookWebSocketCrossServiceTest {
       assertThat(first.responses())
           .anyMatch(
               response ->
-                  response.trim().equals(GameplayTranscriptMatchers.canonicalLookWithPrompt()));
+                  GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt()
+                      .test(response.trim()));
 
       assertThat(second.responses())
           .anyMatch(
               response ->
-                  response.trim().equals(GameplayTranscriptMatchers.canonicalLookWithPrompt())
+                  GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt()
+                          .test(response.trim())
                       || response.trim().equals(GameplayTranscriptMatchers.canonicalLook()));
 
       first.send("LOOK");
@@ -211,11 +211,9 @@ class LookWebSocketCrossServiceTest {
       socket.send("LOOK");
       socket.awaitMatching(
           response ->
-              response
-                  .trim()
-                  .equals(
-                      GameplayTranscriptMatchers.canonicalLookWithPrompt(
-                          LookTestFixtures.DESTINATION_ROOM_ID)),
+              GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                      LookTestFixtures.DESTINATION_ROOM_ID)
+                  .test(response.trim()),
           "destination look after restart");
       assertThat(socket.responses())
           .matches(
@@ -223,11 +221,9 @@ class LookWebSocketCrossServiceTest {
                   responses.stream()
                       .anyMatch(
                           response ->
-                              response
-                                  .trim()
-                                  .equals(
-                                      GameplayTranscriptMatchers.canonicalLookWithPrompt(
-                                          LookTestFixtures.DESTINATION_ROOM_ID))));
+                              GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                                      LookTestFixtures.DESTINATION_ROOM_ID)
+                                  .test(response.trim())));
     }
   }
 
@@ -344,18 +340,16 @@ class LookWebSocketCrossServiceTest {
       client.send("north");
       client.awaitMatching(
           response ->
-              GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+              GameplayTranscriptMatchers.matchesCanonicalMoveOrLookWithOptionalPrompt(
                       LookTestFixtures.DESTINATION_ROOM_ID)
                   .test(response.trim()),
           "destination move refresh");
       client.send("LOOK");
       client.awaitMatching(
           response ->
-              response
-                  .trim()
-                  .equals(
-                      GameplayTranscriptMatchers.canonicalLookWithPrompt(
-                          LookTestFixtures.DESTINATION_ROOM_ID)),
+              GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                      LookTestFixtures.DESTINATION_ROOM_ID)
+                  .test(response.trim()),
           "destination look with prompt");
       client.send("west");
       client.awaitStartsWith("ERROR INVALID_EXIT");

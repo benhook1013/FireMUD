@@ -50,6 +50,7 @@ import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -85,6 +86,8 @@ class SessionResumptionFlowTest {
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private LookCommandHandler lookHandler;
   private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
+  private final ScriptEventPublisher scriptEventPublisher =
+      Mockito.mock(ScriptEventPublisher.class);
   private final InMemorySessionContextService sessionContextService =
       new InMemorySessionContextService();
   private SessionAuthenticationService sessionAuthenticationService;
@@ -212,6 +215,7 @@ class SessionResumptionFlowTest {
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
             gameplayPresenceLifecycleService,
+            scriptEventPublisher,
             meterRegistry);
     worldsHandler = new WorldsCommandHandler(worldCatalog, entityManagementClient);
     AfkCommandHandler afkHandler =
