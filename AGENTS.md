@@ -26,7 +26,8 @@ Use this file as the canonical AI instruction source for this repository.
 - Optimize for token efficiency and continuity of reasoning over parallel delegation.
 - Treat subagent use as off by default; do not use subagents unless a human explicitly asks for them for a specific task.
 - When working on a large problem, keep the context in one thread and progress in coherent committed batches rather than splitting the work across delegated workers.
-- Be proactive within scope. When the current task exposes related breakage, drift, or weak assumptions in the same area, resolve them in the same pass when practical instead of stopping at the narrowest possible patch.
+- Be proactive within scope. When the current task exposes related breakage, drift, weak assumptions, or in-scope outliers in the same area, resolve them in the same pass when practical instead of stopping at the narrowest possible patch.
+- When introducing or repairing a shared pattern, harness, or architectural seam, roll it through the remaining in-scope adopters before declaring the lane complete. Do not knowingly leave acknowledged leftovers for a vague later cleanup pass unless a human explicitly asks to stop early.
 
 ## Working Tree Safety
 
@@ -47,6 +48,7 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 - Breaking changes are allowed across DB schema, Redis keys, protocol fields, route shapes, and internal APIs.
 - Do not add migration scaffolding unless explicitly requested: no dual-read or dual-write paths, no deprecation windows, no compatibility matrices, and no temporary rollout-only flags.
 - When a contract changes, update all call sites, tests, and docs in the same change and remove obsolete paths.
+- Prefer finishing foundational convergence early over preserving local exceptions: remove or absorb low-value outliers while the pattern is being rolled out instead of normalizing “we will clean that up later.”
 
 ## Documentation Behavior
 
