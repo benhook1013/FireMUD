@@ -23,25 +23,22 @@ import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetDriver;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
+import net.firedevops.firemud.test.ReactiveTestApplicationSupport;
 import net.firedevops.firemud.test.TestAsyncAssertions;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.boot.web.server.context.WebServerApplicationContext;
-import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.util.TestSocketUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
@@ -63,7 +60,7 @@ import reactor.core.publisher.Mono;
 class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
   private static GameSessionStubHolder GAME_SESSION_STUB;
-  private static GatewayHolder GATEWAY;
+  private static ReactiveTestApplicationSupport.ReactiveAppHolder GATEWAY;
   // This suite runs alongside many other service checks in the full repo build, so use a wider
   // per-command timeout than the lighter isolated telnet tests.
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(30);
@@ -86,7 +83,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
   @AfterAll
   static synchronized void stopTestServices() {
-    GatewayHolder gateway = GATEWAY;
+    ReactiveTestApplicationSupport.ReactiveAppHolder gateway = GATEWAY;
     GATEWAY = null;
     if (gateway != null) {
       gateway.close();
@@ -206,43 +203,40 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
       GAME_SESSION_STUB = startGameSessionStub();
     }
     if (GATEWAY == null) {
-      GATEWAY = startGateway(GAME_SESSION_STUB.port);
+      GATEWAY = startGateway(GAME_SESSION_STUB.port());
     }
   }
 
   private static GameSessionStubHolder startGameSessionStub() {
-    int grpcPort = TestSocketUtils.findAvailableTcpPort();
     try {
-      ConfigurableApplicationContext context =
-          new SpringApplicationBuilder(GameSessionStubApplication.class)
-              .properties(
-                  "server.port=0",
-                  "spring.main.web-application-type=reactive",
-                  "spring.grpc.server.port=0",
-                  "management.endpoint.health.group.liveness.include=livenessState",
-                  "management.endpoint.health.group.readiness.include=readinessState,gameplayPathReadiness")
-              .run();
-      int port = ((WebServerApplicationContext) context).getWebServer().getPort();
-      return new GameSessionStubHolder(context, port, context.getBean(GameSessionStub.class));
+      ReactiveTestApplicationSupport.ReactiveAppHolder app =
+          ReactiveTestApplicationSupport.startReactiveApp(
+              Map.of(
+                  "spring.grpc.server.port",
+                  "0",
+                  "management.endpoint.health.group.liveness.include",
+                  "livenessState",
+                  "management.endpoint.health.group.readiness.include",
+                  "readinessState,gameplayPathReadiness"),
+              GameSessionStubApplication.class);
+      return new GameSessionStubHolder(app, app.context().getBean(GameSessionStub.class));
     } catch (RuntimeException ex) {
-      throw new IllegalStateException(
-          "Failed to start game session stub (grpcPort=" + grpcPort + ")", ex);
+      throw new IllegalStateException("Failed to start game session stub", ex);
     }
   }
 
-  private static GatewayHolder startGateway(int gameSessionPort) {
+  private static ReactiveTestApplicationSupport.ReactiveAppHolder startGateway(
+      int gameSessionPort) {
     try {
-      ConfigurableApplicationContext context =
-          new SpringApplicationBuilder(GatewayStubApplication.class)
-              .properties(
-                  "server.port=0",
-                  "spring.main.web-application-type=reactive",
-                  "gateway.stub.target-uri=ws://localhost:" + gameSessionPort + "/ws/game",
-                  "management.endpoint.health.group.liveness.include=livenessState",
-                  "management.endpoint.health.group.readiness.include=readinessState,gameplayRouteReadiness")
-              .run();
-      int port = ((WebServerApplicationContext) context).getWebServer().getPort();
-      return new GatewayHolder(context, port);
+      return ReactiveTestApplicationSupport.startReactiveApp(
+          Map.of(
+              "gateway.stub.target-uri",
+              "ws://localhost:" + gameSessionPort + "/ws/game",
+              "management.endpoint.health.group.liveness.include",
+              "livenessState",
+              "management.endpoint.health.group.readiness.include",
+              "readinessState,gameplayRouteReadiness"),
+          GatewayStubApplication.class);
     } catch (RuntimeException ex) {
       throw new IllegalStateException(
           "Failed to start gateway (gameSessionPort=" + gameSessionPort + ")", ex);
@@ -250,14 +244,12 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   }
 
   private static final class GameSessionStubHolder {
-    private final ConfigurableApplicationContext context;
-    private final int port;
+    private final ReactiveTestApplicationSupport.ReactiveAppHolder app;
     private final GameSessionStub stub;
 
     private GameSessionStubHolder(
-        ConfigurableApplicationContext context, int port, GameSessionStub stub) {
-      this.context = context;
-      this.port = port;
+        ReactiveTestApplicationSupport.ReactiveAppHolder app, GameSessionStub stub) {
+      this.app = app;
       this.stub = stub;
     }
 
@@ -265,26 +257,16 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
       return stub;
     }
 
-    void close() {
-      context.close();
-    }
-  }
-
-  private static final class GatewayHolder {
-    private final ConfigurableApplicationContext context;
-    private final int port;
-
-    private GatewayHolder(ConfigurableApplicationContext context, int port) {
-      this.context = context;
-      this.port = port;
+    int port() {
+      return app.port();
     }
 
     String websocketUrl() {
-      return "ws://localhost:" + port + "/ws/game";
+      return app.websocketUrl();
     }
 
     void close() {
-      context.close();
+      app.close();
     }
   }
 

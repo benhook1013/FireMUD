@@ -1,15 +1,16 @@
-package net.firedevops.firemud.springcloudgateway.testsupport;
+package net.firedevops.firemud.test;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 
-/** Shared reactive app bootstrap helpers for gateway integration tests. */
-public final class GatewayTestApplicationSupport {
+/** Shared reactive app bootstrap helpers for integration and cross-service tests. */
+public final class ReactiveTestApplicationSupport {
 
-  private GatewayTestApplicationSupport() {}
+  private ReactiveTestApplicationSupport() {}
 
   public static ReactiveAppHolder startReactiveApp(
       Map<String, ?> properties, Class<?>... applicationClasses) {
@@ -31,10 +32,17 @@ public final class GatewayTestApplicationSupport {
         .toArray(String[]::new);
   }
 
+  @SuppressFBWarnings(
+      value = "EI",
+      justification = "Test app holder intentionally exposes the live Spring context.")
   public record ReactiveAppHolder(ConfigurableApplicationContext context, int port)
       implements AutoCloseable {
     public String websocketUrl() {
-      return "ws://localhost:" + port + "/ws/game";
+      return websocketUrl("/ws/game");
+    }
+
+    public String websocketUrl(String path) {
+      return "ws://localhost:" + port + path;
     }
 
     @Override

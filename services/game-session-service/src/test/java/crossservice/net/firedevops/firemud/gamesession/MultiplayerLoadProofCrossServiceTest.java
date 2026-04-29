@@ -12,14 +12,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
-import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
+import net.firedevops.firemud.gamesession.testsupport.GameplayLoadScenarios;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -59,14 +58,15 @@ class MultiplayerLoadProofCrossServiceTest {
   @Test
   void tenConcurrentPlayersCanLoginPlayAndLookAgainstRealCrossServiceStack() throws Exception {
     ensureTestServicesStarted();
-    List<PlayerSeed> players = prepareGameInstances(CLIENT_COUNT);
+    List<GameplayLoadScenarios.PlayerSeed> players =
+        GameplayLoadScenarios.seedPlayers(STACK, TENANT_ID, 1L, ACCOUNT_ID_BASE, CLIENT_COUNT, 7L);
     URI uri = URI.create("ws://localhost:" + gameSession().port() + "/ws/game");
     CountDownLatch start = new CountDownLatch(1);
 
     ExecutorService executor = Executors.newFixedThreadPool(CLIENT_COUNT);
     try {
       List<Future<PlayerRunResult>> futures = new ArrayList<>();
-      for (PlayerSeed player : players) {
+      for (GameplayLoadScenarios.PlayerSeed player : players) {
         futures.add(executor.submit(() -> runPlayerSequence(uri, player, start)));
       }
 
@@ -92,7 +92,7 @@ class MultiplayerLoadProofCrossServiceTest {
               });
 
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
-      for (PlayerSeed player : players) {
+      for (GameplayLoadScenarios.PlayerSeed player : players) {
         assertThat(sessionContextService.findBySessionId(player.sessionId()))
             .hasValueSatisfying(
                 context -> {
@@ -130,48 +130,19 @@ class MultiplayerLoadProofCrossServiceTest {
     }
   }
 
-  private List<PlayerSeed> prepareGameInstances(int count) {
-    JdbcTemplate jdbc = new JdbcTemplate(gameSession().bean(javax.sql.DataSource.class));
-    GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
-    STACK.resetScenarioState();
-    STACK.clearRedis();
-    STACK.clearScreenBuffers(TENANT_ID, 1L);
-    jdbc.update("DELETE FROM game_instances");
-
-    List<PlayerSeed> players = new ArrayList<>();
-    for (int i = 0; i < count; i++) {
-      long accountId = ACCOUNT_ID_BASE + i + 1;
-      long sessionId =
-          GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, accountId, 7L);
-      STACK.accountStub().mapAccountId("player" + (i + 1) + "@example.com", accountId);
-      players.add(
-          new PlayerSeed(
-              sessionId, accountId, "player" + (i + 1) + "@example.com", "player-" + (i + 1)));
-    }
-    return players;
-  }
-
-  private PlayerRunResult runPlayerSequence(URI uri, PlayerSeed player, CountDownLatch start)
-      throws Exception {
+  private PlayerRunResult runPlayerSequence(
+      URI uri, GameplayLoadScenarios.PlayerSeed player, CountDownLatch start) throws Exception {
     try (GameplayWebSocketDriver client =
-        GameplayWebSocketDriver.connect(
-            uri,
-            COMMAND_WAIT,
-            java.util.Map.of(
-                "X-Game-Instance-Id", Long.toString(player.sessionId()),
-                "X-Tenant-Id", Long.toString(TENANT_ID)))) {
+        GameplayLoadScenarios.openReadyPlayer(
+            uri, COMMAND_WAIT, TENANT_ID, player, "demo", "Candle-lit Antechamber")) {
       assertThat(start.await(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
-      client.login(player.username(), "swordfish");
-      client.play("demo");
       client.send("LOOK");
       client.awaitStartsWith("OK LOOK");
       return new PlayerRunResult(player, List.copyOf(client.responses()));
     }
   }
 
-  private record PlayerSeed(long sessionId, long accountId, String username, String label) {}
-
-  private record PlayerRunResult(PlayerSeed player, List<String> responses) {}
+  private record PlayerRunResult(GameplayLoadScenarios.PlayerSeed player, List<String> responses) {}
 
   private static CrossServiceAppHarness.GameSessionHolder gameSession() {
     return STACK.gameSession();

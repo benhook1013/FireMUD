@@ -8,8 +8,8 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.springcloudgateway.health.GameplayRouteReadinessHealthIndicator;
-import net.firedevops.firemud.springcloudgateway.testsupport.GatewayTestApplicationSupport;
 import net.firedevops.firemud.springcloudgateway.testsupport.GatewayWebSocketProbe;
+import net.firedevops.firemud.test.ReactiveTestApplicationSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringBootConfiguration;
@@ -32,7 +32,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 class GatewayLookCommandIntegrationTest {
-  private static volatile GatewayTestApplicationSupport.ReactiveAppHolder GATEWAY;
+  private static volatile ReactiveTestApplicationSupport.ReactiveAppHolder GATEWAY;
 
   @AfterAll
   static void stopGateway() {
@@ -103,8 +103,8 @@ class GatewayLookCommandIntegrationTest {
     }
   }
 
-  private static GatewayTestApplicationSupport.ReactiveAppHolder startGateway() {
-    return GatewayTestApplicationSupport.startReactiveApp(
+  private static ReactiveTestApplicationSupport.ReactiveAppHolder startGateway() {
+    return ReactiveTestApplicationSupport.startReactiveApp(
         Map.of(
             "spring.main.allow-bean-definition-overriding",
             "true",

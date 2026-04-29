@@ -14,10 +14,10 @@ import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
 import net.firedevops.firemud.springcloudgateway.config.GameplayWebSocketBridgeProperties;
 import net.firedevops.firemud.springcloudgateway.health.GameplayRouteReadinessHealthIndicator;
-import net.firedevops.firemud.springcloudgateway.testsupport.GatewayTestApplicationSupport;
 import net.firedevops.firemud.springcloudgateway.testsupport.GatewayWebSocketProbe;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
+import net.firedevops.firemud.test.ReactiveTestApplicationSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -41,7 +41,7 @@ import reactor.core.publisher.Mono;
 
 class GatewayGameplayBridgeIntegrationTest {
   private static volatile UpstreamHolder UPSTREAM;
-  private static volatile GatewayTestApplicationSupport.ReactiveAppHolder GATEWAY;
+  private static volatile ReactiveTestApplicationSupport.ReactiveAppHolder GATEWAY;
   private static final AtomicReference<String> TEST_UPSTREAM_URL = new AtomicReference<>();
   private static final AtomicReference<UpstreamRuntimeState> TEST_UPSTREAM_STATE =
       new AtomicReference<>();
@@ -139,7 +139,7 @@ class GatewayGameplayBridgeIntegrationTest {
   private static GatewayHolder startGateway(String upstreamUrl) {
     TEST_UPSTREAM_URL.set(upstreamUrl);
     return new GatewayHolder(
-        GatewayTestApplicationSupport.startReactiveApp(
+        ReactiveTestApplicationSupport.startReactiveApp(
             Map.of(
                 "spring.profiles.active",
                 "test",
@@ -155,7 +155,7 @@ class GatewayGameplayBridgeIntegrationTest {
             GatewayBridgeTestOverrideConfiguration.class));
   }
 
-  private record GatewayHolder(GatewayTestApplicationSupport.ReactiveAppHolder app) {
+  private record GatewayHolder(ReactiveTestApplicationSupport.ReactiveAppHolder app) {
     String websocketUrl() {
       return app.websocketUrl();
     }
@@ -175,8 +175,8 @@ class GatewayGameplayBridgeIntegrationTest {
     }
 
     static UpstreamHolder start(int port) {
-      GatewayTestApplicationSupport.ReactiveAppHolder app =
-          GatewayTestApplicationSupport.startReactiveApp(
+      ReactiveTestApplicationSupport.ReactiveAppHolder app =
+          ReactiveTestApplicationSupport.startReactiveApp(
               Map.ofEntries(
                   Map.entry("server.port", Integer.toString(port)),
                   Map.entry("server.shutdown", "immediate"),
