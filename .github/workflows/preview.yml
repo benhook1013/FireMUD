@@ -234,8 +234,8 @@ jobs:
           PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/preview/write-kubeconfig.sh)"
-          bash ./dev-tools/hosted/preview/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
+          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify preview cluster access
@@ -260,7 +260,7 @@ jobs:
 
       - name: Reset preview namespace for clean deploy
         run: |
-          bash ./dev-tools/hosted/preview/delete-preview-namespace.sh \
+          bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.release_name }}"
 
@@ -283,7 +283,7 @@ jobs:
           PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
           PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
         run: |
-          bash ./dev-tools/hosted/preview/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
+          bash ./dev-tools/hosted/shared/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
       - name: Resolve exact preview image tag
         id: effective-image-tag
@@ -318,11 +318,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "PREVIEW_STAGE=wait-for-images" >> "$GITHUB_ENV"
-          bash ./dev-tools/hosted/preview/wait-for-preview-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
+          bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
 
       - name: Ensure preview gRPC TLS secret exists
         run: |
-          bash ./dev-tools/hosted/preview/ensure-grpc-tls-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
+          bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
       - name: Show namespace state
         run: |
@@ -598,7 +598,7 @@ jobs:
           echo "PREVIEW_STAGE=smoke" >> "$GITHUB_ENV"
           set -o pipefail
           SMOKE_TRANSCRIPT=/tmp/preview-hosted-tcp-smoke.log
-          if ! bash ./dev-tools/hosted/preview/preview-login-look-smoke.sh 2>&1 | tee "${SMOKE_TRANSCRIPT}"; then
+          if ! bash ./dev-tools/hosted/shared/hosted-login-look-smoke.sh 2>&1 | tee "${SMOKE_TRANSCRIPT}"; then
             echo "=== Hosted preview TCP smoke transcript ==="
             cat "${SMOKE_TRANSCRIPT}"
             exit 1
@@ -747,13 +747,13 @@ jobs:
           PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/preview/write-kubeconfig.sh)"
-          bash ./dev-tools/hosted/preview/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
+          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Delete preview namespace and release
         run: |
-          bash ./dev-tools/hosted/preview/delete-preview-namespace.sh \
+          bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.release_name }}"
 

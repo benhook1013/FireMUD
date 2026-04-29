@@ -20,14 +20,13 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 - `backups/` – local and operator backup helpers; see `backups/README.md` for the script map.
 - `certs/` – tracked certificate helper scripts plus ignored generated local TLS material.
 - `deploy/` – deployment preflight and overlay validation; see `deploy/README.md` for the script map.
-- `hosted/dev-demo/` – fixed `develop` hosted environment helpers.
+- `hosted/` – hosted Kubernetes environment tooling; see `hosted/README.md` for the lane split.
 - `docs/` – documentation generation and validation helpers; see `docs/README.md` for the script map.
 - `insomnia/` – Insomnia client assets.
 - `kreya/` – Kreya gRPC client assets.
 - `load-testing/` – Gatling load-testing module.
 - `maintenance/` – non-canonical maintenance and analysis utilities that should not shape repo workflow.
 - `observability/` – observability contract and evidence validators.
-- `hosted/preview/` – hosted PR preview orchestration helpers.
 - `release/` – release/notice generation utilities.
 - `restores/` – restore and external-credential validation helpers.
 - `seed/` – local and test data seeding helpers.
@@ -37,6 +36,6 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 ## Placement guidance
 
 - Put a tool in `validation/` when its main job is enforcing a repo policy or static contract in CI/Gradle.
-- Put a tool in `deploy/`, `hosted/preview/`, `hosted/dev-demo/`, `backups/`, or `restores/` when it owns a real operational lane.
+- Put a tool in `deploy/`, `hosted/shared/`, `hosted/preview/`, `hosted/dev-demo/`, `backups/`, or `restores/` when it owns a real operational lane.
 - Keep root-level scripts only when they are canonical entrypoints contributors are expected to run directly.
 - Avoid placing personal or AI-host-specific maintenance scripts at the root. If they remain in the repo at all, keep them under `maintenance/`.

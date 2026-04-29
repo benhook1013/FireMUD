@@ -18,7 +18,7 @@ kubectl delete namespace "$namespace" --ignore-not-found=true >/dev/null || true
 
 if kubectl get namespace "$namespace" >/dev/null 2>&1; then
   kubectl wait --for=delete "namespace/${namespace}" --timeout="${wait_seconds}s" || {
-    echo "preview namespace ${namespace} still exists after ${wait_seconds}s" >&2
+    echo "hosted namespace ${namespace} still exists after ${wait_seconds}s" >&2
     exit 1
   }
 fi
