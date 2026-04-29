@@ -128,6 +128,7 @@ class GameSessionGrpcServiceTest {
                     7L,
                     true,
                     9L,
+                    "ISOLATED",
                     "demo",
                     "Demo World",
                     "production",

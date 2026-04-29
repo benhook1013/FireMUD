@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package social_groups.v1;
 
+import "entity-management/v1/entity_management_service.proto";
 import "shared/v1/errors.proto";
 option java_package = "net.firedevops.firemud.socialgroups.v1";
 option java_multiple_files = true;
@@ -95,6 +96,7 @@ message FriendPresenceEntry {
   string realm_display_name = 11;
   FriendRecentPresenceDisposition recent_disposition = 12;
   int64 pointer_version = 13;
+  entity_management.v1.PlayableStateScope playable_state_scope = 14;
 }
 
 message ListFriendPresenceResponse {

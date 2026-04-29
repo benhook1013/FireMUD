@@ -166,6 +166,7 @@ message AccountPresenceEntry {
   string realm_display_name = 12;
   AccountRecentPresenceDisposition recent_disposition = 13;
   int64 pointer_version = 14;
+  entity_management.v1.PlayableStateScope playable_state_scope = 15;
 }
 
 message QueryAccountPresenceResponse {

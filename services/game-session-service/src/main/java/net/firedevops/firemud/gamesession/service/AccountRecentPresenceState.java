@@ -7,6 +7,7 @@ public record AccountRecentPresenceState(
     long tenantId,
     long accountId,
     Long gameInstanceId,
+    String playableStateScope,
     String worldSlug,
     String realmSlug,
     Long pointerVersion,
@@ -25,6 +26,7 @@ public record AccountRecentPresenceState(
     this(
         tenantId,
         accountId,
+        null,
         null,
         null,
         null,

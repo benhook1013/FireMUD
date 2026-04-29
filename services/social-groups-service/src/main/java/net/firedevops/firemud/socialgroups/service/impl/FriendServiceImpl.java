@@ -99,6 +99,7 @@ public class FriendServiceImpl implements FriendService {
               friendAccountId,
               visibleOnline(entry),
               visibleGameInstanceId(entry),
+              visiblePlayableStateScope(entry),
               visibleWorldSlug(entry),
               visibleWorldDisplayName(entry),
               visibleRealmSlug(entry),
@@ -119,6 +120,7 @@ public class FriendServiceImpl implements FriendService {
                     new FriendPresenceDto(
                         friendAccountId,
                         false,
+                        null,
                         null,
                         null,
                         null,
@@ -174,6 +176,20 @@ public class FriendServiceImpl implements FriendService {
           ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
           null;
       default -> entry.getWorldSlug().isBlank() ? null : entry.getWorldSlug();
+    };
+  }
+
+  private String visiblePlayableStateScope(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default ->
+          switch (entry.getPlayableStateScope()) {
+            case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
+            case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
+            default -> null;
+          };
     };
   }
 

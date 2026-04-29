@@ -224,6 +224,9 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
         if (presence.pointerVersion() != null && presence.pointerVersion() > 0L) {
           entry.setPointerVersion(presence.pointerVersion());
         }
+        if (presence.playableStateScope() != null && !presence.playableStateScope().isBlank()) {
+          entry.setPlayableStateScope(mapPlayableStateScope(presence.playableStateScope()));
+        }
         if (presence.characterId() != null) {
           entry.setCharacterId(Long.toString(presence.characterId()));
         }
@@ -347,6 +350,20 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       case TAKEOVER ->
           net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition
               .FRIEND_RECENT_PRESENCE_DISPOSITION_TAKEOVER;
+    };
+  }
+
+  private net.firedevops.firemud.entitymanagement.v1.PlayableStateScope mapPlayableStateScope(
+      String playableStateScope) {
+    return switch (playableStateScope) {
+      case "SHARED" ->
+          net.firedevops.firemud.entitymanagement.v1.PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" ->
+          net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+              .PLAYABLE_STATE_SCOPE_ISOLATED;
+      default ->
+          net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+              .PLAYABLE_STATE_SCOPE_UNSPECIFIED;
     };
   }
 

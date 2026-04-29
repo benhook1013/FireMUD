@@ -63,6 +63,7 @@ class RedisAccountRecentPresenceServiceTest {
             41L,
             22L,
             101L,
+            "ISOLATED",
             "demo",
             "production",
             17L,

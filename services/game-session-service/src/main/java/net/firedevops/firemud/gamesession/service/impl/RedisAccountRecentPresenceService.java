@@ -152,6 +152,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
             snapshot.tenantId(),
             snapshot.accountId(),
             snapshot.gameInstanceId(),
+            snapshot.playableStateScope(),
             snapshot.worldSlug(),
             snapshot.realmSlug(),
             snapshot.pointerVersion(),
@@ -173,6 +174,8 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
         context.tenantId(),
         context.accountId(),
         gameInstanceId > 0 ? gameInstanceId : null,
+        firstNonBlank(
+            presence == null ? null : presence.playableStateScope(), context.playableStateScope()),
         firstNonBlank(presence == null ? null : presence.worldSlug(), context.worldSlug()),
         firstNonBlank(presence == null ? null : presence.realmSlug(), context.realmSlug()),
         pointerVersion(context, presence));
@@ -204,6 +207,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
       long tenantId,
       long accountId,
       Long gameInstanceId,
+      String playableStateScope,
       String worldSlug,
       String realmSlug,
       Long pointerVersion) {}

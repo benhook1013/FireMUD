@@ -94,6 +94,7 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
               instance.getOwnerAccountId(),
               true,
               presence.gameInstanceId(),
+              presence.playableStateScope(),
               presence.worldSlug() != null
                   ? presence.worldSlug()
                   : runtimeTarget == null ? null : runtimeTarget.worldSlug(),
@@ -133,6 +134,7 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
         accountId,
         false,
         recentState == null ? null : recentState.gameInstanceId(),
+        recentState == null ? null : recentState.playableStateScope(),
         recentState == null ? null : recentState.worldSlug(),
         runtimeTarget == null ? null : runtimeTarget.worldDisplayName(),
         recentState == null ? null : recentState.realmSlug(),
