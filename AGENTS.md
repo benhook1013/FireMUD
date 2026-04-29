@@ -4,10 +4,10 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 
 ## Start Here
 
-- Read [design/architecture/repository-structure.md](design/architecture/repository-structure.md) for the repo map and where domain docs live.
-- Read [design/architecture/system-architecture-overview.md](design/architecture/system-architecture-overview.md) for canonical platform contracts and architecture decisions.
-- Read [design/architecture/infrastructure/README.md](design/architecture/infrastructure/README.md) for shared deployment, gateway, protocol, and environment context.
-- When working in a subsystem with narrower docs, prefer those subsystem docs over repeating or inferring behavior from unrelated code.
+- Read [design/architecture/repository-structure.md](design/architecture/repository-structure.md) when you need the repo map or are not sure where a concern lives.
+- Read [design/architecture/system-architecture-overview.md](design/architecture/system-architecture-overview.md) for cross-service contracts, shared runtime behavior, or architecture changes.
+- Read [design/architecture/infrastructure/README.md](design/architecture/infrastructure/README.md) for deployment, gateway, protocol, environment, or preview/hosted concerns.
+- For service-scoped work, prefer the matching docs under `design/architecture/microservices/<service>/` before inferring from code in other areas.
 
 ## Core Workflow
 
