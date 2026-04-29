@@ -315,7 +315,10 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setObservedAtMs(summary.observedAtMs())
             .setProjectionAsOfMs(summary.projectionAsOfMs())
             .setProjectionLagMs(summary.projectionLagMs())
-            .setIsProjectionStale(summary.projectionStale());
+            .setIsProjectionStale(summary.projectionStale())
+            .setWorldSlug(summary.worldSlug())
+            .setRealmSlug(summary.realmSlug())
+            .setPointerVersion(summary.pointerVersion());
       } else if (!lookup.errorCode().isBlank()) {
         response.setError(
             ErrorDetail.newBuilder().setCode(lookup.errorCode()).setMessage(lookup.errorMessage()));
@@ -951,6 +954,10 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setGameInstanceId(summary.gameInstanceId())
         .setScriptPatchVersion(summary.scriptPatchVersion())
         .setScriptId(summary.scriptId())
+        .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
+        .setWorldSlug(summary.worldSlug())
+        .setRealmSlug(summary.realmSlug())
+        .setPointerVersion(summary.pointerVersion())
         .setPluginId(summary.pluginId())
         .setPluginVersionId(summary.pluginVersionId())
         .setEventType(summary.eventType())
@@ -975,7 +982,6 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setRuntimeRegionEpoch(summary.runtimeRegionEpoch())
         .setLastObservedTickId(summary.lastObservedTickId())
         .setLastRuntimeProgressObservedAtMs(summary.lastRuntimeProgressObservedAtMs())
-        .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
         .build();
   }
 

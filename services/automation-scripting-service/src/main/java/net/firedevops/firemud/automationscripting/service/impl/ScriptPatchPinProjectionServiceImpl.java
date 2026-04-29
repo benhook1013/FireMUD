@@ -111,6 +111,9 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     projection.setObservedPinnedScriptPatchVersion(runtimeState.getPinnedScriptPatchVersion());
     projection.setPlayableStateScope(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
+    projection.setWorldSlug(blankToEmpty(runtimeState.getWorldSlug()));
+    projection.setRealmSlug(blankToEmpty(runtimeState.getRealmSlug()));
+    projection.setPointerVersion(normalizePointerVersion(runtimeState.getPointerVersion()));
     projection.setLastObservedControlPlaneRequestId(
         runtimeState.getScriptPatchPinnedControlPlaneRequestId());
     projection.setObservedAt(
@@ -134,7 +137,10 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
             : projection.getObservedAt().toEpochMilli(),
         projectionAsOfMs,
         projectionLagMs,
-        projectionLagMs >= runtimeProperties.getPinProjectionStaleThresholdMs());
+        projectionLagMs >= runtimeProperties.getPinProjectionStaleThresholdMs(),
+        blankToEmpty(projection.getWorldSlug()),
+        blankToEmpty(projection.getRealmSlug()),
+        blankToEmpty(projection.getPointerVersion()));
   }
 
   private boolean isStale(ScriptPatchPinProjection projection, Instant now) {
@@ -157,5 +163,13 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
       case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
       case PLAYABLE_STATE_SCOPE_UNSPECIFIED, UNRECOGNIZED -> "";
     };
+  }
+
+  private static String normalizePointerVersion(long pointerVersion) {
+    return pointerVersion > 0 ? Long.toString(pointerVersion) : "";
+  }
+
+  private static String blankToEmpty(String value) {
+    return value == null ? "" : value;
   }
 }

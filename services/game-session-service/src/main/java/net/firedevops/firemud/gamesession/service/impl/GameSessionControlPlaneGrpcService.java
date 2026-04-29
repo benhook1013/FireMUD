@@ -685,6 +685,7 @@ public final class GameSessionControlPlaneGrpcService
       if (instance.getTenantId() != tenantId) {
         throw new IllegalArgumentException("tenant_id does not own game_instance_id");
       }
+      GameplayRoutingBundle routingBundle = resolveGameplayRouting(instance);
       GetGameInstanceRuntimeStateResponse response =
           GetGameInstanceRuntimeStateResponse.newBuilder()
               .setRuntimeState(
@@ -729,7 +730,10 @@ public final class GameSessionControlPlaneGrpcService
                           instance.getScriptPatchPinnedControlPlaneRequestId() == null
                               ? ""
                               : instance.getScriptPatchPinnedControlPlaneRequestId())
-                      .setPlayableStateScope(resolvePlayableStateScope(instance))
+                      .setPlayableStateScope(routingBundle.playableStateScope())
+                      .setWorldSlug(routingBundle.worldSlug())
+                      .setRealmSlug(routingBundle.realmSlug())
+                      .setPointerVersion(routingBundle.pointerVersion())
                       .build())
               .build();
       responseObserver.onNext(response);
@@ -1389,19 +1393,30 @@ public final class GameSessionControlPlaneGrpcService
     return value == null || value.isBlank() ? "" : value;
   }
 
-  private PlayableStateScope resolvePlayableStateScope(GameInstance instance) {
+  private GameplayRoutingBundle resolveGameplayRouting(GameInstance instance) {
     return gameplayAdmissionPointerAuthorityService
         .findByRuntimeTarget(instance.getTenantId(), instance.getId())
-        .map(GameplayAdmissionPointerSnapshot::stateScope)
         .map(
-            stateScope ->
-                switch (normalizeBlank(stateScope)) {
-                  case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-                  case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-                  default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
-                })
-        .orElse(PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED);
+            pointer ->
+                new GameplayRoutingBundle(
+                    switch (normalizeBlank(pointer.stateScope())) {
+                      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+                      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+                      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+                    },
+                    normalizeBlank(pointer.worldSlug()),
+                    normalizeBlank(pointer.realmSlug()),
+                    pointer.pointerVersion()))
+        .orElse(
+            new GameplayRoutingBundle(
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED, "", "", 0L));
   }
+
+  private record GameplayRoutingBundle(
+      PlayableStateScope playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion) {}
 
   private void requireText(String value, String message) {
     if (value == null || value.isBlank()) {

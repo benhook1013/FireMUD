@@ -38,6 +38,9 @@ class ScriptPatchPinProjectionServiceImplTest {
                         .setPinnedScriptPatchVersion("patch-7")
                         .setScriptPatchPinnedControlPlaneRequestId("req-7")
                         .setScriptPatchPinnedAtMs(700L)
+                        .setWorldSlug("demo")
+                        .setRealmSlug("production")
+                        .setPointerVersion(17L)
                         .build())
                 .build());
 
@@ -59,6 +62,9 @@ class ScriptPatchPinProjectionServiceImplTest {
     assertThat(lookup.summary().get().observedAtMs()).isEqualTo(700L);
     assertThat(lookup.summary().get().projectionLagMs()).isZero();
     assertThat(lookup.summary().get().projectionStale()).isFalse();
+    assertThat(lookup.summary().get().worldSlug()).isEqualTo("demo");
+    assertThat(lookup.summary().get().realmSlug()).isEqualTo("production");
+    assertThat(lookup.summary().get().pointerVersion()).isEqualTo("17");
   }
 
   @Test
@@ -70,6 +76,9 @@ class ScriptPatchPinProjectionServiceImplTest {
     existing.setLastObservedControlPlaneRequestId("req-4");
     existing.setObservedAt(Instant.ofEpochMilli(400L));
     existing.setProjectionRefreshedAt(Instant.now().minusSeconds(30));
+    existing.setWorldSlug("demo");
+    existing.setRealmSlug("production");
+    existing.setPointerVersion("11");
 
     ScriptPatchPinProjectionRepository repository =
         Mockito.mock(ScriptPatchPinProjectionRepository.class);
@@ -103,6 +112,9 @@ class ScriptPatchPinProjectionServiceImplTest {
     assertThat(lookup.summary().get().observedPinnedScriptPatchVersion()).isEqualTo("patch-4");
     assertThat(lookup.summary().get().lastObservedControlPlaneRequestId()).isEqualTo("req-4");
     assertThat(lookup.summary().get().projectionStale()).isTrue();
+    assertThat(lookup.summary().get().worldSlug()).isEqualTo("demo");
+    assertThat(lookup.summary().get().realmSlug()).isEqualTo("production");
+    assertThat(lookup.summary().get().pointerVersion()).isEqualTo("11");
   }
 
   private static ScriptRuntimeProperties runtimeProperties() {

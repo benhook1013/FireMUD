@@ -324,6 +324,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "patch-1",
                     "npc-guard",
                     "SHARED",
+                    "demo",
+                    "production",
+                    "17",
                     "",
                     "",
                     "onTimerExpire",
@@ -375,6 +378,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getSchedules(0).getTargetScopeId()).isEqualTo("guard-1");
     assertThat(ref.get().getSchedules(0).getMaterializationStatus()).isEqualTo("READY");
     assertThat(ref.get().getSchedules(0).getNextDueAtMs()).isEqualTo(5555L);
+    assertThat(ref.get().getSchedules(0).getWorldSlug()).isEqualTo("demo");
+    assertThat(ref.get().getSchedules(0).getRealmSlug()).isEqualTo("production");
+    assertThat(ref.get().getSchedules(0).getPointerVersion()).isEqualTo("17");
   }
 
   @Test
@@ -431,7 +437,17 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-2", "req-22", 222L, 230L, 4L, false)),
+                        "1",
+                        "game-1",
+                        "patch-2",
+                        "req-22",
+                        222L,
+                        230L,
+                        4L,
+                        false,
+                        "demo",
+                        "production",
+                        "17")),
                 "",
                 ""));
     AutomationScriptingControlPlaneGrpcService service =
@@ -456,6 +472,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getProjectionAsOfMs()).isEqualTo(230L);
     assertThat(ref.get().getProjectionLagMs()).isEqualTo(4L);
     assertThat(ref.get().getIsProjectionStale()).isFalse();
+    assertThat(ref.get().getWorldSlug()).isEqualTo("demo");
+    assertThat(ref.get().getRealmSlug()).isEqualTo("production");
+    assertThat(ref.get().getPointerVersion()).isEqualTo("17");
   }
 
   @Test

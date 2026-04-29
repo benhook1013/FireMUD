@@ -289,6 +289,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
         responseRef.get().getRuntimeState().getPlayableStateScope());
+    assertEquals("demo", responseRef.get().getRuntimeState().getWorldSlug());
+    assertEquals("production", responseRef.get().getRuntimeState().getRealmSlug());
+    assertEquals(11L, responseRef.get().getRuntimeState().getPointerVersion());
   }
 
   @Test

@@ -332,6 +332,9 @@ message GameInstanceRuntimeState {
   string script_patch_pinned_reason = 12;
   string script_patch_pinned_control_plane_request_id = 13;
   entity_management.v1.PlayableStateScope playable_state_scope = 14;
+  string world_slug = 15;
+  string realm_slug = 16;
+  int64 pointer_version = 17;
 }
 
 message GetGameInstanceRuntimeStateResponse {

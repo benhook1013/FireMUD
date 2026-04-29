@@ -199,6 +199,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               .setGameInstanceId(projection.getGameInstanceId())
               .setPinnedScriptPatchVersion(projection.getObservedPinnedScriptPatchVersion())
               .setPlayableStateScope(toPlayableStateScope(projection.getPlayableStateScope()))
+              .setWorldSlug(blankToEmpty(projection.getWorldSlug()))
+              .setRealmSlug(blankToEmpty(projection.getRealmSlug()))
+              .setPointerVersion(parsePointerVersion(projection.getPointerVersion()))
               .setScriptPatchPinnedControlPlaneRequestId(
                   projection.getLastObservedControlPlaneRequestId())
               .setScriptPatchPinnedAtMs(projection.getObservedAt().toEpochMilli())
@@ -381,6 +384,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setScriptId(definition.getScriptId());
     instance.setPlayableStateScope(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
+    instance.setWorldSlug(blankToEmpty(runtimeState.getWorldSlug()));
+    instance.setRealmSlug(blankToEmpty(runtimeState.getRealmSlug()));
+    instance.setPointerVersion(normalizePointerVersion(runtimeState.getPointerVersion()));
     instance.setPluginId(blankToEmpty(definition.getPluginId()));
     instance.setPluginVersionId(blankToEmpty(definition.getPluginVersionId()));
     instance.setEventType(definition.getEventType());
@@ -579,9 +585,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             candidate.regionEpoch(),
             entityId,
             blankToEmpty(instance.getPlayableStateScope()),
-            "",
-            "",
-            "",
+            blankToEmpty(instance.getWorldSlug()),
+            blankToEmpty(instance.getRealmSlug()),
+            blankToEmpty(instance.getPointerVersion()),
             instance.getScriptId(),
             instance.getEventType(),
             DEFAULT_SCHEMA_VERSION,
@@ -597,9 +603,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setRegionEpoch(candidate.regionEpoch());
     audit.setEntityId(entityId);
     audit.setPlayableStateScope(blankToEmpty(instance.getPlayableStateScope()));
-    audit.setWorldSlug("");
-    audit.setRealmSlug("");
-    audit.setPointerVersion("");
+    audit.setWorldSlug(blankToEmpty(instance.getWorldSlug()));
+    audit.setRealmSlug(blankToEmpty(instance.getRealmSlug()));
+    audit.setPointerVersion(blankToEmpty(instance.getPointerVersion()));
     audit.setScriptId(instance.getScriptId());
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
@@ -691,9 +697,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             candidate.regionEpoch(),
             entityId,
             blankToEmpty(instance.getPlayableStateScope()),
-            "",
-            "",
-            "",
+            blankToEmpty(instance.getWorldSlug()),
+            blankToEmpty(instance.getRealmSlug()),
+            blankToEmpty(instance.getPointerVersion()),
             instance.getScriptId(),
             instance.getEventType(),
             DEFAULT_SCHEMA_VERSION,
@@ -712,9 +718,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setRegionEpoch(candidate.regionEpoch());
     item.setEntityId(entityId);
     item.setPlayableStateScope(blankToEmpty(instance.getPlayableStateScope()));
-    item.setWorldSlug("");
-    item.setRealmSlug("");
-    item.setPointerVersion("");
+    item.setWorldSlug(blankToEmpty(instance.getWorldSlug()));
+    item.setRealmSlug(blankToEmpty(instance.getRealmSlug()));
+    item.setPointerVersion(blankToEmpty(instance.getPointerVersion()));
     item.setScriptId(instance.getScriptId());
     item.setPluginId(blankToEmpty(instance.getPluginId()));
     item.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
@@ -867,6 +873,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         instance.getScriptPatchVersion(),
         instance.getScriptId(),
         blankToEmpty(instance.getPlayableStateScope()),
+        blankToEmpty(instance.getWorldSlug()),
+        blankToEmpty(instance.getRealmSlug()),
+        blankToEmpty(instance.getPointerVersion()),
         instance.getPluginId(),
         instance.getPluginVersionId(),
         instance.getEventType(),
@@ -938,6 +947,17 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
       default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
     };
+  }
+
+  private static String normalizePointerVersion(long pointerVersion) {
+    return pointerVersion > 0 ? Long.toString(pointerVersion) : "";
+  }
+
+  private static long parsePointerVersion(String pointerVersion) {
+    if (pointerVersion == null || pointerVersion.isBlank()) {
+      return 0L;
+    }
+    return Long.parseLong(pointerVersion);
   }
 
   private record TickAdvanceResult(
