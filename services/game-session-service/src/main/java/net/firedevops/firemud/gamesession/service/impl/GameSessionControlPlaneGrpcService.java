@@ -1650,7 +1650,8 @@ public final class GameSessionControlPlaneGrpcService
             .setGameplayResult(command.getGameplayResult())
             .setAcceptedAtMs(toEpochMillis(command.getAcceptedAt()))
             .setLastAttemptAtMs(toEpochMillis(command.getLastAttemptAt()))
-            .setAttemptCount(command.getAttemptCount());
+            .setAttemptCount(command.getAttemptCount())
+            .setPlayableStateScope(toPlayableStateScopeStatus(command.getPlayableStateScope()));
     if (command.getAccountId() != null) {
       builder.setAccountId(command.getAccountId().toString());
     }
@@ -1699,7 +1700,27 @@ public final class GameSessionControlPlaneGrpcService
     if (command.getEnqueueSeq() != null) {
       builder.setEnqueueSeq(command.getEnqueueSeq());
     }
+    if (command.getWorldSlug() != null) {
+      builder.setWorldSlug(command.getWorldSlug());
+    }
+    if (command.getRealmSlug() != null) {
+      builder.setRealmSlug(command.getRealmSlug());
+    }
+    if (command.getPointerVersion() != null) {
+      builder.setPointerVersion(command.getPointerVersion());
+    }
     return builder.build();
+  }
+
+  private static PlayableStateScope toPlayableStateScopeStatus(String playableStateScope) {
+    if (playableStateScope == null || playableStateScope.isBlank()) {
+      return PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+    }
+    return switch (playableStateScope) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+    };
   }
 
   private long toEpochMillis(Instant instant) {

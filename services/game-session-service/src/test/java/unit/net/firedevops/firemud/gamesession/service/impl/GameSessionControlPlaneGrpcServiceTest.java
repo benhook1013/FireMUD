@@ -986,6 +986,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setLastAttemptAt(Instant.parse("2026-04-15T00:00:01Z"));
     command.setAttemptCount(1);
     command.setEnqueueSeq(33L);
+    command.setPlayableStateScope("SHARED");
+    command.setWorldSlug("demo");
+    command.setRealmSlug("production");
+    command.setPointerVersion(17L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(commandRepository.findByCommandId("cmd-123")).thenReturn(Optional.of(command));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -1015,6 +1019,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("LOOK", responseRef.get().getCommand().getSanitizedCommandText());
     assertEquals(33L, responseRef.get().getCommand().getEnqueueSeq());
     assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getCommand().getPlayableStateScope());
+    assertEquals("demo", responseRef.get().getCommand().getWorldSlug());
+    assertEquals("production", responseRef.get().getCommand().getRealmSlug());
+    assertEquals(17L, responseRef.get().getCommand().getPointerVersion());
+    assertEquals(
         Instant.parse("2026-04-15T00:00:01Z").toEpochMilli(),
         responseRef.get().getCommand().getStagedAtMs());
   }
@@ -1040,6 +1050,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setRegionId("region-1");
     command.setRegionEpoch(12L);
     command.setEnqueueSeq(44L);
+    command.setPlayableStateScope("ISOLATED");
+    command.setWorldSlug("ops");
+    command.setRealmSlug("preview");
+    command.setPointerVersion(29L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -1078,6 +1092,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("dispatch-1", responseRef.get().getCommand().getAutomationDispatchId());
     assertEquals("work-1", responseRef.get().getCommand().getAutomationWorkItemId());
     assertEquals(44L, responseRef.get().getCommand().getEnqueueSeq());
+    assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
+        responseRef.get().getCommand().getPlayableStateScope());
+    assertEquals("ops", responseRef.get().getCommand().getWorldSlug());
+    assertEquals("preview", responseRef.get().getCommand().getRealmSlug());
+    assertEquals(29L, responseRef.get().getCommand().getPointerVersion());
   }
 
   @Test
