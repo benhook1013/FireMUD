@@ -75,6 +75,18 @@ public class ScriptWorkItem {
   @Column(nullable = false, length = 64)
   private String triggerMode;
 
+  @Column(nullable = false, length = 64)
+  private String sourceKind = "";
+
+  @Column(nullable = false, length = 64)
+  private String sourceState = "";
+
+  @Column private Long sourceOrdinal;
+
+  @Column private Long sourceDueTickId;
+
+  @Column private Long sourceDueAtMs;
+
   @Column(nullable = false, length = 32)
   private String priorityTag = "normal";
 

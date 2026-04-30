@@ -179,6 +179,8 @@ class ScriptEventIngressServiceImplTest {
     assertThat(auditCaptor.getValue().getWorldSlug()).isEqualTo("demo");
     assertThat(auditCaptor.getValue().getRealmSlug()).isEqualTo("production");
     assertThat(auditCaptor.getValue().getPointerVersion()).isEqualTo("17");
+    assertThat(auditCaptor.getValue().getSourceKind()).isEqualTo("GAMEPLAY_EVENT");
+    assertThat(auditCaptor.getValue().getSourceState()).isEqualTo("TRIGGER_ADMITTED");
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(workItemRepository).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getValue().getScriptId()).isEqualTo("script-1");
@@ -188,6 +190,8 @@ class ScriptEventIngressServiceImplTest {
     assertThat(workItemCaptor.getValue().getWorldSlug()).isEqualTo("demo");
     assertThat(workItemCaptor.getValue().getRealmSlug()).isEqualTo("production");
     assertThat(workItemCaptor.getValue().getPointerVersion()).isEqualTo("17");
+    assertThat(workItemCaptor.getValue().getSourceKind()).isEqualTo("GAMEPLAY_EVENT");
+    assertThat(workItemCaptor.getValue().getSourceState()).isEqualTo("WORK_ITEM_PERSISTED");
     assertThat(workItemCaptor.getValue().getPriorityTag()).isEqualTo("high");
     assertThat(workItemCaptor.getValue().getStatus()).isEqualTo("PENDING_EVALUATION");
     ArgumentCaptor<ScriptEventAudit> eventAuditCaptor =
@@ -195,6 +199,8 @@ class ScriptEventIngressServiceImplTest {
     verify(eventAuditRepository).save(eventAuditCaptor.capture());
     assertThat(eventAuditCaptor.getValue().getFinalStage()).isEqualTo("ADMISSION");
     assertThat(eventAuditCaptor.getValue().getFinalOutcome()).isEqualTo("work_item_persisted");
+    assertThat(eventAuditCaptor.getValue().getSourceKind()).isEqualTo("GAMEPLAY_EVENT");
+    assertThat(eventAuditCaptor.getValue().getSourceState()).isEqualTo("WORK_ITEM_PERSISTED");
     verify(automationQueueService).enqueueWorkItem(Mockito.any(ScriptWorkItem.class));
   }
 

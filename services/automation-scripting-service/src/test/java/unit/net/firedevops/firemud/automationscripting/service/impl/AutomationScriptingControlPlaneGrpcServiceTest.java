@@ -788,6 +788,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "demo",
                     "production",
                     "17",
+                    "SCHEDULE_TIMER",
+                    "SCHEDULE_DUE_CLAIMED",
+                    5000L,
+                    0L,
+                    5000L,
                     "LOOK AT old chest",
                     "enqueued",
                     "game_session_accepted",
@@ -820,6 +825,10 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvents(0).getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getEvents(0).getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getEvents(0).getPointerVersion()).isEqualTo("17");
+    assertThat(ref.get().getEvents(0).getSourceKind()).isEqualTo("SCHEDULE_TIMER");
+    assertThat(ref.get().getEvents(0).getSourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
+    assertThat(ref.get().getEvents(0).getSourceOrdinal()).isEqualTo(5000L);
+    assertThat(ref.get().getEvents(0).getSourceDueAtMs()).isEqualTo(5000L);
     assertThat(ref.get().getEvents(0).getEmittedCommandText()).isEqualTo("LOOK AT old chest");
     assertThat(ref.get().getEvents(0).getHandoffOutcome()).isEqualTo("enqueued");
   }
@@ -842,6 +851,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "demo",
                     "production",
                     "17",
+                    "GAMEPLAY_EVENT",
+                    "WORK_ITEM_PERSISTED",
+                    0L,
+                    0L,
+                    0L,
                     "script-1",
                     "onCommand",
                     "patch-1",
@@ -873,6 +887,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getDeadLetters(0).getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getDeadLetters(0).getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getDeadLetters(0).getPointerVersion()).isEqualTo("17");
+    assertThat(ref.get().getDeadLetters(0).getSourceKind()).isEqualTo("GAMEPLAY_EVENT");
+    assertThat(ref.get().getDeadLetters(0).getSourceState()).isEqualTo("WORK_ITEM_PERSISTED");
     assertThat(ref.get().getDeadLetters(0).getReason()).isEqualTo("STALE_TIMELINE");
   }
 

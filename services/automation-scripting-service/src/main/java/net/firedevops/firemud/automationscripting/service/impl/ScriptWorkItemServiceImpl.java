@@ -507,6 +507,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         blankToEmpty(item.getWorldSlug()),
         blankToEmpty(item.getRealmSlug()),
         blankToEmpty(item.getPointerVersion()),
+        blankToEmpty(item.getSourceKind()),
+        blankToEmpty(item.getSourceState()),
+        zeroIfNull(item.getSourceOrdinal()),
+        zeroIfNull(item.getSourceDueTickId()),
+        zeroIfNull(item.getSourceDueAtMs()),
         item.getScriptId(),
         item.getEventType(),
         item.getScriptPatchVersion(),
@@ -535,6 +540,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         blankToEmpty(event.getWorldSlug()),
         blankToEmpty(event.getRealmSlug()),
         blankToEmpty(event.getPointerVersion()),
+        blankToEmpty(event.getSourceKind()),
+        blankToEmpty(event.getSourceState()),
+        zeroIfNull(event.getSourceOrdinal()),
+        zeroIfNull(event.getSourceDueTickId()),
+        zeroIfNull(event.getSourceDueAtMs()),
         event.getEmittedCommandText(),
         event.getHandoffOutcome(),
         event.getHandoffReason(),
@@ -689,5 +699,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
 
   private static String blankToEmpty(String value) {
     return value == null ? "" : value;
+  }
+
+  private static long zeroIfNull(Long value) {
+    return value == null ? 0L : value;
   }
 }

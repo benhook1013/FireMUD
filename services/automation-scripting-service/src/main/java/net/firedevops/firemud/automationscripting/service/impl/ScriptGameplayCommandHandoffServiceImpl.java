@@ -205,6 +205,11 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setWorldSlug(normalize(workItem.getWorldSlug()));
     event.setRealmSlug(normalize(workItem.getRealmSlug()));
     event.setPointerVersion(normalize(workItem.getPointerVersion()));
+    event.setSourceKind(normalize(workItem.getSourceKind()));
+    event.setSourceState(normalize(workItem.getSourceState()));
+    event.setSourceOrdinal(workItem.getSourceOrdinal());
+    event.setSourceDueTickId(workItem.getSourceDueTickId());
+    event.setSourceDueAtMs(workItem.getSourceDueAtMs());
     event.setEmittedCommandText(command.commandText());
     event.setHandoffOutcome(outcome);
     event.setHandoffReason(reason);

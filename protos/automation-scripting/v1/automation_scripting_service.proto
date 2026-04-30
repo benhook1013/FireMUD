@@ -271,6 +271,11 @@ message ScriptDeadLetterEntry {
   string world_slug = 16;
   string realm_slug = 17;
   string pointer_version = 18;
+  string source_kind = 19;
+  string source_state = 20;
+  int64 source_ordinal = 21;
+  int64 source_due_tick_id = 22;
+  int64 source_due_at_ms = 23;
 }
 
 message ListScriptDeadLettersResponse {
@@ -658,6 +663,11 @@ message ScriptHandoffEventEntry {
   string world_slug = 18;
   string realm_slug = 19;
   string pointer_version = 20;
+  string source_kind = 21;
+  string source_state = 22;
+  int64 source_ordinal = 23;
+  int64 source_due_tick_id = 24;
+  int64 source_due_at_ms = 25;
 }
 
 message ListScriptHandoffEventsResponse {

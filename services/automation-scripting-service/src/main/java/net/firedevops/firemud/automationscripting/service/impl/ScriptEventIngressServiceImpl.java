@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
@@ -26,6 +27,7 @@ import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunQuot
 import net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
+import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -173,6 +175,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setScriptEventId(requiredText(request.getScriptEventId(), "script_event_id"));
     audit.setSourceService(resolveSourceService());
     audit.setTriggerMode(request.getTriggerMode().name());
+    audit.setSourceKind(sourceKind(request));
+    audit.setSourceState(admission.admitted() ? "TRIGGER_ADMITTED" : "TRIGGER_REJECTED");
+    audit.setSourceOrdinal(sourceOrdinal(request));
+    audit.setSourceDueTickId(sourceDueTickId(request));
+    audit.setSourceDueAtMs(sourceDueAtMs(request));
     audit.setDryRun(request.getIsDryRun());
     audit.setReadSnapshotToken(normalize(request.getReadSnapshotToken()));
     audit.setPayloadJson(normalize(request.getPayloadJson()));
@@ -417,6 +424,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setDryRun(request.getIsDryRun());
     item.setSourceService(resolveSourceService());
     item.setTriggerMode(request.getTriggerMode().name());
+    item.setSourceKind(sourceKind(request));
+    item.setSourceState("WORK_ITEM_PERSISTED");
+    item.setSourceOrdinal(sourceOrdinal(request));
+    item.setSourceDueTickId(sourceDueTickId(request));
+    item.setSourceDueAtMs(sourceDueAtMs(request));
     item.setPriorityTag(binding.getPriorityTag());
     item.setReadSnapshotToken(normalize(request.getReadSnapshotToken()));
     item.setPayloadJson(normalize(request.getPayloadJson()));
@@ -460,11 +472,40 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setDryRun(request.getIsDryRun());
     audit.setSourceService(resolveSourceService());
     audit.setTriggerMode(request.getTriggerMode().name());
+    audit.setSourceKind(sourceKind(request));
+    audit.setSourceState(
+        workItem == null ? finalOutcome.toUpperCase(Locale.ROOT) : "WORK_ITEM_PERSISTED");
+    audit.setSourceOrdinal(sourceOrdinal(request));
+    audit.setSourceDueTickId(sourceDueTickId(request));
+    audit.setSourceDueAtMs(sourceDueAtMs(request));
     audit.setWorkItemId(workItem == null ? null : workItem.getId());
     audit.setFinalStage(finalStage);
     audit.setFinalOutcome(finalOutcome);
     audit.setFinalReason(finalReason);
     eventAuditRepository.save(audit);
+  }
+
+  private static String sourceKind(TriggerScriptEventRequest request) {
+    if (request.getTriggerMode() == TriggerMode.TRIGGER_MODE_CATCH_UP) {
+      return "TRIGGER_CATCH_UP_EVENT";
+    }
+    return "GAMEPLAY_EVENT";
+  }
+
+  private static Long sourceOrdinal(TriggerScriptEventRequest request) {
+    Long dueAtMs = sourceDueAtMs(request);
+    if (dueAtMs != null) {
+      return dueAtMs;
+    }
+    return sourceDueTickId(request);
+  }
+
+  private static Long sourceDueTickId(TriggerScriptEventRequest request) {
+    return request.getDueTickId() > 0 ? request.getDueTickId() : null;
+  }
+
+  private static Long sourceDueAtMs(TriggerScriptEventRequest request) {
+    return request.getDueAtMs() > 0 ? request.getDueAtMs() : null;
   }
 
   private boolean handlerAuditExists(

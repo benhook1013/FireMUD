@@ -410,6 +410,11 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getWorldSlug()).isEqualTo("demo");
     assertThat(workItem.getRealmSlug()).isEqualTo("production");
     assertThat(workItem.getPointerVersion()).isEqualTo("17");
+    assertThat(workItem.getSourceKind()).isEqualTo("SCHEDULE_TIMER");
+    assertThat(workItem.getSourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
+    assertThat(workItem.getSourceOrdinal()).isEqualTo(5_000L);
+    assertThat(workItem.getSourceDueAtMs()).isEqualTo(5_000L);
+    assertThat(workItem.getSourceDueTickId()).isNull();
     assertThat(workItem.getPayloadJson())
         .contains("\"scheduleId\":\"guard.alert.expire.v1\"")
         .contains("\"dueAt\":5000");

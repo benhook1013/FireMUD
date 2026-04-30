@@ -679,6 +679,8 @@ class ScriptWorkItemServiceImplTest {
     deadLetter.setEventType("onCommand");
     deadLetter.setScriptEventId("event-1");
     deadLetter.setCancelReason("STALE_TIMELINE");
+    deadLetter.setSourceKind("GAMEPLAY_EVENT");
+    deadLetter.setSourceState("WORK_ITEM_PERSISTED");
     deadLetter.setCreatedAt(Instant.ofEpochMilli(100));
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -703,6 +705,8 @@ class ScriptWorkItemServiceImplTest {
 
     assertThat(deadLetters).hasSize(1);
     assertThat(deadLetters.get(0).workItemId()).isEqualTo("99");
+    assertThat(deadLetters.get(0).sourceKind()).isEqualTo("GAMEPLAY_EVENT");
+    assertThat(deadLetters.get(0).sourceState()).isEqualTo("WORK_ITEM_PERSISTED");
     assertThat(deadLetters.get(0).reason()).isEqualTo("STALE_TIMELINE");
     assertThat(deadLetters.get(0).updatedAtMs()).isEqualTo(300L);
   }
@@ -726,6 +730,10 @@ class ScriptWorkItemServiceImplTest {
     event.setAutomationDispatchId("workItem:99#0");
     event.setGameSessionCommandId("command-1");
     event.setTargetEntityId("target-1");
+    event.setSourceKind("SCHEDULE_TIMER");
+    event.setSourceState("SCHEDULE_DUE_CLAIMED");
+    event.setSourceOrdinal(5000L);
+    event.setSourceDueAtMs(5000L);
     event.setEmittedCommandText("LOOK AT old chest");
     event.setHandoffOutcome("enqueued");
     event.setHandoffReason("game_session_accepted");
@@ -759,6 +767,9 @@ class ScriptWorkItemServiceImplTest {
     assertThat(events).hasSize(1);
     assertThat(events.get(0).automationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(events.get(0).gameSessionCommandId()).isEqualTo("command-1");
+    assertThat(events.get(0).sourceKind()).isEqualTo("SCHEDULE_TIMER");
+    assertThat(events.get(0).sourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
+    assertThat(events.get(0).sourceOrdinal()).isEqualTo(5000L);
     assertThat(events.get(0).emittedCommandText()).isEqualTo("LOOK AT old chest");
     assertThat(events.get(0).handoffOutcome()).isEqualTo("enqueued");
   }

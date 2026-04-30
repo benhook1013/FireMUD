@@ -93,6 +93,9 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     verify(handoffEventRepository).save(handoffCaptor.capture());
     assertThat(handoffCaptor.getValue().getAutomationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(handoffCaptor.getValue().getGameSessionCommandId()).isEqualTo("auto-1");
+    assertThat(handoffCaptor.getValue().getSourceKind()).isEqualTo("SCHEDULE_TIMER");
+    assertThat(handoffCaptor.getValue().getSourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
+    assertThat(handoffCaptor.getValue().getSourceOrdinal()).isEqualTo(5000L);
     assertThat(handoffCaptor.getValue().getEmittedCommandText()).isEqualTo("say hello");
     assertThat(handoffCaptor.getValue().getHandoffOutcome()).isEqualTo("enqueued");
   }
@@ -141,6 +144,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
         ArgumentCaptor.forClass(ScriptHandoffEvent.class);
     verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getSourceKind()).isEqualTo("SCHEDULE_TIMER");
+    assertThat(handoffCaptor.getValue().getSourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
     assertThat(handoffCaptor.getValue().getEmittedCommandText()).isEqualTo("say hello");
     assertThat(handoffCaptor.getValue().getHandoffOutcome()).isEqualTo("rejected");
     assertThat(handoffCaptor.getValue().getHandoffReason()).isEqualTo("STALE_TIMELINE");
@@ -197,6 +202,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
         ArgumentCaptor.forClass(ScriptHandoffEvent.class);
     verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getSourceKind()).isEqualTo("SCHEDULE_TIMER");
+    assertThat(handoffCaptor.getValue().getSourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
     assertThat(handoffCaptor.getValue().getEmittedCommandText()).isEqualTo("say hello");
     assertThat(handoffCaptor.getValue().getHandoffOutcome()).isEqualTo("rollback_epoch_advanced");
   }
@@ -216,6 +223,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     item.setWorldSlug("demo");
     item.setRealmSlug("production");
     item.setPointerVersion("17");
+    item.setSourceKind("SCHEDULE_TIMER");
+    item.setSourceState("SCHEDULE_DUE_CLAIMED");
+    item.setSourceOrdinal(5000L);
+    item.setSourceDueAtMs(5000L);
     item.setScriptPatchVersion("patch-1");
     item.setAdmissionEpoch(1L);
     item.setUpdatedAt(Instant.EPOCH);

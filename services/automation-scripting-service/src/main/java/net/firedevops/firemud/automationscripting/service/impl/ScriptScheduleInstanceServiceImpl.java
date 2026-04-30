@@ -614,6 +614,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setDryRun(false);
     audit.setSourceService(SOURCE_SERVICE);
     audit.setTriggerMode(TriggerMode.TRIGGER_MODE_CATCH_UP.name());
+    audit.setSourceKind("SCHEDULE_TIMER");
+    audit.setSourceState("SCHEDULE_DROPPED");
+    audit.setSourceOrdinal(candidate.dueOrderValue());
+    audit.setSourceDueTickId(candidate.wallClock() ? null : candidate.dueTickId());
+    audit.setSourceDueAtMs(candidate.wallClock() ? candidate.dueAt().toEpochMilli() : null);
     audit.setFinalStage(FINAL_STAGE_ADMISSION);
     audit.setFinalOutcome(FINAL_OUTCOME_CANCELED);
     audit.setFinalReason(finalReason);
@@ -731,6 +736,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setDryRun(false);
     item.setSourceService(SOURCE_SERVICE);
     item.setTriggerMode(TriggerMode.TRIGGER_MODE_CATCH_UP.name());
+    item.setSourceKind("SCHEDULE_TIMER");
+    item.setSourceState("SCHEDULE_DUE_CLAIMED");
+    item.setSourceOrdinal(candidate.dueOrderValue());
+    item.setSourceDueTickId(candidate.wallClock() ? null : candidate.dueTickId());
+    item.setSourceDueAtMs(candidate.wallClock() ? candidate.dueAt().toEpochMilli() : null);
     item.setPriorityTag(instance.getPriorityTag());
     item.setReadSnapshotToken(timerReadSnapshotToken(candidate));
     item.setPayloadJson(timerPayload(candidate));
@@ -772,6 +782,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setDryRun(false);
     audit.setSourceService(SOURCE_SERVICE);
     audit.setTriggerMode(TriggerMode.TRIGGER_MODE_CATCH_UP.name());
+    audit.setSourceKind("SCHEDULE_TIMER");
+    audit.setSourceState("WORK_ITEM_PERSISTED");
+    audit.setSourceOrdinal(workItem.getSourceOrdinal());
+    audit.setSourceDueTickId(workItem.getSourceDueTickId());
+    audit.setSourceDueAtMs(workItem.getSourceDueAtMs());
     audit.setWorkItemId(workItem.getId());
     audit.setFinalStage("ADMISSION");
     audit.setFinalOutcome("work_item_persisted");
