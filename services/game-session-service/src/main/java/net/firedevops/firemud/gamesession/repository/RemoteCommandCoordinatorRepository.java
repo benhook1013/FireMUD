@@ -7,6 +7,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface RemoteCommandCoordinatorRepository
     extends JpaRepository<RemoteCommandCoordinator, Long> {
+  Optional<RemoteCommandCoordinator> findByTenantIdAndCommandId(Long tenantId, String commandId);
+
   Optional<RemoteCommandCoordinator> findByTenantIdAndCoordinatorId(
       Long tenantId, String coordinatorId);
 

@@ -35,6 +35,9 @@ public class RemoteCommandCoordinator {
   @Column(name = "command_id", nullable = false, length = 64)
   private String commandId;
 
+  @Column(name = "followup_id", nullable = false, length = 64)
+  private String followupId;
+
   @Column(name = "origin_game_instance_id", nullable = false)
   private Long originGameInstanceId;
 

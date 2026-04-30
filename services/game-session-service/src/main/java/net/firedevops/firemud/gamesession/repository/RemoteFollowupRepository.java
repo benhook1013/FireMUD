@@ -8,6 +8,9 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, Long> {
   Optional<RemoteFollowup> findByTenantIdAndFollowupId(Long tenantId, String followupId);
 
+  Optional<RemoteFollowup> findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+      Long tenantId, String targetRegionId, long targetRegionEpoch, String effectKey);
+
   List<RemoteFollowup> findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAsc(
       Long tenantId, String targetRegionId, String status);
 

@@ -490,20 +490,21 @@ message RemoteCommandCoordinatorEntry {
   string coordinator_id = 1;
   string tenant_id = 2;
   string command_id = 3;
-  string origin_game_instance_id = 4;
-  string origin_region_id = 5;
-  int64 origin_region_epoch = 6;
-  string target_game_instance_id = 7;
-  string target_region_id = 8;
-  int64 target_region_epoch = 9;
-  int64 target_due_tick_id = 10;
-  int64 origin_deadline_region_epoch = 11;
-  int64 origin_deadline_tick_id = 12;
-  string state = 13;
-  string late_result_policy = 14;
-  string execution_outcome = 15;
-  string gameplay_result = 16;
-  int64 updated_at_ms = 17;
+  string followup_id = 4;
+  string origin_game_instance_id = 5;
+  string origin_region_id = 6;
+  int64 origin_region_epoch = 7;
+  string target_game_instance_id = 8;
+  string target_region_id = 9;
+  int64 target_region_epoch = 10;
+  int64 target_due_tick_id = 11;
+  int64 origin_deadline_region_epoch = 12;
+  int64 origin_deadline_tick_id = 13;
+  string state = 14;
+  string late_result_policy = 15;
+  string execution_outcome = 16;
+  string gameplay_result = 17;
+  int64 updated_at_ms = 18;
 }
 
 message GetRemoteCommandCoordinatorResponse {

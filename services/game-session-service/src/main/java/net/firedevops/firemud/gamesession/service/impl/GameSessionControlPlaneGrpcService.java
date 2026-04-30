@@ -1879,6 +1879,7 @@ public final class GameSessionControlPlaneGrpcService
             .setCoordinatorId(coordinator.getCoordinatorId())
             .setTenantId(Long.toString(coordinator.getTenantId()))
             .setCommandId(coordinator.getCommandId())
+            .setFollowupId(coordinator.getFollowupId())
             .setOriginGameInstanceId(Long.toString(coordinator.getOriginGameInstanceId()))
             .setOriginRegionId(coordinator.getOriginRegionId())
             .setOriginRegionEpoch(coordinator.getOriginRegionEpoch())

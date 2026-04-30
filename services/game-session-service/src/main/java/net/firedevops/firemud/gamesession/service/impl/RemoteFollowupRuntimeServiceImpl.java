@@ -1,0 +1,331 @@
+package net.firedevops.firemud.gamesession.service.impl;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
+import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
+import net.firedevops.firemud.gamesession.entity.RemoteFollowupResult;
+import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
+import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
+import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
+import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
+import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeService {
+  private static final Logger logger =
+      LoggingUtil.getLogger(RemoteFollowupRuntimeServiceImpl.class);
+
+  static final String COORDINATOR_PENDING_REMOTE = "PENDING_REMOTE";
+  static final String COORDINATOR_REMOTE_APPLIED = "REMOTE_APPLIED";
+  static final String COORDINATOR_REMOTE_ABANDONED = "REMOTE_ABANDONED";
+  static final String COORDINATOR_REMOTE_TIMEOUT_ABANDONED = "REMOTE_TIMEOUT_ABANDONED";
+  static final String COORDINATOR_LATE_RESULT_IGNORED = "LATE_RESULT_IGNORED";
+  static final String COORDINATOR_LATE_RESULT_RECONCILED = "LATE_RESULT_RECONCILED";
+
+  static final String FOLLOWUP_SCHEDULED = "SCHEDULED";
+  static final String FOLLOWUP_APPLIED = "APPLIED";
+  static final String FOLLOWUP_ABANDONED = "ABANDONED";
+
+  static final String RESULT_APPLIED = "APPLIED";
+  static final String LATE_RESULT_REQUIRES_RECONCILIATION = "late_result_requires_reconciliation";
+
+  private final RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
+  private final RemoteFollowupRepository remoteFollowupRepository;
+  private final RemoteFollowupResultRepository remoteFollowupResultRepository;
+  private final Clock clock;
+
+  @Autowired
+  public RemoteFollowupRuntimeServiceImpl(
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository) {
+    this(
+        remoteCommandCoordinatorRepository,
+        remoteFollowupRepository,
+        remoteFollowupResultRepository,
+        Clock.systemUTC());
+  }
+
+  RemoteFollowupRuntimeServiceImpl(
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      Clock clock) {
+    this.remoteCommandCoordinatorRepository = remoteCommandCoordinatorRepository;
+    this.remoteFollowupRepository = remoteFollowupRepository;
+    this.remoteFollowupResultRepository = remoteFollowupResultRepository;
+    this.clock = clock;
+  }
+
+  @Override
+  @Transactional
+  public ScheduleOutcome scheduleFollowup(ScheduleRequest request) {
+    validateScheduleRequest(request);
+    Instant now = Instant.now(clock);
+
+    Optional<RemoteCommandCoordinator> existingCoordinator =
+        remoteCommandCoordinatorRepository.findByTenantIdAndCommandId(
+            request.tenantId(), request.commandId());
+    RemoteCommandCoordinator coordinator =
+        existingCoordinator.orElseGet(RemoteCommandCoordinator::new);
+    boolean coordinatorCreated = existingCoordinator.isEmpty();
+    populateCoordinator(coordinator, request, now);
+    remoteCommandCoordinatorRepository.save(coordinator);
+
+    Optional<RemoteFollowup> existingFollowup =
+        remoteFollowupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            request.tenantId(),
+            request.targetRegionId(),
+            request.targetRegionEpoch(),
+            request.effectKey());
+    RemoteFollowup followup = existingFollowup.orElseGet(RemoteFollowup::new);
+    boolean followupCreated = existingFollowup.isEmpty();
+    populateFollowup(followup, request, now);
+    remoteFollowupRepository.save(followup);
+
+    logger.info(
+        "Scheduled remote followup tenantId={} commandId={} coordinatorId={} followupId={} targetRegionId={}",
+        request.tenantId(),
+        request.commandId(),
+        coordinator.getCoordinatorId(),
+        followup.getFollowupId(),
+        request.targetRegionId());
+    return new ScheduleOutcome(
+        coordinator.getCoordinatorId(),
+        followup.getFollowupId(),
+        coordinatorCreated,
+        followupCreated);
+  }
+
+  @Override
+  @Transactional
+  public ResultOutcome recordResult(ResultRequest request) {
+    validateResultRequest(request);
+
+    RemoteCommandCoordinator coordinator =
+        remoteCommandCoordinatorRepository
+            .findByTenantIdAndCoordinatorId(request.tenantId(), request.coordinatorId())
+            .orElseThrow(() -> new IllegalArgumentException("remote coordinator not found"));
+    RemoteFollowup followup =
+        remoteFollowupRepository
+            .findByTenantIdAndFollowupId(request.tenantId(), request.followupId())
+            .orElseThrow(() -> new IllegalArgumentException("remote followup not found"));
+
+    RemoteFollowupResult result =
+        remoteFollowupResultRepository
+            .findByTenantIdAndResultId(request.tenantId(), request.resultId())
+            .orElseGet(RemoteFollowupResult::new);
+    populateResult(result, request, Instant.now(clock));
+    remoteFollowupResultRepository.save(result);
+
+    boolean lateResult = COORDINATOR_REMOTE_TIMEOUT_ABANDONED.equals(coordinator.getState());
+    boolean reconciledLateResult = false;
+    if (COORDINATOR_PENDING_REMOTE.equals(coordinator.getState())) {
+      applyTerminalResult(coordinator, followup, request.outcome(), Instant.now(clock));
+    } else if (lateResult) {
+      reconciledLateResult =
+          LATE_RESULT_REQUIRES_RECONCILIATION.equals(coordinator.getLateResultPolicy());
+      coordinator.setState(
+          reconciledLateResult
+              ? COORDINATOR_LATE_RESULT_RECONCILED
+              : COORDINATOR_LATE_RESULT_IGNORED);
+      coordinator.setUpdatedAt(Instant.now(clock));
+      if (reconciledLateResult) {
+        applyFollowupResultState(followup, request.outcome(), Instant.now(clock));
+      }
+    }
+
+    remoteCommandCoordinatorRepository.save(coordinator);
+    remoteFollowupRepository.save(followup);
+    return new ResultOutcome(
+        coordinator.getState(), followup.getStatus(), lateResult, reconciledLateResult);
+  }
+
+  @Override
+  @Transactional
+  public int reconcileTimeouts(
+      long tenantId, String originRegionId, long currentOriginRegionEpoch, long currentTickId) {
+    if (originRegionId == null || originRegionId.isBlank()) {
+      throw new IllegalArgumentException("origin_region_id is required");
+    }
+    List<RemoteCommandCoordinator> pending =
+        remoteCommandCoordinatorRepository
+            .findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+                tenantId, originRegionId, COORDINATOR_PENDING_REMOTE);
+    Instant now = Instant.now(clock);
+    int updated = 0;
+    for (RemoteCommandCoordinator coordinator : pending) {
+      if (!deadlineReached(coordinator, currentOriginRegionEpoch, currentTickId)) {
+        continue;
+      }
+      coordinator.setState(COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
+      coordinator.setExecutionOutcome(FOLLOWUP_ABANDONED);
+      coordinator.setGameplayResult("NOT_APPLIED");
+      coordinator.setUpdatedAt(now);
+      remoteCommandCoordinatorRepository.save(coordinator);
+
+      remoteFollowupRepository
+          .findByTenantIdAndFollowupId(tenantId, coordinator.getFollowupId())
+          .ifPresent(
+              followup -> {
+                followup.setStatus(FOLLOWUP_ABANDONED);
+                followup.setFailureCode("REMOTE_TIMEOUT");
+                followup.setFailureMessage(
+                    "Origin region deadline reached before remote terminal result");
+                followup.setUpdatedAt(now);
+                remoteFollowupRepository.save(followup);
+              });
+      updated++;
+    }
+    return updated;
+  }
+
+  private static boolean deadlineReached(
+      RemoteCommandCoordinator coordinator, long currentOriginRegionEpoch, long currentTickId) {
+    return currentOriginRegionEpoch > coordinator.getOriginDeadlineRegionEpoch()
+        || (currentOriginRegionEpoch == coordinator.getOriginDeadlineRegionEpoch()
+            && currentTickId >= coordinator.getOriginDeadlineTickId());
+  }
+
+  private static void validateScheduleRequest(ScheduleRequest request) {
+    requirePositive(request.tenantId(), "tenant_id");
+    requireNotBlank(request.commandId(), "command_id");
+    requireNotBlank(request.coordinatorId(), "coordinator_id");
+    requirePositive(request.originGameInstanceId(), "origin_game_instance_id");
+    requireNotBlank(request.originRegionId(), "origin_region_id");
+    requirePositive(request.targetGameInstanceId(), "target_game_instance_id");
+    requireNotBlank(request.targetRegionId(), "target_region_id");
+    requireNotBlank(request.followupId(), "followup_id");
+    requireNotBlank(request.effectKey(), "effect_key");
+    requireNotBlank(request.lateResultPolicy(), "late_result_policy");
+  }
+
+  private static void validateResultRequest(ResultRequest request) {
+    requirePositive(request.tenantId(), "tenant_id");
+    requireNotBlank(request.resultId(), "result_id");
+    requireNotBlank(request.coordinatorId(), "coordinator_id");
+    requireNotBlank(request.followupId(), "followup_id");
+    requireNotBlank(request.originRegionId(), "origin_region_id");
+    requireNotBlank(request.targetRegionId(), "target_region_id");
+    requireNotBlank(request.outcome(), "outcome");
+  }
+
+  private static void requirePositive(long value, String field) {
+    if (value <= 0) {
+      throw new IllegalArgumentException(field + " must be positive");
+    }
+  }
+
+  private static void requireNotBlank(String value, String field) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException(field + " is required");
+    }
+  }
+
+  private static void populateCoordinator(
+      RemoteCommandCoordinator coordinator, ScheduleRequest request, Instant now) {
+    coordinator.setCoordinatorId(request.coordinatorId());
+    coordinator.setTenantId(request.tenantId());
+    coordinator.setCommandId(request.commandId());
+    coordinator.setFollowupId(request.followupId());
+    coordinator.setOriginGameInstanceId(request.originGameInstanceId());
+    coordinator.setOriginRegionId(request.originRegionId());
+    coordinator.setOriginRegionEpoch(request.originRegionEpoch());
+    coordinator.setTargetGameInstanceId(request.targetGameInstanceId());
+    coordinator.setTargetRegionId(request.targetRegionId());
+    coordinator.setTargetRegionEpoch(request.targetRegionEpoch());
+    coordinator.setTargetDueTickId(request.targetDueTickId());
+    coordinator.setOriginDeadlineRegionEpoch(request.originDeadlineRegionEpoch());
+    coordinator.setOriginDeadlineTickId(request.originDeadlineTickId());
+    coordinator.setLateResultPolicy(request.lateResultPolicy());
+    if (coordinator.getState() == null
+        || coordinator.getState().isBlank()
+        || COORDINATOR_REMOTE_TIMEOUT_ABANDONED.equals(coordinator.getState())
+        || COORDINATOR_LATE_RESULT_IGNORED.equals(coordinator.getState())
+        || COORDINATOR_LATE_RESULT_RECONCILED.equals(coordinator.getState())) {
+      coordinator.setState(COORDINATOR_PENDING_REMOTE);
+      coordinator.setExecutionOutcome(null);
+      coordinator.setGameplayResult(null);
+    }
+    coordinator.setUpdatedAt(now);
+  }
+
+  private static void populateFollowup(
+      RemoteFollowup followup, ScheduleRequest request, Instant now) {
+    followup.setFollowupId(request.followupId());
+    followup.setTenantId(request.tenantId());
+    followup.setOriginGameInstanceId(request.originGameInstanceId());
+    followup.setOriginRegionId(request.originRegionId());
+    followup.setOriginRegionEpoch(request.originRegionEpoch());
+    followup.setTargetGameInstanceId(request.targetGameInstanceId());
+    followup.setTargetRegionId(request.targetRegionId());
+    followup.setTargetRegionEpoch(request.targetRegionEpoch());
+    followup.setDueTickId(request.targetDueTickId());
+    followup.setEffectKey(request.effectKey());
+    followup.setTargetEntityId(blankToNull(request.targetEntityId()));
+    followup.setPayloadJson(blankToNull(request.payloadJson()));
+    followup.setStatus(FOLLOWUP_SCHEDULED);
+    followup.setClaimedTickBatchId(null);
+    followup.setFailureCode(null);
+    followup.setFailureMessage(null);
+    if (followup.getCreatedAt() == null) {
+      followup.setCreatedAt(now);
+    }
+    followup.setUpdatedAt(now);
+  }
+
+  private static void populateResult(
+      RemoteFollowupResult result, ResultRequest request, Instant now) {
+    result.setResultId(request.resultId());
+    result.setTenantId(request.tenantId());
+    result.setCoordinatorId(request.coordinatorId());
+    result.setFollowupId(request.followupId());
+    result.setOriginRegionId(request.originRegionId());
+    result.setOriginRegionEpoch(request.originRegionEpoch());
+    result.setTargetRegionId(request.targetRegionId());
+    result.setTargetRegionEpoch(request.targetRegionEpoch());
+    result.setOutcome(request.outcome());
+    result.setResultPayloadJson(blankToNull(request.resultPayloadJson()));
+    result.setObservedAt(now);
+  }
+
+  private static void applyTerminalResult(
+      RemoteCommandCoordinator coordinator, RemoteFollowup followup, String outcome, Instant now) {
+    if (RESULT_APPLIED.equalsIgnoreCase(outcome)) {
+      coordinator.setState(COORDINATOR_REMOTE_APPLIED);
+      coordinator.setExecutionOutcome(FOLLOWUP_APPLIED);
+      coordinator.setGameplayResult("APPLIED");
+    } else {
+      coordinator.setState(COORDINATOR_REMOTE_ABANDONED);
+      coordinator.setExecutionOutcome(FOLLOWUP_ABANDONED);
+      coordinator.setGameplayResult("NOT_APPLIED");
+    }
+    coordinator.setUpdatedAt(now);
+    applyFollowupResultState(followup, outcome, now);
+  }
+
+  private static void applyFollowupResultState(
+      RemoteFollowup followup, String outcome, Instant now) {
+    if (RESULT_APPLIED.equalsIgnoreCase(outcome)) {
+      followup.setStatus(FOLLOWUP_APPLIED);
+      followup.setFailureCode(null);
+      followup.setFailureMessage(null);
+    } else {
+      followup.setStatus(FOLLOWUP_ABANDONED);
+      followup.setFailureCode("REMOTE_ABANDONED");
+      followup.setFailureMessage("Target region reported terminal abandoned outcome");
+    }
+    followup.setUpdatedAt(now);
+  }
+
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
+  }
+}

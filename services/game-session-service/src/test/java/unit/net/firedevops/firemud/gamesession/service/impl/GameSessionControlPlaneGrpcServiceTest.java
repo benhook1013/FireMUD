@@ -1671,6 +1671,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setCommandId("cmd-1");
+    coordinator.setFollowupId("rf-1");
     coordinator.setOriginGameInstanceId(7L);
     coordinator.setOriginRegionId("region-a");
     coordinator.setOriginRegionEpoch(3L);
@@ -1704,6 +1705,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals("coord-1", responseRef.get().getCoordinator().getCoordinatorId());
+    assertEquals("rf-1", responseRef.get().getCoordinator().getFollowupId());
     assertEquals("region-a", responseRef.get().getCoordinator().getOriginRegionId());
     assertEquals("region-b", responseRef.get().getCoordinator().getTargetRegionId());
     assertEquals(55L, responseRef.get().getCoordinator().getTargetDueTickId());
