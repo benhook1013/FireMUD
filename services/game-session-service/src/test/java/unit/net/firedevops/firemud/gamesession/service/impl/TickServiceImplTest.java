@@ -48,6 +48,8 @@ class TickServiceImplTest {
       durableGameplayCommandExecutionService;
   private net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService
       remoteFollowupDrainService;
+  private net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService
+      remoteFollowupRuntimeService;
   private AutomationScriptingClient automationScriptingClient;
   private TickService service;
 
@@ -99,6 +101,8 @@ class TickServiceImplTest {
                 .class);
     remoteFollowupDrainService =
         mock(net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService.class);
+    remoteFollowupRuntimeService =
+        mock(net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService.class);
     automationScriptingClient = mock(AutomationScriptingClient.class);
     when(automationScriptingClient.observeRuntimeTickProgress(any()))
         .thenReturn(ObserveRuntimeTickProgressResponse.newBuilder().build());
@@ -117,6 +121,7 @@ class TickServiceImplTest {
             sessionContextService,
             durableGameplayCommandExecutionService,
             remoteFollowupDrainService,
+            remoteFollowupRuntimeService,
             automationScriptingClient);
     ((TickServiceImpl) service).init();
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
@@ -583,6 +588,23 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals("2", request.getRegionId());
     org.junit.jupiter.api.Assertions.assertEquals(4L, request.getRegionEpoch());
     org.junit.jupiter.api.Assertions.assertEquals(8L, request.getTickId());
+    verify(remoteFollowupRuntimeService).reconcileTimeouts(1L, "2", 4L, 8L);
+  }
+
+  @Test
+  void processTickReconcilesRemoteFollowupTimeoutsAfterTickAdvance() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(remoteFollowupRuntimeService.reconcileTimeouts(1L, "2", 4L, 8L)).thenReturn(2);
+    net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
+        runtimeOwnership(1L, 2L, 4L, "fence-a", false);
+    currentStatus.setLastCommittedTickId(7L);
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(currentStatus), Optional.of(currentStatus));
+
+    service.processTick(1L, 2L);
+
+    verify(remoteFollowupRuntimeService).reconcileTimeouts(1L, "2", 4L, 8L);
   }
 
   @Test

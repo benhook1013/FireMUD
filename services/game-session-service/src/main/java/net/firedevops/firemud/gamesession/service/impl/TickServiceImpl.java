@@ -42,6 +42,7 @@ import net.firedevops.firemud.gamesession.repository.TickBatchRepository;
 import net.firedevops.firemud.gamesession.repository.TickEffectRepository;
 import net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
+import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.TickService;
@@ -79,6 +80,7 @@ public class TickServiceImpl implements TickService {
   private final SessionContextService sessionContextService;
   private final DurableGameplayCommandExecutionService durableGameplayCommandExecutionService;
   private final RemoteFollowupDrainService remoteFollowupDrainService;
+  private final RemoteFollowupRuntimeService remoteFollowupRuntimeService;
   private final AutomationScriptingClient automationScriptingClient;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -419,6 +421,7 @@ public class TickServiceImpl implements TickService {
         }
         tickProgressToPublish =
             advanceRuntimeTickProgress(normalizedTenantId, normalizedQueueTargetId, ownership);
+        reconcileRemoteFollowupTimeouts(tickProgressToPublish);
         tickSucceeded = true;
         awaitReplication();
       } catch (Exception ex) {
@@ -477,6 +480,27 @@ public class TickServiceImpl implements TickService {
     status.setLastCommittedTickId(status.getLastCommittedTickId() + 1L);
     status.setUpdatedAt(Instant.now());
     return runtimeRegionStatusRepository.save(status);
+  }
+
+  private void reconcileRemoteFollowupTimeouts(RuntimeRegionStatus status) {
+    if (status == null) {
+      return;
+    }
+    int reconciled =
+        remoteFollowupRuntimeService.reconcileTimeouts(
+            status.getTenantId(),
+            status.getRegionId(),
+            status.getRegionEpoch(),
+            status.getLastCommittedTickId());
+    if (reconciled > 0) {
+      logger.info(
+          "Reconciled remote followup timeouts tenantId={} regionId={} regionEpoch={} tickId={} count={}",
+          status.getTenantId(),
+          status.getRegionId(),
+          status.getRegionEpoch(),
+          status.getLastCommittedTickId(),
+          reconciled);
+    }
   }
 
   private void publishRuntimeTickProgress(RuntimeRegionStatus status) {
