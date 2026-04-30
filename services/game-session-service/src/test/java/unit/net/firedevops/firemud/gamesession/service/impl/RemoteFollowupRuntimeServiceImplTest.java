@@ -143,7 +143,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
         .thenReturn(Optional.of(result));
 
-    int reconciled = service.reconcileResults(1L, "region-a");
+    int reconciled = service.reconcileResults(1L, "region-a", 4L);
 
     assertEquals(1, reconciled);
     assertEquals(
@@ -169,11 +169,34 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
         .thenReturn(Optional.of(result));
 
-    int reconciled = service.reconcileResults(1L, "region-a");
+    int reconciled = service.reconcileResults(1L, "region-a", 4L);
 
     assertEquals(1, reconciled);
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.COORDINATOR_LATE_RESULT_IGNORED, coordinator.getState());
+  }
+
+  @Test
+  void reconcileResultsSkipsPendingCoordinatorFromStaleOriginEpoch() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    coordinator.setOriginRegionEpoch(3L);
+    RemoteFollowupResult result = new RemoteFollowupResult();
+    result.setOutcome("APPLIED");
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
+        .thenReturn(List.of(coordinator));
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
+        .thenReturn(List.of());
+    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+        .thenReturn(Optional.of(result));
+
+    int reconciled = service.reconcileResults(1L, "region-a", 4L);
+
+    assertEquals(0, reconciled);
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, coordinator.getState());
   }
 
   @Test

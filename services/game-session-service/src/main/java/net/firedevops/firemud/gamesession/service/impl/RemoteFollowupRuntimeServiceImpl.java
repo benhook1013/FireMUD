@@ -162,7 +162,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   @Override
   @Transactional
-  public int reconcileResults(long tenantId, String originRegionId) {
+  public int reconcileResults(long tenantId, String originRegionId, long currentOriginRegionEpoch) {
     if (originRegionId == null || originRegionId.isBlank()) {
       throw new IllegalArgumentException("origin_region_id is required");
     }
@@ -173,6 +173,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             remoteCommandCoordinatorRepository
                 .findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
                     tenantId, originRegionId, COORDINATOR_PENDING_REMOTE),
+            currentOriginRegionEpoch,
             now);
     reconciled +=
         reconcileLateResults(
@@ -211,9 +212,13 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     return updated;
   }
 
-  private int reconcilePendingResults(List<RemoteCommandCoordinator> coordinators, Instant now) {
+  private int reconcilePendingResults(
+      List<RemoteCommandCoordinator> coordinators, long currentOriginRegionEpoch, Instant now) {
     int reconciled = 0;
     for (RemoteCommandCoordinator coordinator : coordinators) {
+      if (coordinator.getOriginRegionEpoch() != currentOriginRegionEpoch) {
+        continue;
+      }
       RemoteFollowupResult result =
           latestResult(coordinator.getTenantId(), coordinator.getCoordinatorId()).orElse(null);
       if (result == null) {
