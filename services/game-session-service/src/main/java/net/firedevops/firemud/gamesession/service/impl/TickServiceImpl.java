@@ -1097,6 +1097,8 @@ public class TickServiceImpl implements TickService {
       command.setQueueSourceKind(selectionSourceKind(command));
       command.setQueueSourceState(selectionSourceState(command));
       command.setQueueSourceOrdinal(selectionSourceOrdinal(command, fallbackIndex));
+      command.setQueueSourceDueTickId(selectionSourceDueTickId(command));
+      command.setQueueSourceDueAtMs(selectionSourceDueAtMs(command));
       command.setExecutionOutcome(executionOutcome);
       command.setGameplayResult(gameplayResult);
       command.setLastAttemptAt(attemptedAt);
@@ -1232,6 +1234,8 @@ public class TickServiceImpl implements TickService {
       appendJsonNumberField(
           builder, "enqueueSeq", command == null ? null : command.getEnqueueSeq());
       appendJsonNumberField(builder, "dueTickId", command == null ? null : command.getDueTickId());
+      appendJsonNumberField(builder, "queueSourceDueTickId", selectionSourceDueTickId(command));
+      appendJsonNumberField(builder, "queueSourceDueAtMs", selectionSourceDueAtMs(command));
       appendJsonStringField(
           builder, "originSourceKind", command == null ? null : command.getOriginSourceKind());
       appendJsonStringField(
@@ -1277,6 +1281,14 @@ public class TickServiceImpl implements TickService {
       return "REDIS_RETRY_CLAIMED";
     }
     return "REDIS_PENDING_CLAIMED";
+  }
+
+  private Long selectionSourceDueTickId(GameplayCommand command) {
+    return command == null ? null : command.getDueTickId();
+  }
+
+  private Long selectionSourceDueAtMs(GameplayCommand command) {
+    return null;
   }
 
   private static void appendJsonStringField(StringBuilder builder, String fieldName, String value) {

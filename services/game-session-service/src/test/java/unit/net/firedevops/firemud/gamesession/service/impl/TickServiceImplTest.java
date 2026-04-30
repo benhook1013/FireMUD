@@ -612,6 +612,8 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"dueTickId\":14"));
     org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"queueSourceDueTickId\":14"));
+    org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch
             .getSelectedWorkManifestJson()
             .contains("\"originSourceKind\":\"SCHEDULE_TIMER\""));
@@ -639,6 +641,8 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals(
         "REDIS_PENDING_CLAIMED", command.getQueueSourceState());
     org.junit.jupiter.api.Assertions.assertEquals(77L, command.getQueueSourceOrdinal());
+    org.junit.jupiter.api.Assertions.assertEquals(14L, command.getQueueSourceDueTickId());
+    org.junit.jupiter.api.Assertions.assertNull(command.getQueueSourceDueAtMs());
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<net.firedevops.firemud.gamesession.entity.TickEffect>> effectCaptor =
         ArgumentCaptor.forClass(List.class);
@@ -700,6 +704,8 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"dueTickId\":21"));
     org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"queueSourceDueTickId\":21"));
+    org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch
             .getSelectedWorkManifestJson()
             .contains("\"originSourceKind\":\"SCHEDULE_TIMER\""));
@@ -709,6 +715,8 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals(
         "REDIS_RETRY_CLAIMED", command.getQueueSourceState());
     org.junit.jupiter.api.Assertions.assertEquals(78L, command.getQueueSourceOrdinal());
+    org.junit.jupiter.api.Assertions.assertEquals(21L, command.getQueueSourceDueTickId());
+    org.junit.jupiter.api.Assertions.assertNull(command.getQueueSourceDueAtMs());
   }
 
   @Test

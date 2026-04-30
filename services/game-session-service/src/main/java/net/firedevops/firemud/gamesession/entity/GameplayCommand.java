@@ -141,6 +141,12 @@ public class GameplayCommand {
   @Column(name = "queue_source_ordinal")
   private Long queueSourceOrdinal;
 
+  @Column(name = "queue_source_due_tick_id")
+  private Long queueSourceDueTickId;
+
+  @Column(name = "queue_source_due_at_ms")
+  private Long queueSourceDueAtMs;
+
   @Column(name = "target_entity_id", length = 64)
   private String targetEntityId;
 
