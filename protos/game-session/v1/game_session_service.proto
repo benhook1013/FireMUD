@@ -452,6 +452,9 @@ message GameplayCommandStatus {
   string remote_coordinator_id = 45;
   string remote_followup_id = 46;
   string remote_state = 47;
+  string remote_result_outcome = 48;
+  string remote_result_payload_json = 49;
+  int64 remote_result_observed_at_ms = 50;
 }
 
 message GetGameplayCommandStatusResponse {

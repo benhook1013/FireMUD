@@ -2049,6 +2049,10 @@ public final class GameSessionControlPlaneGrpcService
             : remoteCommandCoordinatorRepository
                 .findByTenantIdAndCommandId(command.getTenantId(), command.getCommandId())
                 .orElse(null);
+    RemoteFollowupResult latestRemoteResult =
+        remoteCoordinator == null || remoteFollowupResultRepository == null
+            ? null
+            : latestRemoteResult(command.getTenantId(), remoteCoordinator.getCoordinatorId());
     GameplayCommandStatus.Builder builder =
         GameplayCommandStatus.newBuilder()
             .setCommandId(command.getCommandId())
@@ -2162,7 +2166,26 @@ public final class GameSessionControlPlaneGrpcService
       builder.setRemoteFollowupId(remoteCoordinator.getFollowupId());
       builder.setRemoteState(remoteCoordinator.getState());
     }
+    if (latestRemoteResult != null) {
+      builder.setRemoteResultOutcome(latestRemoteResult.getOutcome());
+      if (latestRemoteResult.getResultPayloadJson() != null) {
+        builder.setRemoteResultPayloadJson(latestRemoteResult.getResultPayloadJson());
+      }
+      if (latestRemoteResult.getObservedAt() != null) {
+        builder.setRemoteResultObservedAtMs(latestRemoteResult.getObservedAt().toEpochMilli());
+      }
+    }
     return builder.build();
+  }
+
+  private RemoteFollowupResult latestRemoteResult(long tenantId, String coordinatorId) {
+    java.util.List<RemoteFollowupResult> results =
+        remoteFollowupResultRepository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(
+            tenantId, coordinatorId);
+    if (results.isEmpty()) {
+      return null;
+    }
+    return results.get(results.size() - 1);
   }
 
   private static PlayableStateScope toPlayableStateScopeStatus(String playableStateScope) {
