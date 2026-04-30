@@ -19,6 +19,7 @@ import net.firedevops.firemud.automationscripting.service.AutomationAdmissionSta
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
@@ -58,7 +59,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
   private final PluginRuntimeStateService pluginRuntimeStateService;
   private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
+  private final ScriptPatchReadinessProjectionService readinessProjectionService;
 
+  @org.springframework.beans.factory.annotation.Autowired
   public ScriptWorkItemServiceImpl(
       ScriptWorkItemRepository workItemRepository,
       ScriptEventAuditRepository auditRepository,
@@ -70,6 +73,32 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
       PluginRuntimeStateService pluginRuntimeStateService,
       GameDesignControlPlaneClient gameDesignControlPlaneClient) {
+    this(
+        workItemRepository,
+        auditRepository,
+        ingressAuditRepository,
+        handoffEventRepository,
+        outboxProperties,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        rolloutProjectionService,
+        pluginRuntimeStateService,
+        gameDesignControlPlaneClient,
+        null);
+  }
+
+  public ScriptWorkItemServiceImpl(
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptEventIngressAuditRepository ingressAuditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
+      ScriptOutboxProperties outboxProperties,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      ScriptPatchReadinessProjectionService readinessProjectionService) {
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
     this.ingressAuditRepository = ingressAuditRepository;
@@ -80,6 +109,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     this.rolloutProjectionService = rolloutProjectionService;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
     this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
+    this.readinessProjectionService = readinessProjectionService;
   }
 
   @Override
@@ -207,6 +237,21 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   public Optional<PatchStatusSummary> getPatchStatus(String tenantId, String scriptPatchVersion) {
     requireText(tenantId, "tenant_id");
     requireText(scriptPatchVersion, "script_patch_version");
+    if (readinessProjectionService != null) {
+      Optional<PatchStatusSummary> projectionSummary =
+          readinessProjectionService
+              .getProjection(tenantId, scriptPatchVersion)
+              .map(
+                  readiness -> {
+                    PublicationMetadata metadata =
+                        publicationMetadata(tenantId, scriptPatchVersion);
+                    return PatchStatusSummary.fromProjection(
+                        readiness, metadata.baseVersionId(), metadata.abilitySchemaDigest());
+                  });
+      if (projectionSummary.isPresent()) {
+        return projectionSummary;
+      }
+    }
     return summarize(
         scriptPatchVersion,
         workItemRepository.findByTenantIdAndScriptPatchVersion(tenantId, scriptPatchVersion));
@@ -217,6 +262,24 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   public List<PatchStatusSummary> listPatchStatuses(
       String tenantId, ScriptPatchStatus status, long changedAfterMs, long changedBeforeMs) {
     requireText(tenantId, "tenant_id");
+    if (readinessProjectionService != null) {
+      return readinessProjectionService.listProjections(tenantId).stream()
+          .map(
+              readiness -> {
+                PublicationMetadata metadata =
+                    publicationMetadata(tenantId, readiness.scriptPatchVersion());
+                return PatchStatusSummary.fromProjection(
+                    readiness, metadata.baseVersionId(), metadata.abilitySchemaDigest());
+              })
+          .filter(
+              summary ->
+                  status == ScriptPatchStatus.SCRIPT_PATCH_STATUS_UNSPECIFIED
+                      || summary.status() == status)
+          .filter(summary -> changedAfterMs <= 0 || summary.lastChangedAtMs() > changedAfterMs)
+          .filter(summary -> changedBeforeMs <= 0 || summary.lastChangedAtMs() < changedBeforeMs)
+          .sorted(Comparator.comparingLong(PatchStatusSummary::lastChangedAtMs).reversed())
+          .toList();
+    }
     return workItemRepository.findDistinctScriptPatchVersionsByTenantId(tenantId).stream()
         .map(
             patchVersion ->
@@ -426,6 +489,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             scriptPatchVersion,
             status,
             statusReasonFor(status),
+            "",
             lastChanged.toEpochMilli(),
             publicationMetadata.baseVersionId(),
             publicationMetadata.abilitySchemaDigest()));

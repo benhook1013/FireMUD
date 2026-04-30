@@ -49,6 +49,9 @@ public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, 
   List<ScriptWorkItem> findByTenantIdAndScriptPatchVersion(
       String tenantId, String scriptPatchVersion);
 
+  List<ScriptWorkItem> findByTenantIdAndEventTypeAndStatusInOrderByCreatedAtAscIdAsc(
+      String tenantId, String eventType, Collection<String> statuses);
+
   List<ScriptWorkItem> findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
       String tenantId, String gameInstanceId, String scriptPatchVersion);
 

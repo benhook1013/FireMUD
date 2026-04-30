@@ -241,6 +241,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "patch-1",
                     ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
                     "runtime_work_terminal",
+                    "",
                     123L,
                     7L,
                     "ability-1")));
@@ -280,6 +281,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "patch-2",
                     ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED,
                     "terminal_work_failed",
+                    "",
                     15L,
                     7L,
                     "ability-1")));

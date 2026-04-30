@@ -6,6 +6,7 @@ import java.util.List;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleDefinitionService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
@@ -18,6 +19,7 @@ class ScriptVersionServiceImplTest {
   private ScriptScheduleDefinitionService scheduleDefinitionService;
   private ScriptScheduleInstanceService scheduleInstanceService;
   private ScriptEventIngressService scriptEventIngressService;
+  private ScriptPatchReadinessProjectionService readinessProjectionService;
   private ScriptVersionServiceImpl service;
 
   @BeforeEach
@@ -26,12 +28,14 @@ class ScriptVersionServiceImplTest {
     scheduleDefinitionService = mock(ScriptScheduleDefinitionService.class);
     scheduleInstanceService = mock(ScriptScheduleInstanceService.class);
     scriptEventIngressService = mock(ScriptEventIngressService.class);
+    readinessProjectionService = mock(ScriptPatchReadinessProjectionService.class);
     service =
         new ScriptVersionServiceImpl(
             repository,
             scheduleDefinitionService,
             scheduleInstanceService,
-            scriptEventIngressService);
+            scriptEventIngressService,
+            readinessProjectionService);
   }
 
   @Test
@@ -51,6 +55,7 @@ class ScriptVersionServiceImplTest {
     verify(scheduleDefinitionService)
         .refreshPatchSchedules("1", "v1-script.1", List.of(def), List.of("npc-barkeep"));
     verify(scheduleInstanceService).reconcilePinnedPatchInstances("1", "v1-script.1");
+    verify(readinessProjectionService).beginPatchReadiness("1", "v1-script.1", 1);
     ArgumentCaptor<TriggerScriptEventRequest> requestCaptor =
         ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
     verify(scriptEventIngressService)

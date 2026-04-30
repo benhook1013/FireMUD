@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.service;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService.ReadinessStatusSummary;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 
@@ -90,9 +91,22 @@ public interface ScriptWorkItemService {
       String scriptPatchVersion,
       ScriptPatchStatus status,
       String statusReason,
+      String supersededByScriptPatchVersion,
       long lastChangedAtMs,
       long baseVersionId,
-      String abilitySchemaDigest) {}
+      String abilitySchemaDigest) {
+    public static PatchStatusSummary fromProjection(
+        ReadinessStatusSummary readiness, long baseVersionId, String abilitySchemaDigest) {
+      return new PatchStatusSummary(
+          readiness.scriptPatchVersion(),
+          readiness.status(),
+          readiness.statusReason(),
+          readiness.supersededByScriptPatchVersion(),
+          readiness.lastChangedAtMs(),
+          baseVersionId,
+          abilitySchemaDigest);
+    }
+  }
 
   record AutomationDrainStatusSummary(
       String tenantId,

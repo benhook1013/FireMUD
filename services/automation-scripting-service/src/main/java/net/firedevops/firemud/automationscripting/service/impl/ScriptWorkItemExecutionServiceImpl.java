@@ -19,6 +19,7 @@ import net.firedevops.firemud.automationscripting.service.AutomationQueueService
 import net.firedevops.firemud.automationscripting.service.AutomationQueueWorkItemPointer;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunCapacityService;
@@ -54,6 +55,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository auditRepository;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
+  private final ScriptPatchReadinessProjectionService readinessProjectionService;
   private final ScriptOutputProperties outputProperties;
   private final ScriptTenantBudgetService tenantBudgetService;
   private final ScriptDryRunCapacityService dryRunCapacityService;
@@ -84,6 +86,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         dryRunCapacityService,
         objectMapper,
         new SimpleMeterRegistry(),
+        null,
         null);
   }
 
@@ -99,6 +102,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptOutputProperties outputProperties,
       ScriptTenantBudgetService tenantBudgetService,
       ScriptDryRunCapacityService dryRunCapacityService,
+      ScriptPatchReadinessProjectionService readinessProjectionService,
       ObjectMapper objectMapper,
       MeterRegistry meterRegistry) {
     this(
@@ -113,7 +117,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         dryRunCapacityService,
         objectMapper,
         meterRegistry,
-        automationQueueService);
+        automationQueueService,
+        readinessProjectionService);
   }
 
   public ScriptWorkItemExecutionServiceImpl(
@@ -140,6 +145,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         dryRunCapacityService,
         objectMapper,
         meterRegistry,
+        null,
         null);
   }
 
@@ -156,6 +162,36 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ObjectMapper objectMapper,
       MeterRegistry meterRegistry,
       AutomationQueueService automationQueueService) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        meterRegistry,
+        automationQueueService,
+        null);
+  }
+
+  public ScriptWorkItemExecutionServiceImpl(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry,
+      AutomationQueueService automationQueueService,
+      ScriptPatchReadinessProjectionService readinessProjectionService) {
     this.workItemService = workItemService;
     this.scriptDefinitionRepository = scriptDefinitionRepository;
     this.handoffService = handoffService;
@@ -168,6 +204,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.objectMapper = objectMapper;
     this.meterRegistry = meterRegistry;
     this.automationQueueService = automationQueueService;
+    this.readinessProjectionService = readinessProjectionService;
   }
 
   @Override
@@ -544,6 +581,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
     updateAudit(workItem.getId(), stage, outcome, reason, now);
+    refreshPatchReadiness(workItem);
     recordOutcome(workItem, stage, outcome);
   }
 
@@ -555,6 +593,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
     updateAudit(workItem.getId(), stage, outcome, reason, now);
+    refreshPatchReadiness(workItem);
     recordOutcome(workItem, stage, outcome);
   }
 
@@ -566,6 +605,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
     updateAudit(workItem.getId(), stage, outcome, reason, now);
+    refreshPatchReadiness(workItem);
     recordOutcome(workItem, stage, outcome);
   }
 
@@ -593,6 +633,13 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   private static boolean isOnLoad(ScriptWorkItem workItem) {
     return EVENT_ON_LOAD.equals(workItem.getEventType());
+  }
+
+  private void refreshPatchReadiness(ScriptWorkItem workItem) {
+    if (readinessProjectionService != null && isOnLoad(workItem)) {
+      readinessProjectionService.refreshFromOnLoadWorkItems(
+          workItem.getTenantId(), workItem.getScriptPatchVersion());
+    }
   }
 
   private void recordOutcome(ScriptWorkItem workItem, String stage, String outcome) {

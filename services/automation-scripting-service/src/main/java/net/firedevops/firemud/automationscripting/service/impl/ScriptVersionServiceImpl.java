@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleDefinitionService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
@@ -30,6 +31,7 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
   private final ScriptScheduleDefinitionService scheduleDefinitionService;
   private final ScriptScheduleInstanceService scheduleInstanceService;
   private final ScriptEventIngressService scriptEventIngressService;
+  private final ScriptPatchReadinessProjectionService readinessProjectionService;
   private final Map<Long, Map<String, String>> registry = new ConcurrentHashMap<>();
 
   @Override
@@ -49,6 +51,7 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
     List<ScriptDefinition> defs =
         repository.findByTenantIdAndScriptVersionAndNameIn(
             tenantKey, scriptPatchVersion, affectedScripts);
+    readinessProjectionService.beginPatchReadiness(tenantId, scriptPatchVersion, defs.size());
     defs.forEach(def -> admitOnLoad(tenantId, scriptPatchVersion, def));
     scheduleDefinitionService.refreshPatchSchedules(
         tenantId, scriptPatchVersion, defs, affectedScripts);

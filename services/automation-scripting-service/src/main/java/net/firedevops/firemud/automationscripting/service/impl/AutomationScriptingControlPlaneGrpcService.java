@@ -184,6 +184,7 @@ public final class AutomationScriptingControlPlaneGrpcService
                   response
                       .setStatus(summary.status())
                       .setStatusReason(summary.statusReason())
+                      .setSupersededByScriptPatchVersion(summary.supersededByScriptPatchVersion())
                       .setLastChangedAtMs(summary.lastChangedAtMs())
                       .setBaseVersionId(summary.baseVersionId())
                       .setAbilitySchemaDigest(summary.abilitySchemaDigest()),
@@ -894,6 +895,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setScriptPatchVersion(summary.scriptPatchVersion())
         .setStatus(summary.status())
         .setStatusReason(summary.statusReason())
+        .setSupersededByScriptPatchVersion(summary.supersededByScriptPatchVersion())
         .setLastChangedAtMs(summary.lastChangedAtMs())
         .setBaseVersionId(summary.baseVersionId())
         .setAbilitySchemaDigest(summary.abilitySchemaDigest())

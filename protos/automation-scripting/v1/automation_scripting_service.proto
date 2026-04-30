@@ -409,6 +409,7 @@ enum ScriptPatchStatus {
   SCRIPT_PATCH_STATUS_ROLLED_BACK = 3;
   SCRIPT_PATCH_STATUS_PENDING_VALIDATION = 4;
   SCRIPT_PATCH_STATUS_ONLOAD_RUNNING = 5;
+  SCRIPT_PATCH_STATUS_SUPERSEDED = 6;
 }
 
 message GetScriptPatchStatusRequest {
@@ -423,6 +424,7 @@ message GetScriptPatchStatusResponse {
   int64 base_version_id = 4;
   string ability_schema_digest = 5;
   shared.v1.ErrorDetail error = 6;
+  string superseded_by_script_patch_version = 7;
 }
 
 message ListScriptPatchStatusesRequest {
@@ -439,6 +441,7 @@ message ScriptPatchStatusEntry {
   int64 last_changed_at_ms = 4;
   int64 base_version_id = 5;
   string ability_schema_digest = 6;
+  string superseded_by_script_patch_version = 7;
 }
 
 message ListScriptPatchStatusesResponse {
