@@ -22,6 +22,7 @@ import net.firedevops.firemud.automationscripting.service.AutomationAdmissionSta
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
@@ -932,6 +933,111 @@ class ScriptWorkItemServiceImplTest {
     assertThat(result.replayedCount()).isEqualTo(0L);
     assertThat(result.rejectedCount()).isEqualTo(1L);
     assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+  }
+
+  @Test
+  void replaysFailedOnLoadDeadLetterWhenReadinessProjectionMatches() {
+    ScriptWorkItem item = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    item.setId(88L);
+    item.setTenantId("1");
+    item.setEventType("onLoad");
+    item.setScriptId("boot-script");
+    item.setScriptEventId("onload:1:patch-1:boot-script");
+    item.setCreatedAt(Instant.ofEpochMilli(100));
+    item.setCancelReason("definition_invalid");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(workItemRepository.findById(88L)).thenReturn(Optional.of(item));
+    when(workItemRepository.save(item)).thenReturn(item);
+    when(auditRepository.findByWorkItemId(88L)).thenReturn(Optional.of(audit));
+    when(readinessProjectionService.getProjection("1", "patch-1"))
+        .thenReturn(
+            Optional.of(
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
+                    "1",
+                    "patch-1",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED,
+                    "onload_failed",
+                    "",
+                    900L)));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService);
+
+    ScriptWorkItemService.ReplayResult result =
+        service.replayDeadLetters(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1", "", "", List.of("88"), "patch-1", 0L, 0L, 10, "req-1", "admin", "retry"));
+
+    assertThat(result.replayedCount()).isEqualTo(1L);
+    assertThat(result.rejectedCount()).isEqualTo(0L);
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getCancelReason()).isEmpty();
+    verify(readinessProjectionService).refreshFromOnLoadWorkItems("1", "patch-1");
+    assertThat(audit.getFinalStage()).isEqualTo("REPLAY");
+    assertThat(audit.getFinalOutcome()).isEqualTo("requeued");
+  }
+
+  @Test
+  void rejectsReplayForSupersededOnLoadDeadLetter() {
+    ScriptWorkItem item = workItem("patch-old", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    item.setId(89L);
+    item.setTenantId("1");
+    item.setEventType("onLoad");
+    item.setScriptId("boot-script");
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(workItemRepository.findById(89L)).thenReturn(Optional.of(item));
+    when(auditRepository.findByWorkItemId(89L)).thenReturn(Optional.empty());
+    when(readinessProjectionService.getProjection("1", "patch-old"))
+        .thenReturn(
+            Optional.of(
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
+                    "1",
+                    "patch-old",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_SUPERSEDED,
+                    "superseded_by_newer_patch",
+                    "patch-new",
+                    901L)));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService);
+
+    ScriptWorkItemService.ReplayResult result =
+        service.replayDeadLetters(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1", "", "", List.of("89"), "patch-old", 0L, 0L, 10, "", "", ""));
+
+    assertThat(result.replayedCount()).isEqualTo(0L);
+    assertThat(result.rejectedCount()).isEqualTo(1L);
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    verify(readinessProjectionService, Mockito.never())
+        .refreshFromOnLoadWorkItems(Mockito.anyString(), Mockito.anyString());
   }
 
   private static ScriptWorkItem workItem(String patchVersion, String status, Instant updatedAt) {

@@ -464,6 +464,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       item.setCancelReason("");
       item.setUpdatedAt(now);
       workItemRepository.save(item);
+      refreshReadinessProjectionIfNeeded(item);
       rolloutProjectionService.refreshForWorkItem(item);
       markReplayQueued(item.getId(), reason, now);
       replayed++;
@@ -655,6 +656,24 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private boolean eligibleForReplay(ScriptWorkItem item) {
+    if ("onLoad".equals(item.getEventType())) {
+      return eligibleForOnLoadReplay(item);
+    }
+    return eligibleForRuntimeReplay(item);
+  }
+
+  private boolean eligibleForOnLoadReplay(ScriptWorkItem item) {
+    if (readinessProjectionService == null) {
+      return false;
+    }
+    return readinessProjectionService
+        .getProjection(item.getTenantId(), item.getScriptPatchVersion())
+        .filter(summary -> summary.status() == ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED)
+        .filter(summary -> summary.supersededByScriptPatchVersion().isBlank())
+        .isPresent();
+  }
+
+  private boolean eligibleForRuntimeReplay(ScriptWorkItem item) {
     Optional<ScriptPatchPinProjectionService.PinConvergenceSummary> runtime =
         scriptPatchPinProjectionService
             .getPinConvergence(item.getTenantId(), item.getGameInstanceId())
@@ -691,6 +710,14 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         .getStatus(item.getTenantId(), item.getGameInstanceId(), audit.get().getPluginId())
         .map(status -> status.activePluginVersionId().equals(audit.get().getPluginVersionId()))
         .orElse(false);
+  }
+
+  private void refreshReadinessProjectionIfNeeded(ScriptWorkItem item) {
+    if (readinessProjectionService == null || !"onLoad".equals(item.getEventType())) {
+      return;
+    }
+    readinessProjectionService.refreshFromOnLoadWorkItems(
+        item.getTenantId(), item.getScriptPatchVersion());
   }
 
   private void markReplayQueued(Long workItemId, String reason, Instant now) {
