@@ -460,6 +460,7 @@ class TickServiceImplTest {
     command.setCommandText("north");
     command.setSanitizedCommandText("north");
     command.setRequiresSoloTick(false);
+    command.setSourceType("AUTOMATION");
     when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
             1L, 2L, "DRAINED"))
         .thenReturn(List.of(drainedBatch));
@@ -477,6 +478,14 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", drainedEffect.getStatus());
     org.junit.jupiter.api.Assertions.assertEquals("RETRY_QUEUED", command.getExecutionOutcome());
     verify(durableGameplayCommandExecutionService, never()).execute(any(), any());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1.0,
+        meterRegistry
+            .get("tick_requeued_action_total")
+            .tag("source", "automation")
+            .counter()
+            .count(),
+        0.001);
   }
 
   @Test
@@ -785,9 +794,11 @@ class TickServiceImplTest {
     second.setCommandText("wave");
     second.setSanitizedCommandText("wave");
     second.setEnqueueSeq(6L);
+    second.setSourceType("AUTOMATION");
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
         .thenReturn(List.of(first, second));
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2"))).thenReturn(List.of(second));
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(existingBatch));
@@ -797,6 +808,14 @@ class TickServiceImplTest {
     verify(redisTemplate).delete("gamesession:tick:pending:1:2");
     verify(listOps).rightPush("gamesession:tick:pending:1:2", "N|cmd-1|look");
     verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-2|wave");
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1.0,
+        meterRegistry
+            .get("tick_requeued_action_total")
+            .tag("source", "automation")
+            .counter()
+            .count(),
+        0.001);
   }
 
   private static net.firedevops.firemud.gamesession.entity.GameplayCommand gameplayCommand(

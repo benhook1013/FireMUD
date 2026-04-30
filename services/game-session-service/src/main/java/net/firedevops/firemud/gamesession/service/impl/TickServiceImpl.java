@@ -93,7 +93,6 @@ public class TickServiceImpl implements TickService {
   private Counter redisErrorCounter;
   private Counter lockContentionCounter;
   private Counter budgetExceededCounter;
-  private Counter requeuedActionCounter;
   private Counter retryBackoffCounter;
   private Counter manifestMismatchCounter;
   private Timer tickTimer;
@@ -162,8 +161,6 @@ public class TickServiceImpl implements TickService {
     this.budgetExceededCounter = meterRegistry.counter("game_session_tick_budget_exceeded_total");
     this.tickTimer = meterRegistry.timer("game_session_tick_duration_ms");
     this.luaTimer = meterRegistry.timer("game_session_lua_latency_ms");
-    this.requeuedActionCounter =
-        meterRegistry.counter("tick_requeued_action_total", "source", "player");
     this.retryBackoffCounter = meterRegistry.counter("tick_retry_backoff_count_total");
     this.manifestMismatchCounter = meterRegistry.counter("tick_manifest_mismatch_total");
     meterRegistry.gauge("game_session_retry_queue_depth_total", retryQueueDepthTotal);
@@ -415,7 +412,6 @@ public class TickServiceImpl implements TickService {
                     List.of(
                         pendingKey(normalizedTenantId, normalizedQueueTargetId),
                         queueKey(normalizedTenantId, normalizedQueueTargetId))));
-        requeuedActionCounter.increment();
         if (activeBatch != null) {
           markBatchAbandoned(activeBatch, activeBatchEntries, failureCode(ex), ex.getMessage());
         }
@@ -616,6 +612,7 @@ public class TickServiceImpl implements TickService {
         batch.getTickBatchId(), "ABANDONED", now, "MANIFEST_MISMATCH", failureMessage);
     updateGameplayCommands(
         entries, "RETRY_QUEUED", "PENDING", now, "MANIFEST_MISMATCH", failureMessage, false);
+    recordRequeuedActions(entries);
   }
 
   private List<QueuedCommandEnvelope> loadSealedReplayEntries(TickBatch batch) {
@@ -693,6 +690,7 @@ public class TickServiceImpl implements TickService {
           "MANIFEST_MISMATCH",
           "Redis pending entry was returned to queue because sealed replay manifest won",
           false);
+      recordRequeuedActions(redisOnlyEntries);
     }
     String pendingKey = pendingKey(tenantId, gameInstanceId);
     redisTemplate.delete(pendingKey);
@@ -820,6 +818,7 @@ public class TickServiceImpl implements TickService {
     updateEffectStatuses(batch.getTickBatchId(), "ABANDONED", now, failureCode, failureMessage);
     updateGameplayCommands(
         entries, "RETRY_QUEUED", "PENDING", now, failureCode, failureMessage, false);
+    recordRequeuedActions(entries);
     logger.warn(
         "Abandoned durable tick batch tickBatchId={} tenantId={} gameInstanceId={} code={} message={}",
         batch.getTickBatchId(),
@@ -887,6 +886,7 @@ public class TickServiceImpl implements TickService {
     if (!commands.isEmpty()) {
       gameplayCommandRepository.saveAll(commands);
     }
+    recordRequeuedCommands(commands);
     batch.setStatus("ABANDONED");
     batch.setCompletedAt(now);
     batch.setFailureCode("STALE_EXECUTOR_FENCE");
@@ -922,6 +922,43 @@ public class TickServiceImpl implements TickService {
               queueKey(tenantId, gameInstanceId),
               queuePayload(entry.requiresSoloTick(), entry.commandId(), entry.command()));
     }
+  }
+
+  private void recordRequeuedActions(List<QueuedCommandEnvelope> entries) {
+    if (entries.isEmpty()) {
+      return;
+    }
+    recordRequeuedCommands(loadCommands(entries), entries.size());
+  }
+
+  private void recordRequeuedCommands(List<GameplayCommand> commands) {
+    recordRequeuedCommands(commands, commands.size());
+  }
+
+  private void recordRequeuedCommands(List<GameplayCommand> commands, int fallbackCount) {
+    if (!commands.isEmpty()) {
+      Map<String, Long> countsBySource =
+          commands.stream()
+              .collect(
+                  java.util.stream.Collectors.groupingBy(
+                      this::requeueMetricSource, java.util.stream.Collectors.counting()));
+      countsBySource.forEach(
+          (source, count) ->
+              meterRegistry
+                  .counter("tick_requeued_action_total", "source", source)
+                  .increment(count));
+      return;
+    }
+    if (fallbackCount > 0) {
+      meterRegistry
+          .counter("tick_requeued_action_total", "source", "unknown")
+          .increment(fallbackCount);
+    }
+  }
+
+  private String requeueMetricSource(GameplayCommand command) {
+    String sourceType = normalize(command.getSourceType()).trim();
+    return sourceType.isBlank() ? "unknown" : sourceType.toLowerCase(java.util.Locale.ROOT);
   }
 
   private void executeDurableEffect(TickEffect effect) {
