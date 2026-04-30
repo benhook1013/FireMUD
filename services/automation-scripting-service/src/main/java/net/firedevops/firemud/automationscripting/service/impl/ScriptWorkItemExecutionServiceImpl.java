@@ -46,6 +46,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String PRIORITY_HIGH = "high";
   private static final String PRIORITY_NORMAL = "normal";
   private static final String PRIORITY_BACKGROUND = "background";
+  private static final String EVENT_ON_LOAD = "onLoad";
 
   private final ScriptWorkItemService workItemService;
   private final ScriptDefinitionRepository scriptDefinitionRepository;
@@ -219,6 +220,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
     Instant now = Instant.now();
     if (!workItem.isDryRun()
+        && !isOnLoad(workItem)
         && !tenantBudgetService.tryReserve(
             workItem.getTenantId(), normalizePriorityTag(workItem.getPriorityTag()))) {
       cancel(workItem, STAGE_ADMISSION, "tenant_budget_exceeded", "tenant_budget_exceeded", now);
@@ -262,6 +264,11 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       deadLetter(workItem, STAGE_DSL_EVAL, "command_count_exceeded", "command_count_exceeded", now);
       return false;
     }
+    if (isOnLoad(workItem) && !commands.isEmpty()) {
+      deadLetter(
+          workItem, STAGE_DSL_EVAL, "definition_invalid", "onload_commands_not_allowed", now);
+      return false;
+    }
     if (exceedsPerEntityCommandLimit(commands)) {
       deadLetter(
           workItem,
@@ -276,8 +283,12 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       markTerminalSuccess(
           workItem,
           STAGE_DSL_EVAL,
-          workItem.isDryRun() ? "dry_run_completed" : "no_commands_emitted",
-          workItem.isDryRun() ? "dry_run_no_handoff" : "script_emitted_no_commands",
+          workItem.isDryRun()
+              ? "dry_run_completed"
+              : isOnLoad(workItem) ? "readiness_success" : "no_commands_emitted",
+          workItem.isDryRun()
+              ? "dry_run_no_handoff"
+              : isOnLoad(workItem) ? "ready_for_tenant" : "script_emitted_no_commands",
           now);
       return true;
     }
@@ -578,6 +589,10 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     } catch (NumberFormatException ex) {
       throw new IllegalArgumentException("tenant_id must be numeric for script definition lookup");
     }
+  }
+
+  private static boolean isOnLoad(ScriptWorkItem workItem) {
+    return EVENT_ON_LOAD.equals(workItem.getEventType());
   }
 
   private void recordOutcome(ScriptWorkItem workItem, String stage, String outcome) {

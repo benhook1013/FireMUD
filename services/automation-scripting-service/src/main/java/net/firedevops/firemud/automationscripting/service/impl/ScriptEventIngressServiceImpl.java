@@ -141,6 +141,12 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   @Override
   @Transactional
   public TriggerAdmission admit(TriggerScriptEventRequest request) {
+    return admit(request, resolveSourceService());
+  }
+
+  @Override
+  @Transactional
+  public TriggerAdmission admit(TriggerScriptEventRequest request, String sourceService) {
     String schemaVersion = schemaVersion(request);
     ScriptEventIngressAudit existing = findExisting(request, schemaVersion);
     if (existing != null) {
@@ -153,7 +159,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
     TriggerAdmission admission = validate(request, schemaVersion);
     if (admission.admitted()) {
-      admission = admissionWithHandlers(request, schemaVersion);
+      admission = admissionWithHandlers(request, schemaVersion, sourceService);
     }
     ScriptEventIngressAudit audit = new ScriptEventIngressAudit();
     audit.setTenantId(requiredText(request.getTenantId(), "tenant_id"));
@@ -173,7 +179,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setScriptPatchVersion(
         requiredText(request.getScriptPatchVersion(), "script_patch_version"));
     audit.setScriptEventId(requiredText(request.getScriptEventId(), "script_event_id"));
-    audit.setSourceService(resolveSourceService());
+    audit.setSourceService(sourceService);
     audit.setTriggerMode(request.getTriggerMode().name());
     audit.setSourceKind(sourceKind(request));
     audit.setSourceState(admission.admitted() ? "TRIGGER_ADMITTED" : "TRIGGER_REJECTED");
@@ -214,6 +220,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (definition.snapshotAuthority().equals("PRODUCER_SUPPLIED_TOKEN")
         && request.getReadSnapshotToken().isBlank()) {
       return rejected("missing_snapshot_token");
+    }
+    if (isOnLoadRequest(request) && request.getScriptId().isBlank()) {
+      return rejected("missing_script_identity");
     }
     if (definition.requiredTriggerIdentityFields().contains("regionEpoch")) {
       if (request.getGameInstanceId().isBlank()
@@ -362,59 +371,93 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private TriggerAdmission admissionWithHandlers(
-      TriggerScriptEventRequest request, String schemaVersion) {
+      TriggerScriptEventRequest request, String schemaVersion, String sourceService) {
+    if (isOnLoadRequest(request)) {
+      return admissionWithOnLoadHandler(request, schemaVersion, sourceService);
+    }
     long tenantKey = Long.parseLong(request.getTenantId());
     List<ScriptEventBinding> handlers =
         bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
                 tenantKey, request.getScriptPatchVersion(), request.getEventType(), schemaVersion)
             .stream()
+            .filter(
+                binding ->
+                    request.getScriptId().isBlank()
+                        || binding.getScriptId().equals(request.getScriptId()))
             .filter(binding -> matchesScope(binding, request))
             .toList();
-    handlers.forEach(binding -> admitHandler(request, schemaVersion, binding));
+    handlers.forEach(binding -> admitHandler(request, schemaVersion, binding, sourceService));
     String reason = handlers.isEmpty() ? "admitted_no_handlers" : "admitted_handlers_resolved";
     return new TriggerAdmission(true, OUTCOME_ADMITTED, reason, handlers.size());
   }
 
+  private TriggerAdmission admissionWithOnLoadHandler(
+      TriggerScriptEventRequest request, String schemaVersion, String sourceService) {
+    String scriptId = requiredText(request.getScriptId(), "script_id");
+    if (handlerAuditExistsForScript(request, schemaVersion, scriptId)
+        || workItemExistsForScript(request, schemaVersion, scriptId)) {
+      return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_handlers_resolved", 1);
+    }
+    persistWorkItemForScript(request, schemaVersion, scriptId, "", sourceService);
+    return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_handlers_resolved", 1);
+  }
+
   private void admitHandler(
-      TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      ScriptEventBinding binding,
+      String sourceService) {
     if (handlerAuditExists(request, schemaVersion, binding)) {
       return;
     }
     if (!request.getIsDryRun()
+        && !isOnLoadRequest(request)
         && !quotaService.tryAcquire(request.getTenantId(), binding.getScriptId())) {
       persistHandlerAudit(
           request,
           schemaVersion,
           binding,
+          sourceService,
           null,
           "ADMISSION",
           "quota_denied",
           "script_quota_denied");
       return;
     }
-    persistWorkItem(request, schemaVersion, binding);
+    persistWorkItem(
+        request,
+        schemaVersion,
+        binding.getScriptId(),
+        binding.getPriorityTag(),
+        sourceService,
+        requestScopeValues(request));
   }
 
   private void persistWorkItem(
-      TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
-    if (workItemExists(request, schemaVersion, binding)) {
-      return;
-    }
-    AutomationAdmissionStateService.AdmissionStateSummary admissionState =
-        automationAdmissionStateService.getState(
-            request.getTenantId(), request.getGameInstanceId(), request.getRegionId());
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      String scriptId,
+      String priorityTag,
+      String sourceService,
+      HandlerScopeValues scopeValues) {
+    Long admissionEpoch =
+        request.getGameInstanceId().isBlank()
+            ? 0L
+            : automationAdmissionStateService
+                .getState(request.getTenantId(), request.getGameInstanceId(), request.getRegionId())
+                .admissionEpoch();
     ScriptWorkItem item = new ScriptWorkItem();
     item.setTenantId(request.getTenantId());
     item.setGameInstanceId(normalize(request.getGameInstanceId()));
     item.setRegionId(normalize(request.getRegionId()));
     item.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L);
-    item.setEntityId(normalize(request.getEntityId()));
-    item.setPlayableStateScope(normalizePlayableStateScope(request.getPlayableStateScope()));
-    item.setWorldSlug(normalize(request.getWorldSlug()));
-    item.setRealmSlug(normalize(request.getRealmSlug()));
-    item.setPointerVersion(normalize(request.getPointerVersion()));
-    item.setScriptId(binding.getScriptId());
+    item.setEntityId(scopeValues.entityId());
+    item.setPlayableStateScope(scopeValues.playableStateScope());
+    item.setWorldSlug(scopeValues.worldSlug());
+    item.setRealmSlug(scopeValues.realmSlug());
+    item.setPointerVersion(scopeValues.pointerVersion());
+    item.setScriptId(scriptId);
     item.setPluginId(normalize(request.getPluginId()));
     item.setPluginVersionId(normalize(request.getPluginVersionId()));
     item.setEventType(request.getEventType());
@@ -422,55 +465,89 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setScriptPatchVersion(request.getScriptPatchVersion());
     item.setScriptEventId(request.getScriptEventId());
     item.setDryRun(request.getIsDryRun());
-    item.setSourceService(resolveSourceService());
+    item.setSourceService(sourceService);
     item.setTriggerMode(request.getTriggerMode().name());
     item.setSourceKind(sourceKind(request));
     item.setSourceState("WORK_ITEM_PERSISTED");
     item.setSourceOrdinal(sourceOrdinal(request));
     item.setSourceDueTickId(sourceDueTickId(request));
     item.setSourceDueAtMs(sourceDueAtMs(request));
-    item.setPriorityTag(binding.getPriorityTag());
+    item.setPriorityTag(priorityTag);
     item.setReadSnapshotToken(normalize(request.getReadSnapshotToken()));
     item.setPayloadJson(normalize(request.getPayloadJson()));
-    item.setAdmissionEpoch(admissionState.admissionEpoch());
+    item.setAdmissionEpoch(admissionEpoch);
     ScriptWorkItem saved = workItemRepository.save(item);
     rolloutProjectionService.refreshForWorkItem(saved);
     automationQueueService.enqueueWorkItem(saved);
     persistHandlerAudit(
         request,
         schemaVersion,
-        binding,
+        scriptId,
+        sourceService,
         saved,
         "ADMISSION",
         "work_item_persisted",
         "handler_resolved");
   }
 
+  private void persistWorkItemForScript(
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      String scriptId,
+      String priorityTag,
+      String sourceService) {
+    persistWorkItem(
+        request, schemaVersion, scriptId, priorityTag, sourceService, requestScopeValues(request));
+  }
+
   private void persistHandlerAudit(
       TriggerScriptEventRequest request,
       String schemaVersion,
       ScriptEventBinding binding,
+      String sourceService,
       ScriptWorkItem workItem,
       String finalStage,
       String finalOutcome,
       String finalReason) {
+    persistHandlerAudit(
+        request,
+        schemaVersion,
+        binding.getScriptId(),
+        sourceService,
+        workItem,
+        finalStage,
+        finalOutcome,
+        finalReason);
+  }
+
+  private void persistHandlerAudit(
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      String scriptId,
+      String sourceService,
+      ScriptWorkItem workItem,
+      String finalStage,
+      String finalOutcome,
+      String finalReason) {
+    HandlerScopeValues scopeValues =
+        workItem == null ? requestScopeValues(request) : workItemScopeValues(workItem);
     ScriptEventAudit audit = new ScriptEventAudit();
     audit.setTenantId(request.getTenantId());
     audit.setGameInstanceId(normalize(request.getGameInstanceId()));
     audit.setRegionId(normalize(request.getRegionId()));
     audit.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L);
-    audit.setEntityId(normalize(request.getEntityId()));
-    audit.setPlayableStateScope(normalizePlayableStateScope(request.getPlayableStateScope()));
-    audit.setWorldSlug(normalize(request.getWorldSlug()));
-    audit.setRealmSlug(normalize(request.getRealmSlug()));
-    audit.setPointerVersion(normalize(request.getPointerVersion()));
-    audit.setScriptId(binding.getScriptId());
+    audit.setEntityId(scopeValues.entityId());
+    audit.setPlayableStateScope(scopeValues.playableStateScope());
+    audit.setWorldSlug(scopeValues.worldSlug());
+    audit.setRealmSlug(scopeValues.realmSlug());
+    audit.setPointerVersion(scopeValues.pointerVersion());
+    audit.setScriptId(scriptId);
     audit.setEventType(request.getEventType());
     audit.setEventSchemaVersion(schemaVersion);
     audit.setScriptPatchVersion(request.getScriptPatchVersion());
     audit.setScriptEventId(request.getScriptEventId());
     audit.setDryRun(request.getIsDryRun());
-    audit.setSourceService(resolveSourceService());
+    audit.setSourceService(sourceService);
     audit.setTriggerMode(request.getTriggerMode().name());
     audit.setSourceKind(sourceKind(request));
     audit.setSourceState(
@@ -486,6 +563,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private static String sourceKind(TriggerScriptEventRequest request) {
+    if (isOnLoadRequest(request)) {
+      return "PATCH_READINESS_EVENT";
+    }
     if (request.getTriggerMode() == TriggerMode.TRIGGER_MODE_CATCH_UP) {
       return "TRIGGER_CATCH_UP_EVENT";
     }
@@ -510,18 +590,33 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private boolean handlerAuditExists(
       TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
+    return handlerAuditExistsForScope(
+        request, schemaVersion, binding.getScriptId(), requestScopeValues(request));
+  }
+
+  private boolean handlerAuditExistsForScript(
+      TriggerScriptEventRequest request, String schemaVersion, String scriptId) {
+    return handlerAuditExistsForScope(
+        request, schemaVersion, scriptId, requestScopeValues(request));
+  }
+
+  private boolean handlerAuditExistsForScope(
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      String scriptId,
+      HandlerScopeValues scopeValues) {
     return eventAuditRepository
         .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             request.getTenantId(),
             normalize(request.getGameInstanceId()),
             normalize(request.getRegionId()),
             request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
-            normalize(request.getEntityId()),
-            normalizePlayableStateScope(request.getPlayableStateScope()),
-            normalize(request.getWorldSlug()),
-            normalize(request.getRealmSlug()),
-            normalize(request.getPointerVersion()),
-            binding.getScriptId(),
+            scopeValues.entityId(),
+            scopeValues.playableStateScope(),
+            scopeValues.worldSlug(),
+            scopeValues.realmSlug(),
+            scopeValues.pointerVersion(),
+            scriptId,
             request.getEventType(),
             schemaVersion,
             request.getScriptPatchVersion(),
@@ -531,18 +626,32 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private boolean workItemExists(
       TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
+    return workItemExistsForScope(
+        request, schemaVersion, binding.getScriptId(), requestScopeValues(request));
+  }
+
+  private boolean workItemExistsForScript(
+      TriggerScriptEventRequest request, String schemaVersion, String scriptId) {
+    return workItemExistsForScope(request, schemaVersion, scriptId, requestScopeValues(request));
+  }
+
+  private boolean workItemExistsForScope(
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      String scriptId,
+      HandlerScopeValues scopeValues) {
     return workItemRepository
         .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             request.getTenantId(),
             normalize(request.getGameInstanceId()),
             normalize(request.getRegionId()),
             request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
-            normalize(request.getEntityId()),
-            normalizePlayableStateScope(request.getPlayableStateScope()),
-            normalize(request.getWorldSlug()),
-            normalize(request.getRealmSlug()),
-            normalize(request.getPointerVersion()),
-            binding.getScriptId(),
+            scopeValues.entityId(),
+            scopeValues.playableStateScope(),
+            scopeValues.worldSlug(),
+            scopeValues.realmSlug(),
+            scopeValues.pointerVersion(),
+            scriptId,
             request.getEventType(),
             schemaVersion,
             request.getScriptPatchVersion(),
@@ -637,4 +746,33 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private static String normalize(String value) {
     return value == null ? "" : value;
   }
+
+  private static boolean isOnLoadRequest(TriggerScriptEventRequest request) {
+    return "onLoad".equals(request.getEventType());
+  }
+
+  private static HandlerScopeValues requestScopeValues(TriggerScriptEventRequest request) {
+    return new HandlerScopeValues(
+        normalize(request.getEntityId()),
+        normalizePlayableStateScope(request.getPlayableStateScope()),
+        normalize(request.getWorldSlug()),
+        normalize(request.getRealmSlug()),
+        normalize(request.getPointerVersion()));
+  }
+
+  private static HandlerScopeValues workItemScopeValues(ScriptWorkItem workItem) {
+    return new HandlerScopeValues(
+        normalize(workItem.getEntityId()),
+        normalize(workItem.getPlayableStateScope()),
+        normalize(workItem.getWorldSlug()),
+        normalize(workItem.getRealmSlug()),
+        normalize(workItem.getPointerVersion()));
+  }
+
+  private record HandlerScopeValues(
+      String entityId,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion) {}
 }
