@@ -697,7 +697,8 @@ public final class AutomationScriptingControlPlaneGrpcService
           .setInspectedCount(convergence.inspectedCount())
           .setFailClosedCount(convergence.failClosedCount())
           .setConverged(convergence.converged())
-          .setEvaluatedAtMs(convergence.evaluatedAtMs());
+          .setEvaluatedAtMs(convergence.evaluatedAtMs())
+          .setIsStale(isPolicyCheckStale(convergence.evaluatedAtMs()));
       convergence.violations().stream()
           .map(AutomationScriptingControlPlaneGrpcService::toProto)
           .forEach(response::addViolations);

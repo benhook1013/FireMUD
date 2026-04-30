@@ -33,6 +33,7 @@ RPC expectations:
 - `GetScriptEventDefinition` / `ListScriptEventDefinitions` – canonical event-registry reads now include `payloadSchemaRef` alongside schema version and producer/identity rules, so callers can discover the authoritative payload contract instead of inferring it from prose only.
 - Plugin control-plane mutating RPCs (`SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`) are idempotent with respect to `controlPlaneRequestId`.
 - `GetPluginStatus` now includes `lastPolicyCheckedAtMs` and `policyCheckStale` so operator tooling can see whether enabled-plugin signer/component-policy evidence is fresh enough for runtime admission.
+- `GetPluginPolicyConvergence` reports the current fail-closed plugin-policy picture for one instance and now includes `evaluatedAtMs` plus `isStale` so callers can distinguish stale policy evidence from true convergence.
 - `ListPluginRuntimeEvents` exposes append-only instance-scoped plugin activation/drain/disable/policy-reconcile history so tooling does not have to infer lifecycle transitions from the latest runtime row.
 - `GetPluginPolicyConvergence` reports enabled plugin runtime states whose current Game Design publication, signer, or component-policy metadata would now fail closed, giving operators a direct read before or after scheduled plugin-policy reconciliation disables affected plugins.
 - Event ingress RPCs (for example, `TriggerScriptEvent`) – **idempotent with respect to `scriptEventId`**:

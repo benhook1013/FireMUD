@@ -774,7 +774,8 @@ message GetPluginPolicyConvergenceResponse {
   bool converged = 3;
   int64 evaluated_at_ms = 4;
   repeated PluginPolicyViolation violations = 5;
-  shared.v1.ErrorDetail error = 6;
+  bool is_stale = 6;
+  shared.v1.ErrorDetail error = 7;
 }
 
 message SetPluginActiveVersionRequest {

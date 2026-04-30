@@ -26,6 +26,8 @@ import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusReq
 import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetAutomationPinConvergenceRequest;
 import net.firedevops.firemud.automationscripting.v1.GetAutomationPinConvergenceResponse;
+import net.firedevops.firemud.automationscripting.v1.GetPluginPolicyConvergenceRequest;
+import net.firedevops.firemud.automationscripting.v1.GetPluginPolicyConvergenceResponse;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionRequest;
@@ -1002,6 +1004,82 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvents(0).getPreviousPluginVersionId()).isEqualTo("plugin-v0");
     assertThat(ref.get().getEvents(0).getActivePluginVersionId()).isEqualTo("plugin-v1");
     assertThat(ref.get().getEvents(0).getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_ENABLED);
+  }
+
+  @Test
+  void getsFreshPluginPolicyConvergenceFromRuntimeRegistry() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    PluginRuntimeStateService pluginRuntimeStateService =
+        Mockito.mock(PluginRuntimeStateService.class);
+    long evaluatedAtMs = System.currentTimeMillis();
+    Mockito.when(pluginRuntimeStateService.getPluginPolicyConvergence("1", "game-1", 25))
+        .thenReturn(
+            new PluginRuntimeStateService.PluginPolicyConvergence(
+                3,
+                1,
+                false,
+                evaluatedAtMs,
+                List.of(
+                    new PluginRuntimeStateService.PluginPolicyViolation(
+                        "game-1", "plugin-1", "plugin-v1", "signer_revoked", 1234L))));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            pluginRuntimeStateService,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<GetPluginPolicyConvergenceResponse> ref = new AtomicReference<>();
+
+    service.getPluginPolicyConvergence(
+        GetPluginPolicyConvergenceRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setMaxResults(25)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getInspectedCount()).isEqualTo(3);
+    assertThat(ref.get().getFailClosedCount()).isEqualTo(1);
+    assertThat(ref.get().getConverged()).isFalse();
+    assertThat(ref.get().getEvaluatedAtMs()).isEqualTo(evaluatedAtMs);
+    assertThat(ref.get().getIsStale()).isFalse();
+    assertThat(ref.get().getViolationsList()).hasSize(1);
+    assertThat(ref.get().getViolations(0).getPluginId()).isEqualTo("plugin-1");
+  }
+
+  @Test
+  void marksPluginPolicyConvergenceStaleWhenEvaluationAgesOut() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    PluginRuntimeStateService pluginRuntimeStateService =
+        Mockito.mock(PluginRuntimeStateService.class);
+    long evaluatedAtMs = System.currentTimeMillis() - 10_000L;
+    Mockito.when(pluginRuntimeStateService.getPluginPolicyConvergence("1", "game-1", 25))
+        .thenReturn(
+            new PluginRuntimeStateService.PluginPolicyConvergence(
+                2, 0, true, evaluatedAtMs, List.of()));
+    ScriptRuntimeProperties runtimeProperties = new ScriptRuntimeProperties();
+    runtimeProperties.setPluginPolicyStaleThresholdSeconds(1L);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            pluginRuntimeStateService,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            runtimeProperties);
+    AtomicReference<GetPluginPolicyConvergenceResponse> ref = new AtomicReference<>();
+
+    service.getPluginPolicyConvergence(
+        GetPluginPolicyConvergenceRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setMaxResults(25)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getEvaluatedAtMs()).isEqualTo(evaluatedAtMs);
+    assertThat(ref.get().getIsStale()).isTrue();
   }
 
   @Test
