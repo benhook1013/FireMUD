@@ -255,7 +255,9 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     return new PublishingScope(
         Long.toString(context.tenantId()),
         Long.toString(context.gameInstanceId()),
-        Long.toString(context.gameInstanceId()),
+        StringUtils.hasText(ownership.getRegionId())
+            ? ownership.getRegionId()
+            : Long.toString(context.gameInstanceId()),
         ownership.getRegionEpoch(),
         Long.toString(context.characterId()),
         resolvePlayableStateScope(context),

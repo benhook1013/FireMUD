@@ -454,6 +454,7 @@ public class TickServiceImpl implements TickService {
           "Cannot advance stale runtime tick progress for tenantId=%d gameInstanceId=%d"
               .formatted(tenantId, gameInstanceId));
     }
+    status.setRegionId(runtimeRegionId(gameInstanceId));
     status.setLastCommittedTickId(status.getLastCommittedTickId() + 1L);
     status.setUpdatedAt(Instant.now());
     return runtimeRegionStatusRepository.save(status);
@@ -468,7 +469,7 @@ public class TickServiceImpl implements TickService {
             ObserveRuntimeTickProgressRequest.newBuilder()
                 .setTenantId(Long.toString(status.getTenantId()))
                 .setGameInstanceId(Long.toString(status.getGameInstanceId()))
-                .setRegionId(Long.toString(status.getGameInstanceId()))
+                .setRegionId(status.getRegionId())
                 .setRegionEpoch(status.getRegionEpoch())
                 .setTickId(status.getLastCommittedTickId())
                 .setObservedAtMs(status.getUpdatedAt().toEpochMilli())
@@ -539,7 +540,7 @@ public class TickServiceImpl implements TickService {
           "PENDING_REPLAY", tenantId, gameInstanceId, false, ownership, replayEntries);
     }
     TickBatch batch = existing.orElseThrow();
-    String replayManifest = selectedWorkManifest(commandSelections(replayEntries));
+    String replayManifest = selectedWorkManifest(gameInstanceId, commandSelections(replayEntries));
     String replayDigest = shortHash(replayManifest);
     if (replayDigest.equals(batch.getSelectedWorkManifestDigest())) {
       return batch;
@@ -572,6 +573,7 @@ public class TickServiceImpl implements TickService {
     batch.setTickBatchId("tb-" + UUID.randomUUID());
     batch.setTenantId(tenantId);
     batch.setGameInstanceId(gameInstanceId);
+    batch.setRegionId(runtimeRegionId(gameInstanceId));
     batch.setRegionEpoch(ownership.regionEpoch());
     batch.setExecutorFence(ownership.executorFence());
     batch.setBatchSource(batchSource);
@@ -579,7 +581,7 @@ public class TickServiceImpl implements TickService {
     batch.setRequiresSoloTick(requiresSoloTick);
     batch.setCommandCount(entries.size());
     batch.setExpectedEffectCount(entries.size());
-    String selectedWorkManifest = selectedWorkManifest(selections);
+    String selectedWorkManifest = selectedWorkManifest(gameInstanceId, selections);
     batch.setSelectedWorkManifestJson(selectedWorkManifest);
     batch.setSelectedWorkManifestDigest(shortHash(selectedWorkManifest));
     batch.setStagedAt(now);
@@ -1184,9 +1186,12 @@ public class TickServiceImpl implements TickService {
     return "tfx-" + shortHash(tickBatchId + "|" + effectKey);
   }
 
-  private String selectedWorkManifest(List<CommandSelection> selections) {
+  private String selectedWorkManifest(Long gameInstanceId, List<CommandSelection> selections) {
     StringBuilder builder = new StringBuilder();
-    builder.append("{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"items\":[");
+    builder
+        .append("{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"regionId\":\"")
+        .append(jsonEscape(runtimeRegionId(gameInstanceId)))
+        .append("\",\"items\":[");
     for (int index = 0; index < selections.size(); index++) {
       if (index > 0) {
         builder.append(',');
@@ -1357,11 +1362,13 @@ public class TickServiceImpl implements TickService {
                   RuntimeRegionStatus created = new RuntimeRegionStatus();
                   created.setTenantId(tenantId);
                   created.setGameInstanceId(gameInstanceId);
+                  created.setRegionId(runtimeRegionId(gameInstanceId));
                   created.setRegionEpoch(1L);
                   created.setExecutorFence("fence-" + UUID.randomUUID());
                   created.setPaused(false);
                   return created;
                 });
+    status.setRegionId(runtimeRegionId(gameInstanceId));
     status.setOwnerService(runtimeIdentity.service());
     status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
     status.setUpdatedAt(now);
@@ -1471,9 +1478,11 @@ public class TickServiceImpl implements TickService {
                   RuntimeRegionStatus created = new RuntimeRegionStatus();
                   created.setTenantId(tenantId);
                   created.setGameInstanceId(gameInstanceId);
+                  created.setRegionId(runtimeRegionId(gameInstanceId));
                   created.setRegionEpoch(0L);
                   return created;
                 });
+    status.setRegionId(runtimeRegionId(gameInstanceId));
     status.setRegionEpoch(status.getRegionEpoch() + 1L);
     status.setExecutorFence("fence-" + UUID.randomUUID());
     status.setOwnerService(runtimeIdentity.service());
@@ -1481,5 +1490,9 @@ public class TickServiceImpl implements TickService {
     status.setPaused(paused);
     status.setUpdatedAt(now);
     runtimeRegionStatusRepository.save(status);
+  }
+
+  private String runtimeRegionId(Long gameInstanceId) {
+    return Long.toString(gameInstanceId);
   }
 }

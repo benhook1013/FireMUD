@@ -32,6 +32,7 @@ class AutomationScriptEventPublisherTest {
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
     RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
     status.setRegionEpoch(7L);
     when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
     when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
@@ -49,7 +50,7 @@ class AutomationScriptEventPublisherTest {
     TriggerScriptEventRequest request = captor.getValue();
     assertThat(request.getTenantId()).isEqualTo("9");
     assertThat(request.getGameInstanceId()).isEqualTo("99");
-    assertThat(request.getRegionId()).isEqualTo("99");
+    assertThat(request.getRegionId()).isEqualTo("region-99");
     assertThat(request.getRegionEpoch()).isEqualTo(7L);
     assertThat(request.getEntityId()).isEqualTo("44");
     assertThat(request.getPlayableStateScope())
@@ -92,6 +93,7 @@ class AutomationScriptEventPublisherTest {
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
     RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
     status.setRegionEpoch(7L);
     when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
     when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
@@ -129,6 +131,7 @@ class AutomationScriptEventPublisherTest {
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
     RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
     status.setRegionEpoch(7L);
     when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
     when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));

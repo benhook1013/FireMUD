@@ -1634,6 +1634,7 @@ public final class GameSessionControlPlaneGrpcService
     return RuntimeOwnershipStatus.newBuilder()
         .setTenantId(Long.toString(status.getTenantId()))
         .setGameInstanceId(Long.toString(status.getGameInstanceId()))
+        .setRegionId(status.getRegionId() == null ? "" : status.getRegionId())
         .setRegionEpoch(status.getRegionEpoch())
         .setExecutorFence(status.getExecutorFence())
         .setOwnerService(status.getOwnerService())

@@ -584,7 +584,10 @@ class TickServiceImplTest {
             .findFirst()
             .orElseThrow();
     org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"regionId\":\"2\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"enqueueSeq\":77"));
+    org.junit.jupiter.api.Assertions.assertEquals("2", stagedBatch.getRegionId());
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"sourceType\":\"AUTOMATION\""));
     org.junit.jupiter.api.Assertions.assertTrue(
@@ -685,6 +688,9 @@ class TickServiceImplTest {
             .filter(batch -> "FRESH_STAGE".equals(batch.getBatchSource()))
             .findFirst()
             .orElseThrow();
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"regionId\":\"2\""));
+    org.junit.jupiter.api.Assertions.assertEquals("2", stagedBatch.getRegionId());
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"sourceKind\":\"GAMEPLAY_RETRY\""));
     org.junit.jupiter.api.Assertions.assertTrue(
@@ -851,6 +857,7 @@ class TickServiceImplTest {
     var status = new net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus();
     status.setTenantId(tenantId);
     status.setGameInstanceId(gameInstanceId);
+    status.setRegionId(Long.toString(gameInstanceId));
     status.setRegionEpoch(regionEpoch);
     status.setExecutorFence(executorFence);
     status.setOwnerService("game-session-service");
@@ -894,9 +901,9 @@ class TickServiceImplTest {
       selectionsMethod.setAccessible(true);
       Object selections = selectionsMethod.invoke(service, entries);
       var manifestMethod =
-          TickServiceImpl.class.getDeclaredMethod("selectedWorkManifest", List.class);
+          TickServiceImpl.class.getDeclaredMethod("selectedWorkManifest", Long.class, List.class);
       manifestMethod.setAccessible(true);
-      return (String) manifestMethod.invoke(service, selections);
+      return (String) manifestMethod.invoke(service, 2L, selections);
     } catch (ReflectiveOperationException e) {
       throw new IllegalStateException("Failed to compute replay manifest json", e);
     }

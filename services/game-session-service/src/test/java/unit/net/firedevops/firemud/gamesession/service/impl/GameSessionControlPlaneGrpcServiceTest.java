@@ -1561,6 +1561,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     RuntimeRegionStatus status = new RuntimeRegionStatus();
     status.setTenantId(1L);
     status.setGameInstanceId(7L);
+    status.setRegionId("region-7");
     status.setRegionEpoch(3L);
     status.setExecutorFence("fence-3");
     status.setOwnerService("game-session-service");
@@ -1598,6 +1599,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals(3L, responseRef.get().getOwnership().getRegionEpoch());
+    assertEquals("region-7", responseRef.get().getOwnership().getRegionId());
     assertEquals("fence-3", responseRef.get().getOwnership().getExecutorFence());
     assertEquals("tb-9", responseRef.get().getOwnership().getLastCommittedTickBatchId());
     assertEquals(14L, responseRef.get().getOwnership().getLastCommittedTickId());

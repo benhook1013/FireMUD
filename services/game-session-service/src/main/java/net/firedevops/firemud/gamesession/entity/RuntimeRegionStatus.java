@@ -31,6 +31,9 @@ public class RuntimeRegionStatus {
   @Column(name = "game_instance_id", nullable = false)
   private Long gameInstanceId;
 
+  @Column(name = "region_id", nullable = false, length = 64)
+  private String regionId;
+
   @Column(name = "region_epoch", nullable = false)
   private long regionEpoch;
 
