@@ -1606,6 +1606,54 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void getRuntimeOwnershipStatusCanResolveByRegionId() {
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setTenantId(1L);
+    status.setGameInstanceId(7L);
+    status.setRegionId("region-7");
+    status.setRegionEpoch(3L);
+    status.setExecutorFence("fence-3");
+    status.setOwnerService("game-session-service");
+    status.setOwnerInstanceId("gs-1");
+    status.setPaused(false);
+    status.setLastCommittedTickBatchId("tb-9");
+    status.setLastCommittedTickId(14L);
+    status.setUpdatedAt(Instant.parse("2026-04-20T00:00:00Z"));
+    RuntimeRegionStatusRepository repository = Mockito.mock(RuntimeRegionStatusRepository.class);
+    Mockito.when(repository.findByTenantIdAndRegionId(1L, "region-7"))
+        .thenReturn(Optional.of(status));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
+            repository,
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<GetRuntimeOwnershipStatusResponse> responseRef = new AtomicReference<>();
+    service.getRuntimeOwnershipStatus(
+        GetRuntimeOwnershipStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setRegionId("region-7")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetRuntimeOwnershipStatusResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("region-7", responseRef.get().getOwnership().getRegionId());
+    Mockito.verify(repository).findByTenantIdAndRegionId(1L, "region-7");
+    Mockito.verify(repository, Mockito.never())
+        .findByTenantIdAndGameInstanceId(Mockito.anyLong(), Mockito.anyLong());
+  }
+
+  @Test
   void validateInstanceCutoverCompatibilityReturnsCompatibilityReportForAdminCaller() {
     InstanceCutoverCompatibilityService compatibilityService =
         Mockito.mock(InstanceCutoverCompatibilityService.class);

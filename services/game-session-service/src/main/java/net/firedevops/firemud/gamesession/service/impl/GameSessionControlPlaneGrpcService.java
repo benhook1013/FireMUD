@@ -376,11 +376,7 @@ public final class GameSessionControlPlaneGrpcService
     try {
       requireAdminRole();
       long tenantId = parseTenantId(request.getTenantId());
-      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
-      RuntimeRegionStatus status =
-          runtimeRegionStatusRepository
-              .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-              .orElseThrow(() -> new IllegalArgumentException("Runtime ownership not found"));
+      RuntimeRegionStatus status = findRuntimeOwnershipStatus(request, tenantId);
       GetRuntimeOwnershipStatusResponse response =
           GetRuntimeOwnershipStatusResponse.newBuilder().setOwnership(toStatus(status)).build();
       responseObserver.onNext(response);
@@ -408,6 +404,19 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  private RuntimeRegionStatus findRuntimeOwnershipStatus(
+      GetRuntimeOwnershipStatusRequest request, long tenantId) {
+    if (!request.getRegionId().isBlank()) {
+      return runtimeRegionStatusRepository
+          .findByTenantIdAndRegionId(tenantId, request.getRegionId())
+          .orElseThrow(() -> new IllegalArgumentException("Runtime ownership not found"));
+    }
+    long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+    return runtimeRegionStatusRepository
+        .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
+        .orElseThrow(() -> new IllegalArgumentException("Runtime ownership not found"));
   }
 
   @Override

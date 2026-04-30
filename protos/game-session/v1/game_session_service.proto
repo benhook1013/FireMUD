@@ -454,6 +454,7 @@ message GetGameplayCommandStatusResponse {
 message GetRuntimeOwnershipStatusRequest {
   string tenant_id = 1;
   string game_instance_id = 2;
+  string region_id = 3;
 }
 
 message RuntimeOwnershipStatus {
