@@ -4,6 +4,8 @@ This directory contains version 1 protocol buffer definitions for the game sessi
 They describe the gRPC API exposed by the service.
 
 Generate Java stubs with `./gradlew generateProto` from the repository root.
+
+- `GetGameSessionPinConvergence` exposes the persisted Game Session-side pinned script patch observation for one instance and now includes `observedAtMs` plus `isStale` so operator tooling can distinguish an old pin observation from a fresh convergence read.
 For details see the [design docs](../../../design/architecture/microservices/game-session-service/README.md).
 
 ## Control Plane APIs

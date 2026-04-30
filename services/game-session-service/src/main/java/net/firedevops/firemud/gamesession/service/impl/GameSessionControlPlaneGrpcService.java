@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
+import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -83,6 +84,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification =
+        "Injected repository/services and config properties are internal Spring collaborators")
 public final class GameSessionControlPlaneGrpcService
     extends GameSessionControlPlaneServiceGrpc.GameSessionControlPlaneServiceImplBase {
   private static final Logger logger =
@@ -97,10 +102,8 @@ public final class GameSessionControlPlaneGrpcService
   private final TickService tickService;
   private final BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver;
   private final MeterRegistry meterRegistry;
+  private final GameSessionProperties gameSessionProperties;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Injected repository/services are internal Spring collaborators")
   @Autowired
   public GameSessionControlPlaneGrpcService(
       GameInstanceRepository gameInstanceRepository,
@@ -112,6 +115,30 @@ public final class GameSessionControlPlaneGrpcService
       BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
       TickService tickService,
       MeterRegistry meterRegistry) {
+    this(
+        gameInstanceRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        gameplayAdmissionPointerAuthorityService,
+        instanceCutoverCompatibilityService,
+        versionUpgradePreparationService,
+        builtInTextCommandAliasResolver,
+        tickService,
+        meterRegistry,
+        new GameSessionProperties());
+  }
+
+  public GameSessionControlPlaneGrpcService(
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
+      VersionUpgradePreparationService versionUpgradePreparationService,
+      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
+      TickService tickService,
+      MeterRegistry meterRegistry,
+      GameSessionProperties gameSessionProperties) {
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
@@ -121,6 +148,7 @@ public final class GameSessionControlPlaneGrpcService
     this.builtInTextCommandAliasResolver = builtInTextCommandAliasResolver;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
+    this.gameSessionProperties = gameSessionProperties;
   }
 
   GameSessionControlPlaneGrpcService(
@@ -139,9 +167,32 @@ public final class GameSessionControlPlaneGrpcService
         gameplayAdmissionPointerAuthorityService,
         instanceCutoverCompatibilityService,
         versionUpgradePreparationService,
+        tickService,
+        meterRegistry,
+        new GameSessionProperties());
+  }
+
+  GameSessionControlPlaneGrpcService(
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
+      VersionUpgradePreparationService versionUpgradePreparationService,
+      TickService tickService,
+      MeterRegistry meterRegistry,
+      GameSessionProperties gameSessionProperties) {
+    this(
+        gameInstanceRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        gameplayAdmissionPointerAuthorityService,
+        instanceCutoverCompatibilityService,
+        versionUpgradePreparationService,
         BuiltInTextCommandAliasResolver.unsupported(),
         tickService,
-        meterRegistry);
+        meterRegistry,
+        gameSessionProperties);
   }
 
   private long parseTenantId(String tenantId) {
@@ -640,10 +691,8 @@ public final class GameSessionControlPlaneGrpcService
                   instance.getScriptPatchPinnedControlPlaneRequestId() == null
                       ? ""
                       : instance.getScriptPatchPinnedControlPlaneRequestId())
-              .setObservedAtMs(
-                  instance.getScriptPatchPinnedAt() == null
-                      ? 0L
-                      : instance.getScriptPatchPinnedAt().toEpochMilli())
+              .setObservedAtMs(toEpochMillis(instance.getScriptPatchPinnedAt()))
+              .setIsStale(isPinConvergenceStale(instance.getScriptPatchPinnedAt()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1737,6 +1786,14 @@ public final class GameSessionControlPlaneGrpcService
 
   private long toEpochMillis(Instant instant) {
     return instant == null ? 0L : instant.toEpochMilli();
+  }
+
+  private boolean isPinConvergenceStale(Instant pinnedAt) {
+    if (pinnedAt == null) {
+      return true;
+    }
+    long ageMs = Instant.now().toEpochMilli() - pinnedAt.toEpochMilli();
+    return ageMs > gameSessionProperties.getPinConvergenceStaleThresholdMs();
   }
 
   @Override

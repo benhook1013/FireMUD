@@ -309,7 +309,8 @@ message GetGameSessionPinConvergenceResponse {
   string observed_pinned_script_patch_version = 3;
   string last_observed_control_plane_request_id = 4;
   int64 observed_at_ms = 5;
-  shared.v1.ErrorDetail error = 6;
+  bool is_stale = 6;
+  shared.v1.ErrorDetail error = 7;
 }
 
 message GetGameInstanceRuntimeStateRequest {

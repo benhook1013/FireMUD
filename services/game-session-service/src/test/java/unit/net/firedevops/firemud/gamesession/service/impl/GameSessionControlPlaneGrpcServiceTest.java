@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
+import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
@@ -358,6 +359,41 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("req-77", responseRef.get().getLastObservedControlPlaneRequestId());
     assertEquals(
         Instant.parse("2026-04-22T00:00:00Z").toEpochMilli(), responseRef.get().getObservedAtMs());
+    assertEquals(true, responseRef.get().getIsStale());
+  }
+
+  @Test
+  void getGameSessionPinConvergenceCanReportFreshObservation() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setScriptPatchVersion("patch-2");
+    instance.setScriptPatchPinnedAt(Instant.now());
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-77");
+    Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionProperties properties = new GameSessionProperties();
+    properties.setPinConvergenceStaleThresholdMs(60_000L);
+    GameSessionControlPlaneGrpcService service =
+        newService(repository, new SimpleMeterRegistry(), properties);
+
+    AtomicReference<GetGameSessionPinConvergenceResponse> responseRef = new AtomicReference<>();
+    service.getGameSessionPinConvergence(
+        GetGameSessionPinConvergenceRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetGameSessionPinConvergenceResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals(false, responseRef.get().getIsStale());
   }
 
   @Test
@@ -1706,6 +1742,13 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   private static GameSessionControlPlaneGrpcService newService(
       GameInstanceRepository repository, SimpleMeterRegistry meterRegistry) {
+    return newService(repository, meterRegistry, new GameSessionProperties());
+  }
+
+  private static GameSessionControlPlaneGrpcService newService(
+      GameInstanceRepository repository,
+      SimpleMeterRegistry meterRegistry,
+      GameSessionProperties gameSessionProperties) {
     return new GameSessionControlPlaneGrpcService(
         repository,
         Mockito.mock(GameplayCommandRepository.class),
@@ -1715,7 +1758,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(VersionUpgradePreparationService.class),
         BuiltInTextCommandAliasResolver.unsupported(),
         Mockito.mock(TickService.class),
-        meterRegistry);
+        meterRegistry,
+        gameSessionProperties);
   }
 
   private static EnqueueAutomationCommandIfAbsentRequest automationRequest() {
