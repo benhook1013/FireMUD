@@ -2043,6 +2043,12 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private GameplayCommandStatus toStatus(GameplayCommand command) {
+    RemoteCommandCoordinator remoteCoordinator =
+        remoteCommandCoordinatorRepository == null
+            ? null
+            : remoteCommandCoordinatorRepository
+                .findByTenantIdAndCommandId(command.getTenantId(), command.getCommandId())
+                .orElse(null);
     GameplayCommandStatus.Builder builder =
         GameplayCommandStatus.newBuilder()
             .setCommandId(command.getCommandId())
@@ -2150,6 +2156,11 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (command.getQueueSourceDueAtMs() != null) {
       builder.setQueueSourceDueAtMs(command.getQueueSourceDueAtMs());
+    }
+    if (remoteCoordinator != null) {
+      builder.setRemoteCoordinatorId(remoteCoordinator.getCoordinatorId());
+      builder.setRemoteFollowupId(remoteCoordinator.getFollowupId());
+      builder.setRemoteState(remoteCoordinator.getState());
     }
     return builder.build();
   }

@@ -449,6 +449,9 @@ message GameplayCommandStatus {
   int64 queue_source_ordinal = 42;
   int64 queue_source_due_tick_id = 43;
   int64 queue_source_due_at_ms = 44;
+  string remote_coordinator_id = 45;
+  string remote_followup_id = 46;
+  string remote_state = 47;
 }
 
 message GetGameplayCommandStatusResponse {

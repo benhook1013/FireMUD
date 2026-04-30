@@ -1049,18 +1049,32 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setQueueSourceOrdinal(33L);
     command.setQueueSourceDueTickId(14L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
     Mockito.when(commandRepository.findByCommandId("cmd-123")).thenReturn(Optional.of(command));
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setTenantId(1L);
+    coordinator.setCommandId("cmd-123");
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setFollowupId("followup-1");
+    coordinator.setState("PENDING_REMOTE");
+    Mockito.when(remoteCommandCoordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-123"))
+        .thenReturn(Optional.of(coordinator));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
             commandRepository,
             Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(RemoteFollowupRepository.class),
+            remoteCommandCoordinatorRepository,
+            Mockito.mock(RemoteFollowupResultRepository.class),
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             Mockito.mock(TickService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            new GameSessionProperties());
 
     AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
     service.getGameplayCommandStatus(
@@ -1092,6 +1106,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("REDIS_PENDING_CLAIMED", responseRef.get().getCommand().getQueueSourceState());
     assertEquals(33L, responseRef.get().getCommand().getQueueSourceOrdinal());
     assertEquals(14L, responseRef.get().getCommand().getQueueSourceDueTickId());
+    assertEquals("coord-1", responseRef.get().getCommand().getRemoteCoordinatorId());
+    assertEquals("followup-1", responseRef.get().getCommand().getRemoteFollowupId());
+    assertEquals("PENDING_REMOTE", responseRef.get().getCommand().getRemoteState());
     assertEquals(
         Instant.parse("2026-04-15T00:00:01Z").toEpochMilli(),
         responseRef.get().getCommand().getStagedAtMs());
@@ -1133,22 +1150,36 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setQueueSourceOrdinal(44L);
     command.setQueueSourceDueTickId(21L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
     Mockito.when(
             commandRepository
                 .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
                     1L, 7L, "region-1", 12L, "dispatch-1"))
         .thenReturn(Optional.of(command));
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setTenantId(1L);
+    coordinator.setCommandId("auto-123");
+    coordinator.setCoordinatorId("coord-2");
+    coordinator.setFollowupId("followup-2");
+    coordinator.setState("REMOTE_APPLIED");
+    Mockito.when(remoteCommandCoordinatorRepository.findByTenantIdAndCommandId(1L, "auto-123"))
+        .thenReturn(Optional.of(coordinator));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
             commandRepository,
             Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(RemoteFollowupRepository.class),
+            remoteCommandCoordinatorRepository,
+            Mockito.mock(RemoteFollowupResultRepository.class),
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             Mockito.mock(TickService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            new GameSessionProperties());
 
     AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
     service.getGameplayCommandStatus(
@@ -1170,6 +1201,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("dispatch-1", responseRef.get().getCommand().getAutomationDispatchId());
     assertEquals("work-1", responseRef.get().getCommand().getAutomationWorkItemId());
     assertEquals(44L, responseRef.get().getCommand().getEnqueueSeq());
+    assertEquals("coord-2", responseRef.get().getCommand().getRemoteCoordinatorId());
+    assertEquals("followup-2", responseRef.get().getCommand().getRemoteFollowupId());
+    assertEquals("REMOTE_APPLIED", responseRef.get().getCommand().getRemoteState());
     assertEquals(
         PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
         responseRef.get().getCommand().getPlayableStateScope());
