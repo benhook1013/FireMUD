@@ -162,6 +162,24 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   @Override
   @Transactional
+  public void abandonFollowup(
+      long tenantId, String followupId, String failureCode, String failureMessage) {
+    requirePositive(tenantId, "tenant_id");
+    requireNotBlank(followupId, "followup_id");
+    RemoteFollowup followup =
+        remoteFollowupRepository
+            .findByTenantIdAndFollowupId(tenantId, followupId)
+            .orElseThrow(() -> new IllegalArgumentException("remote followup not found"));
+    followup.setStatus(FOLLOWUP_ABANDONED);
+    followup.setClaimedTickBatchId(null);
+    followup.setFailureCode(failureCode);
+    followup.setFailureMessage(truncate(failureMessage));
+    followup.setUpdatedAt(Instant.now(clock));
+    remoteFollowupRepository.save(followup);
+  }
+
+  @Override
+  @Transactional
   public int reconcileResults(long tenantId, String originRegionId, long currentOriginRegionEpoch) {
     if (originRegionId == null || originRegionId.isBlank()) {
       throw new IllegalArgumentException("origin_region_id is required");
@@ -402,6 +420,13 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
+  }
+
+  private static String truncate(String value) {
+    if (value == null || value.length() <= 500) {
+      return value;
+    }
+    return value.substring(0, 500);
   }
 
   private void writeRemoteHint(long tenantId, String targetEntityId) {

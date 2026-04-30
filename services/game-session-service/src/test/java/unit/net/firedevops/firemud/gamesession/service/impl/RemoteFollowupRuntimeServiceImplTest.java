@@ -218,6 +218,22 @@ class RemoteFollowupRuntimeServiceImplTest {
     verify(followupRepository, never()).findByTenantIdAndFollowupId(any(), any());
   }
 
+  @Test
+  void abandonFollowupClearsClaimAndMarksTerminalFailure() {
+    RemoteFollowup followup = followup();
+    followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+    followup.setClaimedTickBatchId("tb-1");
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+
+    service.abandonFollowup(1L, "followup-1", "REMOTE_COORDINATOR_NOT_FOUND", "missing");
+
+    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, followup.getStatus());
+    assertEquals(null, followup.getClaimedTickBatchId());
+    assertEquals("REMOTE_COORDINATOR_NOT_FOUND", followup.getFailureCode());
+    assertEquals("missing", followup.getFailureMessage());
+  }
+
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest() {
     return new RemoteFollowupRuntimeService.ScheduleRequest(
         1L,

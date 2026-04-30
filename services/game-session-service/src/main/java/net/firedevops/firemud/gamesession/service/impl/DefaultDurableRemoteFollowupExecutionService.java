@@ -71,6 +71,11 @@ public final class DefaultDurableRemoteFollowupExecutionService
             .findByTenantIdAndFollowupId(followup.getTenantId(), followup.getFollowupId())
             .orElse(null);
     if (coordinator == null) {
+      remoteFollowupRuntimeService.abandonFollowup(
+          followup.getTenantId(),
+          followup.getFollowupId(),
+          "REMOTE_COORDINATOR_NOT_FOUND",
+          "Durable remote followup execution could not load the linked coordinator");
       return new DurableRemoteFollowupExecutionResult(
           "REJECTED",
           "REMOTE_COORDINATOR_NOT_FOUND",

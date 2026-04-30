@@ -95,4 +95,32 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     org.mockito.Mockito.verify(remoteFollowupRuntimeService, org.mockito.Mockito.never())
         .recordResult(org.mockito.ArgumentMatchers.any());
   }
+
+  @Test
+  void executeAbandonsClaimedFollowupWhenCoordinatorIsMissing() {
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId("tb-1");
+    effect.setEffectKey("followup-1");
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setFollowupId("followup-1");
+    followup.setTenantId(1L);
+    followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+    followup.setClaimedTickBatchId("tb-1");
+    followup.setPayloadJson("{\"kind\":\"teleport\"}");
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.empty());
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("REJECTED", result.effectStatus());
+    assertEquals("REMOTE_COORDINATOR_NOT_FOUND", result.failureCode());
+    org.mockito.Mockito.verify(remoteFollowupRuntimeService)
+        .abandonFollowup(
+            1L,
+            "followup-1",
+            "REMOTE_COORDINATOR_NOT_FOUND",
+            "Durable remote followup execution could not load the linked coordinator");
+  }
 }
