@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -46,6 +47,8 @@ class TickServiceImplTest {
   private SessionContextService sessionContextService;
   private net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService
       durableGameplayCommandExecutionService;
+  private net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService
+      durableRemoteFollowupExecutionService;
   private net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService
       remoteFollowupDrainService;
   private net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService
@@ -99,6 +102,9 @@ class TickServiceImplTest {
         mock(
             net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService
                 .class);
+    durableRemoteFollowupExecutionService =
+        mock(
+            net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService.class);
     remoteFollowupDrainService =
         mock(net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService.class);
     remoteFollowupRuntimeService =
@@ -120,10 +126,12 @@ class TickServiceImplTest {
             tickEffectRepository,
             sessionContextService,
             durableGameplayCommandExecutionService,
+            durableRemoteFollowupExecutionService,
             remoteFollowupDrainService,
             remoteFollowupRuntimeService,
             automationScriptingClient);
     ((TickServiceImpl) service).init();
+    setField(service, "maxRemoteFollowupsPerTick", 16);
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
     instance.setTenantId(1L);
     when(repository.findById(anyLong())).thenReturn(java.util.Optional.of(instance));
@@ -147,6 +155,10 @@ class TickServiceImplTest {
             .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
                 anyLong(), any(), any(), anyLong()))
         .thenReturn(0L);
+    when(remoteFollowupDrainService.claimDueFollowups(anyLong(), any(), anyLong(), any(), anyInt()))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService.ClaimOutcome(
+                List.of(), 0));
   }
 
   @Test
@@ -242,6 +254,61 @@ class TickServiceImplTest {
             .tag("regionId", "2")
             .counter()
             .count());
+  }
+
+  @Test
+  void processTickDrainsClaimedRemoteFollowupsIntoDurableBatchEffects() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(remoteFollowupDrainService.claimDueFollowups(
+            eq(1L), eq("2"), eq(1L), any(String.class), eq(16)))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService.ClaimOutcome(
+                List.of("followup-1"), 1));
+    net.firedevops.firemud.gamesession.entity.RemoteFollowup followup =
+        new net.firedevops.firemud.gamesession.entity.RemoteFollowup();
+    followup.setFollowupId("followup-1");
+    followup.setTenantId(1L);
+    followup.setOriginRegionId("origin-1");
+    followup.setOriginRegionEpoch(3L);
+    followup.setTargetGameInstanceId(2L);
+    followup.setTargetRegionId("2");
+    followup.setTargetRegionEpoch(4L);
+    followup.setDueTickId(10L);
+    followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+    followup.setClaimedTickBatchId("tb-followup");
+    followup.setPayloadJson("{\"kind\":\"noop\"}");
+    when(remoteFollowupRepository.findByClaimedTickBatchIdOrderByIdAsc(any(String.class)))
+        .thenReturn(List.of(followup));
+    when(durableRemoteFollowupExecutionService.execute(any()))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService
+                .DurableRemoteFollowupExecutionResult(
+                "ABANDONED", "REMOTE_FOLLOWUP_KIND_UNSUPPORTED", "unsupported"));
+    net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
+        runtimeOwnership(1L, 2L, 1L, "fence-a", false);
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(
+            Optional.of(currentStatus),
+            Optional.of(currentStatus),
+            Optional.of(currentStatus),
+            Optional.of(currentStatus));
+
+    service.processTick(1L, 2L);
+
+    verify(remoteFollowupDrainService)
+        .claimDueFollowups(eq(1L), eq("2"), eq(1L), any(String.class), eq(16));
+    ArgumentCaptor<java.util.List<net.firedevops.firemud.gamesession.entity.TickEffect>>
+        effectListCaptor = ArgumentCaptor.forClass(java.util.List.class);
+    verify(tickEffectRepository).saveAll(effectListCaptor.capture());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "REMOTE_FOLLOWUP", effectListCaptor.getValue().get(0).getEffectType());
+    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.TickBatch> batchCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.TickBatch.class);
+    verify(tickBatchRepository, org.mockito.Mockito.atLeastOnce()).save(batchCaptor.capture());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        batchCaptor.getAllValues().stream()
+            .anyMatch(batch -> "REMOTE_FOLLOWUP_DRAIN".equals(batch.getBatchSource())));
   }
 
   @Test

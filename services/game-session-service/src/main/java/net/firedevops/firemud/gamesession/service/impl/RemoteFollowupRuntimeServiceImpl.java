@@ -356,6 +356,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       followup.setFailureCode("REMOTE_ABANDONED");
       followup.setFailureMessage("Target region reported terminal abandoned outcome");
     }
+    followup.setClaimedTickBatchId(null);
     followup.setUpdatedAt(now);
   }
 

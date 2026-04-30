@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 
 public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, Long> {
+  Optional<RemoteFollowup> findByFollowupId(String followupId);
+
   Optional<RemoteFollowup> findByTenantIdAndFollowupId(Long tenantId, String followupId);
 
   Optional<RemoteFollowup> findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(

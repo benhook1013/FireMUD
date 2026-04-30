@@ -41,6 +41,7 @@ import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusReposito
 import net.firedevops.firemud.gamesession.repository.TickBatchRepository;
 import net.firedevops.firemud.gamesession.repository.TickEffectRepository;
 import net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService;
+import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -79,6 +80,7 @@ public class TickServiceImpl implements TickService {
   private final TickEffectRepository tickEffectRepository;
   private final SessionContextService sessionContextService;
   private final DurableGameplayCommandExecutionService durableGameplayCommandExecutionService;
+  private final DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService;
   private final RemoteFollowupDrainService remoteFollowupDrainService;
   private final RemoteFollowupRuntimeService remoteFollowupRuntimeService;
   private final AutomationScriptingClient automationScriptingClient;
@@ -347,6 +349,7 @@ public class TickServiceImpl implements TickService {
       RuntimeRegionStatus tickProgressToPublish = null;
       try {
         executeDurableEffects(normalizedTenantId, normalizedQueueTargetId);
+        drainRemoteFollowups(normalizedTenantId, normalizedQueueTargetId, ownership);
         Long pending =
             redisTemplate
                 .opsForList()
@@ -573,6 +576,40 @@ public class TickServiceImpl implements TickService {
               "regionId",
               ownership.regionId())
           .increment();
+    }
+  }
+
+  private void drainRemoteFollowups(
+      Long tenantId, Long gameInstanceId, OwnershipSnapshot ownership) {
+    String tickBatchId = "tb-" + UUID.randomUUID();
+    RemoteFollowupDrainService.ClaimOutcome claimOutcome =
+        remoteFollowupDrainService.claimDueFollowups(
+            tenantId,
+            ownership.regionId(),
+            ownership.lastCommittedTickId() + 1L,
+            tickBatchId,
+            maxRemoteFollowupsPerTick);
+    if (claimOutcome.claimedCount() <= 0) {
+      return;
+    }
+    List<net.firedevops.firemud.gamesession.entity.RemoteFollowup> claimedFollowups =
+        remoteFollowupRepository.findByClaimedTickBatchIdOrderByIdAsc(tickBatchId);
+    TickBatch batch = null;
+    try {
+      batch =
+          createRemoteFollowupBatch(
+              tickBatchId, tenantId, gameInstanceId, ownership, claimedFollowups);
+      requireCurrentOwnership(batch, false);
+      markRemoteFollowupBatchDrained(batch);
+      executeDurableEffects(tenantId, gameInstanceId);
+    } catch (Exception ex) {
+      if (batch != null) {
+        markRemoteFollowupBatchAbandoned(batch, failureCode(ex), ex.getMessage());
+      } else {
+        remoteFollowupDrainService.releaseClaimedFollowups(
+            tickBatchId, failureCode(ex), ex.getMessage());
+      }
+      throw ex;
     }
   }
 
@@ -803,6 +840,71 @@ public class TickServiceImpl implements TickService {
     tickEffectRepository.saveAll(effects);
   }
 
+  private TickBatch createRemoteFollowupBatch(
+      String tickBatchId,
+      Long tenantId,
+      Long gameInstanceId,
+      OwnershipSnapshot ownership,
+      List<net.firedevops.firemud.gamesession.entity.RemoteFollowup> followups) {
+    Instant now = Instant.now();
+    TickBatch batch = new TickBatch();
+    batch.setTickBatchId(tickBatchId);
+    batch.setTenantId(tenantId);
+    batch.setGameInstanceId(gameInstanceId);
+    batch.setRegionId(ownership.regionId());
+    batch.setRegionEpoch(ownership.regionEpoch());
+    batch.setExecutorFence(ownership.executorFence());
+    batch.setBatchSource("REMOTE_FOLLOWUP_DRAIN");
+    batch.setStatus("STAGED");
+    batch.setRequiresSoloTick(false);
+    batch.setCommandCount(0);
+    batch.setExpectedEffectCount(followups.size());
+    String selectedWorkManifest = selectedRemoteFollowupManifest(ownership.regionId(), followups);
+    batch.setSelectedWorkManifestJson(selectedWorkManifest);
+    batch.setSelectedWorkManifestDigest(shortHash(selectedWorkManifest));
+    batch.setStagedAt(now);
+    TickBatch savedBatch = tickBatchRepository.save(batch);
+    persistRemoteFollowupEffects(savedBatch, now, followups);
+    logger.info(
+        "Staged durable remote followup batch tickBatchId={} tenantId={} gameInstanceId={} followupCount={}",
+        savedBatch.getTickBatchId(),
+        tenantId,
+        gameInstanceId,
+        followups.size());
+    return savedBatch;
+  }
+
+  private void persistRemoteFollowupEffects(
+      TickBatch batch,
+      Instant stagedAt,
+      List<net.firedevops.firemud.gamesession.entity.RemoteFollowup> followups) {
+    if (followups.isEmpty()) {
+      return;
+    }
+    List<TickEffect> effects = new ArrayList<>(followups.size());
+    for (net.firedevops.firemud.gamesession.entity.RemoteFollowup followup : followups) {
+      TickEffect effect = new TickEffect();
+      effect.setEffectId(effectId(batch.getTickBatchId(), followup.getFollowupId()));
+      effect.setTickBatchId(batch.getTickBatchId());
+      effect.setCommandId(null);
+      effect.setEffectKey(followup.getFollowupId());
+      effect.setEffectType("REMOTE_FOLLOWUP");
+      effect.setTargetAggregate(remoteFollowupTargetAggregate(followup));
+      effect.setStatus("STAGED");
+      effect.setStagedAt(stagedAt);
+      effects.add(effect);
+    }
+    tickEffectRepository.saveAll(effects);
+  }
+
+  private static String remoteFollowupTargetAggregate(
+      net.firedevops.firemud.gamesession.entity.RemoteFollowup followup) {
+    if (followup.getTargetEntityId() != null && !followup.getTargetEntityId().isBlank()) {
+      return "entity:" + followup.getTargetEntityId();
+    }
+    return "game-instance:" + followup.getTargetGameInstanceId();
+  }
+
   private static String effectTargetAggregate(Long gameInstanceId, GameplayCommand command) {
     if (command != null) {
       if (command.getCharacterId() != null && command.getCharacterId() > 0) {
@@ -882,6 +984,24 @@ public class TickServiceImpl implements TickService {
         batch.getCommandCount());
   }
 
+  private void markRemoteFollowupBatchDrained(TickBatch batch) {
+    Instant now = Instant.now();
+    RuntimeRegionStatus ownership =
+        requireCurrentOwnership(batch, false).orElseThrow(IllegalStateException::new);
+    batch.setStatus("DRAINED");
+    batch.setCompletedAt(now);
+    tickBatchRepository.save(batch);
+    updateEffectStatuses(batch.getTickBatchId(), "DRAINED", now, null, null);
+    ownership.setLastCommittedTickBatchId(batch.getTickBatchId());
+    ownership.setUpdatedAt(now);
+    runtimeRegionStatusRepository.save(ownership);
+    logger.info(
+        "Drained durable remote followup batch tickBatchId={} tenantId={} gameInstanceId={}",
+        batch.getTickBatchId(),
+        batch.getTenantId(),
+        batch.getGameInstanceId());
+  }
+
   private void markBatchAbandoned(
       TickBatch batch,
       List<QueuedCommandEnvelope> entries,
@@ -901,6 +1021,26 @@ public class TickServiceImpl implements TickService {
     recordRequeuedActions(entries);
     logger.warn(
         "Abandoned durable tick batch tickBatchId={} tenantId={} gameInstanceId={} code={} message={}",
+        batch.getTickBatchId(),
+        batch.getTenantId(),
+        batch.getGameInstanceId(),
+        failureCode,
+        truncate(failureMessage, 500));
+  }
+
+  private void markRemoteFollowupBatchAbandoned(
+      TickBatch batch, String failureCode, String failureMessage) {
+    Instant now = Instant.now();
+    batch.setStatus("ABANDONED");
+    batch.setCompletedAt(now);
+    batch.setFailureCode(failureCode);
+    batch.setFailureMessage(truncate(failureMessage, 500));
+    tickBatchRepository.save(batch);
+    updateEffectStatuses(batch.getTickBatchId(), "ABANDONED", now, failureCode, failureMessage);
+    remoteFollowupDrainService.releaseClaimedFollowups(
+        batch.getTickBatchId(), failureCode, failureMessage);
+    logger.warn(
+        "Abandoned durable remote followup batch tickBatchId={} tenantId={} gameInstanceId={} code={} message={}",
         batch.getTickBatchId(),
         batch.getTenantId(),
         batch.getGameInstanceId(),
@@ -1044,6 +1184,18 @@ public class TickServiceImpl implements TickService {
   }
 
   private void executeDurableEffect(TickEffect effect) {
+    if ("REMOTE_FOLLOWUP".equals(effect.getEffectType())) {
+      DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+          durableRemoteFollowupExecutionService.execute(effect);
+      markEffectTerminal(
+          effect,
+          result.effectStatus(),
+          "COMPLETED",
+          "NOT_APPLIED",
+          result.failureCode(),
+          result.failureMessage());
+      return;
+    }
     if (effect.getCommandId() == null || effect.getCommandId().isBlank()) {
       markEffectTerminal(
           effect,
@@ -1348,6 +1500,40 @@ public class TickServiceImpl implements TickService {
           .append(",\"commandDigest\":\"")
           .append(selection.commandDigest())
           .append("\"}");
+    }
+    builder.append("]}");
+    return builder.toString();
+  }
+
+  private String selectedRemoteFollowupManifest(
+      String regionId, List<net.firedevops.firemud.gamesession.entity.RemoteFollowup> followups) {
+    StringBuilder builder = new StringBuilder();
+    builder
+        .append("{\"version\":1,\"source\":\"REMOTE_FOLLOWUP_QUEUE\",\"regionId\":\"")
+        .append(jsonEscape(regionId))
+        .append("\",\"items\":[");
+    for (int index = 0; index < followups.size(); index++) {
+      if (index > 0) {
+        builder.append(',');
+      }
+      net.firedevops.firemud.gamesession.entity.RemoteFollowup followup = followups.get(index);
+      builder
+          .append("{\"sourceKind\":\"REMOTE_FOLLOWUP\"")
+          .append(",\"sourceOrdinal\":")
+          .append(followup.getDueTickId())
+          .append(",\"sourceState\":\"TARGET_REGION_CLAIMED\"")
+          .append(",\"effectKey\":\"")
+          .append(jsonEscape(followup.getFollowupId()))
+          .append("\"");
+      appendJsonStringField(builder, "followupId", followup.getFollowupId());
+      appendJsonStringField(builder, "originRegionId", followup.getOriginRegionId());
+      appendJsonNumberField(builder, "originRegionEpoch", followup.getOriginRegionEpoch());
+      appendJsonStringField(builder, "targetRegionId", followup.getTargetRegionId());
+      appendJsonNumberField(builder, "targetRegionEpoch", followup.getTargetRegionEpoch());
+      appendJsonNumberField(builder, "dueTickId", followup.getDueTickId());
+      appendJsonStringField(builder, "targetEntityId", followup.getTargetEntityId());
+      appendJsonStringField(builder, "payloadJson", followup.getPayloadJson());
+      builder.append('}');
     }
     builder.append("]}");
     return builder.toString();
