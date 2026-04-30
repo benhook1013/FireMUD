@@ -433,6 +433,57 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void listsProjectedAndLegacyPatchStatusesTogetherWhenProjectionCoverageIsPartial() {
+    ScriptWorkItem legacyFailed =
+        workItem("patch-legacy", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(readinessProjectionService.listProjections("1"))
+        .thenReturn(
+            List.of(
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
+                    "1",
+                    "patch-projected",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
+                    "ready_for_tenant",
+                    "",
+                    500L)));
+    when(workItemRepository.findDistinctScriptPatchVersionsByTenantId("1"))
+        .thenReturn(List.of("patch-projected", "patch-legacy"));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-legacy"))
+        .thenReturn(List.of(legacyFailed));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService);
+
+    List<ScriptWorkItemService.PatchStatusSummary> statuses =
+        service.listPatchStatuses("1", ScriptPatchStatus.SCRIPT_PATCH_STATUS_UNSPECIFIED, 0L, 0L);
+
+    assertThat(statuses).hasSize(2);
+    assertThat(statuses)
+        .extracting(ScriptWorkItemService.PatchStatusSummary::scriptPatchVersion)
+        .containsExactly("patch-projected", "patch-legacy");
+    assertThat(statuses)
+        .extracting(ScriptWorkItemService.PatchStatusSummary::status)
+        .containsExactly(
+            ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
+            ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
+    verify(workItemRepository).findByTenantIdAndScriptPatchVersion("1", "patch-legacy");
+  }
+
+  @Test
   void reportsAutomationDrainStatusForScopedWorkItems() {
     ScriptWorkItem pending = workItem("patch-1", "PENDING_EVALUATION", Instant.ofEpochMilli(200));
     pending.setTenantId("1");
