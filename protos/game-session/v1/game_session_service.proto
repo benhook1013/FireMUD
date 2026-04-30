@@ -423,20 +423,22 @@ message GameplayCommandStatus {
   string automation_work_item_id = 21;
   string script_id = 22;
   string script_patch_version = 23;
-  string target_entity_id = 24;
-  string region_id = 25;
-  int64 region_epoch = 26;
-  int64 due_tick_id = 27;
-  int64 enqueue_seq = 28;
-  entity_management.v1.PlayableStateScope playable_state_scope = 29;
-  string world_slug = 30;
-  string realm_slug = 31;
-  int64 pointer_version = 32;
-  string origin_source_kind = 33;
-  string origin_source_state = 34;
-  int64 origin_source_ordinal = 35;
-  int64 origin_source_due_tick_id = 36;
-  int64 origin_source_due_at_ms = 37;
+  string plugin_id = 24;
+  string plugin_version_id = 25;
+  string target_entity_id = 26;
+  string region_id = 27;
+  int64 region_epoch = 28;
+  int64 due_tick_id = 29;
+  int64 enqueue_seq = 30;
+  entity_management.v1.PlayableStateScope playable_state_scope = 31;
+  string world_slug = 32;
+  string realm_slug = 33;
+  int64 pointer_version = 34;
+  string origin_source_kind = 35;
+  string origin_source_state = 36;
+  int64 origin_source_ordinal = 37;
+  int64 origin_source_due_tick_id = 38;
+  int64 origin_source_due_at_ms = 39;
 }
 
 message GetGameplayCommandStatusResponse {

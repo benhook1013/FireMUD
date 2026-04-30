@@ -1754,6 +1754,12 @@ public final class GameSessionControlPlaneGrpcService
     if (command.getScriptPatchVersion() != null) {
       builder.setScriptPatchVersion(command.getScriptPatchVersion());
     }
+    if (command.getPluginId() != null) {
+      builder.setPluginId(command.getPluginId());
+    }
+    if (command.getPluginVersionId() != null) {
+      builder.setPluginVersionId(command.getPluginVersionId());
+    }
     if (command.getTargetEntityId() != null) {
       builder.setTargetEntityId(command.getTargetEntityId());
     }

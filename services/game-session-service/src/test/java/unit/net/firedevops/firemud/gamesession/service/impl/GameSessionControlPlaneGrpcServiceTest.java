@@ -1026,6 +1026,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setWorldSlug("demo");
     command.setRealmSlug("production");
     command.setPointerVersion(17L);
+    command.setPluginId("plugin-1");
+    command.setPluginVersionId("plugin-v1");
     command.setOriginSourceKind("GAMEPLAY_EVENT");
     command.setOriginSourceState("WORK_ITEM_PERSISTED");
     command.setOriginSourceOrdinal(41L);
@@ -1064,6 +1066,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("demo", responseRef.get().getCommand().getWorldSlug());
     assertEquals("production", responseRef.get().getCommand().getRealmSlug());
     assertEquals(17L, responseRef.get().getCommand().getPointerVersion());
+    assertEquals("plugin-1", responseRef.get().getCommand().getPluginId());
+    assertEquals("plugin-v1", responseRef.get().getCommand().getPluginVersionId());
     assertEquals("GAMEPLAY_EVENT", responseRef.get().getCommand().getOriginSourceKind());
     assertEquals("WORK_ITEM_PERSISTED", responseRef.get().getCommand().getOriginSourceState());
     assertEquals(41L, responseRef.get().getCommand().getOriginSourceOrdinal());
@@ -1098,6 +1102,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setWorldSlug("ops");
     command.setRealmSlug("preview");
     command.setPointerVersion(29L);
+    command.setPluginId("plugin-2");
+    command.setPluginVersionId("plugin-v2");
     command.setOriginSourceKind("SCHEDULE_TIMER");
     command.setOriginSourceState("SCHEDULE_DUE_CLAIMED");
     command.setOriginSourceOrdinal(5000L);
@@ -1146,6 +1152,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("ops", responseRef.get().getCommand().getWorldSlug());
     assertEquals("preview", responseRef.get().getCommand().getRealmSlug());
     assertEquals(29L, responseRef.get().getCommand().getPointerVersion());
+    assertEquals("plugin-2", responseRef.get().getCommand().getPluginId());
+    assertEquals("plugin-v2", responseRef.get().getCommand().getPluginVersionId());
     assertEquals("SCHEDULE_TIMER", responseRef.get().getCommand().getOriginSourceKind());
     assertEquals("SCHEDULE_DUE_CLAIMED", responseRef.get().getCommand().getOriginSourceState());
     assertEquals(5000L, responseRef.get().getCommand().getOriginSourceOrdinal());
