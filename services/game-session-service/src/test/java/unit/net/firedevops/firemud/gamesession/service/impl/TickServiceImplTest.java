@@ -46,6 +46,8 @@ class TickServiceImplTest {
   private SessionContextService sessionContextService;
   private net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService
       durableGameplayCommandExecutionService;
+  private net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService
+      remoteFollowupDrainService;
   private AutomationScriptingClient automationScriptingClient;
   private TickService service;
 
@@ -95,6 +97,8 @@ class TickServiceImplTest {
         mock(
             net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService
                 .class);
+    remoteFollowupDrainService =
+        mock(net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService.class);
     automationScriptingClient = mock(AutomationScriptingClient.class);
     when(automationScriptingClient.observeRuntimeTickProgress(any()))
         .thenReturn(ObserveRuntimeTickProgressResponse.newBuilder().build());
@@ -112,6 +116,7 @@ class TickServiceImplTest {
             tickEffectRepository,
             sessionContextService,
             durableGameplayCommandExecutionService,
+            remoteFollowupDrainService,
             automationScriptingClient);
     ((TickServiceImpl) service).init();
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
@@ -455,6 +460,11 @@ class TickServiceImplTest {
                     "ABANDONED".equals(batch.getStatus())
                         && "STALE_EXECUTOR_FENCE".equals(batch.getFailureCode())));
     verify(tickEffectRepository).saveAll(any());
+    verify(remoteFollowupDrainService)
+        .releaseClaimedFollowups(
+            org.mockito.ArgumentMatchers.anyString(),
+            eq("STALE_EXECUTOR_FENCE"),
+            org.mockito.ArgumentMatchers.anyString());
   }
 
   @Test
@@ -508,6 +518,9 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", drainedEffect.getStatus());
     org.junit.jupiter.api.Assertions.assertEquals("RETRY_QUEUED", command.getExecutionOutcome());
     verify(durableGameplayCommandExecutionService, never()).execute(any(), any());
+    verify(remoteFollowupDrainService)
+        .releaseClaimedFollowups(
+            eq("tb-drained"), eq("STALE_EXECUTOR_FENCE"), org.mockito.ArgumentMatchers.anyString());
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0,
         meterRegistry

@@ -41,6 +41,7 @@ import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusReposito
 import net.firedevops.firemud.gamesession.repository.TickBatchRepository;
 import net.firedevops.firemud.gamesession.repository.TickEffectRepository;
 import net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService;
+import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.TickService;
@@ -77,6 +78,7 @@ public class TickServiceImpl implements TickService {
   private final TickEffectRepository tickEffectRepository;
   private final SessionContextService sessionContextService;
   private final DurableGameplayCommandExecutionService durableGameplayCommandExecutionService;
+  private final RemoteFollowupDrainService remoteFollowupDrainService;
   private final AutomationScriptingClient automationScriptingClient;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -870,6 +872,8 @@ public class TickServiceImpl implements TickService {
     updateEffectStatuses(batch.getTickBatchId(), "ABANDONED", now, failureCode, failureMessage);
     updateGameplayCommands(
         entries, "RETRY_QUEUED", "PENDING", now, failureCode, failureMessage, false);
+    remoteFollowupDrainService.releaseClaimedFollowups(
+        batch.getTickBatchId(), failureCode, failureMessage);
     recordRequeuedActions(entries);
     logger.warn(
         "Abandoned durable tick batch tickBatchId={} tenantId={} gameInstanceId={} code={} message={}",
@@ -938,6 +942,8 @@ public class TickServiceImpl implements TickService {
     if (!commands.isEmpty()) {
       gameplayCommandRepository.saveAll(commands);
     }
+    remoteFollowupDrainService.releaseClaimedFollowups(
+        batch.getTickBatchId(), "STALE_EXECUTOR_FENCE", failureMessage);
     recordRequeuedCommands(commands);
     batch.setStatus("ABANDONED");
     batch.setCompletedAt(now);
