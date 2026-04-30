@@ -120,7 +120,7 @@ public class TickServiceImpl implements TickService {
   private record CommandSelection(
       QueuedCommandEnvelope entry,
       GameplayCommand command,
-      int sourceOrdinal,
+      long sourceOrdinal,
       String effectKey,
       String commandDigest) {}
 
@@ -769,9 +769,21 @@ public class TickServiceImpl implements TickService {
               : commandsById.get(entry.commandId());
       String effectKey = effectKey(entry, index);
       selections.add(
-          new CommandSelection(entry, command, index, effectKey, shortHash(entry.command())));
+          new CommandSelection(
+              entry,
+              command,
+              selectionSourceOrdinal(command, index),
+              effectKey,
+              shortHash(entry.command())));
     }
     return List.copyOf(selections);
+  }
+
+  private long selectionSourceOrdinal(GameplayCommand command, int fallbackIndex) {
+    if (command != null && command.getEnqueueSeq() != null && command.getEnqueueSeq() > 0) {
+      return command.getEnqueueSeq();
+    }
+    return fallbackIndex;
   }
 
   private void markBatchDrained(TickBatch batch, List<QueuedCommandEnvelope> entries) {

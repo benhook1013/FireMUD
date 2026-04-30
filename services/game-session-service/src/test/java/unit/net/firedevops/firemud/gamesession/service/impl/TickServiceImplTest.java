@@ -579,6 +579,8 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"sourceType\":\"AUTOMATION\""));
     org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"sourceOrdinal\":77"));
+    org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch
             .getSelectedWorkManifestJson()
             .contains("\"automationDispatchId\":\"dispatch-1\""));
@@ -668,6 +670,8 @@ class TickServiceImplTest {
             .orElseThrow();
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"sourceKind\":\"GAMEPLAY_RETRY\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"sourceOrdinal\":78"));
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch
             .getSelectedWorkManifestJson()
