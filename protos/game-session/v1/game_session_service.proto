@@ -47,6 +47,11 @@ service GameSessionControlPlaneService {
       returns (GetGameplayCommandStatusResponse);
   rpc GetRuntimeOwnershipStatus(GetRuntimeOwnershipStatusRequest)
       returns (GetRuntimeOwnershipStatusResponse);
+  rpc GetRemoteCommandCoordinator(GetRemoteCommandCoordinatorRequest)
+      returns (GetRemoteCommandCoordinatorResponse);
+  rpc ListRemoteFollowups(ListRemoteFollowupsRequest) returns (ListRemoteFollowupsResponse);
+  rpc ListRemoteFollowupResults(ListRemoteFollowupResultsRequest)
+      returns (ListRemoteFollowupResultsResponse);
   rpc SetAdmissionPointer(SetAdmissionPointerRequest)
       returns (SetAdmissionPointerResponse);
   rpc ExecutePreparedVersionCutover(ExecutePreparedVersionCutoverRequest)
@@ -473,6 +478,92 @@ message RuntimeOwnershipStatus {
 
 message GetRuntimeOwnershipStatusResponse {
   RuntimeOwnershipStatus ownership = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetRemoteCommandCoordinatorRequest {
+  string tenant_id = 1;
+  string coordinator_id = 2;
+}
+
+message RemoteCommandCoordinatorEntry {
+  string coordinator_id = 1;
+  string tenant_id = 2;
+  string command_id = 3;
+  string origin_game_instance_id = 4;
+  string origin_region_id = 5;
+  int64 origin_region_epoch = 6;
+  string target_game_instance_id = 7;
+  string target_region_id = 8;
+  int64 target_region_epoch = 9;
+  int64 target_due_tick_id = 10;
+  int64 origin_deadline_region_epoch = 11;
+  int64 origin_deadline_tick_id = 12;
+  string state = 13;
+  string late_result_policy = 14;
+  string execution_outcome = 15;
+  string gameplay_result = 16;
+  int64 updated_at_ms = 17;
+}
+
+message GetRemoteCommandCoordinatorResponse {
+  RemoteCommandCoordinatorEntry coordinator = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListRemoteFollowupsRequest {
+  string tenant_id = 1;
+  string target_region_id = 2;
+  string status = 3;
+}
+
+message RemoteFollowupEntry {
+  string followup_id = 1;
+  string tenant_id = 2;
+  string origin_game_instance_id = 3;
+  string origin_region_id = 4;
+  int64 origin_region_epoch = 5;
+  string target_game_instance_id = 6;
+  string target_region_id = 7;
+  int64 target_region_epoch = 8;
+  int64 due_tick_id = 9;
+  string effect_key = 10;
+  string target_entity_id = 11;
+  string status = 12;
+  string claimed_tick_batch_id = 13;
+  string payload_json = 14;
+  string failure_code = 15;
+  string failure_message = 16;
+  int64 created_at_ms = 17;
+  int64 updated_at_ms = 18;
+}
+
+message ListRemoteFollowupsResponse {
+  repeated RemoteFollowupEntry followups = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListRemoteFollowupResultsRequest {
+  string tenant_id = 1;
+  string coordinator_id = 2;
+}
+
+message RemoteFollowupResultEntry {
+  string result_id = 1;
+  string tenant_id = 2;
+  string coordinator_id = 3;
+  string followup_id = 4;
+  string origin_region_id = 5;
+  int64 origin_region_epoch = 6;
+  string target_region_id = 7;
+  int64 target_region_epoch = 8;
+  string outcome = 9;
+  string result_payload_json = 10;
+  int64 observed_at_ms = 11;
+}
+
+message ListRemoteFollowupResultsResponse {
+  repeated RemoteFollowupResultEntry results = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

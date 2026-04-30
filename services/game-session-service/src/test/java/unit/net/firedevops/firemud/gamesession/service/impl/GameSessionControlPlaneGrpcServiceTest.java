@@ -19,9 +19,15 @@ import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasRe
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
+import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
+import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
+import net.firedevops.firemud.gamesession.entity.RemoteFollowupResult;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
+import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
+import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
+import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
@@ -44,12 +50,18 @@ import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
+import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorRequest;
+import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorResponse;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
+import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsRequest;
+import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsResponse;
+import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsRequest;
+import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionRequest;
@@ -1654,6 +1666,135 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void getRemoteCommandCoordinatorReturnsCoordinatorRowForAdminCaller() {
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setTenantId(1L);
+    coordinator.setCommandId("cmd-1");
+    coordinator.setOriginGameInstanceId(7L);
+    coordinator.setOriginRegionId("region-a");
+    coordinator.setOriginRegionEpoch(3L);
+    coordinator.setTargetGameInstanceId(9L);
+    coordinator.setTargetRegionId("region-b");
+    coordinator.setTargetRegionEpoch(4L);
+    coordinator.setTargetDueTickId(55L);
+    coordinator.setOriginDeadlineRegionEpoch(3L);
+    coordinator.setOriginDeadlineTickId(88L);
+    coordinator.setState("PENDING_REMOTE");
+    coordinator.setLateResultPolicy("late_result_safe_to_ignore");
+    coordinator.setUpdatedAt(Instant.parse("2026-05-01T00:00:00Z"));
+    RemoteCommandCoordinatorRepository repository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    Mockito.when(repository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service = remoteControlPlaneService(null, repository, null);
+
+    AtomicReference<GetRemoteCommandCoordinatorResponse> responseRef = new AtomicReference<>();
+    service.getRemoteCommandCoordinator(
+        GetRemoteCommandCoordinatorRequest.newBuilder()
+            .setTenantId("1")
+            .setCoordinatorId("coord-1")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetRemoteCommandCoordinatorResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("coord-1", responseRef.get().getCoordinator().getCoordinatorId());
+    assertEquals("region-a", responseRef.get().getCoordinator().getOriginRegionId());
+    assertEquals("region-b", responseRef.get().getCoordinator().getTargetRegionId());
+    assertEquals(55L, responseRef.get().getCoordinator().getTargetDueTickId());
+    assertEquals("PENDING_REMOTE", responseRef.get().getCoordinator().getState());
+  }
+
+  @Test
+  void listRemoteFollowupsReturnsRegionScopedRowsForAdminCaller() {
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setFollowupId("rf-1");
+    followup.setTenantId(1L);
+    followup.setOriginGameInstanceId(7L);
+    followup.setOriginRegionId("region-a");
+    followup.setOriginRegionEpoch(3L);
+    followup.setTargetGameInstanceId(9L);
+    followup.setTargetRegionId("region-b");
+    followup.setTargetRegionEpoch(4L);
+    followup.setDueTickId(55L);
+    followup.setEffectKey("damage:1");
+    followup.setTargetEntityId("entity-9");
+    followup.setStatus("SCHEDULED");
+    followup.setCreatedAt(Instant.parse("2026-05-01T00:00:00Z"));
+    followup.setUpdatedAt(Instant.parse("2026-05-01T00:00:01Z"));
+    RemoteFollowupRepository repository = Mockito.mock(RemoteFollowupRepository.class);
+    Mockito.when(
+            repository.findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAsc(
+                1L, "region-b", "SCHEDULED"))
+        .thenReturn(List.of(followup));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service = remoteControlPlaneService(repository, null, null);
+
+    AtomicReference<ListRemoteFollowupsResponse> responseRef = new AtomicReference<>();
+    service.listRemoteFollowups(
+        ListRemoteFollowupsRequest.newBuilder()
+            .setTenantId("1")
+            .setTargetRegionId("region-b")
+            .setStatus("SCHEDULED")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListRemoteFollowupsResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(1, responseRef.get().getFollowupsCount());
+    assertEquals("rf-1", responseRef.get().getFollowups(0).getFollowupId());
+    assertEquals("region-b", responseRef.get().getFollowups(0).getTargetRegionId());
+    assertEquals(55L, responseRef.get().getFollowups(0).getDueTickId());
+  }
+
+  @Test
+  void listRemoteFollowupResultsReturnsOriginAddressedRowsForAdminCaller() {
+    RemoteFollowupResult result = new RemoteFollowupResult();
+    result.setResultId("rr-1");
+    result.setTenantId(1L);
+    result.setCoordinatorId("coord-1");
+    result.setFollowupId("rf-1");
+    result.setOriginRegionId("region-a");
+    result.setOriginRegionEpoch(3L);
+    result.setTargetRegionId("region-b");
+    result.setTargetRegionEpoch(4L);
+    result.setOutcome("REMOTE_APPLIED");
+    result.setResultPayloadJson("{\"damage\":5}");
+    result.setObservedAt(Instant.parse("2026-05-01T00:00:02Z"));
+    RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
+    Mockito.when(repository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(1L, "coord-1"))
+        .thenReturn(List.of(result));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service = remoteControlPlaneService(null, null, repository);
+
+    AtomicReference<ListRemoteFollowupResultsResponse> responseRef = new AtomicReference<>();
+    service.listRemoteFollowupResults(
+        ListRemoteFollowupResultsRequest.newBuilder()
+            .setTenantId("1")
+            .setCoordinatorId("coord-1")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListRemoteFollowupResultsResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(1, responseRef.get().getResultsCount());
+    assertEquals("rr-1", responseRef.get().getResults(0).getResultId());
+    assertEquals("REMOTE_APPLIED", responseRef.get().getResults(0).getOutcome());
+    assertEquals("{\"damage\":5}", responseRef.get().getResults(0).getResultPayloadJson());
+  }
+
+  @Test
   void validateInstanceCutoverCompatibilityReturnsCompatibilityReportForAdminCaller() {
     InstanceCutoverCompatibilityService compatibilityService =
         Mockito.mock(InstanceCutoverCompatibilityService.class);
@@ -1903,6 +2044,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     RuntimeRegionStatus status = new RuntimeRegionStatus();
     status.setTenantId(1L);
     status.setGameInstanceId(7L);
+    status.setRegionId("region-1");
     status.setRegionEpoch(regionEpoch);
     status.setExecutorFence("fence-1");
     status.setOwnerService("game-session-service");
@@ -1917,6 +2059,25 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(repository.findByTenantIdAndGameInstanceId(1L, 7L))
         .thenReturn(Optional.of(status));
     return repository;
+  }
+
+  private static GameSessionControlPlaneGrpcService remoteControlPlaneService(
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository) {
+    return new GameSessionControlPlaneGrpcService(
+        Mockito.mock(GameInstanceRepository.class),
+        Mockito.mock(GameplayCommandRepository.class),
+        Mockito.mock(RuntimeRegionStatusRepository.class),
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        remoteFollowupResultRepository,
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+        Mockito.mock(InstanceCutoverCompatibilityService.class),
+        Mockito.mock(VersionUpgradePreparationService.class),
+        Mockito.mock(TickService.class),
+        new SimpleMeterRegistry(),
+        new GameSessionProperties());
   }
 
   private static class NoopObserver<T> implements StreamObserver<T> {

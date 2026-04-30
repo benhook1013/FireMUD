@@ -16,10 +16,16 @@ import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
+import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
+import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
+import net.firedevops.firemud.gamesession.entity.RemoteFollowupResult;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
+import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
+import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
+import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
@@ -49,12 +55,18 @@ import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
+import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorRequest;
+import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorResponse;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
+import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsRequest;
+import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsResponse;
+import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsRequest;
+import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsResponse;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
@@ -64,6 +76,9 @@ import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVer
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionResponse;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchRequest;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchResponse;
+import net.firedevops.firemud.gamesession.v1.RemoteCommandCoordinatorEntry;
+import net.firedevops.firemud.gamesession.v1.RemoteFollowupEntry;
+import net.firedevops.firemud.gamesession.v1.RemoteFollowupResultEntry;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionRequest;
@@ -96,6 +111,9 @@ public final class GameSessionControlPlaneGrpcService
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
+  private final RemoteFollowupRepository remoteFollowupRepository;
+  private final RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
+  private final RemoteFollowupResultRepository remoteFollowupResultRepository;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final InstanceCutoverCompatibilityService instanceCutoverCompatibilityService;
   private final VersionUpgradePreparationService versionUpgradePreparationService;
@@ -119,6 +137,9 @@ public final class GameSessionControlPlaneGrpcService
         gameInstanceRepository,
         gameplayCommandRepository,
         runtimeRegionStatusRepository,
+        null,
+        null,
+        null,
         gameplayAdmissionPointerAuthorityService,
         instanceCutoverCompatibilityService,
         versionUpgradePreparationService,
@@ -139,9 +160,71 @@ public final class GameSessionControlPlaneGrpcService
       TickService tickService,
       MeterRegistry meterRegistry,
       GameSessionProperties gameSessionProperties) {
+    this(
+        gameInstanceRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        null,
+        null,
+        null,
+        gameplayAdmissionPointerAuthorityService,
+        instanceCutoverCompatibilityService,
+        versionUpgradePreparationService,
+        builtInTextCommandAliasResolver,
+        tickService,
+        meterRegistry,
+        gameSessionProperties);
+  }
+
+  public GameSessionControlPlaneGrpcService(
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
+      VersionUpgradePreparationService versionUpgradePreparationService,
+      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
+      TickService tickService,
+      MeterRegistry meterRegistry) {
+    this(
+        gameInstanceRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        remoteFollowupResultRepository,
+        gameplayAdmissionPointerAuthorityService,
+        instanceCutoverCompatibilityService,
+        versionUpgradePreparationService,
+        builtInTextCommandAliasResolver,
+        tickService,
+        meterRegistry,
+        new GameSessionProperties());
+  }
+
+  public GameSessionControlPlaneGrpcService(
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
+      VersionUpgradePreparationService versionUpgradePreparationService,
+      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
+      TickService tickService,
+      MeterRegistry meterRegistry,
+      GameSessionProperties gameSessionProperties) {
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
+    this.remoteFollowupRepository = remoteFollowupRepository;
+    this.remoteCommandCoordinatorRepository = remoteCommandCoordinatorRepository;
+    this.remoteFollowupResultRepository = remoteFollowupResultRepository;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.instanceCutoverCompatibilityService = instanceCutoverCompatibilityService;
     this.versionUpgradePreparationService = versionUpgradePreparationService;
@@ -164,6 +247,9 @@ public final class GameSessionControlPlaneGrpcService
         gameInstanceRepository,
         gameplayCommandRepository,
         runtimeRegionStatusRepository,
+        null,
+        null,
+        null,
         gameplayAdmissionPointerAuthorityService,
         instanceCutoverCompatibilityService,
         versionUpgradePreparationService,
@@ -176,6 +262,9 @@ public final class GameSessionControlPlaneGrpcService
       GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
       VersionUpgradePreparationService versionUpgradePreparationService,
@@ -186,6 +275,9 @@ public final class GameSessionControlPlaneGrpcService
         gameInstanceRepository,
         gameplayCommandRepository,
         runtimeRegionStatusRepository,
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        remoteFollowupResultRepository,
         gameplayAdmissionPointerAuthorityService,
         instanceCutoverCompatibilityService,
         versionUpgradePreparationService,
@@ -402,6 +494,128 @@ public final class GameSessionControlPlaneGrpcService
               .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getRemoteCommandCoordinator")
+  public void getRemoteCommandCoordinator(
+      GetRemoteCommandCoordinatorRequest request,
+      StreamObserver<GetRemoteCommandCoordinatorResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      long tenantId = parseTenantId(request.getTenantId());
+      requireText(request.getCoordinatorId(), "coordinator_id is required");
+      RemoteCommandCoordinator coordinator =
+          remoteCommandCoordinatorRepository
+              .findByTenantIdAndCoordinatorId(tenantId, request.getCoordinatorId())
+              .orElseThrow(
+                  () -> new IllegalArgumentException("Remote command coordinator not found"));
+      responseObserver.onNext(
+          GetRemoteCommandCoordinatorResponse.newBuilder()
+              .setCoordinator(toRemoteCoordinatorEntry(coordinator))
+              .build());
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          GetRemoteCommandCoordinatorResponse.newBuilder()
+              .setError(authorizationError("GetRemoteCommandCoordinator", ex))
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          GetRemoteCommandCoordinatorResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("GetRemoteCommandCoordinator failed", ex);
+      responseObserver.onNext(
+          GetRemoteCommandCoordinatorResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build());
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.listRemoteFollowups")
+  public void listRemoteFollowups(
+      ListRemoteFollowupsRequest request,
+      StreamObserver<ListRemoteFollowupsResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      long tenantId = parseTenantId(request.getTenantId());
+      requireText(request.getTargetRegionId(), "target_region_id is required");
+      java.util.List<RemoteFollowup> followups =
+          request.getStatus().isBlank()
+              ? remoteFollowupRepository.findByTenantIdAndTargetRegionIdOrderByDueTickIdAsc(
+                  tenantId, request.getTargetRegionId())
+              : remoteFollowupRepository
+                  .findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAsc(
+                      tenantId, request.getTargetRegionId(), request.getStatus());
+      ListRemoteFollowupsResponse.Builder response = ListRemoteFollowupsResponse.newBuilder();
+      followups.forEach(followup -> response.addFollowups(toRemoteFollowupEntry(followup)));
+      responseObserver.onNext(response.build());
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          ListRemoteFollowupsResponse.newBuilder()
+              .setError(authorizationError("ListRemoteFollowups", ex))
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          ListRemoteFollowupsResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("ListRemoteFollowups failed", ex);
+      responseObserver.onNext(
+          ListRemoteFollowupsResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build());
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.listRemoteFollowupResults")
+  public void listRemoteFollowupResults(
+      ListRemoteFollowupResultsRequest request,
+      StreamObserver<ListRemoteFollowupResultsResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      long tenantId = parseTenantId(request.getTenantId());
+      requireText(request.getCoordinatorId(), "coordinator_id is required");
+      java.util.List<RemoteFollowupResult> results =
+          remoteFollowupResultRepository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(
+              tenantId, request.getCoordinatorId());
+      ListRemoteFollowupResultsResponse.Builder response =
+          ListRemoteFollowupResultsResponse.newBuilder();
+      results.forEach(result -> response.addResults(toRemoteFollowupResultEntry(result)));
+      responseObserver.onNext(response.build());
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          ListRemoteFollowupResultsResponse.newBuilder()
+              .setError(authorizationError("ListRemoteFollowupResults", ex))
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          ListRemoteFollowupResultsResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("ListRemoteFollowupResults failed", ex);
+      responseObserver.onNext(
+          ListRemoteFollowupResultsResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build());
       responseObserver.onCompleted();
     }
   }
@@ -1656,6 +1870,93 @@ public final class GameSessionControlPlaneGrpcService
         .setLastCommittedTickId(status.getLastCommittedTickId())
         .setUpdatedAtMs(status.getUpdatedAt() == null ? 0L : status.getUpdatedAt().toEpochMilli())
         .build();
+  }
+
+  private RemoteCommandCoordinatorEntry toRemoteCoordinatorEntry(
+      RemoteCommandCoordinator coordinator) {
+    RemoteCommandCoordinatorEntry.Builder builder =
+        RemoteCommandCoordinatorEntry.newBuilder()
+            .setCoordinatorId(coordinator.getCoordinatorId())
+            .setTenantId(Long.toString(coordinator.getTenantId()))
+            .setCommandId(coordinator.getCommandId())
+            .setOriginGameInstanceId(Long.toString(coordinator.getOriginGameInstanceId()))
+            .setOriginRegionId(coordinator.getOriginRegionId())
+            .setOriginRegionEpoch(coordinator.getOriginRegionEpoch())
+            .setTargetGameInstanceId(Long.toString(coordinator.getTargetGameInstanceId()))
+            .setTargetRegionId(coordinator.getTargetRegionId())
+            .setTargetRegionEpoch(coordinator.getTargetRegionEpoch())
+            .setTargetDueTickId(coordinator.getTargetDueTickId())
+            .setOriginDeadlineRegionEpoch(coordinator.getOriginDeadlineRegionEpoch())
+            .setOriginDeadlineTickId(coordinator.getOriginDeadlineTickId())
+            .setState(coordinator.getState())
+            .setLateResultPolicy(coordinator.getLateResultPolicy())
+            .setUpdatedAtMs(
+                coordinator.getUpdatedAt() == null
+                    ? 0L
+                    : coordinator.getUpdatedAt().toEpochMilli());
+    if (coordinator.getExecutionOutcome() != null) {
+      builder.setExecutionOutcome(coordinator.getExecutionOutcome());
+    }
+    if (coordinator.getGameplayResult() != null) {
+      builder.setGameplayResult(coordinator.getGameplayResult());
+    }
+    return builder.build();
+  }
+
+  private RemoteFollowupEntry toRemoteFollowupEntry(RemoteFollowup followup) {
+    RemoteFollowupEntry.Builder builder =
+        RemoteFollowupEntry.newBuilder()
+            .setFollowupId(followup.getFollowupId())
+            .setTenantId(Long.toString(followup.getTenantId()))
+            .setOriginGameInstanceId(Long.toString(followup.getOriginGameInstanceId()))
+            .setOriginRegionId(followup.getOriginRegionId())
+            .setOriginRegionEpoch(followup.getOriginRegionEpoch())
+            .setTargetGameInstanceId(Long.toString(followup.getTargetGameInstanceId()))
+            .setTargetRegionId(followup.getTargetRegionId())
+            .setTargetRegionEpoch(followup.getTargetRegionEpoch())
+            .setDueTickId(followup.getDueTickId())
+            .setEffectKey(followup.getEffectKey())
+            .setStatus(followup.getStatus())
+            .setCreatedAtMs(
+                followup.getCreatedAt() == null ? 0L : followup.getCreatedAt().toEpochMilli())
+            .setUpdatedAtMs(
+                followup.getUpdatedAt() == null ? 0L : followup.getUpdatedAt().toEpochMilli());
+    if (followup.getTargetEntityId() != null) {
+      builder.setTargetEntityId(followup.getTargetEntityId());
+    }
+    if (followup.getClaimedTickBatchId() != null) {
+      builder.setClaimedTickBatchId(followup.getClaimedTickBatchId());
+    }
+    if (followup.getPayloadJson() != null) {
+      builder.setPayloadJson(followup.getPayloadJson());
+    }
+    if (followup.getFailureCode() != null) {
+      builder.setFailureCode(followup.getFailureCode());
+    }
+    if (followup.getFailureMessage() != null) {
+      builder.setFailureMessage(followup.getFailureMessage());
+    }
+    return builder.build();
+  }
+
+  private RemoteFollowupResultEntry toRemoteFollowupResultEntry(RemoteFollowupResult result) {
+    RemoteFollowupResultEntry.Builder builder =
+        RemoteFollowupResultEntry.newBuilder()
+            .setResultId(result.getResultId())
+            .setTenantId(Long.toString(result.getTenantId()))
+            .setCoordinatorId(result.getCoordinatorId())
+            .setFollowupId(result.getFollowupId())
+            .setOriginRegionId(result.getOriginRegionId())
+            .setOriginRegionEpoch(result.getOriginRegionEpoch())
+            .setTargetRegionId(result.getTargetRegionId())
+            .setTargetRegionEpoch(result.getTargetRegionEpoch())
+            .setOutcome(result.getOutcome())
+            .setObservedAtMs(
+                result.getObservedAt() == null ? 0L : result.getObservedAt().toEpochMilli());
+    if (result.getResultPayloadJson() != null) {
+      builder.setResultPayloadJson(result.getResultPayloadJson());
+    }
+    return builder.build();
   }
 
   private CutoverParticipantResult toParticipantResult(
