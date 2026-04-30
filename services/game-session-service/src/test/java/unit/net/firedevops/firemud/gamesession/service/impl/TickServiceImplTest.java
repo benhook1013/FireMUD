@@ -557,6 +557,10 @@ class TickServiceImplTest {
     command.setPointerVersion(17L);
     command.setDueTickId(14L);
     command.setEnqueueSeq(77L);
+    command.setOriginSourceKind("SCHEDULE_TIMER");
+    command.setOriginSourceState("SCHEDULE_DUE_CLAIMED");
+    command.setOriginSourceOrdinal(5000L);
+    command.setOriginSourceDueAtMs(5000L);
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
         .thenReturn(List.of(command));
 
@@ -597,6 +601,18 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"dueTickId\":14"));
     org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch
+            .getSelectedWorkManifestJson()
+            .contains("\"originSourceKind\":\"SCHEDULE_TIMER\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch
+            .getSelectedWorkManifestJson()
+            .contains("\"originSourceState\":\"SCHEDULE_DUE_CLAIMED\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"originSourceOrdinal\":5000"));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"originSourceDueAtMs\":5000"));
+    org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"playableStateScope\":\"SHARED\""));
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"worldSlug\":\"demo\""));
@@ -632,6 +648,10 @@ class TickServiceImplTest {
     command.setTargetEntityId("entity-2");
     command.setDueTickId(21L);
     command.setEnqueueSeq(78L);
+    command.setOriginSourceKind("SCHEDULE_TIMER");
+    command.setOriginSourceState("SCHEDULE_DUE_CLAIMED");
+    command.setOriginSourceOrdinal(6000L);
+    command.setOriginSourceDueAtMs(6000L);
     command.setExecutionOutcome("RETRY_QUEUED");
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
         .thenReturn(List.of(command));
@@ -662,6 +682,12 @@ class TickServiceImplTest {
         stagedBatch.getSelectedWorkManifestJson().contains("\"targetEntityId\":\"entity-2\""));
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"dueTickId\":21"));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch
+            .getSelectedWorkManifestJson()
+            .contains("\"originSourceKind\":\"SCHEDULE_TIMER\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"originSourceDueAtMs\":6000"));
   }
 
   @Test

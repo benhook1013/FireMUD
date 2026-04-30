@@ -1026,6 +1026,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setWorldSlug("demo");
     command.setRealmSlug("production");
     command.setPointerVersion(17L);
+    command.setOriginSourceKind("GAMEPLAY_EVENT");
+    command.setOriginSourceState("WORK_ITEM_PERSISTED");
+    command.setOriginSourceOrdinal(41L);
+    command.setOriginSourceDueTickId(14L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(commandRepository.findByCommandId("cmd-123")).thenReturn(Optional.of(command));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -1060,6 +1064,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("demo", responseRef.get().getCommand().getWorldSlug());
     assertEquals("production", responseRef.get().getCommand().getRealmSlug());
     assertEquals(17L, responseRef.get().getCommand().getPointerVersion());
+    assertEquals("GAMEPLAY_EVENT", responseRef.get().getCommand().getOriginSourceKind());
+    assertEquals("WORK_ITEM_PERSISTED", responseRef.get().getCommand().getOriginSourceState());
+    assertEquals(41L, responseRef.get().getCommand().getOriginSourceOrdinal());
+    assertEquals(14L, responseRef.get().getCommand().getOriginSourceDueTickId());
     assertEquals(
         Instant.parse("2026-04-15T00:00:01Z").toEpochMilli(),
         responseRef.get().getCommand().getStagedAtMs());
@@ -1090,6 +1098,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setWorldSlug("ops");
     command.setRealmSlug("preview");
     command.setPointerVersion(29L);
+    command.setOriginSourceKind("SCHEDULE_TIMER");
+    command.setOriginSourceState("SCHEDULE_DUE_CLAIMED");
+    command.setOriginSourceOrdinal(5000L);
+    command.setOriginSourceDueAtMs(5000L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -1134,6 +1146,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("ops", responseRef.get().getCommand().getWorldSlug());
     assertEquals("preview", responseRef.get().getCommand().getRealmSlug());
     assertEquals(29L, responseRef.get().getCommand().getPointerVersion());
+    assertEquals("SCHEDULE_TIMER", responseRef.get().getCommand().getOriginSourceKind());
+    assertEquals("SCHEDULE_DUE_CLAIMED", responseRef.get().getCommand().getOriginSourceState());
+    assertEquals(5000L, responseRef.get().getCommand().getOriginSourceOrdinal());
+    assertEquals(5000L, responseRef.get().getCommand().getOriginSourceDueAtMs());
   }
 
   @Test
@@ -1190,6 +1206,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("demo", staged.getWorldSlug());
     assertEquals("production", staged.getRealmSlug());
     assertEquals(17L, staged.getPointerVersion());
+    assertEquals("SCHEDULE_TIMER", staged.getOriginSourceKind());
+    assertEquals("SCHEDULE_DUE_CLAIMED", staged.getOriginSourceState());
+    assertEquals(5000L, staged.getOriginSourceOrdinal());
+    assertEquals(5000L, staged.getOriginSourceDueAtMs());
     assertEquals("entity-1", staged.getTargetEntityId());
     assertEquals("region-1", staged.getRegionId());
     assertEquals(12L, staged.getRegionEpoch());
@@ -1779,6 +1799,10 @@ class GameSessionControlPlaneGrpcServiceTest {
         .setWorldSlug("demo")
         .setRealmSlug("production")
         .setPointerVersion("17")
+        .setOriginSourceKind("SCHEDULE_TIMER")
+        .setOriginSourceState("SCHEDULE_DUE_CLAIMED")
+        .setOriginSourceOrdinal(5000L)
+        .setOriginSourceDueAtMs(5000L)
         .setTargetEntityId("entity-1")
         .setCommand("say hello")
         .build();

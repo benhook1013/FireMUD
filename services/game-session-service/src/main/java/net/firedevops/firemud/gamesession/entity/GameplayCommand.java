@@ -117,6 +117,21 @@ public class GameplayCommand {
   @Column(name = "pointer_version")
   private Long pointerVersion;
 
+  @Column(name = "origin_source_kind", length = 64)
+  private String originSourceKind;
+
+  @Column(name = "origin_source_state", length = 64)
+  private String originSourceState;
+
+  @Column(name = "origin_source_ordinal")
+  private Long originSourceOrdinal;
+
+  @Column(name = "origin_source_due_tick_id")
+  private Long originSourceDueTickId;
+
+  @Column(name = "origin_source_due_at_ms")
+  private Long originSourceDueAtMs;
+
   @Column(name = "target_entity_id", length = 64)
   private String targetEntityId;
 

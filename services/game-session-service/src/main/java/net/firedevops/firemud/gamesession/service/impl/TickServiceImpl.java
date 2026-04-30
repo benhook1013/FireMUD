@@ -1172,6 +1172,22 @@ public class TickServiceImpl implements TickService {
           builder, "enqueueSeq", command == null ? null : command.getEnqueueSeq());
       appendJsonNumberField(builder, "dueTickId", command == null ? null : command.getDueTickId());
       appendJsonStringField(
+          builder, "originSourceKind", command == null ? null : command.getOriginSourceKind());
+      appendJsonStringField(
+          builder, "originSourceState", command == null ? null : command.getOriginSourceState());
+      appendJsonNumberField(
+          builder,
+          "originSourceOrdinal",
+          command == null ? null : command.getOriginSourceOrdinal());
+      appendJsonNumberField(
+          builder,
+          "originSourceDueTickId",
+          command == null ? null : command.getOriginSourceDueTickId());
+      appendJsonNumberField(
+          builder,
+          "originSourceDueAtMs",
+          command == null ? null : command.getOriginSourceDueAtMs());
+      appendJsonStringField(
           builder, "playableStateScope", command == null ? null : command.getPlayableStateScope());
       appendJsonStringField(builder, "worldSlug", command == null ? null : command.getWorldSlug());
       appendJsonStringField(builder, "realmSlug", command == null ? null : command.getRealmSlug());

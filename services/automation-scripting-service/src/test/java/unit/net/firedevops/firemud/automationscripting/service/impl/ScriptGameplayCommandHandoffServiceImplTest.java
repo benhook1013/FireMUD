@@ -82,6 +82,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(requestCaptor.getValue().getWorldSlug()).isEqualTo("demo");
     assertThat(requestCaptor.getValue().getRealmSlug()).isEqualTo("production");
     assertThat(requestCaptor.getValue().getPointerVersion()).isEqualTo("17");
+    assertThat(requestCaptor.getValue().getOriginSourceKind()).isEqualTo("SCHEDULE_TIMER");
+    assertThat(requestCaptor.getValue().getOriginSourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
+    assertThat(requestCaptor.getValue().getOriginSourceOrdinal()).isEqualTo(5000L);
+    assertThat(requestCaptor.getValue().getOriginSourceDueAtMs()).isEqualTo(5000L);
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(workItemRepository, Mockito.times(2)).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getAllValues().get(1).getStatus()).isEqualTo("HANDED_OFF");

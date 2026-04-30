@@ -128,6 +128,11 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setWorldSlug(normalize(workItem.getWorldSlug()))
         .setRealmSlug(normalize(workItem.getRealmSlug()))
         .setPointerVersion(normalize(workItem.getPointerVersion()))
+        .setOriginSourceKind(normalize(workItem.getSourceKind()))
+        .setOriginSourceState(normalize(workItem.getSourceState()))
+        .setOriginSourceOrdinal(zeroIfNull(workItem.getSourceOrdinal()))
+        .setOriginSourceDueTickId(zeroIfNull(workItem.getSourceDueTickId()))
+        .setOriginSourceDueAtMs(zeroIfNull(workItem.getSourceDueAtMs()))
         .setTargetEntityId(command.targetEntityId())
         .setCommand(command.commandText())
         .setRequiresSoloTick(command.requiresSoloTick())
@@ -219,6 +224,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
 
   private static String normalize(String value) {
     return value == null ? "" : value;
+  }
+
+  private static long zeroIfNull(Long value) {
+    return value == null ? 0L : value;
   }
 
   private static PlayableStateScope toPlayableStateScope(String playableStateScope) {

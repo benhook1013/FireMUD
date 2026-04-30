@@ -1275,6 +1275,14 @@ public final class GameSessionControlPlaneGrpcService
     command.setWorldSlug(normalizeBlank(request.getWorldSlug()));
     command.setRealmSlug(normalizeBlank(request.getRealmSlug()));
     command.setPointerVersion(parsePointerVersionClaim(request.getPointerVersion()));
+    command.setOriginSourceKind(normalizeBlank(request.getOriginSourceKind()));
+    command.setOriginSourceState(normalizeBlank(request.getOriginSourceState()));
+    command.setOriginSourceOrdinal(
+        request.getOriginSourceOrdinal() > 0 ? request.getOriginSourceOrdinal() : null);
+    command.setOriginSourceDueTickId(
+        request.getOriginSourceDueTickId() > 0 ? request.getOriginSourceDueTickId() : null);
+    command.setOriginSourceDueAtMs(
+        request.getOriginSourceDueAtMs() > 0 ? request.getOriginSourceDueAtMs() : null);
     command.setTargetEntityId(request.getTargetEntityId());
     command.setCharacterId(parseGameplayCharacterId(request.getTargetEntityId()));
     command.setRegionId(request.getRegionId());
@@ -1769,6 +1777,21 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (command.getPointerVersion() != null) {
       builder.setPointerVersion(command.getPointerVersion());
+    }
+    if (command.getOriginSourceKind() != null) {
+      builder.setOriginSourceKind(command.getOriginSourceKind());
+    }
+    if (command.getOriginSourceState() != null) {
+      builder.setOriginSourceState(command.getOriginSourceState());
+    }
+    if (command.getOriginSourceOrdinal() != null) {
+      builder.setOriginSourceOrdinal(command.getOriginSourceOrdinal());
+    }
+    if (command.getOriginSourceDueTickId() != null) {
+      builder.setOriginSourceDueTickId(command.getOriginSourceDueTickId());
+    }
+    if (command.getOriginSourceDueAtMs() != null) {
+      builder.setOriginSourceDueAtMs(command.getOriginSourceDueAtMs());
     }
     return builder.build();
   }

@@ -432,6 +432,11 @@ message GameplayCommandStatus {
   string world_slug = 30;
   string realm_slug = 31;
   int64 pointer_version = 32;
+  string origin_source_kind = 33;
+  string origin_source_state = 34;
+  int64 origin_source_ordinal = 35;
+  int64 origin_source_due_tick_id = 36;
+  int64 origin_source_due_at_ms = 37;
 }
 
 message GetGameplayCommandStatusResponse {
@@ -670,6 +675,11 @@ message EnqueueAutomationCommandIfAbsentRequest {
   string world_slug = 16;
   string realm_slug = 17;
   string pointer_version = 18;
+  string origin_source_kind = 19;
+  string origin_source_state = 20;
+  int64 origin_source_ordinal = 21;
+  int64 origin_source_due_tick_id = 22;
+  int64 origin_source_due_at_ms = 23;
 }
 
 message EnqueueAutomationCommandIfAbsentResponse {
