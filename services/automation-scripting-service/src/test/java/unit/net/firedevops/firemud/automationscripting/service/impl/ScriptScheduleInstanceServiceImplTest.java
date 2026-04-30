@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -528,8 +529,12 @@ class ScriptScheduleInstanceServiceImplTest {
             meterRegistry);
     ScriptScheduleInstance first =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 20L, 120L);
+    first.setPluginId("plugin-1");
+    first.setPluginVersionId("plugin-v1");
     ScriptScheduleInstance second =
         tickSchedule("guard-2", "npc-scout", "guard.scout.v1", 20L, 120L);
+    second.setPluginId("plugin-1");
+    second.setPluginVersionId("plugin-v1");
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "TICKS"))
         .thenReturn(List.of(first, second));
@@ -543,7 +548,15 @@ class ScriptScheduleInstanceServiceImplTest {
 
     assertThat(result.firedScheduleCount()).isEqualTo(1);
     assertThat(result.truncatedFiringCount()).isEqualTo(1);
-    verify(eventAuditRepository, org.mockito.Mockito.times(2)).save(any(ScriptEventAudit.class));
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository, org.mockito.Mockito.times(2)).save(auditCaptor.capture());
+    assertThat(auditCaptor.getAllValues())
+        .anySatisfy(
+            audit -> {
+              assertThat(audit.getFinalReason()).isEqualTo("catch_up_truncated");
+              assertThat(audit.getPluginId()).isEqualTo("plugin-1");
+              assertThat(audit.getPluginVersionId()).isEqualTo("plugin-v1");
+            });
     assertThat(
             meterRegistry
                 .get("automation_script_timer_catchup_truncated_total")
@@ -552,6 +565,69 @@ class ScriptScheduleInstanceServiceImplTest {
                 .counter()
                 .count())
         .isEqualTo(1.0);
+  }
+
+  @Test
+  void listTimerAuditEventsReturnsBoundedSummariesFromAuditRows() {
+    ScriptEventAudit audit = new ScriptEventAudit();
+    audit.setTenantId("1");
+    audit.setGameInstanceId("game-1");
+    audit.setRegionId("region-1");
+    audit.setRegionEpoch(12L);
+    audit.setEntityId("guard-1");
+    audit.setPlayableStateScope("SHARED");
+    audit.setWorldSlug("demo");
+    audit.setRealmSlug("production");
+    audit.setPointerVersion("17");
+    audit.setScriptId("npc-guard");
+    audit.setPluginId("plugin-1");
+    audit.setPluginVersionId("plugin-v1");
+    audit.setEventType("onInterval");
+    audit.setScriptPatchVersion("patch-1");
+    audit.setScriptEventId("timer-1");
+    audit.setTriggerMode("TRIGGER_MODE_CATCH_UP");
+    audit.setSourceKind("SCHEDULE_TIMER");
+    audit.setSourceState("SCHEDULE_DROPPED");
+    audit.setSourceOrdinal(130L);
+    audit.setSourceDueTickId(130L);
+    audit.setFinalStage("ADMISSION");
+    audit.setFinalOutcome("canceled");
+    audit.setFinalReason("catch_up_truncated");
+    audit.setCreatedAt(Instant.ofEpochMilli(1234L));
+    audit.setUpdatedAt(Instant.ofEpochMilli(1235L));
+    when(eventAuditRepository.findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq("catch_up_truncated"),
+            any(),
+            any(),
+            any()))
+        .thenReturn(List.of(audit));
+
+    List<ScriptScheduleInstanceService.TimerAuditEventSummary> result =
+        service.listTimerAuditEvents(
+            "1",
+            "game-1",
+            "patch-1",
+            "npc-guard",
+            "onInterval",
+            "catch_up_truncated",
+            100L,
+            200L,
+            25);
+
+    assertThat(result)
+        .singleElement()
+        .satisfies(
+            summary -> {
+              assertThat(summary.pluginId()).isEqualTo("plugin-1");
+              assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
+              assertThat(summary.finalReason()).isEqualTo("catch_up_truncated");
+              assertThat(summary.sourceDueTickId()).isEqualTo(130L);
+            });
   }
 
   @Test

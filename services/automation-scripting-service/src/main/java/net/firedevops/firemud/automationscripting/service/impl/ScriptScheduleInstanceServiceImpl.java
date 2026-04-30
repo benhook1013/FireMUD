@@ -319,6 +319,36 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         .toList();
   }
 
+  @Override
+  @Transactional(readOnly = true)
+  public List<TimerAuditEventSummary> listTimerAuditEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String scriptId,
+      String eventType,
+      String finalReason,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit) {
+    requireText(tenantId, "tenant_id");
+    int boundedLimit = Math.min(Math.max(limit <= 0 ? 50 : limit, 1), 500);
+    return eventAuditRepository
+        .findTimerAuditEvents(
+            tenantId,
+            blankToEmpty(gameInstanceId),
+            blankToEmpty(scriptPatchVersion),
+            blankToEmpty(scriptId),
+            blankToEmpty(eventType),
+            blankToEmpty(finalReason),
+            changedAfterMs <= 0 ? null : Instant.ofEpochMilli(changedAfterMs),
+            changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs),
+            org.springframework.data.domain.PageRequest.of(0, boundedLimit))
+        .stream()
+        .map(ScriptScheduleInstanceServiceImpl::toTimerAuditSummary)
+        .toList();
+  }
+
   private Map<String, String> activePluginVersions(String tenantId, String gameInstanceId) {
     Map<String, String> active = new HashMap<>();
     for (PluginRuntimeState state :
@@ -607,6 +637,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setRealmSlug(blankToEmpty(instance.getRealmSlug()));
     audit.setPointerVersion(blankToEmpty(instance.getPointerVersion()));
     audit.setScriptId(instance.getScriptId());
+    audit.setPluginId(blankToEmpty(instance.getPluginId()));
+    audit.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
@@ -775,6 +807,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setRealmSlug(blankToEmpty(workItem.getRealmSlug()));
     audit.setPointerVersion(blankToEmpty(workItem.getPointerVersion()));
     audit.setScriptId(instance.getScriptId());
+    audit.setPluginId(blankToEmpty(workItem.getPluginId()));
+    audit.setPluginVersionId(blankToEmpty(workItem.getPluginVersionId()));
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
@@ -816,6 +850,36 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private static String timerScriptEventId(TimerFiringCandidate candidate) {
     return "timer-" + shortHash(candidate.identity());
+  }
+
+  private static TimerAuditEventSummary toTimerAuditSummary(ScriptEventAudit audit) {
+    return new TimerAuditEventSummary(
+        audit.getTenantId(),
+        audit.getGameInstanceId(),
+        audit.getRegionId(),
+        audit.getRegionEpoch() == null ? 0L : audit.getRegionEpoch(),
+        audit.getEntityId(),
+        blankToEmpty(audit.getPlayableStateScope()),
+        blankToEmpty(audit.getWorldSlug()),
+        blankToEmpty(audit.getRealmSlug()),
+        blankToEmpty(audit.getPointerVersion()),
+        audit.getScriptId(),
+        blankToEmpty(audit.getPluginId()),
+        blankToEmpty(audit.getPluginVersionId()),
+        audit.getEventType(),
+        audit.getScriptPatchVersion(),
+        audit.getScriptEventId(),
+        audit.getTriggerMode(),
+        blankToEmpty(audit.getSourceState()),
+        audit.getSourceOrdinal() == null ? 0L : audit.getSourceOrdinal(),
+        audit.getSourceDueTickId() == null ? 0L : audit.getSourceDueTickId(),
+        audit.getSourceDueAtMs() == null ? 0L : audit.getSourceDueAtMs(),
+        audit.getWorkItemId() == null ? 0L : audit.getWorkItemId(),
+        audit.getFinalStage(),
+        audit.getFinalOutcome(),
+        audit.getFinalReason(),
+        audit.getCreatedAt() == null ? 0L : audit.getCreatedAt().toEpochMilli(),
+        audit.getUpdatedAt() == null ? 0L : audit.getUpdatedAt().toEpochMilli());
   }
 
   private static String timerReadSnapshotToken(TimerFiringCandidate candidate) {

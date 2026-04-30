@@ -52,6 +52,8 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequ
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptTimerAuditEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptTimerAuditEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsRequest;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsResponse;
@@ -61,6 +63,7 @@ import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeR
 import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeResponse;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionRequest;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
+import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -528,6 +531,85 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getSchedulesList()).hasSize(1);
     assertThat(ref.get().getSchedules(0).getIsPinStale()).isTrue();
     assertThat(ref.get().getSchedules(0).getIsRuntimeProgressStale()).isTrue();
+  }
+
+  @Test
+  void listsScriptTimerAuditEventsFromReadModel() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(
+            scheduleInstanceService.listTimerAuditEvents(
+                "1",
+                "game-1",
+                "patch-1",
+                "npc-guard",
+                "onInterval",
+                "catch_up_truncated",
+                100L,
+                200L,
+                25))
+        .thenReturn(
+            List.of(
+                new ScriptScheduleInstanceService.TimerAuditEventSummary(
+                    "1",
+                    "game-1",
+                    "region-1",
+                    12L,
+                    "guard-1",
+                    "SHARED",
+                    "demo",
+                    "production",
+                    "17",
+                    "npc-guard",
+                    "plugin-1",
+                    "plugin-v1",
+                    "onInterval",
+                    "patch-1",
+                    "timer-1",
+                    "TRIGGER_MODE_CATCH_UP",
+                    "SCHEDULE_DROPPED",
+                    130L,
+                    130L,
+                    0L,
+                    0L,
+                    "ADMISSION",
+                    "canceled",
+                    "catch_up_truncated",
+                    1234L,
+                    1235L)));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            scheduleInstanceService);
+    AtomicReference<ListScriptTimerAuditEventsResponse> ref = new AtomicReference<>();
+
+    service.listScriptTimerAuditEvents(
+        ListScriptTimerAuditEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptId("npc-guard")
+            .setEventType("onInterval")
+            .setFinalReason("catch_up_truncated")
+            .setChangedAfterMs(100L)
+            .setChangedBeforeMs(200L)
+            .setLimit(25)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getEventsCount()).isEqualTo(1);
+    assertThat(ref.get().getEvents(0).getPluginId()).isEqualTo("plugin-1");
+    assertThat(ref.get().getEvents(0).getPluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(ref.get().getEvents(0).getTriggerMode())
+        .isEqualTo(TriggerMode.TRIGGER_MODE_CATCH_UP);
+    assertThat(ref.get().getEvents(0).getFinalReason()).isEqualTo("catch_up_truncated");
+    assertThat(ref.get().getEvents(0).getSourceDueTickId()).isEqualTo(130L);
   }
 
   @Test

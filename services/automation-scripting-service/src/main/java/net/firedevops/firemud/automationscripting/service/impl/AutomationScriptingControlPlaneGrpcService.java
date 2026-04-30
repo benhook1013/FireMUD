@@ -51,6 +51,8 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequ
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptTimerAuditEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptTimerAuditEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.PluginPolicyViolation;
 import net.firedevops.firemud.automationscripting.v1.PluginRuntimeEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsRequest;
@@ -62,10 +64,12 @@ import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutE
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatusEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptScheduleInstanceEntry;
+import net.firedevops.firemud.automationscripting.v1.ScriptTimerAuditEventEntry;
 import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeRequest;
 import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeResponse;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionRequest;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
+import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -394,6 +398,39 @@ public final class AutomationScriptingControlPlaneGrpcService
           .stream()
           .map(this::toProto)
           .forEach(response::addSchedules);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.listScriptTimerAuditEvents")
+  public void listScriptTimerAuditEvents(
+      ListScriptTimerAuditEventsRequest request,
+      StreamObserver<ListScriptTimerAuditEventsResponse> responseObserver) {
+    ListScriptTimerAuditEventsResponse.Builder response =
+        ListScriptTimerAuditEventsResponse.newBuilder();
+    try {
+      requireAdminRole();
+      scriptScheduleInstanceService
+          .listTimerAuditEvents(
+              request.getTenantId(),
+              request.getGameInstanceId(),
+              request.getScriptPatchVersion(),
+              request.getScriptId(),
+              request.getEventType(),
+              request.getFinalReason(),
+              request.getChangedAfterMs(),
+              request.getChangedBeforeMs(),
+              request.getLimit())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addEvents);
     } catch (IllegalArgumentException ex) {
       response.setError(
           ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
@@ -911,6 +948,14 @@ public final class AutomationScriptingControlPlaneGrpcService
     };
   }
 
+  private static TriggerMode toTriggerMode(String triggerMode) {
+    return switch (triggerMode) {
+      case "TRIGGER_MODE_CATCH_UP" -> TriggerMode.TRIGGER_MODE_CATCH_UP;
+      case "TRIGGER_MODE_NORMAL" -> TriggerMode.TRIGGER_MODE_NORMAL;
+      default -> TriggerMode.TRIGGER_MODE_UNSPECIFIED;
+    };
+  }
+
   private static String requireMode(AutomationAdmissionMode mode) {
     return switch (mode) {
       case AUTOMATION_ADMISSION_MODE_NORMAL -> "NORMAL";
@@ -1018,6 +1063,41 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setIsRuntimeProgressStale(
             isScheduleRuntimeProgressStale(summary.lastRuntimeProgressObservedAtMs()))
         .build();
+  }
+
+  private static ScriptTimerAuditEventEntry toProto(
+      ScriptScheduleInstanceService.TimerAuditEventSummary summary) {
+    ScriptTimerAuditEventEntry.Builder builder =
+        ScriptTimerAuditEventEntry.newBuilder()
+            .setTenantId(summary.tenantId())
+            .setGameInstanceId(summary.gameInstanceId())
+            .setRegionId(summary.regionId())
+            .setRegionEpoch(summary.regionEpoch())
+            .setEntityId(summary.entityId())
+            .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
+            .setWorldSlug(summary.worldSlug())
+            .setRealmSlug(summary.realmSlug())
+            .setPointerVersion(summary.pointerVersion())
+            .setScriptId(summary.scriptId())
+            .setPluginId(summary.pluginId())
+            .setPluginVersionId(summary.pluginVersionId())
+            .setEventType(summary.eventType())
+            .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptEventId(summary.scriptEventId())
+            .setTriggerMode(toTriggerMode(summary.triggerMode()))
+            .setSourceState(summary.sourceState())
+            .setSourceOrdinal(summary.sourceOrdinal())
+            .setSourceDueTickId(summary.sourceDueTickId())
+            .setSourceDueAtMs(summary.sourceDueAtMs())
+            .setFinalStage(summary.finalStage())
+            .setFinalOutcome(summary.finalOutcome())
+            .setFinalReason(summary.finalReason())
+            .setCreatedAtMs(summary.createdAtMs())
+            .setUpdatedAtMs(summary.updatedAtMs());
+    if (summary.workItemId() > 0) {
+      builder.setWorkItemId(Long.toString(summary.workItemId()));
+    }
+    return builder.build();
   }
 
   private static ScriptHandoffEventEntry toProto(

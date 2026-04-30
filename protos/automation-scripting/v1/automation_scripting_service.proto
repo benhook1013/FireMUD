@@ -59,6 +59,8 @@ service AutomationScriptingControlPlaneService {
       returns (GetScriptPatchInstanceRolloutStatusResponse);
   rpc ListScriptScheduleInstances(ListScriptScheduleInstancesRequest)
       returns (ListScriptScheduleInstancesResponse);
+  rpc ListScriptTimerAuditEvents(ListScriptTimerAuditEventsRequest)
+      returns (ListScriptTimerAuditEventsResponse);
   rpc ListScriptPatchInstanceRollouts(ListScriptPatchInstanceRolloutsRequest)
       returns (ListScriptPatchInstanceRolloutsResponse);
   rpc ListScriptPatchInstanceRolloutEvents(ListScriptPatchInstanceRolloutEventsRequest)
@@ -581,6 +583,52 @@ message ScriptScheduleInstanceEntry {
 
 message ListScriptScheduleInstancesResponse {
   repeated ScriptScheduleInstanceEntry schedules = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListScriptTimerAuditEventsRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  string script_id = 4;
+  string event_type = 5;
+  string final_reason = 6;
+  int64 changed_after_ms = 7;
+  int64 changed_before_ms = 8;
+  int32 limit = 9;
+}
+
+message ScriptTimerAuditEventEntry {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  int64 region_epoch = 4;
+  string entity_id = 5;
+  entity_management.v1.PlayableStateScope playable_state_scope = 6;
+  string world_slug = 7;
+  string realm_slug = 8;
+  string pointer_version = 9;
+  string script_id = 10;
+  string plugin_id = 11;
+  string plugin_version_id = 12;
+  string event_type = 13;
+  string script_patch_version = 14;
+  string script_event_id = 15;
+  TriggerMode trigger_mode = 16;
+  string source_state = 17;
+  int64 source_ordinal = 18;
+  int64 source_due_tick_id = 19;
+  int64 source_due_at_ms = 20;
+  string final_stage = 21;
+  string final_outcome = 22;
+  string final_reason = 23;
+  int64 created_at_ms = 24;
+  int64 updated_at_ms = 25;
+  string work_item_id = 26;
+}
+
+message ListScriptTimerAuditEventsResponse {
+  repeated ScriptTimerAuditEventEntry events = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

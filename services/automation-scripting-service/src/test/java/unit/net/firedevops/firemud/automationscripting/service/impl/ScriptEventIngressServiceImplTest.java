@@ -199,6 +199,8 @@ class ScriptEventIngressServiceImplTest {
     verify(eventAuditRepository).save(eventAuditCaptor.capture());
     assertThat(eventAuditCaptor.getValue().getFinalStage()).isEqualTo("ADMISSION");
     assertThat(eventAuditCaptor.getValue().getFinalOutcome()).isEqualTo("work_item_persisted");
+    assertThat(eventAuditCaptor.getValue().getPluginId()).isEqualTo("plugin-1");
+    assertThat(eventAuditCaptor.getValue().getPluginVersionId()).isEqualTo("plugin-v1");
     assertThat(eventAuditCaptor.getValue().getSourceKind()).isEqualTo("GAMEPLAY_EVENT");
     assertThat(eventAuditCaptor.getValue().getSourceState()).isEqualTo("WORK_ITEM_PERSISTED");
     verify(automationQueueService).enqueueWorkItem(Mockito.any(ScriptWorkItem.class));

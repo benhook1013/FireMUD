@@ -417,6 +417,27 @@ Contract rules:
 - The live implementation must report tick-aligned schedules honestly as not-yet-advanced when no heartbeat-derived due point exists; it must not invent synthetic tick coordinates.
 - Reconciliation across repins is keyed by stable `scheduleDefinitionId` plus plugin owner metadata and binding target identity, not by inferred semantic similarity.
 
+#### `ListScriptTimerAuditEvents`
+
+Implementation note: the current Automation & Scripting implementation now exposes the scheduler-owned subset of `script_event_audit` directly for timer troubleshooting. This read is bounded to `sourceKind=SCHEDULE_TIMER` and includes both due-point admissions that persisted work items and scheduler-owned dropped candidates such as `catch_up_truncated` and `runtime_scope_changed`, so operators no longer have to infer timer truncation/fence behavior from aggregate metrics alone.
+
+Inputs:
+
+- `tenantId`
+- Optional filters: `gameInstanceId`, `scriptPatchVersion`, `scriptId`, `eventType`, `finalReason`
+- Optional `changedAfter` / `changedBefore`
+- `limit` (bounded by the service)
+
+Outputs:
+
+- newest-first timer audit rows containing Trigger Identity fields, resolved `playableStateScope`, admitted routing bundle, plugin owner metadata, trigger mode, scheduler source state/ordinal/due-point fields, optional `workItemId`, final stage/outcome/reason, and row timestamps
+
+Contract rules:
+
+- This is a read-only operator/debugging surface for scheduler-owned timer decisions; it must not mutate work-item or schedule state.
+- The live implementation is sourced from durable `script_event_audit` rows, not reconstructed from metrics or volatile queue indexes.
+- Timer-fired work that reached durable work-item persistence and timer-fired work intentionally dropped by scheduler fences/truncation share this history surface so operators can correlate a due point without joining multiple ad hoc tables first.
+
 #### `ListScriptDeadLetters`
 
 Implementation note: the current Automation & Scripting API exposes this read directly from durable `script_work_items` rows with `status=DEAD_LETTERED`. It is an operator inspection surface separate from the controlled replay mutation API.

@@ -14,6 +14,17 @@ public interface ScriptScheduleInstanceService {
   List<ScheduleInstanceSummary> listInstances(
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit);
 
+  List<TimerAuditEventSummary> listTimerAuditEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String scriptId,
+      String eventType,
+      String finalReason,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit);
+
   record RuntimeTickProgressObservation(
       String tenantId,
       String gameInstanceId,
@@ -58,4 +69,32 @@ public interface ScriptScheduleInstanceService {
       long runtimeRegionEpoch,
       long lastObservedTickId,
       long lastRuntimeProgressObservedAtMs) {}
+
+  record TimerAuditEventSummary(
+      String tenantId,
+      String gameInstanceId,
+      String regionId,
+      long regionEpoch,
+      String entityId,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
+      String scriptId,
+      String pluginId,
+      String pluginVersionId,
+      String eventType,
+      String scriptPatchVersion,
+      String scriptEventId,
+      String triggerMode,
+      String sourceState,
+      long sourceOrdinal,
+      long sourceDueTickId,
+      long sourceDueAtMs,
+      long workItemId,
+      String finalStage,
+      String finalOutcome,
+      String finalReason,
+      long createdAtMs,
+      long updatedAtMs) {}
 }

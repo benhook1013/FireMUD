@@ -542,6 +542,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setRealmSlug(scopeValues.realmSlug());
     audit.setPointerVersion(scopeValues.pointerVersion());
     audit.setScriptId(scriptId);
+    audit.setPluginId(normalize(request.getPluginId()));
+    audit.setPluginVersionId(normalize(request.getPluginVersionId()));
     audit.setEventType(request.getEventType());
     audit.setEventSchemaVersion(schemaVersion);
     audit.setScriptPatchVersion(request.getScriptPatchVersion());
