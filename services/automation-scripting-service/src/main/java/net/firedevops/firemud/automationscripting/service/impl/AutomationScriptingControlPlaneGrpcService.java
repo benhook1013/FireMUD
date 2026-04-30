@@ -391,7 +391,7 @@ public final class AutomationScriptingControlPlaneGrpcService
               request.getScriptPatchVersion(),
               request.getLimit())
           .stream()
-          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .map(this::toProto)
           .forEach(response::addSchedules);
     } catch (IllegalArgumentException ex) {
       response.setError(
@@ -839,6 +839,22 @@ public final class AutomationScriptingControlPlaneGrpcService
     return ageMs > runtimeProperties.getDrainStatusStaleThresholdMs();
   }
 
+  private boolean isSchedulePinStale(long pinObservedAtMs) {
+    if (pinObservedAtMs <= 0) {
+      return true;
+    }
+    long ageMs = Instant.now().toEpochMilli() - pinObservedAtMs;
+    return ageMs > runtimeProperties.getPinProjectionStaleThresholdMs();
+  }
+
+  private boolean isScheduleRuntimeProgressStale(long lastRuntimeProgressObservedAtMs) {
+    if (lastRuntimeProgressObservedAtMs <= 0) {
+      return true;
+    }
+    long ageMs = Instant.now().toEpochMilli() - lastRuntimeProgressObservedAtMs;
+    return ageMs > runtimeProperties.getScheduleRuntimeProgressStaleThresholdMs();
+  }
+
   private static ErrorDetail authorizationError(AdminAuthorizationException ex) {
     return ErrorDetail.newBuilder()
         .setCode("PERMISSION_DENIED")
@@ -953,7 +969,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         .build();
   }
 
-  private static ScriptScheduleInstanceEntry toProto(
+  private ScriptScheduleInstanceEntry toProto(
       ScriptScheduleInstanceService.ScheduleInstanceSummary summary) {
     return ScriptScheduleInstanceEntry.newBuilder()
         .setTenantId(summary.tenantId())
@@ -988,6 +1004,9 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setRuntimeRegionEpoch(summary.runtimeRegionEpoch())
         .setLastObservedTickId(summary.lastObservedTickId())
         .setLastRuntimeProgressObservedAtMs(summary.lastRuntimeProgressObservedAtMs())
+        .setIsPinStale(isSchedulePinStale(summary.pinObservedAtMs()))
+        .setIsRuntimeProgressStale(
+            isScheduleRuntimeProgressStale(summary.lastRuntimeProgressObservedAtMs()))
         .build();
   }
 

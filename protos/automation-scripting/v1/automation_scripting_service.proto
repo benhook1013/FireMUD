@@ -565,6 +565,8 @@ message ScriptScheduleInstanceEntry {
   string world_slug = 30;
   string realm_slug = 31;
   string pointer_version = 32;
+  bool is_pin_stale = 33;
+  bool is_runtime_progress_stale = 34;
 }
 
 message ListScriptScheduleInstancesResponse {

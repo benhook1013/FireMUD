@@ -79,7 +79,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         pluginRuntimeStateService,
         automationAdmissionStateService,
         scriptPatchPinProjectionService,
-        new ScriptRuntimeProperties());
+        new ScriptRuntimeProperties(),
+        Mockito.mock(ScriptScheduleInstanceService.class));
   }
 
   private static AutomationScriptingControlPlaneGrpcService newService(
@@ -88,13 +89,29 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptRuntimeProperties runtimeProperties) {
+    return newService(
+        workItemService,
+        pluginRuntimeStateService,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        runtimeProperties,
+        Mockito.mock(ScriptScheduleInstanceService.class));
+  }
+
+  private static AutomationScriptingControlPlaneGrpcService newService(
+      ScriptWorkItemService workItemService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptRuntimeProperties runtimeProperties,
+      ScriptScheduleInstanceService scriptScheduleInstanceService) {
     return new AutomationScriptingControlPlaneGrpcService(
         new BuiltInScriptEventRegistryService(),
         workItemService,
         pluginRuntimeStateService,
         automationAdmissionStateService,
         scriptPatchPinProjectionService,
-        Mockito.mock(ScriptScheduleInstanceService.class),
+        scriptScheduleInstanceService,
         runtimeProperties);
   }
 
@@ -366,6 +383,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptScheduleInstanceService scheduleInstanceService =
         Mockito.mock(ScriptScheduleInstanceService.class);
+    long pinObservedAtMs = System.currentTimeMillis();
+    long runtimeProgressObservedAtMs = System.currentTimeMillis();
     Mockito.when(scheduleInstanceService.listInstances("1", "game-1", "patch-1", 25))
         .thenReturn(
             List.of(
@@ -395,20 +414,20 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     0L,
                     "runtime-v2",
                     "req-9",
-                    1234L,
+                    pinObservedAtMs,
                     1235L,
                     1236L,
                     "region-1",
                     12L,
                     100L,
-                    7777L)));
+                    runtimeProgressObservedAtMs)));
     AutomationScriptingControlPlaneGrpcService service =
-        new AutomationScriptingControlPlaneGrpcService(
-            new BuiltInScriptEventRegistryService(),
+        newService(
             Mockito.mock(ScriptWorkItemService.class),
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
             scheduleInstanceService);
     AtomicReference<ListScriptScheduleInstancesResponse> ref = new AtomicReference<>();
 
@@ -432,6 +451,79 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getSchedules(0).getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getSchedules(0).getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getSchedules(0).getPointerVersion()).isEqualTo("17");
+    assertThat(ref.get().getSchedules(0).getIsPinStale()).isFalse();
+    assertThat(ref.get().getSchedules(0).getIsRuntimeProgressStale()).isFalse();
+  }
+
+  @Test
+  void marksScriptScheduleInstanceFreshnessFlagsWhenObservationsAgeOut() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    long stalePinObservedAtMs = System.currentTimeMillis() - 10_000L;
+    long staleRuntimeProgressObservedAtMs = System.currentTimeMillis() - 10_000L;
+    Mockito.when(scheduleInstanceService.listInstances("1", "game-1", "patch-1", 25))
+        .thenReturn(
+            List.of(
+                new ScriptScheduleInstanceService.ScheduleInstanceSummary(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    "npc-guard",
+                    "SHARED",
+                    "demo",
+                    "production",
+                    "17",
+                    "",
+                    "",
+                    "onTimerExpire",
+                    "guard.alert.expire.v1",
+                    "TIMER",
+                    5000L,
+                    "MILLISECONDS",
+                    "normal",
+                    "ENTITY",
+                    "guard-1",
+                    10,
+                    false,
+                    "READY",
+                    5555L,
+                    0L,
+                    "runtime-v2",
+                    "req-9",
+                    stalePinObservedAtMs,
+                    1235L,
+                    1236L,
+                    "region-1",
+                    12L,
+                    100L,
+                    staleRuntimeProgressObservedAtMs)));
+    ScriptRuntimeProperties runtimeProperties = new ScriptRuntimeProperties();
+    runtimeProperties.setPinProjectionStaleThresholdMs(1L);
+    runtimeProperties.setScheduleRuntimeProgressStaleThresholdMs(1L);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            runtimeProperties,
+            scheduleInstanceService);
+    AtomicReference<ListScriptScheduleInstancesResponse> ref = new AtomicReference<>();
+
+    service.listScriptScheduleInstances(
+        ListScriptScheduleInstancesRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setLimit(25)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getSchedulesList()).hasSize(1);
+    assertThat(ref.get().getSchedules(0).getIsPinStale()).isTrue();
+    assertThat(ref.get().getSchedules(0).getIsRuntimeProgressStale()).isTrue();
   }
 
   @Test

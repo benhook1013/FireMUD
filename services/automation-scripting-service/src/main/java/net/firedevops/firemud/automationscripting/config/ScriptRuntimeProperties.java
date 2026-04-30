@@ -14,6 +14,9 @@ public class ScriptRuntimeProperties {
   private long drainStatusStaleThresholdMs = 5000;
 
   @Min(1)
+  private long scheduleRuntimeProgressStaleThresholdMs = 5000;
+
+  @Min(1)
   private long pluginPolicyReconcileIntervalSeconds = 60;
 
   @Min(1)
@@ -36,6 +39,15 @@ public class ScriptRuntimeProperties {
 
   public void setDrainStatusStaleThresholdMs(long drainStatusStaleThresholdMs) {
     this.drainStatusStaleThresholdMs = drainStatusStaleThresholdMs;
+  }
+
+  public long getScheduleRuntimeProgressStaleThresholdMs() {
+    return scheduleRuntimeProgressStaleThresholdMs;
+  }
+
+  public void setScheduleRuntimeProgressStaleThresholdMs(
+      long scheduleRuntimeProgressStaleThresholdMs) {
+    this.scheduleRuntimeProgressStaleThresholdMs = scheduleRuntimeProgressStaleThresholdMs;
   }
 
   public long getPluginPolicyReconcileIntervalSeconds() {
