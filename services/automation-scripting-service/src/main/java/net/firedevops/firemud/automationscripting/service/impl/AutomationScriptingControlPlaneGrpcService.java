@@ -282,7 +282,8 @@ public final class AutomationScriptingControlPlaneGrpcService
           .setActiveExecutionCount(summary.activeExecutionCount())
           .setOldestActiveExecutionStartedAtMs(summary.oldestActiveExecutionStartedAtMs())
           .setPendingCancelableWorkItemCount(summary.pendingCancelableWorkItemCount())
-          .setObservedAtMs(summary.observedAtMs());
+          .setObservedAtMs(summary.observedAtMs())
+          .setIsStale(isDrainStatusStale(summary.observedAtMs()));
     } catch (IllegalArgumentException ex) {
       response.setError(
           ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
@@ -831,6 +832,11 @@ public final class AutomationScriptingControlPlaneGrpcService
   private boolean isPolicyCheckStale(long lastPolicyCheckedAtMs) {
     long ageMs = Instant.now().toEpochMilli() - lastPolicyCheckedAtMs;
     return ageMs > runtimeProperties.getPluginPolicyStaleThresholdSeconds() * 1_000L;
+  }
+
+  private boolean isDrainStatusStale(long observedAtMs) {
+    long ageMs = Instant.now().toEpochMilli() - observedAtMs;
+    return ageMs > runtimeProperties.getDrainStatusStaleThresholdMs();
   }
 
   private static ErrorDetail authorizationError(AdminAuthorizationException ex) {

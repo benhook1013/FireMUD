@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
@@ -73,13 +74,28 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
       PluginRuntimeStateService pluginRuntimeStateService,
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService) {
+    return newService(
+        workItemService,
+        pluginRuntimeStateService,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        new ScriptRuntimeProperties());
+  }
+
+  private static AutomationScriptingControlPlaneGrpcService newService(
+      ScriptWorkItemService workItemService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptRuntimeProperties runtimeProperties) {
     return new AutomationScriptingControlPlaneGrpcService(
         new BuiltInScriptEventRegistryService(),
         workItemService,
         pluginRuntimeStateService,
         automationAdmissionStateService,
         scriptPatchPinProjectionService,
-        Mockito.mock(ScriptScheduleInstanceService.class));
+        Mockito.mock(ScriptScheduleInstanceService.class),
+        runtimeProperties);
   }
 
   @AfterEach
@@ -278,10 +294,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   void getsAutomationDrainStatusFromWorkItemReadModel() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    long observedAtMs = System.currentTimeMillis();
     Mockito.when(workItemService.getAutomationDrainStatus("1", "game-1", "region-1"))
         .thenReturn(
             new ScriptWorkItemService.AutomationDrainStatusSummary(
-                "1", "game-1", "region-1", "NORMAL", 1L, 2L, 123L, 4L, 200L));
+                "1", "game-1", "region-1", "NORMAL", 1L, 2L, 123L, 4L, observedAtMs));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -307,7 +324,41 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getActiveExecutionCount()).isEqualTo(2L);
     assertThat(ref.get().getOldestActiveExecutionStartedAtMs()).isEqualTo(123L);
     assertThat(ref.get().getPendingCancelableWorkItemCount()).isEqualTo(4L);
-    assertThat(ref.get().getObservedAtMs()).isEqualTo(200L);
+    assertThat(ref.get().getObservedAtMs()).isEqualTo(observedAtMs);
+    assertThat(ref.get().getIsStale()).isFalse();
+  }
+
+  @Test
+  void marksAutomationDrainStatusStaleWhenObservedTimestampAgesPastThreshold() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    long observedAtMs = System.currentTimeMillis() - 10_000L;
+    Mockito.when(workItemService.getAutomationDrainStatus("1", "game-1", "region-1"))
+        .thenReturn(
+            new ScriptWorkItemService.AutomationDrainStatusSummary(
+                "1", "game-1", "region-1", "NORMAL", 1L, 2L, 123L, 4L, observedAtMs));
+    ScriptRuntimeProperties runtimeProperties = new ScriptRuntimeProperties();
+    runtimeProperties.setDrainStatusStaleThresholdMs(1L);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            runtimeProperties);
+    AtomicReference<GetAutomationDrainStatusResponse> ref = new AtomicReference<>();
+
+    service.getAutomationDrainStatus(
+        GetAutomationDrainStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getObservedAtMs()).isEqualTo(observedAtMs);
+    assertThat(ref.get().getIsStale()).isTrue();
   }
 
   @Test

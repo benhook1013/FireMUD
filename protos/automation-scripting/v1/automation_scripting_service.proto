@@ -475,7 +475,8 @@ message GetAutomationDrainStatusResponse {
   int64 oldest_active_execution_started_at_ms = 7;
   int64 pending_cancelable_work_item_count = 8;
   int64 observed_at_ms = 9;
-  shared.v1.ErrorDetail error = 10;
+  bool is_stale = 10;
+  shared.v1.ErrorDetail error = 11;
 }
 
 message GetAutomationPinConvergenceRequest {

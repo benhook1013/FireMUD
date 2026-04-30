@@ -11,6 +11,9 @@ public class ScriptRuntimeProperties {
   private long pinProjectionStaleThresholdMs = 5000;
 
   @Min(1)
+  private long drainStatusStaleThresholdMs = 5000;
+
+  @Min(1)
   private long pluginPolicyReconcileIntervalSeconds = 60;
 
   @Min(1)
@@ -25,6 +28,14 @@ public class ScriptRuntimeProperties {
 
   public void setPinProjectionStaleThresholdMs(long pinProjectionStaleThresholdMs) {
     this.pinProjectionStaleThresholdMs = pinProjectionStaleThresholdMs;
+  }
+
+  public long getDrainStatusStaleThresholdMs() {
+    return drainStatusStaleThresholdMs;
+  }
+
+  public void setDrainStatusStaleThresholdMs(long drainStatusStaleThresholdMs) {
+    this.drainStatusStaleThresholdMs = drainStatusStaleThresholdMs;
   }
 
   public long getPluginPolicyReconcileIntervalSeconds() {
