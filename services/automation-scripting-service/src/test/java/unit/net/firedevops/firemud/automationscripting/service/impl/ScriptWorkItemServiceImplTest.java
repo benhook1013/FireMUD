@@ -681,6 +681,8 @@ class ScriptWorkItemServiceImplTest {
     deadLetter.setCancelReason("STALE_TIMELINE");
     deadLetter.setSourceKind("GAMEPLAY_EVENT");
     deadLetter.setSourceState("WORK_ITEM_PERSISTED");
+    deadLetter.setPluginId("plugin-1");
+    deadLetter.setPluginVersionId("plugin-v1");
     deadLetter.setCreatedAt(Instant.ofEpochMilli(100));
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -707,6 +709,8 @@ class ScriptWorkItemServiceImplTest {
     assertThat(deadLetters.get(0).workItemId()).isEqualTo("99");
     assertThat(deadLetters.get(0).sourceKind()).isEqualTo("GAMEPLAY_EVENT");
     assertThat(deadLetters.get(0).sourceState()).isEqualTo("WORK_ITEM_PERSISTED");
+    assertThat(deadLetters.get(0).pluginId()).isEqualTo("plugin-1");
+    assertThat(deadLetters.get(0).pluginVersionId()).isEqualTo("plugin-v1");
     assertThat(deadLetters.get(0).reason()).isEqualTo("STALE_TIMELINE");
     assertThat(deadLetters.get(0).updatedAtMs()).isEqualTo(300L);
   }

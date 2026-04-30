@@ -857,6 +857,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     0L,
                     0L,
                     "script-1",
+                    "plugin-1",
+                    "plugin-v1",
                     "onCommand",
                     "patch-1",
                     "event-1",
@@ -889,6 +891,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getDeadLetters(0).getPointerVersion()).isEqualTo("17");
     assertThat(ref.get().getDeadLetters(0).getSourceKind()).isEqualTo("GAMEPLAY_EVENT");
     assertThat(ref.get().getDeadLetters(0).getSourceState()).isEqualTo("WORK_ITEM_PERSISTED");
+    assertThat(ref.get().getDeadLetters(0).getPluginId()).isEqualTo("plugin-1");
+    assertThat(ref.get().getDeadLetters(0).getPluginVersionId()).isEqualTo("plugin-v1");
     assertThat(ref.get().getDeadLetters(0).getReason()).isEqualTo("STALE_TIMELINE");
   }
 

@@ -276,6 +276,8 @@ message ScriptDeadLetterEntry {
   int64 source_ordinal = 21;
   int64 source_due_tick_id = 22;
   int64 source_due_at_ms = 23;
+  string plugin_id = 24;
+  string plugin_version_id = 25;
 }
 
 message ListScriptDeadLettersResponse {

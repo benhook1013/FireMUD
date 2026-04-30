@@ -170,6 +170,8 @@ public interface ScriptWorkItemService {
       long sourceDueTickId,
       long sourceDueAtMs,
       String scriptId,
+      String pluginId,
+      String pluginVersionId,
       String eventType,
       String scriptPatchVersion,
       String scriptEventId,

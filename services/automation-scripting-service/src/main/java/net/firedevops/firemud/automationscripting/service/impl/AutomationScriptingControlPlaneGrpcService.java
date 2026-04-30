@@ -936,6 +936,8 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setSourceDueTickId(summary.sourceDueTickId())
         .setSourceDueAtMs(summary.sourceDueAtMs())
         .setScriptId(summary.scriptId())
+        .setPluginId(summary.pluginId())
+        .setPluginVersionId(summary.pluginVersionId())
         .setEventType(summary.eventType())
         .setScriptPatchVersion(summary.scriptPatchVersion())
         .setScriptEventId(summary.scriptEventId())

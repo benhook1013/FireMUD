@@ -513,6 +513,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         zeroIfNull(item.getSourceDueTickId()),
         zeroIfNull(item.getSourceDueAtMs()),
         item.getScriptId(),
+        blankToEmpty(item.getPluginId()),
+        blankToEmpty(item.getPluginVersionId()),
         item.getEventType(),
         item.getScriptPatchVersion(),
         item.getScriptEventId(),
