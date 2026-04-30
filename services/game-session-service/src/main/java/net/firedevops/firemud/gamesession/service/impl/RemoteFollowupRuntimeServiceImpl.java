@@ -150,35 +150,37 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         remoteFollowupResultRepository
             .findByTenantIdAndResultId(request.tenantId(), request.resultId())
             .orElseGet(RemoteFollowupResult::new);
-    populateResult(result, request, Instant.now(clock));
+    Instant now = Instant.now(clock);
+    populateResult(result, request, now);
     remoteFollowupResultRepository.save(result);
 
     boolean lateResult = COORDINATOR_REMOTE_TIMEOUT_ABANDONED.equals(coordinator.getState());
-    boolean reconciledLateResult = false;
-    if (COORDINATOR_PENDING_REMOTE.equals(coordinator.getState())) {
-      applyTerminalResult(coordinator, followup, request.outcome(), Instant.now(clock));
-    } else if (lateResult) {
-      reconciledLateResult =
-          LATE_RESULT_REQUIRES_RECONCILIATION.equals(coordinator.getLateResultPolicy());
-      coordinator.setState(
-          reconciledLateResult
-              ? COORDINATOR_LATE_RESULT_RECONCILED
-              : COORDINATOR_LATE_RESULT_IGNORED);
-      coordinator.setUpdatedAt(Instant.now(clock));
-      if (reconciledLateResult) {
-        lateResultReconciledCounter.increment();
-      } else {
-        lateResultIgnoredCounter.increment();
-      }
-      if (reconciledLateResult) {
-        applyFollowupResultState(followup, request.outcome(), Instant.now(clock));
-      }
-    }
-
-    remoteCommandCoordinatorRepository.save(coordinator);
+    applyFollowupResultState(followup, request.outcome(), now);
     remoteFollowupRepository.save(followup);
-    return new ResultOutcome(
-        coordinator.getState(), followup.getStatus(), lateResult, reconciledLateResult);
+    return new ResultOutcome(coordinator.getState(), followup.getStatus(), lateResult, false);
+  }
+
+  @Override
+  @Transactional
+  public int reconcileResults(long tenantId, String originRegionId) {
+    if (originRegionId == null || originRegionId.isBlank()) {
+      throw new IllegalArgumentException("origin_region_id is required");
+    }
+    Instant now = Instant.now(clock);
+    int reconciled = 0;
+    reconciled +=
+        reconcilePendingResults(
+            remoteCommandCoordinatorRepository
+                .findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+                    tenantId, originRegionId, COORDINATOR_PENDING_REMOTE),
+            now);
+    reconciled +=
+        reconcileLateResults(
+            remoteCommandCoordinatorRepository
+                .findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+                    tenantId, originRegionId, COORDINATOR_REMOTE_TIMEOUT_ABANDONED),
+            now);
+    return reconciled;
   }
 
   @Override
@@ -204,21 +206,55 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       coordinator.setUpdatedAt(now);
       remoteCommandCoordinatorRepository.save(coordinator);
       remoteFollowupTimeoutCounter.increment();
-
-      remoteFollowupRepository
-          .findByTenantIdAndFollowupId(tenantId, coordinator.getFollowupId())
-          .ifPresent(
-              followup -> {
-                followup.setStatus(FOLLOWUP_ABANDONED);
-                followup.setFailureCode("REMOTE_TIMEOUT");
-                followup.setFailureMessage(
-                    "Origin region deadline reached before remote terminal result");
-                followup.setUpdatedAt(now);
-                remoteFollowupRepository.save(followup);
-              });
       updated++;
     }
     return updated;
+  }
+
+  private int reconcilePendingResults(List<RemoteCommandCoordinator> coordinators, Instant now) {
+    int reconciled = 0;
+    for (RemoteCommandCoordinator coordinator : coordinators) {
+      RemoteFollowupResult result =
+          latestResult(coordinator.getTenantId(), coordinator.getCoordinatorId()).orElse(null);
+      if (result == null) {
+        continue;
+      }
+      applyTerminalResult(coordinator, result.getOutcome(), now);
+      remoteCommandCoordinatorRepository.save(coordinator);
+      reconciled++;
+    }
+    return reconciled;
+  }
+
+  private int reconcileLateResults(List<RemoteCommandCoordinator> coordinators, Instant now) {
+    int reconciled = 0;
+    for (RemoteCommandCoordinator coordinator : coordinators) {
+      RemoteFollowupResult result =
+          latestResult(coordinator.getTenantId(), coordinator.getCoordinatorId()).orElse(null);
+      if (result == null) {
+        continue;
+      }
+      boolean requiresReconciliation =
+          LATE_RESULT_REQUIRES_RECONCILIATION.equals(coordinator.getLateResultPolicy());
+      coordinator.setState(
+          requiresReconciliation
+              ? COORDINATOR_LATE_RESULT_RECONCILED
+              : COORDINATOR_LATE_RESULT_IGNORED);
+      coordinator.setUpdatedAt(now);
+      remoteCommandCoordinatorRepository.save(coordinator);
+      if (requiresReconciliation) {
+        lateResultReconciledCounter.increment();
+      } else {
+        lateResultIgnoredCounter.increment();
+      }
+      reconciled++;
+    }
+    return reconciled;
+  }
+
+  private Optional<RemoteFollowupResult> latestResult(long tenantId, String coordinatorId) {
+    return remoteFollowupResultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(
+        tenantId, coordinatorId);
   }
 
   private static boolean deadlineReached(
@@ -331,7 +367,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   }
 
   private static void applyTerminalResult(
-      RemoteCommandCoordinator coordinator, RemoteFollowup followup, String outcome, Instant now) {
+      RemoteCommandCoordinator coordinator, String outcome, Instant now) {
     if (RESULT_APPLIED.equalsIgnoreCase(outcome)) {
       coordinator.setState(COORDINATOR_REMOTE_APPLIED);
       coordinator.setExecutionOutcome(FOLLOWUP_APPLIED);
@@ -342,7 +378,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       coordinator.setGameplayResult("NOT_APPLIED");
     }
     coordinator.setUpdatedAt(now);
-    applyFollowupResultState(followup, outcome, now);
   }
 
   private static void applyFollowupResultState(

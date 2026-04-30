@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -14,9 +15,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
+import net.firedevops.firemud.gamesession.entity.RemoteFollowupResult;
 import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
@@ -81,7 +82,7 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
-  void recordResultAppliesPendingCoordinator() {
+  void recordResultPersistsTerminalTargetOutcomeWithoutMutatingPendingCoordinator() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
     RemoteFollowup followup = followup();
@@ -95,14 +96,15 @@ class RemoteFollowupRuntimeServiceImplTest {
         service.recordResult(resultRequest("APPLIED"));
 
     assertEquals(
-        RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_APPLIED, outcome.coordinatorState());
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, outcome.coordinatorState());
     assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED, outcome.followupStatus());
     assertFalse(outcome.lateResult());
     assertFalse(outcome.reconciledLateResult());
+    verify(coordinatorRepository, never()).save(any());
   }
 
   @Test
-  void recordLateResultIgnoredAfterTimeoutByDefault() {
+  void recordLateResultLeavesTimedOutCoordinatorForLaterOriginReconciliation() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
     coordinator.setLateResultPolicy("late_result_safe_to_ignore");
@@ -118,32 +120,71 @@ class RemoteFollowupRuntimeServiceImplTest {
         service.recordResult(resultRequest("APPLIED"));
 
     assertEquals(
-        RemoteFollowupRuntimeServiceImpl.COORDINATOR_LATE_RESULT_IGNORED,
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED,
         outcome.coordinatorState());
-    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, outcome.followupStatus());
+    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED, outcome.followupStatus());
     assertTrue(outcome.lateResult());
     assertFalse(outcome.reconciledLateResult());
+    verify(coordinatorRepository, never()).save(any());
   }
 
   @Test
-  void reconcileTimeoutsMarksOverduePendingCoordinatorAndFollowup() {
+  void reconcileResultsAppliesPendingCoordinatorFromDurableInbox() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    RemoteFollowupResult result = new RemoteFollowupResult();
+    result.setOutcome("APPLIED");
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
+        .thenReturn(List.of(coordinator));
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
+        .thenReturn(List.of());
+    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+        .thenReturn(Optional.of(result));
+
+    int reconciled = service.reconcileResults(1L, "region-a");
+
+    assertEquals(1, reconciled);
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_APPLIED, coordinator.getState());
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED, coordinator.getExecutionOutcome());
+    assertEquals("APPLIED", coordinator.getGameplayResult());
+  }
+
+  @Test
+  void reconcileResultsMarksLateResultIgnoredAfterTimeoutByDefault() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
+    coordinator.setLateResultPolicy("late_result_safe_to_ignore");
+    RemoteFollowupResult result = new RemoteFollowupResult();
+    result.setOutcome("APPLIED");
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
+        .thenReturn(List.of());
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
+        .thenReturn(List.of(coordinator));
+    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+        .thenReturn(Optional.of(result));
+
+    int reconciled = service.reconcileResults(1L, "region-a");
+
+    assertEquals(1, reconciled);
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_LATE_RESULT_IGNORED, coordinator.getState());
+  }
+
+  @Test
+  void reconcileTimeoutsMarksOverduePendingCoordinatorWithoutMutatingTargetFollowup() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setOriginDeadlineRegionEpoch(4L);
     coordinator.setOriginDeadlineTickId(12L);
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
-    AtomicReference<RemoteFollowup> savedFollowup = new AtomicReference<>();
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
         .thenReturn(List.of(coordinator));
-    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
-        .thenReturn(Optional.of(followup()));
-    when(followupRepository.save(any()))
-        .thenAnswer(
-            invocation -> {
-              RemoteFollowup saved = invocation.getArgument(0);
-              savedFollowup.set(saved);
-              return saved;
-            });
 
     int updated = service.reconcileTimeouts(1L, "region-a", 4L, 12L);
 
@@ -151,9 +192,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED,
         coordinator.getState());
-    assertEquals(
-        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, savedFollowup.get().getStatus());
-    assertEquals("REMOTE_TIMEOUT", savedFollowup.get().getFailureCode());
+    verify(followupRepository, never()).findByTenantIdAndFollowupId(any(), any());
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest() {

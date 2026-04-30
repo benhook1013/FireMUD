@@ -489,6 +489,17 @@ public class TickServiceImpl implements TickService {
     if (status == null) {
       return;
     }
+    int resultReconciled =
+        remoteFollowupRuntimeService.reconcileResults(status.getTenantId(), status.getRegionId());
+    if (resultReconciled > 0) {
+      logger.info(
+          "Reconciled remote followup results tenantId={} regionId={} regionEpoch={} tickId={} count={}",
+          status.getTenantId(),
+          status.getRegionId(),
+          status.getRegionEpoch(),
+          status.getLastCommittedTickId(),
+          resultReconciled);
+    }
     int reconciled =
         remoteFollowupRuntimeService.reconcileTimeouts(
             status.getTenantId(),

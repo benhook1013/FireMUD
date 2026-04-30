@@ -655,6 +655,7 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals("2", request.getRegionId());
     org.junit.jupiter.api.Assertions.assertEquals(4L, request.getRegionEpoch());
     org.junit.jupiter.api.Assertions.assertEquals(8L, request.getTickId());
+    verify(remoteFollowupRuntimeService).reconcileResults(1L, "2");
     verify(remoteFollowupRuntimeService).reconcileTimeouts(1L, "2", 4L, 8L);
   }
 
@@ -662,6 +663,7 @@ class TickServiceImplTest {
   void processTickReconcilesRemoteFollowupTimeoutsAfterTickAdvance() {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
+    when(remoteFollowupRuntimeService.reconcileResults(1L, "2")).thenReturn(1);
     when(remoteFollowupRuntimeService.reconcileTimeouts(1L, "2", 4L, 8L)).thenReturn(2);
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
         runtimeOwnership(1L, 2L, 4L, "fence-a", false);
@@ -671,6 +673,7 @@ class TickServiceImplTest {
 
     service.processTick(1L, 2L);
 
+    verify(remoteFollowupRuntimeService).reconcileResults(1L, "2");
     verify(remoteFollowupRuntimeService).reconcileTimeouts(1L, "2", 4L, 8L);
   }
 

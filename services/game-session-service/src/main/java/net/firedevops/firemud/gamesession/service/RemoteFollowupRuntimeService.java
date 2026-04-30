@@ -5,6 +5,8 @@ public interface RemoteFollowupRuntimeService {
 
   ResultOutcome recordResult(ResultRequest request);
 
+  int reconcileResults(long tenantId, String originRegionId);
+
   int reconcileTimeouts(
       long tenantId, String originRegionId, long currentOriginRegionEpoch, long currentTickId);
 
