@@ -5,6 +5,7 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
@@ -107,6 +108,8 @@ public final class GameSessionControlPlaneGrpcService
     extends GameSessionControlPlaneServiceGrpc.GameSessionControlPlaneServiceImplBase {
   private static final Logger logger =
       LoggerFactory.getLogger(GameSessionControlPlaneGrpcService.class);
+  private static final List<String> ACTIVE_GAMEPLAY_COMMAND_OUTCOMES =
+      List.of("ACCEPTED", "STAGED", "RETRY_QUEUED", "DRAINED");
 
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
@@ -1854,6 +1857,25 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private RuntimeOwnershipStatus toStatus(RuntimeRegionStatus status) {
+    long pendingGameplayCommandCount =
+        gameplayCommandRepository
+            .countByTenantIdAndGameInstanceIdAndCompletedAtIsNullAndExecutionOutcomeIn(
+                status.getTenantId(), status.getGameInstanceId(), ACTIVE_GAMEPLAY_COMMAND_OUTCOMES);
+    long dueRemoteFollowupCount =
+        remoteFollowupRepository.countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+            status.getTenantId(),
+            status.getRegionId(),
+            RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
+            status.getLastCommittedTickId() + 1L);
+    long oldestDueRemoteFollowupTickId =
+        remoteFollowupRepository
+            .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+                status.getTenantId(),
+                status.getRegionId(),
+                RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
+                status.getLastCommittedTickId() + 1L)
+            .map(RemoteFollowup::getDueTickId)
+            .orElse(0L);
     return RuntimeOwnershipStatus.newBuilder()
         .setTenantId(Long.toString(status.getTenantId()))
         .setGameInstanceId(Long.toString(status.getGameInstanceId()))
@@ -1869,6 +1891,9 @@ public final class GameSessionControlPlaneGrpcService
                 : status.getLastCommittedTickBatchId())
         .setLastCommittedTickId(status.getLastCommittedTickId())
         .setUpdatedAtMs(status.getUpdatedAt() == null ? 0L : status.getUpdatedAt().toEpochMilli())
+        .setPendingGameplayCommandCount(pendingGameplayCommandCount)
+        .setDueRemoteFollowupCount(dueRemoteFollowupCount)
+        .setOldestDueRemoteFollowupTickId(oldestDueRemoteFollowupTickId)
         .build();
   }
 

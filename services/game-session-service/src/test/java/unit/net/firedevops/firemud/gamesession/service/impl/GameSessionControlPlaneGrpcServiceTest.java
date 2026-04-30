@@ -1583,19 +1583,44 @@ class GameSessionControlPlaneGrpcServiceTest {
     status.setLastCommittedTickId(14L);
     status.setUpdatedAt(Instant.parse("2026-04-20T00:00:00Z"));
     RuntimeRegionStatusRepository repository = Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameplayCommandRepository gameplayCommandRepository =
+        Mockito.mock(GameplayCommandRepository.class);
+    RemoteFollowupRepository remoteFollowupRepository =
+        Mockito.mock(RemoteFollowupRepository.class);
     Mockito.when(repository.findByTenantIdAndGameInstanceId(1L, 7L))
         .thenReturn(Optional.of(status));
+    Mockito.when(
+            gameplayCommandRepository
+                .countByTenantIdAndGameInstanceIdAndCompletedAtIsNullAndExecutionOutcomeIn(
+                    Mockito.eq(1L), Mockito.eq(7L), Mockito.anyCollection()))
+        .thenReturn(3L);
+    Mockito.when(
+            remoteFollowupRepository
+                .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                    1L, "region-7", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 15L))
+        .thenReturn(2L);
+    RemoteFollowup oldestFollowup = new RemoteFollowup();
+    oldestFollowup.setDueTickId(13L);
+    Mockito.when(
+            remoteFollowupRepository
+                .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+                    1L, "region-7", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 15L))
+        .thenReturn(Optional.of(oldestFollowup));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
-            Mockito.mock(GameplayCommandRepository.class),
+            gameplayCommandRepository,
             repository,
+            remoteFollowupRepository,
+            Mockito.mock(RemoteCommandCoordinatorRepository.class),
+            Mockito.mock(RemoteFollowupResultRepository.class),
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             Mockito.mock(TickService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            new GameSessionProperties());
 
     AtomicReference<GetRuntimeOwnershipStatusResponse> responseRef = new AtomicReference<>();
     service.getRuntimeOwnershipStatus(
@@ -1615,6 +1640,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("fence-3", responseRef.get().getOwnership().getExecutorFence());
     assertEquals("tb-9", responseRef.get().getOwnership().getLastCommittedTickBatchId());
     assertEquals(14L, responseRef.get().getOwnership().getLastCommittedTickId());
+    assertEquals(3L, responseRef.get().getOwnership().getPendingGameplayCommandCount());
+    assertEquals(2L, responseRef.get().getOwnership().getDueRemoteFollowupCount());
+    assertEquals(13L, responseRef.get().getOwnership().getOldestDueRemoteFollowupTickId());
   }
 
   @Test
@@ -1632,19 +1660,42 @@ class GameSessionControlPlaneGrpcServiceTest {
     status.setLastCommittedTickId(14L);
     status.setUpdatedAt(Instant.parse("2026-04-20T00:00:00Z"));
     RuntimeRegionStatusRepository repository = Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameplayCommandRepository gameplayCommandRepository =
+        Mockito.mock(GameplayCommandRepository.class);
+    RemoteFollowupRepository remoteFollowupRepository =
+        Mockito.mock(RemoteFollowupRepository.class);
     Mockito.when(repository.findByTenantIdAndRegionId(1L, "region-7"))
         .thenReturn(Optional.of(status));
+    Mockito.when(
+            gameplayCommandRepository
+                .countByTenantIdAndGameInstanceIdAndCompletedAtIsNullAndExecutionOutcomeIn(
+                    Mockito.eq(1L), Mockito.eq(7L), Mockito.anyCollection()))
+        .thenReturn(0L);
+    Mockito.when(
+            remoteFollowupRepository
+                .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                    1L, "region-7", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 15L))
+        .thenReturn(0L);
+    Mockito.when(
+            remoteFollowupRepository
+                .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+                    1L, "region-7", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 15L))
+        .thenReturn(Optional.empty());
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
-            Mockito.mock(GameplayCommandRepository.class),
+            gameplayCommandRepository,
             repository,
+            remoteFollowupRepository,
+            Mockito.mock(RemoteCommandCoordinatorRepository.class),
+            Mockito.mock(RemoteFollowupResultRepository.class),
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             Mockito.mock(TickService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            new GameSessionProperties());
 
     AtomicReference<GetRuntimeOwnershipStatusResponse> responseRef = new AtomicReference<>();
     service.getRuntimeOwnershipStatus(
@@ -1660,6 +1711,9 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals("region-7", responseRef.get().getOwnership().getRegionId());
+    assertEquals(0L, responseRef.get().getOwnership().getPendingGameplayCommandCount());
+    assertEquals(0L, responseRef.get().getOwnership().getDueRemoteFollowupCount());
+    assertEquals(0L, responseRef.get().getOwnership().getOldestDueRemoteFollowupTickId());
     Mockito.verify(repository).findByTenantIdAndRegionId(1L, "region-7");
     Mockito.verify(repository, Mockito.never())
         .findByTenantIdAndGameInstanceId(Mockito.anyLong(), Mockito.anyLong());

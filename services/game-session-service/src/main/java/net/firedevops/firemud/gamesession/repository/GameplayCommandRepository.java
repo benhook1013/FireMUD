@@ -24,6 +24,9 @@ public interface GameplayCommandRepository extends JpaRepository<GameplayCommand
 
   List<GameplayCommand> findByCommandIdIn(Collection<String> commandIds);
 
+  long countByTenantIdAndGameInstanceIdAndCompletedAtIsNullAndExecutionOutcomeIn(
+      Long tenantId, Long gameInstanceId, Collection<String> executionOutcomes);
+
   List<GameplayCommand> findByExecutionOutcomeAndStagedAtIsNullAndAcceptedAtBefore(
       String executionOutcome, Instant acceptedBefore);
 
