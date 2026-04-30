@@ -87,6 +87,9 @@ public class ScriptPatchReadinessProjectionServiceImpl
     } else if (onLoadWorkItems.stream().anyMatch(this::isActiveOnLoadStatus)) {
       projection.setReadinessStatus("ONLOAD_RUNNING");
       projection.setStatusReason("tenant_readiness_running");
+    } else if (onLoadWorkItems.stream().anyMatch(item -> "CANCELED".equals(item.getStatus()))) {
+      projection.setReadinessStatus("ROLLED_BACK");
+      projection.setStatusReason("tenant_readiness_canceled");
     } else {
       projection.setReadinessStatus("READY");
       projection.setStatusReason("ready_for_tenant");
@@ -164,7 +167,7 @@ public class ScriptPatchReadinessProjectionServiceImpl
 
   private boolean isTerminal(String readinessStatus) {
     return switch (readinessStatus) {
-      case "READY", "FAILED", "SUPERSEDED" -> true;
+      case "READY", "FAILED", "ROLLED_BACK", "SUPERSEDED" -> true;
       default -> false;
     };
   }

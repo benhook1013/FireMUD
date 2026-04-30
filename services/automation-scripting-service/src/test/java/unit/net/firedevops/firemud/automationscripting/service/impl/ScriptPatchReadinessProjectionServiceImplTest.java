@@ -84,4 +84,35 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     assertThat(service.getProjection("1", "patch-old").get().status())
         .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_SUPERSEDED);
   }
+
+  @Test
+  void marksPatchRolledBackWhenOnLoadWorkWasCanceled() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+    projection.setTenantId("1");
+    projection.setScriptPatchVersion("patch-1");
+    projection.setReadinessStatus("ONLOAD_RUNNING");
+    ScriptWorkItem canceledOnLoad = new ScriptWorkItem();
+    canceledOnLoad.setTenantId("1");
+    canceledOnLoad.setScriptPatchVersion("patch-1");
+    canceledOnLoad.setEventType("onLoad");
+    canceledOnLoad.setStatus("CANCELED");
+    when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(Optional.of(projection));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(List.of(canceledOnLoad));
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+    service.refreshFromOnLoadWorkItems("1", "patch-1");
+
+    assertThat(projection.getReadinessStatus()).isEqualTo("ROLLED_BACK");
+    assertThat(projection.getStatusReason()).isEqualTo("tenant_readiness_canceled");
+    assertThat(service.getProjection("1", "patch-1")).isPresent();
+    assertThat(service.getProjection("1", "patch-1").get().status())
+        .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_ROLLED_BACK);
+  }
 }

@@ -6,6 +6,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
@@ -163,6 +164,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     Instant now = Instant.now();
     candidates.forEach(item -> cancel(item, reason, now));
     workItemRepository.saveAll(candidates);
+    refreshReadinessProjectionsIfNeeded(candidates);
     candidates.forEach(rolloutProjectionService::refreshForWorkItem);
     return candidates.size();
   }
@@ -718,6 +720,22 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     }
     readinessProjectionService.refreshFromOnLoadWorkItems(
         item.getTenantId(), item.getScriptPatchVersion());
+  }
+
+  private void refreshReadinessProjectionsIfNeeded(List<ScriptWorkItem> items) {
+    if (readinessProjectionService == null) {
+      return;
+    }
+    items.stream()
+        .filter(item -> "onLoad".equals(item.getEventType()))
+        .map(item -> item.getTenantId() + "\u0000" + item.getScriptPatchVersion())
+        .collect(Collectors.toSet())
+        .forEach(
+            key -> {
+              int delimiter = key.indexOf('\u0000');
+              readinessProjectionService.refreshFromOnLoadWorkItems(
+                  key.substring(0, delimiter), key.substring(delimiter + 1));
+            });
   }
 
   private void markReplayQueued(Long workItemId, String reason, Instant now) {

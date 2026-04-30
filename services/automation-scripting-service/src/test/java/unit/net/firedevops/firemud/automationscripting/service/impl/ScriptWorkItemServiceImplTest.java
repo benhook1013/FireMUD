@@ -125,6 +125,47 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void refreshesReadinessProjectionWhenCancelingPendingOnLoadWork() {
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setId(43L);
+    item.setTenantId("1");
+    item.setScriptPatchVersion("patch-1");
+    item.setEventType("onLoad");
+    item.setStatus("PENDING_EVALUATION");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(workItemRepository.findByTenantIdAndScriptPatchVersionAndStatusInOrderByCreatedAtAscIdAsc(
+            "1", "patch-1", List.of("PENDING_EVALUATION")))
+        .thenReturn(List.of(item));
+    when(auditRepository.findByWorkItemId(43L)).thenReturn(Optional.of(audit));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService);
+
+    long canceled =
+        service.cancelPendingForPatch(
+            new ScriptWorkItemService.CancelPendingForPatchCommand(
+                "1", "patch-1", "", "", "req-1", "admin", "rollback"));
+
+    assertThat(canceled).isEqualTo(1L);
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    verify(readinessProjectionService).refreshFromOnLoadWorkItems("1", "patch-1");
+  }
+
+  @Test
   void cancelsPendingPluginVersionWorkAndUpdatesAuditOutcome() {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setId(43L);
