@@ -514,6 +514,11 @@ message RemoteCommandCoordinatorEntry {
   string execution_outcome = 16;
   string gameplay_result = 17;
   int64 updated_at_ms = 18;
+  string followup_status = 19;
+  string followup_claimed_tick_batch_id = 20;
+  string latest_result_outcome = 21;
+  string latest_result_payload_json = 22;
+  int64 latest_result_observed_at_ms = 23;
 }
 
 message GetRemoteCommandCoordinatorResponse {

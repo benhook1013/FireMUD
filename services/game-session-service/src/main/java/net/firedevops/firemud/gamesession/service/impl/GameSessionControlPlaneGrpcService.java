@@ -517,7 +517,13 @@ public final class GameSessionControlPlaneGrpcService
                   () -> new IllegalArgumentException("Remote command coordinator not found"));
       responseObserver.onNext(
           GetRemoteCommandCoordinatorResponse.newBuilder()
-              .setCoordinator(toRemoteCoordinatorEntry(coordinator))
+              .setCoordinator(
+                  toRemoteCoordinatorEntry(
+                      coordinator,
+                      remoteFollowupRepository
+                          .findByTenantIdAndFollowupId(tenantId, coordinator.getFollowupId())
+                          .orElse(null),
+                      latestRemoteResult(tenantId, coordinator.getCoordinatorId())))
               .build());
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
@@ -1898,7 +1904,9 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private RemoteCommandCoordinatorEntry toRemoteCoordinatorEntry(
-      RemoteCommandCoordinator coordinator) {
+      RemoteCommandCoordinator coordinator,
+      RemoteFollowup followup,
+      RemoteFollowupResult latestResult) {
     RemoteCommandCoordinatorEntry.Builder builder =
         RemoteCommandCoordinatorEntry.newBuilder()
             .setCoordinatorId(coordinator.getCoordinatorId())
@@ -1925,6 +1933,21 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (coordinator.getGameplayResult() != null) {
       builder.setGameplayResult(coordinator.getGameplayResult());
+    }
+    if (followup != null) {
+      builder.setFollowupStatus(followup.getStatus());
+      if (followup.getClaimedTickBatchId() != null) {
+        builder.setFollowupClaimedTickBatchId(followup.getClaimedTickBatchId());
+      }
+    }
+    if (latestResult != null) {
+      builder.setLatestResultOutcome(latestResult.getOutcome());
+      if (latestResult.getResultPayloadJson() != null) {
+        builder.setLatestResultPayloadJson(latestResult.getResultPayloadJson());
+      }
+      if (latestResult.getObservedAt() != null) {
+        builder.setLatestResultObservedAtMs(latestResult.getObservedAt().toEpochMilli());
+      }
     }
     return builder.build();
   }
