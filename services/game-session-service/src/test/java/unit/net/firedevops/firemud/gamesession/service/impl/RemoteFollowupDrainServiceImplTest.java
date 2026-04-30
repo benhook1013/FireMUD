@@ -40,14 +40,16 @@ class RemoteFollowupDrainServiceImplTest {
   @Test
   void claimDueFollowupsMarksClaimedRowsInOrder() {
     RemoteFollowup first = followup("rf-1", 10L);
+    first.setTargetEntityId("entity-1");
     RemoteFollowup second = followup("rf-2", 11L);
+    second.setTargetEntityId("entity-2");
     when(remoteFollowupRepository
             .findByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
                 1L,
                 "region-b",
                 RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
                 12L,
-                Pageable.ofSize(2)))
+                Pageable.ofSize(8)))
         .thenReturn(List.of(first, second));
 
     RemoteFollowupDrainService.ClaimOutcome outcome =
@@ -58,6 +60,33 @@ class RemoteFollowupDrainServiceImplTest {
     assertEquals(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED, first.getStatus());
     assertEquals("tb-1", first.getClaimedTickBatchId());
     assertEquals(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED, second.getStatus());
+  }
+
+  @Test
+  void claimDueFollowupsKeepsOneClaimPerTargetEntityInBatch() {
+    RemoteFollowup first = followup("rf-1", 10L);
+    first.setTargetEntityId("entity-1");
+    RemoteFollowup second = followup("rf-2", 11L);
+    second.setTargetEntityId("entity-1");
+    RemoteFollowup third = followup("rf-3", 12L);
+    third.setTargetEntityId("entity-2");
+    when(remoteFollowupRepository
+            .findByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+                1L,
+                "region-b",
+                RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
+                12L,
+                Pageable.ofSize(8)))
+        .thenReturn(List.of(first, second, third));
+
+    RemoteFollowupDrainService.ClaimOutcome outcome =
+        service.claimDueFollowups(1L, "region-b", 12L, "tb-1", 2);
+
+    assertEquals(2, outcome.claimedCount());
+    assertEquals(List.of("rf-1", "rf-3"), outcome.followupIds());
+    assertEquals(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED, first.getStatus());
+    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, second.getStatus());
+    assertEquals(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED, third.getStatus());
   }
 
   @Test

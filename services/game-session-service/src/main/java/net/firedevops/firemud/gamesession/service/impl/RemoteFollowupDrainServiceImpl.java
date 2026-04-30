@@ -4,7 +4,9 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
@@ -67,27 +69,33 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
                 targetRegionId,
                 RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
                 dueTickIdInclusive,
-                PageRequest.of(0, limit));
+                PageRequest.of(0, candidateWindow(limit)));
     if (followups.isEmpty()) {
       return new ClaimOutcome(List.of(), 0);
     }
 
+    List<RemoteFollowup> selectedFollowups = selectFairFollowups(followups, limit);
+    if (selectedFollowups.isEmpty()) {
+      return new ClaimOutcome(List.of(), 0);
+    }
+
     Instant now = Instant.now(clock);
-    for (RemoteFollowup followup : followups) {
+    for (RemoteFollowup followup : selectedFollowups) {
       followup.setStatus(FOLLOWUP_CLAIMED);
       followup.setClaimedTickBatchId(tickBatchId);
       followup.setUpdatedAt(now);
     }
-    remoteFollowupRepository.saveAll(followups);
-    remoteFollowupClaimedCounter.increment(followups.size());
+    remoteFollowupRepository.saveAll(selectedFollowups);
+    remoteFollowupClaimedCounter.increment(selectedFollowups.size());
     logger.info(
         "Claimed remote followups tenantId={} targetRegionId={} tickBatchId={} count={}",
         tenantId,
         targetRegionId,
         tickBatchId,
-        followups.size());
+        selectedFollowups.size());
     return new ClaimOutcome(
-        followups.stream().map(RemoteFollowup::getFollowupId).toList(), followups.size());
+        selectedFollowups.stream().map(RemoteFollowup::getFollowupId).toList(),
+        selectedFollowups.size());
   }
 
   @Override
@@ -136,5 +144,33 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
       return value;
     }
     return value.substring(0, 500);
+  }
+
+  private static int candidateWindow(int limit) {
+    return Math.max(limit, limit * 4);
+  }
+
+  private static List<RemoteFollowup> selectFairFollowups(
+      List<RemoteFollowup> candidates, int limit) {
+    java.util.ArrayList<RemoteFollowup> selected = new java.util.ArrayList<>(limit);
+    Set<String> claimedEntityKeys = new LinkedHashSet<>();
+    for (RemoteFollowup candidate : candidates) {
+      String entityKey = claimEntityKey(candidate);
+      if (!claimedEntityKeys.add(entityKey)) {
+        continue;
+      }
+      selected.add(candidate);
+      if (selected.size() >= limit) {
+        break;
+      }
+    }
+    return List.copyOf(selected);
+  }
+
+  private static String claimEntityKey(RemoteFollowup followup) {
+    if (followup.getTargetEntityId() == null || followup.getTargetEntityId().isBlank()) {
+      return "followup:" + followup.getFollowupId();
+    }
+    return "entity:" + followup.getTargetEntityId();
   }
 }
