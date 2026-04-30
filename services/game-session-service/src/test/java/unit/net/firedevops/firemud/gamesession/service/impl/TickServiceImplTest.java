@@ -635,6 +635,10 @@ class TickServiceImplTest {
         stagedBatch
             .getSelectedWorkManifestJson()
             .contains("\"sourceState\":\"REDIS_PENDING_CLAIMED\""));
+    org.junit.jupiter.api.Assertions.assertEquals("GAMEPLAY_COMMAND", command.getQueueSourceKind());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "REDIS_PENDING_CLAIMED", command.getQueueSourceState());
+    org.junit.jupiter.api.Assertions.assertEquals(77L, command.getQueueSourceOrdinal());
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<net.firedevops.firemud.gamesession.entity.TickEffect>> effectCaptor =
         ArgumentCaptor.forClass(List.class);
@@ -701,6 +705,10 @@ class TickServiceImplTest {
             .contains("\"originSourceKind\":\"SCHEDULE_TIMER\""));
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"originSourceDueAtMs\":6000"));
+    org.junit.jupiter.api.Assertions.assertEquals("GAMEPLAY_RETRY", command.getQueueSourceKind());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "REDIS_RETRY_CLAIMED", command.getQueueSourceState());
+    org.junit.jupiter.api.Assertions.assertEquals(78L, command.getQueueSourceOrdinal());
   }
 
   @Test

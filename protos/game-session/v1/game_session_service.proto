@@ -439,6 +439,9 @@ message GameplayCommandStatus {
   int64 origin_source_ordinal = 37;
   int64 origin_source_due_tick_id = 38;
   int64 origin_source_due_at_ms = 39;
+  string queue_source_kind = 40;
+  string queue_source_state = 41;
+  int64 queue_source_ordinal = 42;
 }
 
 message GetGameplayCommandStatusResponse {

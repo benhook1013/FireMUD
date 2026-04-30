@@ -1032,6 +1032,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setOriginSourceState("WORK_ITEM_PERSISTED");
     command.setOriginSourceOrdinal(41L);
     command.setOriginSourceDueTickId(14L);
+    command.setQueueSourceKind("GAMEPLAY_COMMAND");
+    command.setQueueSourceState("REDIS_PENDING_CLAIMED");
+    command.setQueueSourceOrdinal(33L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(commandRepository.findByCommandId("cmd-123")).thenReturn(Optional.of(command));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -1072,6 +1075,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("WORK_ITEM_PERSISTED", responseRef.get().getCommand().getOriginSourceState());
     assertEquals(41L, responseRef.get().getCommand().getOriginSourceOrdinal());
     assertEquals(14L, responseRef.get().getCommand().getOriginSourceDueTickId());
+    assertEquals("GAMEPLAY_COMMAND", responseRef.get().getCommand().getQueueSourceKind());
+    assertEquals("REDIS_PENDING_CLAIMED", responseRef.get().getCommand().getQueueSourceState());
+    assertEquals(33L, responseRef.get().getCommand().getQueueSourceOrdinal());
     assertEquals(
         Instant.parse("2026-04-15T00:00:01Z").toEpochMilli(),
         responseRef.get().getCommand().getStagedAtMs());
@@ -1108,6 +1114,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setOriginSourceState("SCHEDULE_DUE_CLAIMED");
     command.setOriginSourceOrdinal(5000L);
     command.setOriginSourceDueAtMs(5000L);
+    command.setQueueSourceKind("GAMEPLAY_RETRY");
+    command.setQueueSourceState("REDIS_RETRY_CLAIMED");
+    command.setQueueSourceOrdinal(44L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -1158,6 +1167,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("SCHEDULE_DUE_CLAIMED", responseRef.get().getCommand().getOriginSourceState());
     assertEquals(5000L, responseRef.get().getCommand().getOriginSourceOrdinal());
     assertEquals(5000L, responseRef.get().getCommand().getOriginSourceDueAtMs());
+    assertEquals("GAMEPLAY_RETRY", responseRef.get().getCommand().getQueueSourceKind());
+    assertEquals("REDIS_RETRY_CLAIMED", responseRef.get().getCommand().getQueueSourceState());
+    assertEquals(44L, responseRef.get().getCommand().getQueueSourceOrdinal());
   }
 
   @Test

@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -1084,7 +1085,18 @@ public class TickServiceImpl implements TickService {
     if (commands.isEmpty()) {
       return;
     }
+    Map<String, Integer> entryIndexByCommandId = new HashMap<>();
+    for (int index = 0; index < entries.size(); index++) {
+      QueuedCommandEnvelope entry = entries.get(index);
+      if (entry.commandId() != null && !entry.commandId().isBlank()) {
+        entryIndexByCommandId.putIfAbsent(entry.commandId(), index);
+      }
+    }
     for (GameplayCommand command : commands) {
+      int fallbackIndex = entryIndexByCommandId.getOrDefault(command.getCommandId(), 0);
+      command.setQueueSourceKind(selectionSourceKind(command));
+      command.setQueueSourceState(selectionSourceState(command));
+      command.setQueueSourceOrdinal(selectionSourceOrdinal(command, fallbackIndex));
       command.setExecutionOutcome(executionOutcome);
       command.setGameplayResult(gameplayResult);
       command.setLastAttemptAt(attemptedAt);

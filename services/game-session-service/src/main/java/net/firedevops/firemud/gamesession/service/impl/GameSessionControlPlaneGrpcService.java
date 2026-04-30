@@ -1799,6 +1799,15 @@ public final class GameSessionControlPlaneGrpcService
     if (command.getOriginSourceDueAtMs() != null) {
       builder.setOriginSourceDueAtMs(command.getOriginSourceDueAtMs());
     }
+    if (command.getQueueSourceKind() != null) {
+      builder.setQueueSourceKind(command.getQueueSourceKind());
+    }
+    if (command.getQueueSourceState() != null) {
+      builder.setQueueSourceState(command.getQueueSourceState());
+    }
+    if (command.getQueueSourceOrdinal() != null) {
+      builder.setQueueSourceOrdinal(command.getQueueSourceOrdinal());
+    }
     return builder.build();
   }
 
