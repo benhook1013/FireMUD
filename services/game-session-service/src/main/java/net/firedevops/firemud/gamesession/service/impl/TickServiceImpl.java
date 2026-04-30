@@ -36,6 +36,7 @@ import net.firedevops.firemud.gamesession.entity.TickBatch;
 import net.firedevops.firemud.gamesession.entity.TickEffect;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
+import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.repository.TickBatchRepository;
 import net.firedevops.firemud.gamesession.repository.TickEffectRepository;
@@ -71,6 +72,7 @@ public class TickServiceImpl implements TickService {
   private final GameplayCommandRepository gameplayCommandRepository;
   private final RuntimeIdentity runtimeIdentity;
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
+  private final RemoteFollowupRepository remoteFollowupRepository;
   private final TickBatchRepository tickBatchRepository;
   private final TickEffectRepository tickEffectRepository;
   private final SessionContextService sessionContextService;
@@ -89,6 +91,9 @@ public class TickServiceImpl implements TickService {
 
   @Value("${game.solo-tick-budget-ms:500}")
   private long soloTickBudgetMs;
+
+  @Value("${game.remote-followups.max-per-tick:16}")
+  private int maxRemoteFollowupsPerTick;
 
   private Counter enqueueCounter;
   private Counter redisErrorCounter;
@@ -111,8 +116,16 @@ public class TickServiceImpl implements TickService {
   private final Map<String, Long> retryQueueDepthByTarget = new ConcurrentHashMap<>();
   private final AtomicLong retryQueueDepthTotal = new AtomicLong();
   private final AtomicInteger retryQueueTargetsWithPending = new AtomicInteger();
+  private final Map<String, Long> remoteFollowupDueCountByTarget = new ConcurrentHashMap<>();
+  private final AtomicLong remoteFollowupDueTotal = new AtomicLong();
+  private final AtomicInteger remoteFollowupTargetsWithDue = new AtomicInteger();
 
-  private record OwnershipSnapshot(long regionEpoch, String executorFence, boolean paused) {}
+  private record OwnershipSnapshot(
+      String regionId,
+      long regionEpoch,
+      String executorFence,
+      boolean paused,
+      long lastCommittedTickId) {}
 
   private record QueuedCommandEnvelope(
       boolean requiresSoloTick, String commandId, String command) {}
@@ -167,6 +180,9 @@ public class TickServiceImpl implements TickService {
     meterRegistry.gauge("game_session_retry_queue_depth_total", retryQueueDepthTotal);
     meterRegistry.gauge(
         "game_session_retry_queue_targets_with_pending", retryQueueTargetsWithPending);
+    meterRegistry.gauge("game_session_remote_followups_due_total", remoteFollowupDueTotal);
+    meterRegistry.gauge(
+        "game_session_remote_followups_targets_with_due", remoteFollowupTargetsWithDue);
     ResourceScriptSource commitSrc =
         new ResourceScriptSource(new ClassPathResource("redis/tick_commit.lua"));
     ResourceScriptSource stageSrc =
@@ -297,6 +313,7 @@ public class TickServiceImpl implements TickService {
     try (GameplayLoggingContext ignored =
         GameplayLoggingContext.open(Long.toString(normalizedTenantId), null, null, null)) {
       OwnershipSnapshot ownership = observeOwnership(normalizedTenantId, normalizedQueueTargetId);
+      observeRemoteFollowupBacklog(normalizedTenantId, ownership);
       if (pauseRequested.get()
           || pausedGameInstances.contains(normalizedQueueTargetId)
           || ownership.paused()) {
@@ -499,6 +516,38 @@ public class TickServiceImpl implements TickService {
           }
           return depth > 0L ? depth : null;
         });
+  }
+
+  private void observeRemoteFollowupBacklog(Long tenantId, OwnershipSnapshot ownership) {
+    long dueCount =
+        remoteFollowupRepository.countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+            tenantId,
+            ownership.regionId(),
+            RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
+            ownership.lastCommittedTickId() + 1L);
+    String gaugeKey = tenantId + ":" + ownership.regionId();
+    remoteFollowupDueCountByTarget.compute(
+        gaugeKey,
+        (ignored, previousDepth) -> {
+          long prior = previousDepth != null ? previousDepth : 0L;
+          remoteFollowupDueTotal.addAndGet(dueCount - prior);
+          if (prior == 0L && dueCount > 0L) {
+            remoteFollowupTargetsWithDue.incrementAndGet();
+          } else if (prior > 0L && dueCount == 0L) {
+            remoteFollowupTargetsWithDue.decrementAndGet();
+          }
+          return dueCount > 0L ? dueCount : null;
+        });
+    if (dueCount > maxRemoteFollowupsPerTick) {
+      meterRegistry
+          .counter(
+              "remote_followups_backlog_over_budget_total",
+              "tenantId",
+              tenantId.toString(),
+              "regionId",
+              ownership.regionId())
+          .increment();
+    }
   }
 
   private List<QueuedCommandEnvelope> readPendingEntries(Long tenantId, Long queueTargetId) {
@@ -1374,7 +1423,11 @@ public class TickServiceImpl implements TickService {
     status.setUpdatedAt(now);
     RuntimeRegionStatus saved = runtimeRegionStatusRepository.save(status);
     return new OwnershipSnapshot(
-        saved.getRegionEpoch(), saved.getExecutorFence(), saved.isPaused());
+        saved.getRegionId(),
+        saved.getRegionEpoch(),
+        saved.getExecutorFence(),
+        saved.isPaused(),
+        saved.getLastCommittedTickId());
   }
 
   @Override

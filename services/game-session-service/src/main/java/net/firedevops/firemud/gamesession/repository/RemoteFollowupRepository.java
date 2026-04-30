@@ -11,6 +11,9 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
   Optional<RemoteFollowup> findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
       Long tenantId, String targetRegionId, long targetRegionEpoch, String effectKey);
 
+  long countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+      Long tenantId, String targetRegionId, String status, long dueTickId);
+
   List<RemoteFollowup> findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAsc(
       Long tenantId, String targetRegionId, String status);
 

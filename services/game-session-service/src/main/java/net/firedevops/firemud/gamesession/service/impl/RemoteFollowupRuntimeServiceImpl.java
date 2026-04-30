@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -14,6 +16,7 @@ import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultReposit
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,17 +42,30 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   private final RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
   private final RemoteFollowupRepository remoteFollowupRepository;
   private final RemoteFollowupResultRepository remoteFollowupResultRepository;
+  private final RedisTemplate<String, Object> redisTemplate;
   private final Clock clock;
+  private final Counter remoteFollowupScheduledCounter;
+  private final Counter remoteFollowupTimeoutCounter;
+  private final Counter lateResultIgnoredCounter;
+  private final Counter lateResultReconciledCounter;
 
   @Autowired
   public RemoteFollowupRuntimeServiceImpl(
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupRepository remoteFollowupRepository,
-      RemoteFollowupResultRepository remoteFollowupResultRepository) {
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      RedisTemplate<String, Object> redisTemplate,
+      MeterRegistry meterRegistry) {
     this(
         remoteCommandCoordinatorRepository,
         remoteFollowupRepository,
         remoteFollowupResultRepository,
+        redisTemplate,
+        meterRegistry.counter("gamesession_remote_followup_scheduled_total"),
+        meterRegistry.counter("gamesession_remote_followup_timeout_total"),
+        meterRegistry.counter("gamesession_remote_followup_late_result_total", "policy", "ignored"),
+        meterRegistry.counter(
+            "gamesession_remote_followup_late_result_total", "policy", "reconciled"),
         Clock.systemUTC());
   }
 
@@ -57,10 +73,20 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
+      RedisTemplate<String, Object> redisTemplate,
+      Counter remoteFollowupScheduledCounter,
+      Counter remoteFollowupTimeoutCounter,
+      Counter lateResultIgnoredCounter,
+      Counter lateResultReconciledCounter,
       Clock clock) {
     this.remoteCommandCoordinatorRepository = remoteCommandCoordinatorRepository;
     this.remoteFollowupRepository = remoteFollowupRepository;
     this.remoteFollowupResultRepository = remoteFollowupResultRepository;
+    this.redisTemplate = redisTemplate;
+    this.remoteFollowupScheduledCounter = remoteFollowupScheduledCounter;
+    this.remoteFollowupTimeoutCounter = remoteFollowupTimeoutCounter;
+    this.lateResultIgnoredCounter = lateResultIgnoredCounter;
+    this.lateResultReconciledCounter = lateResultReconciledCounter;
     this.clock = clock;
   }
 
@@ -89,6 +115,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     boolean followupCreated = existingFollowup.isEmpty();
     populateFollowup(followup, request, now);
     remoteFollowupRepository.save(followup);
+    writeRemoteHint(request.tenantId(), request.targetEntityId());
+    remoteFollowupScheduledCounter.increment();
 
     logger.info(
         "Scheduled remote followup tenantId={} commandId={} coordinatorId={} followupId={} targetRegionId={}",
@@ -138,6 +166,11 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
               : COORDINATOR_LATE_RESULT_IGNORED);
       coordinator.setUpdatedAt(Instant.now(clock));
       if (reconciledLateResult) {
+        lateResultReconciledCounter.increment();
+      } else {
+        lateResultIgnoredCounter.increment();
+      }
+      if (reconciledLateResult) {
         applyFollowupResultState(followup, request.outcome(), Instant.now(clock));
       }
     }
@@ -170,6 +203,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       coordinator.setGameplayResult("NOT_APPLIED");
       coordinator.setUpdatedAt(now);
       remoteCommandCoordinatorRepository.save(coordinator);
+      remoteFollowupTimeoutCounter.increment();
 
       remoteFollowupRepository
           .findByTenantIdAndFollowupId(tenantId, coordinator.getFollowupId())
@@ -327,5 +361,15 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
+  }
+
+  private void writeRemoteHint(long tenantId, String targetEntityId) {
+    if (targetEntityId == null || targetEntityId.isBlank()) {
+      return;
+    }
+    redisTemplate
+        .opsForValue()
+        .set(
+            "remote:" + tenantId + ":" + targetEntityId, "1", java.time.Duration.ofMillis(60_000L));
   }
 }

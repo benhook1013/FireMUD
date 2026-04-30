@@ -5,8 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -21,6 +23,7 @@ import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultReposit
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.RedisTemplate;
 
 class RemoteFollowupRuntimeServiceImplTest {
   private static final Instant NOW = Instant.parse("2026-05-01T00:00:00Z");
@@ -28,6 +31,8 @@ class RemoteFollowupRuntimeServiceImplTest {
   private RemoteCommandCoordinatorRepository coordinatorRepository;
   private RemoteFollowupRepository followupRepository;
   private RemoteFollowupResultRepository resultRepository;
+  private RedisTemplate<String, Object> redisTemplate;
+  private org.springframework.data.redis.core.ValueOperations<String, Object> valueOperations;
   private RemoteFollowupRuntimeService service;
 
   @BeforeEach
@@ -35,14 +40,25 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinatorRepository = mock(RemoteCommandCoordinatorRepository.class);
     followupRepository = mock(RemoteFollowupRepository.class);
     resultRepository = mock(RemoteFollowupResultRepository.class);
+    redisTemplate = mock(RedisTemplate.class);
+    valueOperations = mock(org.springframework.data.redis.core.ValueOperations.class);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     when(coordinatorRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(followupRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(resultRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     service =
         new RemoteFollowupRuntimeServiceImpl(
             coordinatorRepository,
             followupRepository,
             resultRepository,
+            redisTemplate,
+            meterRegistry.counter("gamesession_remote_followup_scheduled_total"),
+            meterRegistry.counter("gamesession_remote_followup_timeout_total"),
+            meterRegistry.counter(
+                "gamesession_remote_followup_late_result_total", "policy", "ignored"),
+            meterRegistry.counter(
+                "gamesession_remote_followup_late_result_total", "policy", "reconciled"),
             Clock.fixed(NOW, ZoneOffset.UTC));
   }
 
@@ -61,6 +77,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertTrue(outcome.followupCreated());
     assertEquals("coord-1", outcome.coordinatorId());
     assertEquals("followup-1", outcome.followupId());
+    verify(valueOperations).set("remote:1:entity-9", "1", java.time.Duration.ofMillis(60_000L));
   }
 
   @Test

@@ -39,6 +39,8 @@ class TickServiceImplTest {
   private net.firedevops.firemud.common.runtime.RuntimeIdentity runtimeIdentity;
   private net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository
       runtimeRegionStatusRepository;
+  private net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository
+      remoteFollowupRepository;
   private net.firedevops.firemud.gamesession.repository.TickBatchRepository tickBatchRepository;
   private net.firedevops.firemud.gamesession.repository.TickEffectRepository tickEffectRepository;
   private SessionContextService sessionContextService;
@@ -82,6 +84,8 @@ class TickServiceImplTest {
             null);
     runtimeRegionStatusRepository =
         mock(net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository.class);
+    remoteFollowupRepository =
+        mock(net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository.class);
     tickBatchRepository =
         mock(net.firedevops.firemud.gamesession.repository.TickBatchRepository.class);
     tickEffectRepository =
@@ -103,6 +107,7 @@ class TickServiceImplTest {
             gameplayCommandRepository,
             runtimeIdentity,
             runtimeRegionStatusRepository,
+            remoteFollowupRepository,
             tickBatchRepository,
             tickEffectRepository,
             sessionContextService,
@@ -128,6 +133,10 @@ class TickServiceImplTest {
     when(tickBatchRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(tickEffectRepository.findByTickBatchId(any())).thenReturn(List.of());
     when(tickEffectRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(remoteFollowupRepository
+            .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                anyLong(), any(), any(), anyLong()))
+        .thenReturn(0L);
   }
 
   @Test
@@ -202,6 +211,27 @@ class TickServiceImplTest {
         .setIfAbsent(eq("gamesession:tick:lock:1:2"), any(Object.class), any(Duration.class));
     verify(listOps).size("gamesession:tick:pending:1:2");
     verify(listOps).index("gamesession:tick:queue:1:2", 0);
+  }
+
+  @Test
+  void processTickRecordsRemoteFollowupBacklogOverBudget() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(remoteFollowupRepository
+            .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                1L, "2", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 1L))
+        .thenReturn(25L);
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1.0,
+        meterRegistry
+            .get("remote_followups_backlog_over_budget_total")
+            .tag("tenantId", "1")
+            .tag("regionId", "2")
+            .counter()
+            .count());
   }
 
   @Test
