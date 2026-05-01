@@ -110,6 +110,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     RemoteCommandCoordinator coordinator =
         existingCoordinator.orElseGet(RemoteCommandCoordinator::new);
     boolean coordinatorCreated = existingCoordinator.isEmpty();
+    existingCoordinator.ifPresent(existing -> validateExistingCoordinator(existing, request));
     populateCoordinator(coordinator, request, now);
     remoteCommandCoordinatorRepository.save(coordinator);
     mirrorCoordinatorToCommand(coordinator, now);
@@ -122,6 +123,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             request.effectKey());
     RemoteFollowup followup = existingFollowup.orElseGet(RemoteFollowup::new);
     boolean followupCreated = existingFollowup.isEmpty();
+    existingFollowup.ifPresent(existing -> validateExistingFollowup(existing, request));
     populateFollowup(followup, request, now);
     remoteFollowupRepository.save(followup);
     writeRemoteHint(request.tenantId(), request.targetEntityId());
@@ -346,6 +348,41 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     if (!request.targetRegionId().equals(followup.getTargetRegionId())
         || request.targetRegionEpoch() != followup.getTargetRegionEpoch()) {
       throw new IllegalArgumentException("target scope does not match remote followup");
+    }
+  }
+
+  private static void validateExistingCoordinator(
+      RemoteCommandCoordinator existing, ScheduleRequest request) {
+    if (!request.coordinatorId().equals(existing.getCoordinatorId())) {
+      throw new IllegalArgumentException("command_id already maps to a different coordinator_id");
+    }
+    if (!request.followupId().equals(existing.getFollowupId())) {
+      throw new IllegalArgumentException("command_id already maps to a different followup_id");
+    }
+    if (request.originGameInstanceId() != existing.getOriginGameInstanceId()
+        || !request.originRegionId().equals(existing.getOriginRegionId())
+        || request.originRegionEpoch() != existing.getOriginRegionEpoch()
+        || request.targetGameInstanceId() != existing.getTargetGameInstanceId()
+        || !request.targetRegionId().equals(existing.getTargetRegionId())
+        || request.targetRegionEpoch() != existing.getTargetRegionEpoch()) {
+      throw new IllegalArgumentException(
+          "command_id already maps to a different remote execution scope");
+    }
+  }
+
+  private static void validateExistingFollowup(RemoteFollowup existing, ScheduleRequest request) {
+    if (!request.followupId().equals(existing.getFollowupId())) {
+      throw new IllegalArgumentException(
+          "effect_key already maps to a different followup_id on the target timeline");
+    }
+    if (request.originGameInstanceId() != existing.getOriginGameInstanceId()
+        || !request.originRegionId().equals(existing.getOriginRegionId())
+        || request.originRegionEpoch() != existing.getOriginRegionEpoch()
+        || request.targetGameInstanceId() != existing.getTargetGameInstanceId()
+        || !request.targetRegionId().equals(existing.getTargetRegionId())
+        || request.targetRegionEpoch() != existing.getTargetRegionEpoch()) {
+      throw new IllegalArgumentException(
+          "effect_key already maps to a different remote execution scope");
     }
   }
 

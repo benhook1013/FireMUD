@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -91,6 +93,80 @@ class RemoteFollowupRuntimeServiceImplTest {
         RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE, command.getExecutionOutcome());
     assertEquals("PENDING", command.getGameplayResult());
     verify(valueOperations).set("remote:1:entity-9", "1", java.time.Duration.ofMillis(60_000L));
+  }
+
+  @Test
+  void scheduleFollowupRejectsConflictingCoordinatorIdentityReuse() {
+    RemoteCommandCoordinator existing = coordinator();
+    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+        .thenReturn(Optional.of(existing));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.scheduleFollowup(
+                    new RemoteFollowupRuntimeService.ScheduleRequest(
+                        1L,
+                        "cmd-1",
+                        "coord-2",
+                        7L,
+                        "region-a",
+                        4L,
+                        8L,
+                        "region-b",
+                        8L,
+                        22L,
+                        4L,
+                        25L,
+                        "late_result_safe_to_ignore",
+                        "followup-1",
+                        "effect-1",
+                        "entity-9",
+                        "{\"type\":\"remote\"}")));
+
+    assertEquals("command_id already maps to a different coordinator_id", ex.getMessage());
+    verify(followupRepository, never())
+        .findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            anyLong(), anyString(), anyLong(), anyString());
+  }
+
+  @Test
+  void scheduleFollowupRejectsConflictingFollowupScopeReuse() {
+    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+        .thenReturn(Optional.empty());
+    RemoteFollowup existing = followup();
+    when(followupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            1L, "region-b", 8L, "effect-1"))
+        .thenReturn(Optional.of(existing));
+    GameplayCommand command = gameplayCommand();
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.scheduleFollowup(
+                    new RemoteFollowupRuntimeService.ScheduleRequest(
+                        1L,
+                        "cmd-1",
+                        "coord-1",
+                        99L,
+                        "region-a",
+                        4L,
+                        8L,
+                        "region-b",
+                        8L,
+                        22L,
+                        4L,
+                        25L,
+                        "late_result_safe_to_ignore",
+                        "followup-1",
+                        "effect-1",
+                        "entity-9",
+                        "{\"type\":\"remote\"}")));
+
+    assertEquals("effect_key already maps to a different remote execution scope", ex.getMessage());
   }
 
   @Test
