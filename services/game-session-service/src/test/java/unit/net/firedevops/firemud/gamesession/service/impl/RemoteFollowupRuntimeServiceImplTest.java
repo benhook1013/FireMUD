@@ -15,9 +15,11 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowupResult;
+import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
@@ -32,6 +34,7 @@ class RemoteFollowupRuntimeServiceImplTest {
   private RemoteCommandCoordinatorRepository coordinatorRepository;
   private RemoteFollowupRepository followupRepository;
   private RemoteFollowupResultRepository resultRepository;
+  private GameplayCommandRepository gameplayCommandRepository;
   private RedisTemplate<String, Object> redisTemplate;
   private org.springframework.data.redis.core.ValueOperations<String, Object> valueOperations;
   private RemoteFollowupRuntimeService service;
@@ -41,18 +44,21 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinatorRepository = mock(RemoteCommandCoordinatorRepository.class);
     followupRepository = mock(RemoteFollowupRepository.class);
     resultRepository = mock(RemoteFollowupResultRepository.class);
+    gameplayCommandRepository = mock(GameplayCommandRepository.class);
     redisTemplate = mock(RedisTemplate.class);
     valueOperations = mock(org.springframework.data.redis.core.ValueOperations.class);
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     when(coordinatorRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(followupRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(resultRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(gameplayCommandRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     service =
         new RemoteFollowupRuntimeServiceImpl(
             coordinatorRepository,
             followupRepository,
             resultRepository,
+            gameplayCommandRepository,
             redisTemplate,
             meterRegistry.counter("gamesession_remote_followup_scheduled_total"),
             meterRegistry.counter("gamesession_remote_followup_timeout_total"),
@@ -70,6 +76,8 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(followupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
             1L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.empty());
+    GameplayCommand command = gameplayCommand();
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
 
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
         service.scheduleFollowup(scheduleRequest());
@@ -78,6 +86,9 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertTrue(outcome.followupCreated());
     assertEquals("coord-1", outcome.coordinatorId());
     assertEquals("followup-1", outcome.followupId());
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE, command.getExecutionOutcome());
+    assertEquals("PENDING", command.getGameplayResult());
     verify(valueOperations).set("remote:1:entity-9", "1", java.time.Duration.ofMillis(60_000L));
   }
 
@@ -132,8 +143,11 @@ class RemoteFollowupRuntimeServiceImplTest {
   void reconcileResultsAppliesPendingCoordinatorFromDurableInbox() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
+    coordinator.setGameplayResult("PENDING");
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setOutcome("APPLIED");
+    GameplayCommand command = gameplayCommand();
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
         .thenReturn(List.of(coordinator));
@@ -142,6 +156,7 @@ class RemoteFollowupRuntimeServiceImplTest {
         .thenReturn(List.of());
     when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
         .thenReturn(Optional.of(result));
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
 
@@ -151,15 +166,20 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED, coordinator.getExecutionOutcome());
     assertEquals("APPLIED", coordinator.getGameplayResult());
+    assertEquals("APPLIED", command.getExecutionOutcome());
+    assertEquals("APPLIED", command.getGameplayResult());
   }
 
   @Test
   void reconcileResultsMarksLateResultIgnoredAfterTimeoutByDefault() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
+    coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED);
+    coordinator.setGameplayResult("TIMEOUT");
     coordinator.setLateResultPolicy("late_result_safe_to_ignore");
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setOutcome("APPLIED");
+    GameplayCommand command = gameplayCommand();
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
         .thenReturn(List.of());
@@ -168,12 +188,47 @@ class RemoteFollowupRuntimeServiceImplTest {
         .thenReturn(List.of(coordinator));
     when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
         .thenReturn(Optional.of(result));
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
 
     assertEquals(1, reconciled);
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.COORDINATOR_LATE_RESULT_IGNORED, coordinator.getState());
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, command.getExecutionOutcome());
+    assertEquals("TIMEOUT", command.getGameplayResult());
+  }
+
+  @Test
+  void reconcileResultsMarksLateResultReconciledAsPartialCommandSuccess() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
+    coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED);
+    coordinator.setGameplayResult("TIMEOUT");
+    coordinator.setLateResultPolicy(
+        RemoteFollowupRuntimeServiceImpl.LATE_RESULT_REQUIRES_RECONCILIATION);
+    RemoteFollowupResult result = new RemoteFollowupResult();
+    result.setOutcome("APPLIED");
+    GameplayCommand command = gameplayCommand();
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
+        .thenReturn(List.of());
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
+        .thenReturn(List.of(coordinator));
+    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+        .thenReturn(Optional.of(result));
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+
+    int reconciled = service.reconcileResults(1L, "region-a", 4L);
+
+    assertEquals(1, reconciled);
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_LATE_RESULT_RECONCILED,
+        coordinator.getState());
+    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED, command.getExecutionOutcome());
+    assertEquals("PARTIAL", command.getGameplayResult());
   }
 
   @Test
@@ -205,9 +260,13 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinator.setOriginDeadlineRegionEpoch(4L);
     coordinator.setOriginDeadlineTickId(12L);
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
+    coordinator.setGameplayResult("PENDING");
+    GameplayCommand command = gameplayCommand();
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
         .thenReturn(List.of(coordinator));
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
 
     int updated = service.reconcileTimeouts(1L, "region-a", 4L, 12L);
 
@@ -215,6 +274,9 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED,
         coordinator.getState());
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, command.getExecutionOutcome());
+    assertEquals("TIMEOUT", command.getGameplayResult());
     verify(followupRepository, never()).findByTenantIdAndFollowupId(any(), any());
   }
 
@@ -305,5 +367,22 @@ class RemoteFollowupRuntimeServiceImplTest {
     followup.setCreatedAt(NOW);
     followup.setUpdatedAt(NOW);
     return followup;
+  }
+
+  private static GameplayCommand gameplayCommand() {
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("cmd-1");
+    command.setTenantId(1L);
+    command.setGameInstanceId(7L);
+    command.setSessionId(0L);
+    command.setCommandName("LOOK");
+    command.setCommandText("LOOK");
+    command.setSanitizedCommandText("LOOK");
+    command.setExecutionOutcome("STAGED");
+    command.setGameplayResult("PENDING");
+    command.setAcceptedAt(NOW);
+    command.setLastAttemptAt(NOW);
+    command.setAttemptCount(1);
+    return command;
   }
 }

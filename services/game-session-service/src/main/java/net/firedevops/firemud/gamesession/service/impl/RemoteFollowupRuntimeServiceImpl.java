@@ -7,9 +7,11 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowupResult;
+import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
@@ -38,10 +40,12 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   static final String RESULT_APPLIED = "APPLIED";
   static final String LATE_RESULT_REQUIRES_RECONCILIATION = "late_result_requires_reconciliation";
+  static final String COMMAND_PENDING_REMOTE = "PENDING_REMOTE";
 
   private final RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
   private final RemoteFollowupRepository remoteFollowupRepository;
   private final RemoteFollowupResultRepository remoteFollowupResultRepository;
+  private final GameplayCommandRepository gameplayCommandRepository;
   private final RedisTemplate<String, Object> redisTemplate;
   private final Clock clock;
   private final Counter remoteFollowupScheduledCounter;
@@ -54,12 +58,14 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameplayCommandRepository gameplayCommandRepository,
       RedisTemplate<String, Object> redisTemplate,
       MeterRegistry meterRegistry) {
     this(
         remoteCommandCoordinatorRepository,
         remoteFollowupRepository,
         remoteFollowupResultRepository,
+        gameplayCommandRepository,
         redisTemplate,
         meterRegistry.counter("gamesession_remote_followup_scheduled_total"),
         meterRegistry.counter("gamesession_remote_followup_timeout_total"),
@@ -73,6 +79,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameplayCommandRepository gameplayCommandRepository,
       RedisTemplate<String, Object> redisTemplate,
       Counter remoteFollowupScheduledCounter,
       Counter remoteFollowupTimeoutCounter,
@@ -82,6 +89,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     this.remoteCommandCoordinatorRepository = remoteCommandCoordinatorRepository;
     this.remoteFollowupRepository = remoteFollowupRepository;
     this.remoteFollowupResultRepository = remoteFollowupResultRepository;
+    this.gameplayCommandRepository = gameplayCommandRepository;
     this.redisTemplate = redisTemplate;
     this.remoteFollowupScheduledCounter = remoteFollowupScheduledCounter;
     this.remoteFollowupTimeoutCounter = remoteFollowupTimeoutCounter;
@@ -104,6 +112,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     boolean coordinatorCreated = existingCoordinator.isEmpty();
     populateCoordinator(coordinator, request, now);
     remoteCommandCoordinatorRepository.save(coordinator);
+    mirrorCoordinatorToCommand(coordinator, now);
 
     Optional<RemoteFollowup> existingFollowup =
         remoteFollowupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
@@ -221,9 +230,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       }
       coordinator.setState(COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
       coordinator.setExecutionOutcome(FOLLOWUP_ABANDONED);
-      coordinator.setGameplayResult("NOT_APPLIED");
+      coordinator.setGameplayResult("TIMEOUT");
       coordinator.setUpdatedAt(now);
       remoteCommandCoordinatorRepository.save(coordinator);
+      mirrorCoordinatorToCommand(coordinator, now);
       remoteFollowupTimeoutCounter.increment();
       updated++;
     }
@@ -244,6 +254,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       }
       applyTerminalResult(coordinator, result.getOutcome(), now);
       remoteCommandCoordinatorRepository.save(coordinator);
+      mirrorCoordinatorToCommand(coordinator, now);
       reconciled++;
     }
     return reconciled;
@@ -259,12 +270,16 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       }
       boolean requiresReconciliation =
           LATE_RESULT_REQUIRES_RECONCILIATION.equals(coordinator.getLateResultPolicy());
-      coordinator.setState(
-          requiresReconciliation
-              ? COORDINATOR_LATE_RESULT_RECONCILED
-              : COORDINATOR_LATE_RESULT_IGNORED);
+      if (requiresReconciliation) {
+        applyTerminalResult(coordinator, result.getOutcome(), now);
+        coordinator.setState(COORDINATOR_LATE_RESULT_RECONCILED);
+        coordinator.setGameplayResult("PARTIAL");
+      } else {
+        coordinator.setState(COORDINATOR_LATE_RESULT_IGNORED);
+      }
       coordinator.setUpdatedAt(now);
       remoteCommandCoordinatorRepository.save(coordinator);
+      mirrorCoordinatorToCommand(coordinator, now);
       if (requiresReconciliation) {
         lateResultReconciledCounter.increment();
       } else {
@@ -344,8 +359,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         || COORDINATOR_LATE_RESULT_IGNORED.equals(coordinator.getState())
         || COORDINATOR_LATE_RESULT_RECONCILED.equals(coordinator.getState())) {
       coordinator.setState(COORDINATOR_PENDING_REMOTE);
-      coordinator.setExecutionOutcome(null);
-      coordinator.setGameplayResult(null);
+      coordinator.setExecutionOutcome(COMMAND_PENDING_REMOTE);
+      coordinator.setGameplayResult("PENDING");
     }
     coordinator.setUpdatedAt(now);
   }
@@ -427,6 +442,36 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       return value;
     }
     return value.substring(0, 500);
+  }
+
+  private void mirrorCoordinatorToCommand(RemoteCommandCoordinator coordinator, Instant now) {
+    GameplayCommand command =
+        gameplayCommandRepository.findByCommandId(coordinator.getCommandId()).orElse(null);
+    if (command == null) {
+      return;
+    }
+    if (coordinator.getExecutionOutcome() != null && !coordinator.getExecutionOutcome().isBlank()) {
+      command.setExecutionOutcome(coordinator.getExecutionOutcome());
+    }
+    if (coordinator.getGameplayResult() != null && !coordinator.getGameplayResult().isBlank()) {
+      command.setGameplayResult(coordinator.getGameplayResult());
+    }
+    command.setLastAttemptAt(now);
+    if (COMMAND_PENDING_REMOTE.equals(coordinator.getExecutionOutcome())) {
+      command.setCompletedAt(null);
+      command.setFailureCode(null);
+      command.setFailureMessage(null);
+    } else {
+      command.setCompletedAt(now);
+      if (FOLLOWUP_ABANDONED.equals(coordinator.getExecutionOutcome())) {
+        command.setFailureCode(coordinator.getState());
+        command.setFailureMessage("Cross-region remote followup did not apply successfully");
+      } else {
+        command.setFailureCode(null);
+        command.setFailureMessage(null);
+      }
+    }
+    gameplayCommandRepository.save(command);
   }
 
   private void writeRemoteHint(long tenantId, String targetEntityId) {
