@@ -1159,7 +1159,20 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 evaluatedAtMs,
                 List.of(
                     new PluginRuntimeStateService.PluginPolicyViolation(
-                        "game-1", "plugin-1", "plugin-v1", "signer_revoked", 1234L))));
+                        "game-1",
+                        "plugin-1",
+                        "plugin-v1",
+                        "signer_revoked",
+                        1234L,
+                        new PluginRuntimeStateService.PluginPublicationLink(
+                            "plugin-v1",
+                            17L,
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                            "signer_revoked",
+                            1230L,
+                            "",
+                            "")))));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),
@@ -1184,6 +1197,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getIsStale()).isFalse();
     assertThat(ref.get().getViolationsList()).hasSize(1);
     assertThat(ref.get().getViolations(0).getPluginId()).isEqualTo("plugin-1");
+    assertThat(ref.get().getViolations(0).getActivePublication().getPublicationId()).isEqualTo(17L);
   }
 
   @Test

@@ -66,7 +66,8 @@ public interface PluginRuntimeStateService {
       String pluginId,
       String activePluginVersionId,
       String reason,
-      long lastChangedAtMs) {}
+      long lastChangedAtMs,
+      PluginPublicationLink activePublication) {}
 
   record PluginRuntimeEventSummary(
       String eventId,

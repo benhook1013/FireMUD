@@ -844,6 +844,7 @@ message PluginPolicyViolation {
   string active_plugin_version_id = 3;
   string reason = 4;
   int64 last_changed_at_ms = 5;
+  PluginPublicationLink active_publication = 6;
 }
 
 message GetPluginPolicyConvergenceResponse {

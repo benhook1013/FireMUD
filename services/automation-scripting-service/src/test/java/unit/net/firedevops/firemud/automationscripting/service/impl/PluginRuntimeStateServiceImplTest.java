@@ -723,6 +723,9 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(convergence.violations()).hasSize(1);
     assertThat(convergence.violations().get(0).reason())
         .isEqualTo("plugin_component_policy_blocked");
+    assertThat(convergence.violations().get(0).activePublication()).isNotNull();
+    assertThat(convergence.violations().get(0).activePublication().pluginVersionId())
+        .isEqualTo("plugin-v1");
   }
 
   @Test

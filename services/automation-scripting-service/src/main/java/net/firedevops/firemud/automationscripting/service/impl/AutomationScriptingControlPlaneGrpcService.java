@@ -850,13 +850,17 @@ public final class AutomationScriptingControlPlaneGrpcService
 
   private static PluginPolicyViolation toProto(
       PluginRuntimeStateService.PluginPolicyViolation violation) {
-    return PluginPolicyViolation.newBuilder()
-        .setGameInstanceId(violation.gameInstanceId())
-        .setPluginId(violation.pluginId())
-        .setActivePluginVersionId(violation.activePluginVersionId())
-        .setReason(violation.reason())
-        .setLastChangedAtMs(violation.lastChangedAtMs())
-        .build();
+    PluginPolicyViolation.Builder builder =
+        PluginPolicyViolation.newBuilder()
+            .setGameInstanceId(violation.gameInstanceId())
+            .setPluginId(violation.pluginId())
+            .setActivePluginVersionId(violation.activePluginVersionId())
+            .setReason(violation.reason())
+            .setLastChangedAtMs(violation.lastChangedAtMs());
+    if (violation.activePublication() != null) {
+      builder.setActivePublication(toProto(violation.activePublication()));
+    }
+    return builder.build();
   }
 
   private boolean isPolicyCheckStale(long lastPolicyCheckedAtMs) {

@@ -265,7 +265,12 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     Instant now = Instant.now();
     int disabledCount = 0;
     for (PluginRuntimeState state : activeStates) {
-      Optional<String> disableReason = disableReasonForCurrentPolicy(state);
+      Optional<String> disableReason =
+          disableReasonForCurrentPolicy(
+              gameDesignControlPlaneClient.getPublishedPluginVersion(
+                  state.getTenantId(),
+                  state.getPluginId(),
+                  normalize(state.getActivePluginVersionId())));
       if (disableReason.isPresent()) {
         disableForPolicy(state, disableReason.get(), now);
         disabledCount++;
@@ -306,21 +311,25 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
   }
 
   private Optional<PluginPolicyViolation> violationForCurrentPolicy(PluginRuntimeState state) {
-    return disableReasonForCurrentPolicy(state)
+    String activePluginVersionId = normalize(state.getActivePluginVersionId());
+    var publication =
+        gameDesignControlPlaneClient.getPublishedPluginVersion(
+            state.getTenantId(), state.getPluginId(), activePluginVersionId);
+    PluginPublicationLink publicationLink = toPublicationLink(activePluginVersionId, publication);
+    return disableReasonForCurrentPolicy(publication)
         .map(
             reason ->
                 new PluginPolicyViolation(
                     state.getGameInstanceId(),
                     state.getPluginId(),
-                    normalize(state.getActivePluginVersionId()),
+                    activePluginVersionId,
                     reason,
-                    state.getLastChangedAt().toEpochMilli()));
+                    state.getLastChangedAt().toEpochMilli(),
+                    publicationLink));
   }
 
-  private Optional<String> disableReasonForCurrentPolicy(PluginRuntimeState state) {
-    var publication =
-        gameDesignControlPlaneClient.getPublishedPluginVersion(
-            state.getTenantId(), state.getPluginId(), normalize(state.getActivePluginVersionId()));
+  private Optional<String> disableReasonForCurrentPolicy(
+      GetPublishedPluginVersionResponse publication) {
     if (publication.hasError() && !publication.getError().getCode().isBlank()) {
       return Optional.of("signer_policy_unavailable");
     }
