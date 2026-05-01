@@ -597,7 +597,16 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "canceled",
                     "catch_up_truncated",
                     1234L,
-                    1235L)));
+                    1235L,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        17L,
+                        9L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        140L,
+                        "",
+                        ""))));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),
@@ -630,6 +639,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         .isEqualTo(TriggerMode.TRIGGER_MODE_CATCH_UP);
     assertThat(ref.get().getEvents(0).getFinalReason()).isEqualTo("catch_up_truncated");
     assertThat(ref.get().getEvents(0).getSourceDueTickId()).isEqualTo(130L);
+    assertThat(ref.get().getEvents(0).getPublication().getVersionId()).isEqualTo(17L);
   }
 
   @Test

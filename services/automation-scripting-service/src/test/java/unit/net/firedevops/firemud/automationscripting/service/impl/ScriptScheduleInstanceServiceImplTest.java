@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
+import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptSchedulerProperties;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
@@ -31,6 +32,8 @@ import net.firedevops.firemud.automationscripting.service.AutomationQueueService
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,6 +49,7 @@ class ScriptScheduleInstanceServiceImplTest {
   private ScriptEventAuditRepository eventAuditRepository;
   private AutomationQueueService automationQueueService;
   private AutomationAdmissionStateService automationAdmissionStateService;
+  private GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private ScriptScheduleInstanceService service;
   private SimpleMeterRegistry meterRegistry;
 
@@ -60,6 +64,7 @@ class ScriptScheduleInstanceServiceImplTest {
     eventAuditRepository = mock(ScriptEventAuditRepository.class);
     automationQueueService = mock(AutomationQueueService.class);
     automationAdmissionStateService = mock(AutomationAdmissionStateService.class);
+    gameDesignControlPlaneClient = mock(GameDesignControlPlaneClient.class);
     meterRegistry = new SimpleMeterRegistry();
     when(automationAdmissionStateService.getState("1", "game-1", "region-1"))
         .thenReturn(
@@ -67,6 +72,20 @@ class ScriptScheduleInstanceServiceImplTest {
                 "1", "game-1", "region-1", "NORMAL", 4L, "", "", "", 0L));
     when(workItemRepository.saveAndFlush(org.mockito.Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(gameDesignControlPlaneClient.getPublishedScriptPatchVersion(any(), any()))
+        .thenReturn(
+            GetPublishedScriptPatchVersionResponse.newBuilder()
+                .setScriptPatch(
+                    PublishedScriptPatchVersion.newBuilder()
+                        .setScriptPatchVersion("patch-1")
+                        .setVersionId(17L)
+                        .setBaseVersionId(7L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setLastChangedAtMs(150L)
+                        .build())
+                .build());
     service =
         new ScriptScheduleInstanceServiceImpl(
             scheduleDefinitionRepository,
@@ -78,6 +97,7 @@ class ScriptScheduleInstanceServiceImplTest {
             eventAuditRepository,
             automationQueueService,
             automationAdmissionStateService,
+            gameDesignControlPlaneClient,
             new ScriptSchedulerProperties(),
             meterRegistry);
   }
@@ -525,6 +545,7 @@ class ScriptScheduleInstanceServiceImplTest {
             eventAuditRepository,
             automationQueueService,
             automationAdmissionStateService,
+            gameDesignControlPlaneClient,
             schedulerProperties,
             meterRegistry);
     ScriptScheduleInstance first =
@@ -627,6 +648,7 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
               assertThat(summary.finalReason()).isEqualTo("catch_up_truncated");
               assertThat(summary.sourceDueTickId()).isEqualTo(130L);
+              assertThat(summary.publication().versionId()).isEqualTo(17L);
             });
   }
 

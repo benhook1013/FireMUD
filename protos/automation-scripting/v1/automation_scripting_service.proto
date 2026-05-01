@@ -640,6 +640,7 @@ message ScriptTimerAuditEventEntry {
   int64 created_at_ms = 24;
   int64 updated_at_ms = 25;
   string work_item_id = 26;
+  ScriptPatchPublicationLink publication = 27;
 }
 
 message ListScriptTimerAuditEventsResponse {

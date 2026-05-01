@@ -1145,7 +1145,8 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setFinalOutcome(summary.finalOutcome())
             .setFinalReason(summary.finalReason())
             .setCreatedAtMs(summary.createdAtMs())
-            .setUpdatedAtMs(summary.updatedAtMs());
+            .setUpdatedAtMs(summary.updatedAtMs())
+            .setPublication(toProto(summary.publication()));
     if (summary.workItemId() > 0) {
       builder.setWorkItemId(Long.toString(summary.workItemId()));
     }

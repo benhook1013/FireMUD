@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service;
 
 import java.util.List;
+import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService.ScriptPatchPublicationLink;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 
 public interface ScriptScheduleInstanceService {
@@ -96,5 +97,6 @@ public interface ScriptScheduleInstanceService {
       String finalOutcome,
       String finalReason,
       long createdAtMs,
-      long updatedAtMs) {}
+      long updatedAtMs,
+      ScriptPatchPublicationLink publication) {}
 }

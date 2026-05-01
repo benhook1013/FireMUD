@@ -13,6 +13,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptSchedulerProperties;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
@@ -31,9 +32,12 @@ import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepos
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
+import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -64,6 +68,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private final ScriptEventAuditRepository eventAuditRepository;
   private final AutomationQueueService automationQueueService;
   private final AutomationAdmissionStateService automationAdmissionStateService;
+  private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private final ScriptSchedulerProperties schedulerProperties;
   private final MeterRegistry meterRegistry;
 
@@ -77,6 +82,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       ScriptEventAuditRepository eventAuditRepository,
       AutomationQueueService automationQueueService,
       AutomationAdmissionStateService automationAdmissionStateService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
       ScriptSchedulerProperties schedulerProperties,
       MeterRegistry meterRegistry) {
     this.scheduleDefinitionRepository = scheduleDefinitionRepository;
@@ -88,6 +94,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     this.eventAuditRepository = eventAuditRepository;
     this.automationQueueService = automationQueueService;
     this.automationAdmissionStateService = automationAdmissionStateService;
+    this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
     this.schedulerProperties = schedulerProperties;
     this.meterRegistry = meterRegistry;
   }
@@ -346,6 +353,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             org.springframework.data.domain.PageRequest.of(0, boundedLimit))
         .stream()
         .map(ScriptScheduleInstanceServiceImpl::toTimerAuditSummary)
+        .map(summary -> withPublication(tenantId, summary))
         .toList();
   }
 
@@ -852,6 +860,61 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     return "timer-" + shortHash(candidate.identity());
   }
 
+  private TimerAuditEventSummary withPublication(String tenantId, TimerAuditEventSummary summary) {
+    return new TimerAuditEventSummary(
+        summary.tenantId(),
+        summary.gameInstanceId(),
+        summary.regionId(),
+        summary.regionEpoch(),
+        summary.entityId(),
+        summary.playableStateScope(),
+        summary.worldSlug(),
+        summary.realmSlug(),
+        summary.pointerVersion(),
+        summary.scriptId(),
+        summary.pluginId(),
+        summary.pluginVersionId(),
+        summary.eventType(),
+        summary.scriptPatchVersion(),
+        summary.scriptEventId(),
+        summary.triggerMode(),
+        summary.sourceState(),
+        summary.sourceOrdinal(),
+        summary.sourceDueTickId(),
+        summary.sourceDueAtMs(),
+        summary.workItemId(),
+        summary.finalStage(),
+        summary.finalOutcome(),
+        summary.finalReason(),
+        summary.createdAtMs(),
+        summary.updatedAtMs(),
+        publicationLink(tenantId, summary.scriptPatchVersion()));
+  }
+
+  private ScriptWorkItemService.ScriptPatchPublicationLink publicationLink(
+      String tenantId, String scriptPatchVersion) {
+    GetPublishedScriptPatchVersionResponse response =
+        gameDesignControlPlaneClient.getPublishedScriptPatchVersion(tenantId, scriptPatchVersion);
+    if (response.hasError() && !response.getError().getCode().isBlank()) {
+      return new ScriptWorkItemService.ScriptPatchPublicationLink(
+          blankToEmpty(scriptPatchVersion),
+          0L,
+          0L,
+          VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+          0L,
+          blankToEmpty(response.getError().getCode()),
+          blankToEmpty(response.getError().getMessage()));
+    }
+    return new ScriptWorkItemService.ScriptPatchPublicationLink(
+        blankToEmpty(response.getScriptPatch().getScriptPatchVersion()),
+        response.getScriptPatch().getVersionId(),
+        response.getScriptPatch().getBaseVersionId(),
+        response.getScriptPatch().getPublicationState(),
+        response.getScriptPatch().getLastChangedAtMs(),
+        "",
+        "");
+  }
+
   private static TimerAuditEventSummary toTimerAuditSummary(ScriptEventAudit audit) {
     return new TimerAuditEventSummary(
         audit.getTenantId(),
@@ -879,7 +942,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         audit.getFinalOutcome(),
         audit.getFinalReason(),
         audit.getCreatedAt() == null ? 0L : audit.getCreatedAt().toEpochMilli(),
-        audit.getUpdatedAt() == null ? 0L : audit.getUpdatedAt().toEpochMilli());
+        audit.getUpdatedAt() == null ? 0L : audit.getUpdatedAt().toEpochMilli(),
+        null);
   }
 
   private static String timerReadSnapshotToken(TimerFiringCandidate candidate) {
