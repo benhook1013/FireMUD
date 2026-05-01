@@ -6,6 +6,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService.ReadinessStatusSummary;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 
 public interface ScriptWorkItemService {
   long cancelPendingForPatch(CancelPendingForPatchCommand command);
@@ -94,9 +95,13 @@ public interface ScriptWorkItemService {
       String supersededByScriptPatchVersion,
       long lastChangedAtMs,
       long baseVersionId,
-      String abilitySchemaDigest) {
+      String abilitySchemaDigest,
+      ScriptPatchPublicationLink publication) {
     public static PatchStatusSummary fromProjection(
-        ReadinessStatusSummary readiness, long baseVersionId, String abilitySchemaDigest) {
+        ReadinessStatusSummary readiness,
+        long baseVersionId,
+        String abilitySchemaDigest,
+        ScriptPatchPublicationLink publication) {
       return new PatchStatusSummary(
           readiness.scriptPatchVersion(),
           readiness.status(),
@@ -104,9 +109,19 @@ public interface ScriptWorkItemService {
           readiness.supersededByScriptPatchVersion(),
           readiness.lastChangedAtMs(),
           baseVersionId,
-          abilitySchemaDigest);
+          abilitySchemaDigest,
+          publication);
     }
   }
+
+  record ScriptPatchPublicationLink(
+      String scriptPatchVersion,
+      long versionId,
+      long baseVersionId,
+      VersionLifecycleState publicationState,
+      long lastChangedAtMs,
+      String lookupErrorCode,
+      String lookupErrorMessage) {}
 
   record AutomationDrainStatusSummary(
       String tenantId,

@@ -247,7 +247,16 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "",
                     123L,
                     7L,
-                    "ability-1")));
+                    "ability-1",
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        17L,
+                        7L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        120L,
+                        "",
+                        ""))));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -269,6 +278,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getLastChangedAtMs()).isEqualTo(123L);
     assertThat(ref.get().getBaseVersionId()).isEqualTo(7L);
     assertThat(ref.get().getAbilitySchemaDigest()).isEqualTo("ability-1");
+    assertThat(ref.get().getPublication().getVersionId()).isEqualTo(17L);
   }
 
   @Test
@@ -287,7 +297,16 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "",
                     15L,
                     7L,
-                    "ability-1")));
+                    "ability-1",
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-2",
+                        18L,
+                        7L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        14L,
+                        "",
+                        ""))));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -312,6 +331,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
     assertThat(ref.get().getPatches(0).getBaseVersionId()).isEqualTo(7L);
     assertThat(ref.get().getPatches(0).getAbilitySchemaDigest()).isEqualTo("ability-1");
+    assertThat(ref.get().getPatches(0).getPublication().getVersionId()).isEqualTo(18L);
   }
 
   @Test

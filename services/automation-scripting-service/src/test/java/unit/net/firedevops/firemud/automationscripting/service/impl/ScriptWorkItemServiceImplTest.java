@@ -62,7 +62,12 @@ class ScriptWorkItemServiceImplTest {
                     PublishedScriptPatchVersion.newBuilder()
                         .setTenantId("1")
                         .setScriptPatchVersion("patch-1")
+                        .setVersionId(17L)
                         .setBaseVersionId(7L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setLastChangedAtMs(150L)
                         .build())
                 .build());
     when(client.getPublishedReleaseBundle(Mockito.anyString(), Mockito.eq(7L)))
@@ -395,6 +400,11 @@ class ScriptWorkItemServiceImplTest {
     assertThat(status.get().lastChangedAtMs()).isEqualTo(200L);
     assertThat(status.get().baseVersionId()).isEqualTo(7L);
     assertThat(status.get().abilitySchemaDigest()).isEqualTo("ability-1");
+    assertThat(status.get().publication().versionId()).isEqualTo(17L);
+    assertThat(status.get().publication().publicationState())
+        .isEqualTo(
+            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                .VERSION_LIFECYCLE_STATE_PUBLISHED);
   }
 
   @Test
@@ -430,6 +440,7 @@ class ScriptWorkItemServiceImplTest {
     assertThat(statuses.get(0).status()).isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
     assertThat(statuses.get(0).baseVersionId()).isEqualTo(7L);
     assertThat(statuses.get(0).abilitySchemaDigest()).isEqualTo("ability-1");
+    assertThat(statuses.get(0).publication().versionId()).isEqualTo(17L);
   }
 
   @Test

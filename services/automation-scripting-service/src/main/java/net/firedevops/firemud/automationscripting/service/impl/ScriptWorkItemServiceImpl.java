@@ -29,6 +29,7 @@ import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -250,7 +251,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                     PublicationMetadata metadata =
                         publicationMetadata(tenantId, scriptPatchVersion);
                     return PatchStatusSummary.fromProjection(
-                        readiness, metadata.baseVersionId(), metadata.abilitySchemaDigest());
+                        readiness,
+                        metadata.baseVersionId(),
+                        metadata.abilitySchemaDigest(),
+                        metadata.publication());
                   });
       if (projectionSummary.isPresent()) {
         return projectionSummary;
@@ -274,7 +278,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                     PublicationMetadata metadata =
                         publicationMetadata(tenantId, readiness.scriptPatchVersion());
                     return PatchStatusSummary.fromProjection(
-                        readiness, metadata.baseVersionId(), metadata.abilitySchemaDigest());
+                        readiness,
+                        metadata.baseVersionId(),
+                        metadata.abilitySchemaDigest(),
+                        metadata.publication());
                   })
               .toList();
       LinkedHashSet<String> projectedPatchVersions =
@@ -514,23 +521,36 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             "",
             lastChanged.toEpochMilli(),
             publicationMetadata.baseVersionId(),
-            publicationMetadata.abilitySchemaDigest()));
+            publicationMetadata.abilitySchemaDigest(),
+            publicationMetadata.publication()));
   }
 
   private PublicationMetadata publicationMetadata(String tenantId, String scriptPatchVersion) {
     GetPublishedScriptPatchVersionResponse scriptPatchResponse =
         gameDesignControlPlaneClient.getPublishedScriptPatchVersion(tenantId, scriptPatchVersion);
     if (scriptPatchResponse.hasError() && !scriptPatchResponse.getError().getCode().isBlank()) {
-      return PublicationMetadata.empty();
+      return PublicationMetadata.lookupFailure(
+          scriptPatchVersion,
+          scriptPatchResponse.getError().getCode(),
+          scriptPatchResponse.getError().getMessage());
     }
     long baseVersionId = scriptPatchResponse.getScriptPatch().getBaseVersionId();
+    ScriptPatchPublicationLink publication =
+        new ScriptPatchPublicationLink(
+            blankToEmpty(scriptPatchResponse.getScriptPatch().getScriptPatchVersion()),
+            scriptPatchResponse.getScriptPatch().getVersionId(),
+            baseVersionId,
+            scriptPatchResponse.getScriptPatch().getPublicationState(),
+            scriptPatchResponse.getScriptPatch().getLastChangedAtMs(),
+            "",
+            "");
     if (baseVersionId <= 0) {
-      return PublicationMetadata.empty();
+      return new PublicationMetadata(0L, "", publication);
     }
     GetPublishedReleaseBundleResponse releaseBundleResponse =
         gameDesignControlPlaneClient.getPublishedReleaseBundle(tenantId, baseVersionId);
     if (releaseBundleResponse.hasError() && !releaseBundleResponse.getError().getCode().isBlank()) {
-      return new PublicationMetadata(baseVersionId, "");
+      return new PublicationMetadata(baseVersionId, "", publication);
     }
     String abilitySchemaDigest =
         releaseBundleResponse.getBundle().getParticipantDigestsList().stream()
@@ -539,7 +559,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             .map(ParticipantDigest::getContentDigest)
             .findFirst()
             .orElse("");
-    return new PublicationMetadata(baseVersionId, abilitySchemaDigest);
+    return new PublicationMetadata(baseVersionId, abilitySchemaDigest, publication);
   }
 
   private ScriptPatchStatus statusFor(List<ScriptWorkItem> workItems) {
@@ -571,13 +591,29 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     };
   }
 
-  private record PublicationMetadata(long baseVersionId, String abilitySchemaDigest) {
+  private static String blankToEmpty(String value) {
+    return value == null ? "" : value;
+  }
+
+  private record PublicationMetadata(
+      long baseVersionId, String abilitySchemaDigest, ScriptPatchPublicationLink publication) {
     private PublicationMetadata {
       abilitySchemaDigest = abilitySchemaDigest == null ? "" : abilitySchemaDigest;
     }
 
-    private static PublicationMetadata empty() {
-      return new PublicationMetadata(0L, "");
+    private static PublicationMetadata lookupFailure(
+        String scriptPatchVersion, String errorCode, String errorMessage) {
+      return new PublicationMetadata(
+          0L,
+          "",
+          new ScriptPatchPublicationLink(
+              blankToEmpty(scriptPatchVersion),
+              0L,
+              0L,
+              VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+              0L,
+              blankToEmpty(errorCode),
+              blankToEmpty(errorMessage)));
     }
   }
 
@@ -825,10 +861,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private static Long parseOptionalWorkItemId(String workItemId) {
     String normalized = blankToEmpty(workItemId);
     return normalized.isBlank() ? null : parseWorkItemId(normalized);
-  }
-
-  private static String blankToEmpty(String value) {
-    return value == null ? "" : value;
   }
 
   private static long zeroIfNull(Long value) {

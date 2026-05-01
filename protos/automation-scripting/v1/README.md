@@ -20,7 +20,7 @@ RPC expectations:
 
 - `Ping` – safe to retry freely; no side effects.
 - `UpdateScript` / `NotifyScriptVersionUpdate` – **idempotent with respect to their request identifiers** (for example, script IDs, patch versions, and event-binding identity). Callers should treat transport-level retries as safe as long as they resend the same payload.
-- `GetScriptPatchStatus` / `ListScriptPatchStatuses` – visibility over patch lifecycle states (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `ROLLED_BACK`).
+- `GetScriptPatchStatus` / `ListScriptPatchStatuses` – visibility over patch lifecycle states (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `ROLLED_BACK`), now including the linked Game Design script-patch publication metadata instead of only `baseVersionId` and derived digest fields.
 - `SetAutomationAdmissionMode` – mutates the durable Automation-owned rollback admission barrier for one `(tenantId, gameInstanceId[, regionId])` scope and advances `admissionEpoch` when entering rollback pause.
 - `CancelPendingWorkItemsForPatch` / `CancelPendingWorkItemsForPluginVersion` – cancel not-yet-evaluating durable work items for script-patch or plugin-version rollback/disable scopes before they can hand off commands to Game Session.
 - `GetAutomationDrainStatus` – current rollback-drain visibility for one `(tenantId, gameInstanceId[, regionId])` scope, reporting `admissionMode`, `admissionEpoch`, active executions, cancelable pending work, `observedAtMs`, and `isStale` from durable admission/work-item state.

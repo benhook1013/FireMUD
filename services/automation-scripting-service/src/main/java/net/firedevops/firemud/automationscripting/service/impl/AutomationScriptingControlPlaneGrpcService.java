@@ -63,6 +63,7 @@ import net.firedevops.firemud.automationscripting.v1.ScriptEventDefinition;
 import net.firedevops.firemud.automationscripting.v1.ScriptHandoffEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEventEntry;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchPublicationLink;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatusEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptScheduleInstanceEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptTimerAuditEventEntry;
@@ -192,7 +193,8 @@ public final class AutomationScriptingControlPlaneGrpcService
                       .setSupersededByScriptPatchVersion(summary.supersededByScriptPatchVersion())
                       .setLastChangedAtMs(summary.lastChangedAtMs())
                       .setBaseVersionId(summary.baseVersionId())
-                      .setAbilitySchemaDigest(summary.abilitySchemaDigest()),
+                      .setAbilitySchemaDigest(summary.abilitySchemaDigest())
+                      .setPublication(toProto(summary.publication())),
               () -> response.setError(notFound("GetScriptPatchStatus", "script_patch_not_found")));
     } catch (IllegalArgumentException ex) {
       response.setError(
@@ -931,6 +933,20 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setLastChangedAtMs(summary.lastChangedAtMs())
         .setBaseVersionId(summary.baseVersionId())
         .setAbilitySchemaDigest(summary.abilitySchemaDigest())
+        .setPublication(toProto(summary.publication()))
+        .build();
+  }
+
+  private static ScriptPatchPublicationLink toProto(
+      ScriptWorkItemService.ScriptPatchPublicationLink link) {
+    return ScriptPatchPublicationLink.newBuilder()
+        .setScriptPatchVersion(link.scriptPatchVersion())
+        .setVersionId(link.versionId())
+        .setBaseVersionId(link.baseVersionId())
+        .setPublicationState(link.publicationState())
+        .setLastChangedAtMs(link.lastChangedAtMs())
+        .setLookupErrorCode(link.lookupErrorCode())
+        .setLookupErrorMessage(link.lookupErrorMessage())
         .build();
   }
 
