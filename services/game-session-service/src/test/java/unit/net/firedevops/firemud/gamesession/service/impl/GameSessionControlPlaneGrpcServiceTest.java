@@ -244,6 +244,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertNotNull(responseRef.get());
     assertEquals("patch-9", responseRef.get().getPinnedScriptPatchVersion());
     assertEquals("req-99", responseRef.get().getControlPlaneRequestId());
+    assertEquals(17L, responseRef.get().getPublication().getVersionId());
   }
 
   @Test
@@ -292,6 +293,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             authorityService,
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
+            gameDesignClient(),
             BuiltInTextCommandAliasResolver.unsupported(),
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry());
@@ -327,6 +329,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("demo", responseRef.get().getRuntimeState().getWorldSlug());
     assertEquals("production", responseRef.get().getRuntimeState().getRealmSlug());
     assertEquals(11L, responseRef.get().getRuntimeState().getPointerVersion());
+    assertEquals(17L, responseRef.get().getRuntimeState().getPublication().getVersionId());
   }
 
   @Test

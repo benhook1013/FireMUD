@@ -1013,6 +1013,9 @@ public final class GameSessionControlPlaneGrpcService
                   instance.getScriptPatchPinnedControlPlaneRequestId() == null
                       ? ""
                       : instance.getScriptPatchPinnedControlPlaneRequestId())
+              .setPublication(
+                  scriptPatchPublicationLink(
+                      instance.getTenantId(), instance.getScriptPatchVersion()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1159,6 +1162,9 @@ public final class GameSessionControlPlaneGrpcService
                       .setWorldSlug(routingBundle.worldSlug())
                       .setRealmSlug(routingBundle.realmSlug())
                       .setPointerVersion(routingBundle.pointerVersion())
+                      .setPublication(
+                          scriptPatchPublicationLink(
+                              instance.getTenantId(), instance.getScriptPatchVersion()))
                       .build())
               .build();
       responseObserver.onNext(response);

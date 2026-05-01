@@ -301,7 +301,8 @@ message GetPinnedScriptPatchVersionResponse {
   int64 pinned_at_ms = 2;
   string pinned_by = 3;
   string control_plane_request_id = 4;
-  shared.v1.ErrorDetail error = 5;
+  ScriptPatchPublicationLink publication = 5;
+  shared.v1.ErrorDetail error = 6;
 }
 
 message GetGameSessionPinConvergenceRequest {
@@ -353,6 +354,7 @@ message GameInstanceRuntimeState {
   string world_slug = 15;
   string realm_slug = 16;
   int64 pointer_version = 17;
+  ScriptPatchPublicationLink publication = 18;
 }
 
 message GetGameInstanceRuntimeStateResponse {
