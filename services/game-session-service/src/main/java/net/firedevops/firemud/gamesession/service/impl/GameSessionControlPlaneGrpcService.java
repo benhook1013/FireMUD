@@ -6,8 +6,6 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
@@ -21,7 +19,6 @@ import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowupResult;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
-import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
@@ -1372,196 +1369,48 @@ public final class GameSessionControlPlaneGrpcService
 
   private EnqueueAutomationCommandIfAbsentResponse enqueueAutomationCommand(
       EnqueueAutomationCommandIfAbsentRequest request) {
-    long tenantId = parseTenantId(request.getTenantId());
-    long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
-    requireText(request.getRegionId(), "region_id is required");
-    if (request.getRegionEpoch() <= 0) {
-      throw new IllegalArgumentException("region_epoch must be positive");
+    AutomationGameplayCommandAdmissionSupport.AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            new AutomationGameplayCommandAdmissionSupport.AdmissionRequest(
+                parseTenantId(request.getTenantId()),
+                parseGameInstanceId(request.getGameInstanceId()),
+                request.getRegionId(),
+                request.getRegionEpoch(),
+                request.getAutomationDispatchId(),
+                request.getAutomationWorkItemId(),
+                request.getScriptId(),
+                request.getScriptPatchVersion(),
+                normalizeBlank(request.getPluginId()),
+                normalizeBlank(request.getPluginVersionId()),
+                normalizePlayableStateScope(request.getPlayableStateScope()),
+                normalizeBlank(request.getWorldSlug()),
+                normalizeBlank(request.getRealmSlug()),
+                parsePointerVersionClaim(request.getPointerVersion()),
+                normalizeBlank(request.getOriginSourceKind()),
+                normalizeBlank(request.getOriginSourceState()),
+                request.getOriginSourceOrdinal() > 0 ? request.getOriginSourceOrdinal() : null,
+                request.getOriginSourceDueTickId() > 0 ? request.getOriginSourceDueTickId() : null,
+                request.getOriginSourceDueAtMs() > 0 ? request.getOriginSourceDueAtMs() : null,
+                request.getTargetEntityId(),
+                request.getCommand(),
+                request.getRequiresSoloTick(),
+                request.getDueTickId() > 0 ? request.getDueTickId() : null),
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+    EnqueueAutomationCommandIfAbsentResponse.Builder builder =
+        EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+            .setAccepted(result.accepted())
+            .setAdmissionOutcome(result.admissionOutcome());
+    if (result.commandId() != null) {
+      builder.setCommandId(result.commandId());
     }
-    requireText(request.getAutomationDispatchId(), "automation_dispatch_id is required");
-    requireText(request.getAutomationWorkItemId(), "automation_work_item_id is required");
-    requireText(request.getScriptId(), "script_id is required");
-    requireText(request.getScriptPatchVersion(), "script_patch_version is required");
-    requireText(request.getTargetEntityId(), "target_entity_id is required");
-    requireText(request.getCommand(), "command is required");
-
-    GameInstance instance = getInstanceOrThrow(gameInstanceId);
-    if (instance.getTenantId() != tenantId) {
-      throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+    if (result.errorCode() != null) {
+      builder.setError(
+          GrpcAppErrors.error(meterRegistry, result.errorCode(), result.errorMessage()));
     }
-
-    return gameplayCommandRepository
-        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
-            tenantId,
-            gameInstanceId,
-            request.getRegionId(),
-            request.getRegionEpoch(),
-            request.getAutomationDispatchId())
-        .map(this::duplicateAutomationResponse)
-        .orElseGet(() -> enqueueNewAutomationCommand(request, tenantId, gameInstanceId));
-  }
-
-  private EnqueueAutomationCommandIfAbsentResponse duplicateAutomationResponse(
-      GameplayCommand command) {
-    return EnqueueAutomationCommandIfAbsentResponse.newBuilder()
-        .setAccepted(true)
-        .setAdmissionOutcome("DUPLICATE_NOOP")
-        .setCommandId(command.getCommandId())
-        .build();
-  }
-
-  private EnqueueAutomationCommandIfAbsentResponse enqueueNewAutomationCommand(
-      EnqueueAutomationCommandIfAbsentRequest request, long tenantId, long gameInstanceId) {
-    Optional<EnqueueAutomationCommandIfAbsentResponse> rejected =
-        rejectIfAutomationOwnershipClosed(request, tenantId, gameInstanceId);
-    if (rejected.isPresent()) {
-      return rejected.get();
-    }
-    GameplayCommand command = acceptedAutomationCommand(request, tenantId, gameInstanceId);
-    try {
-      tickService.enqueueCommand(
-          tenantId,
-          gameInstanceId,
-          command.getCommandId(),
-          request.getCommand(),
-          request.getRequiresSoloTick());
-      markAutomationStaged(command);
-      triggerImmediateAutomationTick(tenantId, gameInstanceId);
-      return EnqueueAutomationCommandIfAbsentResponse.newBuilder()
-          .setAccepted(true)
-          .setAdmissionOutcome("ENQUEUED")
-          .setCommandId(command.getCommandId())
-          .build();
-    } catch (IllegalArgumentException ex) {
-      markAutomationFailed(command, "INVALID_ARGUMENT", ex.getMessage());
-      return EnqueueAutomationCommandIfAbsentResponse.newBuilder()
-          .setAccepted(false)
-          .setAdmissionOutcome("REJECTED")
-          .setCommandId(command.getCommandId())
-          .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
-          .build();
-    }
-  }
-
-  private Optional<EnqueueAutomationCommandIfAbsentResponse> rejectIfAutomationOwnershipClosed(
-      EnqueueAutomationCommandIfAbsentRequest request, long tenantId, long gameInstanceId) {
-    Optional<RuntimeRegionStatus> maybeStatus =
-        runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
-    if (maybeStatus.isEmpty()) {
-      return Optional.of(
-          rejectedAutomationCommand(
-              "OWNERSHIP_UNAVAILABLE",
-              "runtime_ownership_not_found",
-              "Runtime ownership not found"));
-    }
-    RuntimeRegionStatus status = maybeStatus.get();
-    if (status.getRegionEpoch() != request.getRegionEpoch()) {
-      return Optional.of(
-          rejectedAutomationCommand(
-              "STALE_TIMELINE",
-              "stale_region_epoch",
-              "region_epoch does not match current runtime ownership"));
-    }
-    if (status.isPaused()) {
-      return Optional.of(
-          rejectedAutomationCommand(
-              "RUNTIME_PAUSED", "runtime_paused", "Runtime ownership is paused"));
-    }
-    return Optional.empty();
-  }
-
-  private EnqueueAutomationCommandIfAbsentResponse rejectedAutomationCommand(
-      String admissionOutcome, String errorCode, String message) {
-    return EnqueueAutomationCommandIfAbsentResponse.newBuilder()
-        .setAccepted(false)
-        .setAdmissionOutcome(admissionOutcome)
-        .setError(GrpcAppErrors.error(meterRegistry, errorCode, message))
-        .build();
-  }
-
-  private GameplayCommand acceptedAutomationCommand(
-      EnqueueAutomationCommandIfAbsentRequest request, long tenantId, long gameInstanceId) {
-    Instant now = Instant.now();
-    GameplayCommand command = new GameplayCommand();
-    command.setCommandId("auto-" + UUID.randomUUID());
-    command.setTenantId(tenantId);
-    command.setGameInstanceId(gameInstanceId);
-    command.setSessionId(0L);
-    command.setCommandName(commandName(request.getCommand()));
-    command.setCommandText(request.getCommand());
-    command.setSanitizedCommandText(GameSessionCommandLogSanitizer.sanitize(request.getCommand()));
-    command.setRequiresSoloTick(request.getRequiresSoloTick());
-    command.setExecutionOutcome("ACCEPTED");
-    command.setGameplayResult("PENDING");
-    command.setAcceptedAt(now);
-    command.setLastAttemptAt(now);
-    command.setAttemptCount(1);
-    command.setSourceType("AUTOMATION");
-    command.setAutomationDispatchId(request.getAutomationDispatchId());
-    command.setAutomationWorkItemId(request.getAutomationWorkItemId());
-    command.setScriptId(request.getScriptId());
-    command.setScriptPatchVersion(request.getScriptPatchVersion());
-    command.setPluginId(normalizeBlank(request.getPluginId()));
-    command.setPluginVersionId(normalizeBlank(request.getPluginVersionId()));
-    command.setPlayableStateScope(normalizePlayableStateScope(request.getPlayableStateScope()));
-    command.setWorldSlug(normalizeBlank(request.getWorldSlug()));
-    command.setRealmSlug(normalizeBlank(request.getRealmSlug()));
-    command.setPointerVersion(parsePointerVersionClaim(request.getPointerVersion()));
-    command.setOriginSourceKind(normalizeBlank(request.getOriginSourceKind()));
-    command.setOriginSourceState(normalizeBlank(request.getOriginSourceState()));
-    command.setOriginSourceOrdinal(
-        request.getOriginSourceOrdinal() > 0 ? request.getOriginSourceOrdinal() : null);
-    command.setOriginSourceDueTickId(
-        request.getOriginSourceDueTickId() > 0 ? request.getOriginSourceDueTickId() : null);
-    command.setOriginSourceDueAtMs(
-        request.getOriginSourceDueAtMs() > 0 ? request.getOriginSourceDueAtMs() : null);
-    command.setTargetEntityId(request.getTargetEntityId());
-    command.setCharacterId(parseGameplayCharacterId(request.getTargetEntityId()));
-    command.setRegionId(request.getRegionId());
-    command.setRegionEpoch(request.getRegionEpoch());
-    command.setDueTickId(request.getDueTickId() > 0 ? request.getDueTickId() : null);
-    return gameplayCommandRepository.save(command);
-  }
-
-  private void markAutomationStaged(GameplayCommand command) {
-    Instant now = Instant.now();
-    command.setExecutionOutcome("STAGED");
-    command.setStagedAt(now);
-    command.setLastAttemptAt(now);
-    gameplayCommandRepository.save(command);
-  }
-
-  private void markAutomationFailed(GameplayCommand command, String code, String message) {
-    Instant now = Instant.now();
-    command.setExecutionOutcome("FAILED");
-    command.setGameplayResult("NOT_APPLIED");
-    command.setCompletedAt(now);
-    command.setLastAttemptAt(now);
-    command.setFailureCode(code);
-    command.setFailureMessage(message);
-    gameplayCommandRepository.save(command);
-  }
-
-  private void triggerImmediateAutomationTick(long tenantId, long gameInstanceId) {
-    try {
-      tickService.processTick(tenantId, gameInstanceId);
-    } catch (RuntimeException ex) {
-      logger.warn(
-          "Immediate automation tick kick failed tenantId={} gameInstanceId={}",
-          tenantId,
-          gameInstanceId,
-          ex);
-    }
-  }
-
-  private String commandName(String command) {
-    String trimmed = command == null ? "" : command.trim();
-    if (trimmed.isEmpty()) {
-      return "UNKNOWN";
-    }
-    int firstSpace = trimmed.indexOf(' ');
-    String token = firstSpace < 0 ? trimmed : trimmed.substring(0, firstSpace);
-    return token.toUpperCase(java.util.Locale.ROOT);
+    return builder.build();
   }
 
   private AdmissionPointerControlPlaneEntry toEntry(GameplayAdmissionPointerAuditEntry entry) {

@@ -8,10 +8,14 @@ import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.entity.TickEffect;
+import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
+import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
+import net.firedevops.firemud.gamesession.service.TickService;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -24,15 +28,27 @@ public final class DefaultDurableRemoteFollowupExecutionService
 
   private final RemoteFollowupRepository remoteFollowupRepository;
   private final RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
+  private final GameInstanceRepository gameInstanceRepository;
+  private final GameplayCommandRepository gameplayCommandRepository;
+  private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
+  private final TickService tickService;
   private final RemoteFollowupRuntimeService remoteFollowupRuntimeService;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   public DefaultDurableRemoteFollowupExecutionService(
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      TickService tickService,
       RemoteFollowupRuntimeService remoteFollowupRuntimeService) {
     this.remoteFollowupRepository = remoteFollowupRepository;
     this.remoteCommandCoordinatorRepository = remoteCommandCoordinatorRepository;
+    this.gameInstanceRepository = gameInstanceRepository;
+    this.gameplayCommandRepository = gameplayCommandRepository;
+    this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
+    this.tickService = tickService;
     this.remoteFollowupRuntimeService = remoteFollowupRuntimeService;
   }
 
@@ -82,7 +98,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
           "Durable remote followup execution could not load the linked coordinator");
     }
 
-    FailureDetail failureDetail = validatePayloadKind(followup.getPayloadJson());
+    PayloadExecution payloadExecution = executePayload(coordinator, followup);
     remoteFollowupRuntimeService.recordResult(
         new RemoteFollowupRuntimeService.ResultRequest(
             followup.getTenantId(),
@@ -93,19 +109,19 @@ public final class DefaultDurableRemoteFollowupExecutionService
             coordinator.getOriginRegionEpoch(),
             followup.getTargetRegionId(),
             followup.getTargetRegionEpoch(),
-            "ABANDONED",
-            "{\"failureCode\":\""
-                + failureDetail.failureCode()
-                + "\",\"message\":\""
-                + jsonEscape(failureDetail.failureMessage())
-                + "\"}"));
+            payloadExecution.outcome(),
+            payloadExecution.resultPayloadJson()));
     return new DurableRemoteFollowupExecutionResult(
-        "ABANDONED", failureDetail.failureCode(), failureDetail.failureMessage());
+        payloadExecution.effectStatus(),
+        payloadExecution.failureCode(),
+        payloadExecution.failureMessage());
   }
 
-  private FailureDetail validatePayloadKind(String payloadJson) {
+  private PayloadExecution executePayload(
+      RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
+    String payloadJson = followup.getPayloadJson();
     if (payloadJson == null || payloadJson.isBlank()) {
-      return new FailureDetail(
+      return failure(
           "REMOTE_FOLLOWUP_PAYLOAD_REQUIRED",
           "Target-side remote followup execution requires a typed payload");
     }
@@ -113,19 +129,130 @@ public final class DefaultDurableRemoteFollowupExecutionService
       JsonNode root = objectMapper.readTree(payloadJson);
       String payloadKind = root.path("kind").asText("").trim();
       if (payloadKind.isBlank()) {
-        return new FailureDetail(
+        return failure(
             "REMOTE_FOLLOWUP_KIND_REQUIRED",
             "Target-side remote followup payload must declare a kind");
       }
-      return new FailureDetail(
+      if ("enqueue_automation_command".equals(payloadKind)) {
+        return executeEnqueueAutomationCommand(root, coordinator, followup);
+      }
+      return failure(
           "REMOTE_FOLLOWUP_KIND_UNSUPPORTED",
           "Target-side remote followup payload kind '%s' is not yet supported"
               .formatted(payloadKind));
     } catch (IOException ex) {
-      return new FailureDetail(
+      return failure(
           "REMOTE_FOLLOWUP_PAYLOAD_INVALID",
           "Target-side remote followup payload is not valid JSON");
     }
+  }
+
+  private PayloadExecution executeEnqueueAutomationCommand(
+      JsonNode root, RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
+    try {
+      AutomationGameplayCommandAdmissionSupport.AdmissionResult result =
+          AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+              new AutomationGameplayCommandAdmissionSupport.AdmissionRequest(
+                  followup.getTenantId(),
+                  followup.getTargetGameInstanceId(),
+                  followup.getTargetRegionId(),
+                  followup.getTargetRegionEpoch(),
+                  requiredText(root, "automationDispatchId"),
+                  requiredText(root, "automationWorkItemId"),
+                  requiredText(root, "scriptId"),
+                  requiredText(root, "scriptPatchVersion"),
+                  optionalText(root, "pluginId"),
+                  optionalText(root, "pluginVersionId"),
+                  optionalText(root, "playableStateScope"),
+                  optionalText(root, "worldSlug"),
+                  optionalText(root, "realmSlug"),
+                  optionalLong(root, "pointerVersion"),
+                  textOrDefault(root, "originSourceKind", "REMOTE_FOLLOWUP"),
+                  textOrDefault(root, "originSourceState", "TARGET_REGION_EXECUTED"),
+                  optionalLong(root, "originSourceOrdinal", followup.getDueTickId()),
+                  optionalLong(root, "originSourceDueTickId", followup.getDueTickId()),
+                  optionalLong(root, "originSourceDueAtMs"),
+                  textOrDefault(root, "targetEntityId", followup.getTargetEntityId()),
+                  requiredText(root, "command"),
+                  root.path("requiresSoloTick").asBoolean(false),
+                  followup.getDueTickId()),
+              gameInstanceRepository,
+              gameplayCommandRepository,
+              runtimeRegionStatusRepository,
+              tickService);
+      String payload =
+          "{\"admissionOutcome\":\""
+              + jsonEscape(result.admissionOutcome())
+              + "\""
+              + jsonStringField("commandId", result.commandId())
+              + jsonStringField("errorCode", result.errorCode())
+              + jsonStringField("message", result.errorMessage())
+              + "}";
+      if (result.accepted()) {
+        return new PayloadExecution("APPLIED", "APPLIED", null, null, payload);
+      }
+      return new PayloadExecution(
+          "ABANDONED",
+          "ABANDONED",
+          result.errorCode() == null ? "REMOTE_AUTOMATION_REJECTED" : result.errorCode(),
+          result.errorMessage() == null
+              ? "Target-side remote automation command was not admitted"
+              : result.errorMessage(),
+          payload);
+    } catch (IllegalArgumentException ex) {
+      return failure("REMOTE_AUTOMATION_PAYLOAD_INVALID", ex.getMessage());
+    }
+  }
+
+  private PayloadExecution failure(String failureCode, String failureMessage) {
+    return new PayloadExecution(
+        "ABANDONED",
+        "ABANDONED",
+        failureCode,
+        failureMessage,
+        "{\"failureCode\":\""
+            + jsonEscape(failureCode)
+            + "\",\"message\":\""
+            + jsonEscape(failureMessage)
+            + "\"}");
+  }
+
+  private static String requiredText(JsonNode root, String fieldName) {
+    String value = optionalText(root, fieldName);
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException(fieldName + " is required");
+    }
+    return value;
+  }
+
+  private static String optionalText(JsonNode root, String fieldName) {
+    String value = root.path(fieldName).asText("").trim();
+    return value.isBlank() ? null : value;
+  }
+
+  private static String textOrDefault(JsonNode root, String fieldName, String defaultValue) {
+    String value = optionalText(root, fieldName);
+    return value == null ? defaultValue : value;
+  }
+
+  private static Long optionalLong(JsonNode root, String fieldName) {
+    return optionalLong(root, fieldName, null);
+  }
+
+  private static Long optionalLong(JsonNode root, String fieldName, Long defaultValue) {
+    JsonNode node = root.path(fieldName);
+    if (!node.isNumber()) {
+      return defaultValue;
+    }
+    long value = node.asLong();
+    return value > 0 ? value : defaultValue;
+  }
+
+  private static String jsonStringField(String fieldName, String value) {
+    if (value == null || value.isBlank()) {
+      return "";
+    }
+    return ",\"" + jsonEscape(fieldName) + "\":\"" + jsonEscape(value) + "\"";
   }
 
   private static String jsonEscape(String value) {
@@ -137,5 +264,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
         .replace("\t", "\\t");
   }
 
-  private record FailureDetail(String failureCode, String failureMessage) {}
+  private record PayloadExecution(
+      String effectStatus,
+      String outcome,
+      String failureCode,
+      String failureMessage,
+      String resultPayloadJson) {}
 }
