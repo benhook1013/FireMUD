@@ -456,6 +456,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             PageRequest.of(0, boundedLimit))
         .stream()
         .map(ScriptWorkItemServiceImpl::toHandoffSummary)
+        .map(summary -> withPublication(tenantId, summary))
         .toList();
   }
 
@@ -480,6 +481,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                     || scriptPatchVersion.isBlank()
                     || item.getScriptPatchVersion().equals(scriptPatchVersion))
         .map(ScriptWorkItemServiceImpl::toDeadLetterSummary)
+        .map(summary -> withPublication(tenantId, summary))
         .toList();
   }
 
@@ -561,6 +563,66 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.statusReason(),
         summary.observedAtMs(),
         summary.projectionAsOfMs(),
+        publicationMetadata(tenantId, summary.scriptPatchVersion()).publication());
+  }
+
+  private DeadLetterSummary withPublication(String tenantId, DeadLetterSummary summary) {
+    return new DeadLetterSummary(
+        summary.workItemId(),
+        summary.tenantId(),
+        summary.gameInstanceId(),
+        summary.regionId(),
+        summary.regionEpoch(),
+        summary.entityId(),
+        summary.playableStateScope(),
+        summary.worldSlug(),
+        summary.realmSlug(),
+        summary.pointerVersion(),
+        summary.sourceKind(),
+        summary.sourceState(),
+        summary.sourceOrdinal(),
+        summary.sourceDueTickId(),
+        summary.sourceDueAtMs(),
+        summary.scriptId(),
+        summary.pluginId(),
+        summary.pluginVersionId(),
+        summary.eventType(),
+        summary.scriptPatchVersion(),
+        summary.scriptEventId(),
+        summary.status(),
+        summary.reason(),
+        summary.createdAtMs(),
+        summary.updatedAtMs(),
+        publicationMetadata(tenantId, summary.scriptPatchVersion()).publication());
+  }
+
+  private HandoffEventSummary withPublication(String tenantId, HandoffEventSummary summary) {
+    return new HandoffEventSummary(
+        summary.eventId(),
+        summary.tenantId(),
+        summary.gameInstanceId(),
+        summary.scriptPatchVersion(),
+        summary.scriptId(),
+        summary.pluginId(),
+        summary.pluginVersionId(),
+        summary.workItemId(),
+        summary.commandOrdinal(),
+        summary.automationDispatchId(),
+        summary.gameSessionCommandId(),
+        summary.targetEntityId(),
+        summary.playableStateScope(),
+        summary.worldSlug(),
+        summary.realmSlug(),
+        summary.pointerVersion(),
+        summary.sourceKind(),
+        summary.sourceState(),
+        summary.sourceOrdinal(),
+        summary.sourceDueTickId(),
+        summary.sourceDueAtMs(),
+        summary.emittedCommandText(),
+        summary.handoffOutcome(),
+        summary.handoffReason(),
+        summary.observedAtMs(),
         publicationMetadata(tenantId, summary.scriptPatchVersion()).publication());
   }
 
@@ -682,7 +744,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         item.getStatus(),
         item.getCancelReason() == null ? "" : item.getCancelReason(),
         item.getCreatedAt().toEpochMilli(),
-        item.getUpdatedAt().toEpochMilli());
+        item.getUpdatedAt().toEpochMilli(),
+        null);
   }
 
   private static HandoffEventSummary toHandoffSummary(ScriptHandoffEvent event) {
@@ -711,7 +774,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         event.getEmittedCommandText(),
         event.getHandoffOutcome(),
         event.getHandoffReason(),
-        event.getObservedAt().toEpochMilli());
+        event.getObservedAt().toEpochMilli(),
+        null);
   }
 
   private List<ScriptWorkItem> selectReplayCandidates(

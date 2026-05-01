@@ -847,6 +847,7 @@ class ScriptWorkItemServiceImplTest {
     assertThat(deadLetters.get(0).pluginVersionId()).isEqualTo("plugin-v1");
     assertThat(deadLetters.get(0).reason()).isEqualTo("STALE_TIMELINE");
     assertThat(deadLetters.get(0).updatedAtMs()).isEqualTo(300L);
+    assertThat(deadLetters.get(0).publication().versionId()).isEqualTo(17L);
   }
 
   @Test
@@ -910,6 +911,7 @@ class ScriptWorkItemServiceImplTest {
     assertThat(events.get(0).sourceOrdinal()).isEqualTo(5000L);
     assertThat(events.get(0).emittedCommandText()).isEqualTo("LOOK AT old chest");
     assertThat(events.get(0).handoffOutcome()).isEqualTo("enqueued");
+    assertThat(events.get(0).publication().versionId()).isEqualTo(17L);
   }
 
   @Test

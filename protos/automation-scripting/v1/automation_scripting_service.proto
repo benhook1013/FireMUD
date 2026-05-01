@@ -281,6 +281,7 @@ message ScriptDeadLetterEntry {
   int64 source_due_at_ms = 23;
   string plugin_id = 24;
   string plugin_version_id = 25;
+  ScriptPatchPublicationLink publication = 26;
 }
 
 message ListScriptDeadLettersResponse {
@@ -737,6 +738,7 @@ message ScriptHandoffEventEntry {
   int64 source_ordinal = 23;
   int64 source_due_tick_id = 24;
   int64 source_due_at_ms = 25;
+  ScriptPatchPublicationLink publication = 26;
 }
 
 message ListScriptHandoffEventsResponse {

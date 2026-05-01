@@ -182,7 +182,8 @@ public interface ScriptWorkItemService {
       String emittedCommandText,
       String handoffOutcome,
       String handoffReason,
-      long observedAtMs) {}
+      long observedAtMs,
+      ScriptPatchPublicationLink publication) {}
 
   record DeadLetterSummary(
       String workItemId,
@@ -209,7 +210,8 @@ public interface ScriptWorkItemService {
       String status,
       String reason,
       long createdAtMs,
-      long updatedAtMs) {}
+      long updatedAtMs,
+      ScriptPatchPublicationLink publication) {}
 
   record ReplayDeadLettersCommand(
       String tenantId,

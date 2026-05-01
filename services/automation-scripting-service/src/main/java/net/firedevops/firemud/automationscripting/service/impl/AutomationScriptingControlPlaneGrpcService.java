@@ -1041,6 +1041,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setReason(summary.reason())
         .setCreatedAtMs(summary.createdAtMs())
         .setUpdatedAtMs(summary.updatedAtMs())
+        .setPublication(toProto(summary.publication()))
         .build();
   }
 
@@ -1179,6 +1180,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setHandoffOutcome(summary.handoffOutcome())
         .setHandoffReason(summary.handoffReason())
         .setObservedAtMs(summary.observedAtMs())
+        .setPublication(toProto(summary.publication()))
         .build();
   }
 

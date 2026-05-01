@@ -930,7 +930,16 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "LOOK AT old chest",
                     "enqueued",
                     "game_session_accepted",
-                    15L)));
+                    15L,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        17L,
+                        9L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        140L,
+                        "",
+                        ""))));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -965,6 +974,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvents(0).getSourceDueAtMs()).isEqualTo(5000L);
     assertThat(ref.get().getEvents(0).getEmittedCommandText()).isEqualTo("LOOK AT old chest");
     assertThat(ref.get().getEvents(0).getHandoffOutcome()).isEqualTo("enqueued");
+    assertThat(ref.get().getEvents(0).getPublication().getVersionId()).isEqualTo(17L);
   }
 
   @Test
@@ -999,7 +1009,16 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "DEAD_LETTERED",
                     "STALE_TIMELINE",
                     100L,
-                    200L)));
+                    200L,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        18L,
+                        9L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        140L,
+                        "",
+                        ""))));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -1023,6 +1042,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getDeadLetters(0).getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getDeadLetters(0).getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getDeadLetters(0).getPointerVersion()).isEqualTo("17");
+    assertThat(ref.get().getDeadLetters(0).getPublication().getVersionId()).isEqualTo(18L);
     assertThat(ref.get().getDeadLetters(0).getSourceKind()).isEqualTo("GAMEPLAY_EVENT");
     assertThat(ref.get().getDeadLetters(0).getSourceState()).isEqualTo("WORK_ITEM_PERSISTED");
     assertThat(ref.get().getDeadLetters(0).getPluginId()).isEqualTo("plugin-1");
