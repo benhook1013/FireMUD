@@ -367,7 +367,8 @@ public final class AutomationScriptingControlPlaneGrpcService
                       .setLastChangedAtMs(summary.lastChangedAtMs())
                       .setProjectionAsOfMs(summary.projectionAsOfMs())
                       .setProjectionLagMs(summary.projectionLagMs())
-                      .setIsProjectionStale(summary.projectionStale()),
+                      .setIsProjectionStale(summary.projectionStale())
+                      .setPublication(toProto(summary.publication())),
               () ->
                   response.setError(
                       notFound(
@@ -1055,6 +1056,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setProjectionAsOfMs(summary.projectionAsOfMs())
         .setProjectionLagMs(summary.projectionLagMs())
         .setIsProjectionStale(summary.projectionStale())
+        .setPublication(toProto(summary.publication()))
         .build();
   }
 
@@ -1069,6 +1071,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setStatusReason(summary.statusReason())
         .setObservedAtMs(summary.observedAtMs())
         .setProjectionAsOfMs(summary.projectionAsOfMs())
+        .setPublication(toProto(summary.publication()))
         .build();
   }
 

@@ -143,7 +143,8 @@ public interface ScriptWorkItemService {
       long lastChangedAtMs,
       long projectionAsOfMs,
       long projectionLagMs,
-      boolean projectionStale) {}
+      boolean projectionStale,
+      ScriptPatchPublicationLink publication) {}
 
   record PatchInstanceRolloutEventSummary(
       String eventId,
@@ -153,7 +154,8 @@ public interface ScriptWorkItemService {
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       String statusReason,
       long observedAtMs,
-      long projectionAsOfMs) {}
+      long projectionAsOfMs,
+      ScriptPatchPublicationLink publication) {}
 
   record HandoffEventSummary(
       String eventId,

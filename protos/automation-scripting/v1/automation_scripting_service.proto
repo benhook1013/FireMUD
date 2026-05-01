@@ -548,6 +548,7 @@ message GetScriptPatchInstanceRolloutStatusResponse {
   int64 projection_lag_ms = 8;
   bool is_projection_stale = 9;
   shared.v1.ErrorDetail error = 10;
+  ScriptPatchPublicationLink publication = 11;
 }
 
 message ListScriptScheduleInstancesRequest {
@@ -664,6 +665,7 @@ message ScriptPatchInstanceRolloutEntry {
   int64 projection_as_of_ms = 7;
   int64 projection_lag_ms = 8;
   bool is_projection_stale = 9;
+  ScriptPatchPublicationLink publication = 10;
 }
 
 message ListScriptPatchInstanceRolloutsResponse {
@@ -690,6 +692,7 @@ message ScriptPatchInstanceRolloutEventEntry {
   string status_reason = 6;
   int64 observed_at_ms = 7;
   int64 projection_as_of_ms = 8;
+  ScriptPatchPublicationLink publication = 9;
 }
 
 message ListScriptPatchInstanceRolloutEventsResponse {

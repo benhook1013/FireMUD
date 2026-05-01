@@ -380,7 +380,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     requireText(tenantId, "tenant_id");
     requireText(gameInstanceId, "game_instance_id");
     requireText(scriptPatchVersion, "script_patch_version");
-    return rolloutProjectionService.getProjection(tenantId, gameInstanceId, scriptPatchVersion);
+    return rolloutProjectionService
+        .getProjection(tenantId, gameInstanceId, scriptPatchVersion)
+        .map(summary -> withPublication(tenantId, summary));
   }
 
   @Override
@@ -393,13 +395,17 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       long changedAfterMs,
       long changedBeforeMs) {
     requireText(tenantId, "tenant_id");
-    return rolloutProjectionService.listProjections(
-        tenantId,
-        gameInstanceId,
-        scriptPatchVersion,
-        rolloutStatus,
-        changedAfterMs,
-        changedBeforeMs);
+    return rolloutProjectionService
+        .listProjections(
+            tenantId,
+            gameInstanceId,
+            scriptPatchVersion,
+            rolloutStatus,
+            changedAfterMs,
+            changedBeforeMs)
+        .stream()
+        .map(summary -> withPublication(tenantId, summary))
+        .toList();
   }
 
   @Override
@@ -411,14 +417,18 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       long changedAfterMs,
       long changedBeforeMs,
       int limit) {
-    return rolloutProjectionService.listEvents(
-        tenantId,
-        gameInstanceId,
-        scriptPatchVersion,
-        rolloutStatus,
-        changedAfterMs,
-        changedBeforeMs,
-        limit);
+    return rolloutProjectionService
+        .listEvents(
+            tenantId,
+            gameInstanceId,
+            scriptPatchVersion,
+            rolloutStatus,
+            changedAfterMs,
+            changedBeforeMs,
+            limit)
+        .stream()
+        .map(summary -> withPublication(tenantId, summary))
+        .toList();
   }
 
   @Override
@@ -523,6 +533,35 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             publicationMetadata.baseVersionId(),
             publicationMetadata.abilitySchemaDigest(),
             publicationMetadata.publication()));
+  }
+
+  private PatchInstanceRolloutSummary withPublication(
+      String tenantId, PatchInstanceRolloutSummary summary) {
+    return new PatchInstanceRolloutSummary(
+        summary.tenantId(),
+        summary.gameInstanceId(),
+        summary.scriptPatchVersion(),
+        summary.rolloutStatus(),
+        summary.statusReason(),
+        summary.lastChangedAtMs(),
+        summary.projectionAsOfMs(),
+        summary.projectionLagMs(),
+        summary.projectionStale(),
+        publicationMetadata(tenantId, summary.scriptPatchVersion()).publication());
+  }
+
+  private PatchInstanceRolloutEventSummary withPublication(
+      String tenantId, PatchInstanceRolloutEventSummary summary) {
+    return new PatchInstanceRolloutEventSummary(
+        summary.eventId(),
+        summary.tenantId(),
+        summary.gameInstanceId(),
+        summary.scriptPatchVersion(),
+        summary.rolloutStatus(),
+        summary.statusReason(),
+        summary.observedAtMs(),
+        summary.projectionAsOfMs(),
+        publicationMetadata(tenantId, summary.scriptPatchVersion()).publication());
   }
 
   private PublicationMetadata publicationMetadata(String tenantId, String scriptPatchVersion) {

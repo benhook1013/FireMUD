@@ -605,7 +605,16 @@ class ScriptWorkItemServiceImplTest {
                     150L,
                     151L,
                     0L,
-                    false)));
+                    false,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "",
+                        0L,
+                        0L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+                        0L,
+                        "",
+                        ""))));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
@@ -628,6 +637,7 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.get().statusReason()).isEqualTo("runtime_pin_matches_patch");
     assertThat(summary.get().projectionLagMs()).isZero();
     assertThat(summary.get().projectionStale()).isFalse();
+    assertThat(summary.get().publication().versionId()).isEqualTo(17L);
   }
 
   @Test
@@ -660,7 +670,16 @@ class ScriptWorkItemServiceImplTest {
                     200L,
                     200L,
                     5_100L,
-                    true)));
+                    true,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "",
+                        0L,
+                        0L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+                        0L,
+                        "",
+                        ""))));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
@@ -683,6 +702,7 @@ class ScriptWorkItemServiceImplTest {
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK);
     assertThat(summary.get().statusReason()).isEqualTo("projection_lag_exceeded");
     assertThat(summary.get().projectionStale()).isTrue();
+    assertThat(summary.get().publication().versionId()).isEqualTo(17L);
   }
 
   @Test
@@ -739,7 +759,16 @@ class ScriptWorkItemServiceImplTest {
                     260L,
                     261L,
                     0L,
-                    false)));
+                    false,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "",
+                        0L,
+                        0L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+                        0L,
+                        "",
+                        ""))));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
@@ -768,6 +797,7 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summaries.get(0).rolloutStatus())
         .isEqualTo(
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK);
+    assertThat(summaries.get(0).publication().versionId()).isEqualTo(17L);
   }
 
   @Test

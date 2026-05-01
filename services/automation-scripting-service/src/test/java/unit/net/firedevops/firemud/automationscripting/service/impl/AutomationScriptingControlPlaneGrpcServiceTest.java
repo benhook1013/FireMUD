@@ -742,7 +742,16 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     123L,
                     130L,
                     0L,
-                    false)));
+                    false,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        17L,
+                        9L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        140L,
+                        "",
+                        ""))));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -763,6 +772,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getRolloutStatus())
         .isEqualTo(ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED);
     assertThat(ref.get().getProjectionLagMs()).isZero();
+    assertThat(ref.get().getPublication().getVersionId()).isEqualTo(17L);
   }
 
   @Test
@@ -789,7 +799,16 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     15L,
                     16L,
                     0L,
-                    false)));
+                    false,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        18L,
+                        9L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        140L,
+                        "",
+                        ""))));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -812,6 +831,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getRollouts(0).getRolloutStatus())
         .isEqualTo(
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK);
+    assertThat(ref.get().getRollouts(0).getPublication().getVersionId()).isEqualTo(18L);
   }
 
   @Test
@@ -837,7 +857,16 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED,
                     "runtime_pin_restored_after_rollback",
                     15L,
-                    16L)));
+                    16L,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        19L,
+                        9L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        140L,
+                        "",
+                        ""))));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -864,6 +893,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvents(0).getEventId()).isEqualTo("event-1");
     assertThat(ref.get().getEvents(0).getRolloutStatus())
         .isEqualTo(ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED);
+    assertThat(ref.get().getEvents(0).getPublication().getVersionId()).isEqualTo(19L);
   }
 
   @Test
