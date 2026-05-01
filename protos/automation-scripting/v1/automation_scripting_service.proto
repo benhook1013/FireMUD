@@ -523,6 +523,7 @@ message GetAutomationPinConvergenceResponse {
   string world_slug = 10;
   string realm_slug = 11;
   string pointer_version = 12;
+  ScriptPatchPublicationLink publication = 13;
 }
 
 enum ScriptPatchInstanceRolloutStatus {

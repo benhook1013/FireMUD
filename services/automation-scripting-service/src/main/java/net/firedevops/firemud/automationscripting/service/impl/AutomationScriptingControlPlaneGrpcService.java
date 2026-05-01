@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
+import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
@@ -75,6 +76,8 @@ import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
@@ -92,6 +95,7 @@ public final class AutomationScriptingControlPlaneGrpcService
   private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
   private final ScriptScheduleInstanceService scriptScheduleInstanceService;
+  private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private final ScriptRuntimeProperties runtimeProperties;
 
   public AutomationScriptingControlPlaneGrpcService(
@@ -100,7 +104,8 @@ public final class AutomationScriptingControlPlaneGrpcService
       PluginRuntimeStateService pluginRuntimeStateService,
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
-      ScriptScheduleInstanceService scriptScheduleInstanceService) {
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient) {
     this(
         eventRegistryService,
         workItemService,
@@ -108,6 +113,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         automationAdmissionStateService,
         scriptPatchPinProjectionService,
         scriptScheduleInstanceService,
+        gameDesignControlPlaneClient,
         new ScriptRuntimeProperties());
   }
 
@@ -119,6 +125,7 @@ public final class AutomationScriptingControlPlaneGrpcService
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptScheduleInstanceService scriptScheduleInstanceService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
       ScriptRuntimeProperties runtimeProperties) {
     this.eventRegistryService = eventRegistryService;
     this.workItemService = workItemService;
@@ -126,6 +133,7 @@ public final class AutomationScriptingControlPlaneGrpcService
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
     this.scriptScheduleInstanceService = scriptScheduleInstanceService;
+    this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
     this.runtimeProperties = runtimeProperties;
   }
 
@@ -327,7 +335,10 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setIsProjectionStale(summary.projectionStale())
             .setWorldSlug(summary.worldSlug())
             .setRealmSlug(summary.realmSlug())
-            .setPointerVersion(summary.pointerVersion());
+            .setPointerVersion(summary.pointerVersion())
+            .setPublication(
+                scriptPatchPublicationLink(
+                    request.getTenantId(), summary.observedPinnedScriptPatchVersion()));
       } else if (!lookup.errorCode().isBlank()) {
         response.setError(
             ErrorDetail.newBuilder().setCode(lookup.errorCode()).setMessage(lookup.errorMessage()));
@@ -948,6 +959,30 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setLastChangedAtMs(link.lastChangedAtMs())
         .setLookupErrorCode(link.lookupErrorCode())
         .setLookupErrorMessage(link.lookupErrorMessage())
+        .build();
+  }
+
+  private ScriptPatchPublicationLink scriptPatchPublicationLink(
+      String tenantId, String scriptPatchVersion) {
+    GetPublishedScriptPatchVersionResponse response =
+        gameDesignControlPlaneClient.getPublishedScriptPatchVersion(tenantId, scriptPatchVersion);
+    if (response.hasError() && !response.getError().getCode().isBlank()) {
+      return ScriptPatchPublicationLink.newBuilder()
+          .setScriptPatchVersion(normalize(scriptPatchVersion))
+          .setVersionId(0L)
+          .setBaseVersionId(0L)
+          .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED)
+          .setLastChangedAtMs(0L)
+          .setLookupErrorCode(response.getError().getCode())
+          .setLookupErrorMessage(response.getError().getMessage())
+          .build();
+    }
+    return ScriptPatchPublicationLink.newBuilder()
+        .setScriptPatchVersion(response.getScriptPatch().getScriptPatchVersion())
+        .setVersionId(response.getScriptPatch().getVersionId())
+        .setBaseVersionId(response.getScriptPatch().getBaseVersionId())
+        .setPublicationState(response.getScriptPatch().getPublicationState())
+        .setLastChangedAtMs(response.getScriptPatch().getLastChangedAtMs())
         .build();
   }
 

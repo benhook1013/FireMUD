@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
@@ -65,6 +66,8 @@ import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionReque
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -72,6 +75,25 @@ import org.mockito.Mockito;
 class AutomationScriptingControlPlaneGrpcServiceTest {
   private static AutomationAdmissionStateService admissionStateService() {
     return Mockito.mock(AutomationAdmissionStateService.class);
+  }
+
+  private static GameDesignControlPlaneClient gameDesignClient() {
+    GameDesignControlPlaneClient client = Mockito.mock(GameDesignControlPlaneClient.class);
+    Mockito.when(client.getPublishedScriptPatchVersion(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetPublishedScriptPatchVersionResponse.newBuilder()
+                .setScriptPatch(
+                    PublishedScriptPatchVersion.newBuilder()
+                        .setScriptPatchVersion("patch-2")
+                        .setVersionId(17L)
+                        .setBaseVersionId(7L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setLastChangedAtMs(150L)
+                        .build())
+                .build());
+    return client;
   }
 
   private static AutomationScriptingControlPlaneGrpcService newService(
@@ -85,7 +107,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         automationAdmissionStateService,
         scriptPatchPinProjectionService,
         new ScriptRuntimeProperties(),
-        Mockito.mock(ScriptScheduleInstanceService.class));
+        Mockito.mock(ScriptScheduleInstanceService.class),
+        gameDesignClient());
   }
 
   private static AutomationScriptingControlPlaneGrpcService newService(
@@ -100,7 +123,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         automationAdmissionStateService,
         scriptPatchPinProjectionService,
         runtimeProperties,
-        Mockito.mock(ScriptScheduleInstanceService.class));
+        Mockito.mock(ScriptScheduleInstanceService.class),
+        gameDesignClient());
   }
 
   private static AutomationScriptingControlPlaneGrpcService newService(
@@ -110,6 +134,24 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptRuntimeProperties runtimeProperties,
       ScriptScheduleInstanceService scriptScheduleInstanceService) {
+    return newService(
+        workItemService,
+        pluginRuntimeStateService,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        runtimeProperties,
+        scriptScheduleInstanceService,
+        gameDesignClient());
+  }
+
+  private static AutomationScriptingControlPlaneGrpcService newService(
+      ScriptWorkItemService workItemService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptRuntimeProperties runtimeProperties,
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient) {
     return new AutomationScriptingControlPlaneGrpcService(
         new BuiltInScriptEventRegistryService(),
         workItemService,
@@ -117,6 +159,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         automationAdmissionStateService,
         scriptPatchPinProjectionService,
         scriptScheduleInstanceService,
+        gameDesignControlPlaneClient,
         runtimeProperties);
   }
 
@@ -754,6 +797,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getPointerVersion()).isEqualTo("17");
+    assertThat(ref.get().getPublication().getVersionId()).isEqualTo(17L);
   }
 
   @Test
