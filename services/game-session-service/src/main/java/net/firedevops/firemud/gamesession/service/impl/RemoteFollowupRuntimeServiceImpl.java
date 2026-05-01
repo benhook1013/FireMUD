@@ -550,8 +550,18 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     } else {
       command.setCompletedAt(now);
       if (FOLLOWUP_ABANDONED.equals(coordinator.getExecutionOutcome())) {
-        command.setFailureCode(coordinator.getState());
-        command.setFailureMessage("Cross-region remote followup did not apply successfully");
+        if (COORDINATOR_LATE_RESULT_IGNORED.equals(coordinator.getState())
+            && command.getFailureCode() != null
+            && !command.getFailureCode().isBlank()) {
+          // Preserve the original terminal failure cause when a late result is ignored.
+          command.setFailureMessage(
+              command.getFailureMessage() == null || command.getFailureMessage().isBlank()
+                  ? "Cross-region remote followup did not apply successfully"
+                  : command.getFailureMessage());
+        } else {
+          command.setFailureCode(coordinator.getState());
+          command.setFailureMessage("Cross-region remote followup did not apply successfully");
+        }
       } else {
         command.setFailureCode(null);
         command.setFailureMessage(null);

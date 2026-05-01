@@ -369,6 +369,8 @@ class RemoteFollowupRuntimeServiceImplTest {
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setOutcome("APPLIED");
     GameplayCommand command = gameplayCommand();
+    command.setFailureCode(RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
+    command.setFailureMessage("Cross-region remote followup did not apply successfully");
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
         .thenReturn(List.of());
@@ -387,6 +389,9 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, command.getExecutionOutcome());
     assertEquals("TIMEOUT", command.getGameplayResult());
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED,
+        command.getFailureCode());
   }
 
   @Test
