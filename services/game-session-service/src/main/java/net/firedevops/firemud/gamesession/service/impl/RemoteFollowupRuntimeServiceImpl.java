@@ -162,6 +162,9 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         remoteFollowupResultRepository
             .findByTenantIdAndResultId(request.tenantId(), request.resultId())
             .orElseGet(RemoteFollowupResult::new);
+    if (result.getId() != null) {
+      validateExistingResult(result, request);
+    }
     Instant now = Instant.now(clock);
     populateResult(result, request, now);
     remoteFollowupResultRepository.save(result);
@@ -351,6 +354,20 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     }
   }
 
+  private static void validateExistingResult(RemoteFollowupResult existing, ResultRequest request) {
+    if (!request.coordinatorId().equals(existing.getCoordinatorId())
+        || !request.followupId().equals(existing.getFollowupId())
+        || !request.originRegionId().equals(existing.getOriginRegionId())
+        || request.originRegionEpoch() != existing.getOriginRegionEpoch()
+        || !request.targetRegionId().equals(existing.getTargetRegionId())
+        || request.targetRegionEpoch() != existing.getTargetRegionEpoch()
+        || !request.outcome().equals(existing.getOutcome())
+        || !normalized(request.resultPayloadJson())
+            .equals(normalized(existing.getResultPayloadJson()))) {
+      throw new IllegalArgumentException("result_id already records a different remote outcome");
+    }
+  }
+
   private static void validateExistingCoordinator(
       RemoteCommandCoordinator existing, ScheduleRequest request) {
     if (!request.coordinatorId().equals(existing.getCoordinatorId())) {
@@ -496,6 +513,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
+  }
+
+  private static String normalized(String value) {
+    return value == null ? "" : value;
   }
 
   private static String truncate(String value) {

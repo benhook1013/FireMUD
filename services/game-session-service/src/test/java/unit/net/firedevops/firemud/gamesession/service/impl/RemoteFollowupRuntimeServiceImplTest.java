@@ -248,6 +248,50 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void recordResultRejectsConflictingExistingResultIdReplay() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    RemoteFollowup followup = followup();
+    RemoteFollowupResult existing = new RemoteFollowupResult();
+    existing.setId(99L);
+    existing.setResultId("result-1");
+    existing.setTenantId(1L);
+    existing.setCoordinatorId("coord-1");
+    existing.setFollowupId("followup-1");
+    existing.setOriginRegionId("region-a");
+    existing.setOriginRegionEpoch(4L);
+    existing.setTargetRegionId("region-b");
+    existing.setTargetRegionEpoch(8L);
+    existing.setOutcome("APPLIED");
+    existing.setResultPayloadJson("{\"status\":\"done\"}");
+    when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+    when(resultRepository.findByTenantIdAndResultId(1L, "result-1"))
+        .thenReturn(Optional.of(existing));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.recordResult(
+                    new RemoteFollowupRuntimeService.ResultRequest(
+                        1L,
+                        "result-1",
+                        "coord-1",
+                        "followup-1",
+                        "region-a",
+                        4L,
+                        "region-b",
+                        8L,
+                        "ABANDONED",
+                        "{\"status\":\"failed\"}")));
+
+    assertEquals("result_id already records a different remote outcome", ex.getMessage());
+  }
+
+  @Test
   void reconcileResultsAppliesPendingCoordinatorFromDurableInbox() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
