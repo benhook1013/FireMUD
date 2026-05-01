@@ -3,6 +3,7 @@ syntax = "proto3";
 package game_session.v1;
 
 import "entity-management/v1/entity_management_service.proto";
+import "game-design/v1/game_design_service.proto";
 import "shared/v1/errors.proto";
 
 option java_package = "net.firedevops.firemud.gamesession.v1";
@@ -315,7 +316,18 @@ message GetGameSessionPinConvergenceResponse {
   string last_observed_control_plane_request_id = 4;
   int64 observed_at_ms = 5;
   bool is_stale = 6;
-  shared.v1.ErrorDetail error = 7;
+  ScriptPatchPublicationLink publication = 7;
+  shared.v1.ErrorDetail error = 8;
+}
+
+message ScriptPatchPublicationLink {
+  string script_patch_version = 1;
+  int64 version_id = 2;
+  int64 base_version_id = 3;
+  gamedesign.v1.VersionLifecycleState publication_state = 4;
+  int64 last_changed_at_ms = 5;
+  string lookup_error_code = 6;
+  string lookup_error_message = 7;
 }
 
 message GetGameInstanceRuntimeStateRequest {

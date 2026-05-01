@@ -15,6 +15,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
+import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -81,6 +84,25 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class GameSessionControlPlaneGrpcServiceTest {
+  private static GameDesignClient gameDesignClient() {
+    GameDesignClient client = Mockito.mock(GameDesignClient.class);
+    Mockito.when(client.getPublishedScriptPatchVersion(Mockito.anyLong(), Mockito.anyString()))
+        .thenReturn(
+            GetPublishedScriptPatchVersionResponse.newBuilder()
+                .setScriptPatch(
+                    PublishedScriptPatchVersion.newBuilder()
+                        .setScriptPatchVersion("patch-2")
+                        .setVersionId(17L)
+                        .setBaseVersionId(7L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setLastChangedAtMs(150L)
+                        .build())
+                .build());
+    return client;
+  }
+
   @AfterEach
   void tearDown() {
     SessionContext.clear();
@@ -372,6 +394,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         Instant.parse("2026-04-22T00:00:00Z").toEpochMilli(), responseRef.get().getObservedAtMs());
     assertEquals(true, responseRef.get().getIsStale());
+    assertEquals(17L, responseRef.get().getPublication().getVersionId());
   }
 
   @Test
@@ -2152,6 +2175,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
         Mockito.mock(InstanceCutoverCompatibilityService.class),
         Mockito.mock(VersionUpgradePreparationService.class),
+        gameDesignClient(),
         BuiltInTextCommandAliasResolver.unsupported(),
         Mockito.mock(TickService.class),
         meterRegistry,

@@ -10,12 +10,15 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -88,6 +91,23 @@ public final class GameDesignClient
                 .build());
   }
 
+  public GetPublishedScriptPatchVersionResponse getPublishedScriptPatchVersion(
+      long tenantId, String scriptPatchVersion) {
+    if (stub() == null) {
+      return unavailableScriptPatchVersion();
+    }
+    try {
+      return callStub()
+          .getPublishedScriptPatchVersion(
+              GetPublishedScriptPatchVersionRequest.newBuilder()
+                  .setTenantId(Long.toString(tenantId))
+                  .setScriptPatchVersion(scriptPatchVersion)
+                  .build());
+    } catch (RuntimeException ex) {
+      return unavailableScriptPatchVersion();
+    }
+  }
+
   public GetVersionStateResponse getVersionState(long tenantId, long versionId) {
     return callStub()
         .getVersionState(
@@ -109,5 +129,15 @@ public final class GameDesignClient
 
   private GameDesignServiceGrpc.GameDesignServiceBlockingStub callStub() {
     return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
+  }
+
+  private static GetPublishedScriptPatchVersionResponse unavailableScriptPatchVersion() {
+    return GetPublishedScriptPatchVersionResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("GAME_DESIGN_UNAVAILABLE")
+                .setMessage("Game Design service unavailable")
+                .build())
+        .build();
   }
 }
