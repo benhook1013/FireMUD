@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
-import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.entity.TickEffect;
@@ -102,7 +101,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
     remoteFollowupRuntimeService.recordResult(
         new RemoteFollowupRuntimeService.ResultRequest(
             followup.getTenantId(),
-            "remote-result-" + UUID.randomUUID(),
+            durableResultId(followup),
             coordinator.getCoordinatorId(),
             followup.getFollowupId(),
             coordinator.getOriginRegionId(),
@@ -115,6 +114,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
         payloadExecution.effectStatus(),
         payloadExecution.failureCode(),
         payloadExecution.failureMessage());
+  }
+
+  private static String durableResultId(RemoteFollowup followup) {
+    return "remote-result:" + followup.getFollowupId();
   }
 
   private PayloadExecution executePayload(

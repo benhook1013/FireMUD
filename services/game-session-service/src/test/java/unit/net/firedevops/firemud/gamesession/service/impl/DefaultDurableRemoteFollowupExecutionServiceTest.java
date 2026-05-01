@@ -89,6 +89,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     ArgumentCaptor<RemoteFollowupRuntimeService.ResultRequest> requestCaptor =
         ArgumentCaptor.forClass(RemoteFollowupRuntimeService.ResultRequest.class);
     org.mockito.Mockito.verify(remoteFollowupRuntimeService).recordResult(requestCaptor.capture());
+    assertEquals("remote-result:followup-1", requestCaptor.getValue().resultId());
     assertEquals("coord-1", requestCaptor.getValue().coordinatorId());
     assertEquals("followup-1", requestCaptor.getValue().followupId());
     assertEquals("ABANDONED", requestCaptor.getValue().outcome());
@@ -201,6 +202,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     ArgumentCaptor<RemoteFollowupRuntimeService.ResultRequest> requestCaptor =
         ArgumentCaptor.forClass(RemoteFollowupRuntimeService.ResultRequest.class);
     org.mockito.Mockito.verify(remoteFollowupRuntimeService).recordResult(requestCaptor.capture());
+    assertEquals("remote-result:followup-1", requestCaptor.getValue().resultId());
     assertEquals("APPLIED", requestCaptor.getValue().outcome());
   }
 }
