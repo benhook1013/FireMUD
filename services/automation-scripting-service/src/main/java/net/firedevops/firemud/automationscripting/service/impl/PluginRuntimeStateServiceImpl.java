@@ -114,7 +114,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
             changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs),
             PageRequest.of(0, boundedLimit))
         .stream()
-        .map(PluginRuntimeStateServiceImpl::toEventSummary)
+        .map(event -> toEventSummary(event, publicationLinks(tenantId, pluginId, event)))
         .toList();
   }
 
@@ -461,6 +461,26 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     return links;
   }
 
+  private Map<String, PluginPublicationLink> publicationLinks(
+      String tenantId, String pluginId, PluginRuntimeEvent event) {
+    Map<String, PluginPublicationLink> links = new HashMap<>();
+    for (String pluginVersionId :
+        List.of(
+            normalize(event.getPreviousPluginVersionId()),
+            normalize(event.getActivePluginVersionId()))) {
+      if (pluginVersionId.isBlank() || links.containsKey(pluginVersionId)) {
+        continue;
+      }
+      links.put(
+          pluginVersionId,
+          toPublicationLink(
+              pluginVersionId,
+              gameDesignControlPlaneClient.getPublishedPluginVersion(
+                  tenantId, pluginId, pluginVersionId)));
+    }
+    return links;
+  }
+
   private static PluginRuntimeStatus toStatus(
       PluginRuntimeState state, Map<String, PluginPublicationLink> publicationLinks) {
     String activePluginVersionId = normalize(state.getActivePluginVersionId());
@@ -500,19 +520,24 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         "");
   }
 
-  private static PluginRuntimeEventSummary toEventSummary(PluginRuntimeEvent event) {
+  private static PluginRuntimeEventSummary toEventSummary(
+      PluginRuntimeEvent event, Map<String, PluginPublicationLink> publicationLinks) {
+    String previousPluginVersionId = normalize(event.getPreviousPluginVersionId());
+    String activePluginVersionId = normalize(event.getActivePluginVersionId());
     return new PluginRuntimeEventSummary(
         event.getEventId(),
         event.getTenantId(),
         event.getGameInstanceId(),
         event.getPluginId(),
-        normalize(event.getPreviousPluginVersionId()),
-        normalize(event.getActivePluginVersionId()),
+        previousPluginVersionId,
+        activePluginVersionId,
         PluginState.valueOf(event.getPluginState()),
         event.getStatusReason(),
         normalize(event.getControlPlaneRequestId()),
         normalize(event.getActorPrincipal()),
-        event.getObservedAt().toEpochMilli());
+        event.getObservedAt().toEpochMilli(),
+        publicationLinks.get(previousPluginVersionId),
+        publicationLinks.get(activePluginVersionId));
   }
 
   private void appendEvent(

@@ -859,23 +859,6 @@ public final class AutomationScriptingControlPlaneGrpcService
         .build();
   }
 
-  private static PluginRuntimeEventEntry toProto(
-      PluginRuntimeStateService.PluginRuntimeEventSummary summary) {
-    return PluginRuntimeEventEntry.newBuilder()
-        .setEventId(summary.eventId())
-        .setTenantId(summary.tenantId())
-        .setGameInstanceId(summary.gameInstanceId())
-        .setPluginId(summary.pluginId())
-        .setPreviousPluginVersionId(summary.previousPluginVersionId())
-        .setActivePluginVersionId(summary.activePluginVersionId())
-        .setPluginState(summary.pluginState())
-        .setStatusReason(summary.statusReason())
-        .setControlPlaneRequestId(summary.controlPlaneRequestId())
-        .setActorPrincipal(summary.actorPrincipal())
-        .setObservedAtMs(summary.observedAtMs())
-        .build();
-  }
-
   private boolean isPolicyCheckStale(long lastPolicyCheckedAtMs) {
     long ageMs = Instant.now().toEpochMilli() - lastPolicyCheckedAtMs;
     return ageMs > runtimeProperties.getPluginPolicyStaleThresholdSeconds() * 1_000L;
@@ -958,6 +941,30 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setLookupErrorCode(link.lookupErrorCode())
         .setLookupErrorMessage(link.lookupErrorMessage())
         .build();
+  }
+
+  private static PluginRuntimeEventEntry toProto(
+      PluginRuntimeStateService.PluginRuntimeEventSummary summary) {
+    PluginRuntimeEventEntry.Builder builder =
+        PluginRuntimeEventEntry.newBuilder()
+            .setEventId(summary.eventId())
+            .setTenantId(summary.tenantId())
+            .setGameInstanceId(summary.gameInstanceId())
+            .setPluginId(summary.pluginId())
+            .setPreviousPluginVersionId(summary.previousPluginVersionId())
+            .setActivePluginVersionId(summary.activePluginVersionId())
+            .setPluginState(summary.pluginState())
+            .setStatusReason(summary.statusReason())
+            .setControlPlaneRequestId(summary.controlPlaneRequestId())
+            .setActorPrincipal(summary.actorPrincipal())
+            .setObservedAtMs(summary.observedAtMs());
+    if (summary.previousPublication() != null) {
+      builder.setPreviousPublication(toProto(summary.previousPublication()));
+    }
+    if (summary.activePublication() != null) {
+      builder.setActivePublication(toProto(summary.activePublication()));
+    }
+    return builder.build();
   }
 
   private static AutomationAdmissionMode toProtoMode(String mode) {

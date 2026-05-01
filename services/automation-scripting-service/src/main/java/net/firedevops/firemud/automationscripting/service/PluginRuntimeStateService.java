@@ -79,7 +79,9 @@ public interface PluginRuntimeStateService {
       String statusReason,
       String controlPlaneRequestId,
       String actorPrincipal,
-      long observedAtMs) {}
+      long observedAtMs,
+      PluginPublicationLink previousPublication,
+      PluginPublicationLink activePublication) {}
 
   record PluginRuntimeStatus(
       String activePluginVersionId,

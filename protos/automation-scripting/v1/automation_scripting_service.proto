@@ -823,6 +823,8 @@ message PluginRuntimeEventEntry {
   string control_plane_request_id = 9;
   string actor_principal = 10;
   int64 observed_at_ms = 11;
+  PluginPublicationLink previous_publication = 12;
+  PluginPublicationLink active_publication = 13;
 }
 
 message ListPluginRuntimeEventsResponse {
