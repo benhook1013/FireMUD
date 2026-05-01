@@ -559,7 +559,7 @@ public final class GameSessionControlPlaneGrpcService
               ? remoteFollowupRepository.findByTenantIdAndTargetRegionIdOrderByDueTickIdAsc(
                   tenantId, request.getTargetRegionId())
               : remoteFollowupRepository
-                  .findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAsc(
+                  .findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAscIdAsc(
                       tenantId, request.getTargetRegionId(), request.getStatus());
       ListRemoteFollowupsResponse.Builder response = ListRemoteFollowupsResponse.newBuilder();
       followups.forEach(followup -> response.addFollowups(toRemoteFollowupEntry(followup)));
@@ -1788,6 +1788,9 @@ public final class GameSessionControlPlaneGrpcService
       if (followup.getClaimedTickBatchId() != null) {
         builder.setFollowupClaimedTickBatchId(followup.getClaimedTickBatchId());
       }
+      if (followup.getClaimOrdinal() != null) {
+        builder.setFollowupClaimOrdinal(followup.getClaimOrdinal());
+      }
     }
     if (latestResult != null) {
       builder.setLatestResultOutcome(latestResult.getOutcome());
@@ -1824,6 +1827,9 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (followup.getClaimedTickBatchId() != null) {
       builder.setClaimedTickBatchId(followup.getClaimedTickBatchId());
+    }
+    if (followup.getClaimOrdinal() != null) {
+      builder.setClaimOrdinal(followup.getClaimOrdinal());
     }
     if (followup.getPayloadJson() != null) {
       builder.setPayloadJson(followup.getPayloadJson());

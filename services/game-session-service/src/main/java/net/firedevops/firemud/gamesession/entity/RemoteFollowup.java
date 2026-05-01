@@ -62,6 +62,9 @@ public class RemoteFollowup {
   @Column(name = "claimed_tick_batch_id", length = 64)
   private String claimedTickBatchId;
 
+  @Column(name = "claim_ordinal")
+  private Long claimOrdinal;
+
   @Column(name = "payload_json", columnDefinition = "TEXT")
   private String payloadJson;
 

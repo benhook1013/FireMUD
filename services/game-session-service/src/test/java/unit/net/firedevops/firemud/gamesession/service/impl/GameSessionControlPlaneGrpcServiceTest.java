@@ -1813,6 +1813,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setTenantId(1L);
     followup.setStatus("CLAIMED");
     followup.setClaimedTickBatchId("tb-1");
+    followup.setClaimOrdinal(3L);
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setCoordinatorId("coord-1");
     result.setOutcome("APPLIED");
@@ -1858,6 +1859,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("PENDING_REMOTE", responseRef.get().getCoordinator().getState());
     assertEquals("CLAIMED", responseRef.get().getCoordinator().getFollowupStatus());
     assertEquals("tb-1", responseRef.get().getCoordinator().getFollowupClaimedTickBatchId());
+    assertEquals(3L, responseRef.get().getCoordinator().getFollowupClaimOrdinal());
     assertEquals("APPLIED", responseRef.get().getCoordinator().getLatestResultOutcome());
     assertEquals(
         "{\"commandId\":\"auto-1\"}",
@@ -1879,6 +1881,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setTargetRegionId("region-b");
     followup.setTargetRegionEpoch(4L);
     followup.setDueTickId(55L);
+    followup.setClaimOrdinal(2L);
     followup.setEffectKey("damage:1");
     followup.setTargetEntityId("entity-9");
     followup.setStatus("SCHEDULED");
@@ -1886,7 +1889,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setUpdatedAt(Instant.parse("2026-05-01T00:00:01Z"));
     RemoteFollowupRepository repository = Mockito.mock(RemoteFollowupRepository.class);
     Mockito.when(
-            repository.findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAsc(
+            repository.findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAscIdAsc(
                 1L, "region-b", "SCHEDULED"))
         .thenReturn(List.of(followup));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -1910,6 +1913,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("rf-1", responseRef.get().getFollowups(0).getFollowupId());
     assertEquals("region-b", responseRef.get().getFollowups(0).getTargetRegionId());
     assertEquals(55L, responseRef.get().getFollowups(0).getDueTickId());
+    assertEquals(2L, responseRef.get().getFollowups(0).getClaimOrdinal());
   }
 
   @Test

@@ -1532,11 +1532,12 @@ public class TickServiceImpl implements TickService {
       builder
           .append("{\"sourceKind\":\"REMOTE_FOLLOWUP\"")
           .append(",\"sourceOrdinal\":")
-          .append(followup.getDueTickId())
+          .append(remoteFollowupSourceOrdinal(followup))
           .append(",\"sourceState\":\"TARGET_REGION_CLAIMED\"")
           .append(",\"effectKey\":\"")
           .append(jsonEscape(followup.getFollowupId()))
           .append("\"");
+      appendJsonNumberField(builder, "sourceDueTickId", followup.getDueTickId());
       appendJsonStringField(builder, "followupId", followup.getFollowupId());
       appendJsonStringField(builder, "originRegionId", followup.getOriginRegionId());
       appendJsonNumberField(builder, "originRegionEpoch", followup.getOriginRegionEpoch());
@@ -1549,6 +1550,13 @@ public class TickServiceImpl implements TickService {
     }
     builder.append("]}");
     return builder.toString();
+  }
+
+  private long remoteFollowupSourceOrdinal(
+      net.firedevops.firemud.gamesession.entity.RemoteFollowup followup) {
+    return followup.getClaimOrdinal() == null || followup.getClaimOrdinal() <= 0L
+        ? followup.getDueTickId()
+        : followup.getClaimOrdinal();
   }
 
   private String selectionSourceKind(GameplayCommand command) {

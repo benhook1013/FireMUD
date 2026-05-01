@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -63,39 +64,29 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
     requirePositive(limit, "limit");
 
     List<RemoteFollowup> followups =
-        remoteFollowupRepository
-            .findByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
-                tenantId,
-                targetRegionId,
-                RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
-                dueTickIdInclusive,
-                PageRequest.of(0, candidateWindow(limit)));
+        fairSelectedCandidates(tenantId, targetRegionId, dueTickIdInclusive, limit);
     if (followups.isEmpty()) {
       return new ClaimOutcome(List.of(), 0);
     }
 
-    List<RemoteFollowup> selectedFollowups = selectFairFollowups(followups, limit);
-    if (selectedFollowups.isEmpty()) {
-      return new ClaimOutcome(List.of(), 0);
-    }
-
     Instant now = Instant.now(clock);
-    for (RemoteFollowup followup : selectedFollowups) {
+    for (int index = 0; index < followups.size(); index++) {
+      RemoteFollowup followup = followups.get(index);
       followup.setStatus(FOLLOWUP_CLAIMED);
       followup.setClaimedTickBatchId(tickBatchId);
+      followup.setClaimOrdinal((long) index + 1L);
       followup.setUpdatedAt(now);
     }
-    remoteFollowupRepository.saveAll(selectedFollowups);
-    remoteFollowupClaimedCounter.increment(selectedFollowups.size());
+    remoteFollowupRepository.saveAll(followups);
+    remoteFollowupClaimedCounter.increment(followups.size());
     logger.info(
         "Claimed remote followups tenantId={} targetRegionId={} tickBatchId={} count={}",
         tenantId,
         targetRegionId,
         tickBatchId,
-        selectedFollowups.size());
+        followups.size());
     return new ClaimOutcome(
-        selectedFollowups.stream().map(RemoteFollowup::getFollowupId).toList(),
-        selectedFollowups.size());
+        followups.stream().map(RemoteFollowup::getFollowupId).toList(), followups.size());
   }
 
   @Override
@@ -113,6 +104,7 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
     for (RemoteFollowup followup : followups) {
       followup.setStatus(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED);
       followup.setClaimedTickBatchId(null);
+      followup.setClaimOrdinal(null);
       followup.setFailureCode(failureCode);
       followup.setFailureMessage(truncate(failureMessage));
       followup.setUpdatedAt(now);
@@ -150,17 +142,34 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
     return Math.max(limit, limit * 4);
   }
 
-  private static List<RemoteFollowup> selectFairFollowups(
-      List<RemoteFollowup> candidates, int limit) {
-    java.util.ArrayList<RemoteFollowup> selected = new java.util.ArrayList<>(limit);
+  private List<RemoteFollowup> fairSelectedCandidates(
+      long tenantId, String targetRegionId, long dueTickIdInclusive, int limit) {
+    int pageSize = candidateWindow(limit);
+    ArrayList<RemoteFollowup> selected = new ArrayList<>(limit);
     Set<String> claimedEntityKeys = new LinkedHashSet<>();
-    for (RemoteFollowup candidate : candidates) {
-      String entityKey = claimEntityKey(candidate);
-      if (!claimedEntityKeys.add(entityKey)) {
-        continue;
+    for (int page = 0; selected.size() < limit; page++) {
+      List<RemoteFollowup> candidates =
+          remoteFollowupRepository
+              .findByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAscIdAsc(
+                  tenantId,
+                  targetRegionId,
+                  RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
+                  dueTickIdInclusive,
+                  PageRequest.of(page, pageSize));
+      if (candidates.isEmpty()) {
+        break;
       }
-      selected.add(candidate);
-      if (selected.size() >= limit) {
+      for (RemoteFollowup candidate : candidates) {
+        String entityKey = claimEntityKey(candidate);
+        if (!claimedEntityKeys.add(entityKey)) {
+          continue;
+        }
+        selected.add(candidate);
+        if (selected.size() >= limit) {
+          break;
+        }
+      }
+      if (candidates.size() < pageSize) {
         break;
       }
     }

@@ -21,10 +21,10 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   List<RemoteFollowup>
-      findByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+      findByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAscIdAsc(
           Long tenantId, String targetRegionId, String status, long dueTickId, Pageable pageable);
 
-  List<RemoteFollowup> findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAsc(
+  List<RemoteFollowup> findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAscIdAsc(
       Long tenantId, String targetRegionId, String status);
 
   Optional<RemoteFollowup>

@@ -277,6 +277,7 @@ class TickServiceImplTest {
     followup.setDueTickId(10L);
     followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
     followup.setClaimedTickBatchId("tb-followup");
+    followup.setClaimOrdinal(1L);
     followup.setPayloadJson("{\"kind\":\"noop\"}");
     when(remoteFollowupRepository.findByClaimedTickBatchIdOrderByIdAsc(any(String.class)))
         .thenReturn(List.of(followup));
@@ -309,6 +310,13 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertTrue(
         batchCaptor.getAllValues().stream()
             .anyMatch(batch -> "REMOTE_FOLLOWUP_DRAIN".equals(batch.getBatchSource())));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        batchCaptor.getAllValues().stream()
+            .filter(batch -> "REMOTE_FOLLOWUP_DRAIN".equals(batch.getBatchSource()))
+            .anyMatch(
+                batch ->
+                    batch.getSelectedWorkManifestJson().contains("\"sourceOrdinal\":1")
+                        && batch.getSelectedWorkManifestJson().contains("\"sourceDueTickId\":10")));
   }
 
   @Test

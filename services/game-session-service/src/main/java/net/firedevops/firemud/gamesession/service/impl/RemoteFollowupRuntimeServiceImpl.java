@@ -459,6 +459,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     followup.setPayloadJson(blankToNull(request.payloadJson()));
     followup.setStatus(FOLLOWUP_SCHEDULED);
     followup.setClaimedTickBatchId(null);
+    followup.setClaimOrdinal(null);
     followup.setFailureCode(null);
     followup.setFailureMessage(null);
     if (followup.getCreatedAt() == null) {
