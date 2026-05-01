@@ -2,7 +2,9 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
@@ -15,6 +17,7 @@ import net.firedevops.firemud.automationscripting.service.PluginActivationPrefli
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
@@ -82,7 +85,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     requireText(pluginId, "plugin_id");
     return repository
         .findByTenantIdAndGameInstanceIdAndPluginId(tenantId, gameInstanceId, pluginId)
-        .map(PluginRuntimeStateServiceImpl::toStatus);
+        .map(state -> toStatus(state, publicationLinks(tenantId, pluginId, state)));
   }
 
   @Override
@@ -438,16 +441,63 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     return state;
   }
 
-  private static PluginRuntimeStatus toStatus(PluginRuntimeState state) {
+  private Map<String, PluginPublicationLink> publicationLinks(
+      String tenantId, String pluginId, PluginRuntimeState state) {
+    Map<String, PluginPublicationLink> links = new HashMap<>();
+    for (String pluginVersionId :
+        List.of(
+            normalize(state.getActivePluginVersionId()),
+            normalize(state.getPendingPluginVersionId()))) {
+      if (pluginVersionId.isBlank() || links.containsKey(pluginVersionId)) {
+        continue;
+      }
+      links.put(
+          pluginVersionId,
+          toPublicationLink(
+              pluginVersionId,
+              gameDesignControlPlaneClient.getPublishedPluginVersion(
+                  tenantId, pluginId, pluginVersionId)));
+    }
+    return links;
+  }
+
+  private static PluginRuntimeStatus toStatus(
+      PluginRuntimeState state, Map<String, PluginPublicationLink> publicationLinks) {
+    String activePluginVersionId = normalize(state.getActivePluginVersionId());
+    String pendingPluginVersionId = normalize(state.getPendingPluginVersionId());
     return new PluginRuntimeStatus(
-        normalize(state.getActivePluginVersionId()),
-        normalize(state.getPendingPluginVersionId()),
+        activePluginVersionId,
+        pendingPluginVersionId,
         PluginState.valueOf(state.getPluginState()),
         state.getStatusReason(),
         state.getLastChangedAt().toEpochMilli(),
         normalize(state.getControlPlaneRequestId()),
         normalize(state.getActorPrincipal()),
-        state.getLastPolicyCheckedAt().toEpochMilli());
+        state.getLastPolicyCheckedAt().toEpochMilli(),
+        publicationLinks.get(activePluginVersionId),
+        publicationLinks.get(pendingPluginVersionId));
+  }
+
+  private static PluginPublicationLink toPublicationLink(
+      String pluginVersionId, GetPublishedPluginVersionResponse publication) {
+    if (publication.hasError() && !publication.getError().getCode().isBlank()) {
+      return new PluginPublicationLink(
+          pluginVersionId,
+          0L,
+          VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+          "",
+          0L,
+          publication.getError().getCode(),
+          publication.getError().getMessage());
+    }
+    return new PluginPublicationLink(
+        normalize(publication.getPluginVersion().getPluginVersionId()),
+        publication.getPluginVersion().getPublicationId(),
+        publication.getPluginVersion().getPublicationState(),
+        normalize(publication.getPluginVersion().getStatusReason()),
+        publication.getPluginVersion().getLastChangedAtMs(),
+        "",
+        "");
   }
 
   private static PluginRuntimeEventSummary toEventSummary(PluginRuntimeEvent event) {

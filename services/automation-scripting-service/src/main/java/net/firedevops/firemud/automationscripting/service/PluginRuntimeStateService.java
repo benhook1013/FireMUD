@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.service;
 
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 
 public interface PluginRuntimeStateService {
   Optional<PluginRuntimeStatus> getStatus(String tenantId, String gameInstanceId, String pluginId);
@@ -88,5 +89,16 @@ public interface PluginRuntimeStateService {
       long lastChangedAtMs,
       String controlPlaneRequestId,
       String actorPrincipal,
-      long lastPolicyCheckedAtMs) {}
+      long lastPolicyCheckedAtMs,
+      PluginPublicationLink activePublication,
+      PluginPublicationLink pendingPublication) {}
+
+  record PluginPublicationLink(
+      String pluginVersionId,
+      long publicationId,
+      VersionLifecycleState publicationState,
+      String statusReason,
+      long lastChangedAtMs,
+      String lookupErrorCode,
+      String lookupErrorMessage) {}
 }

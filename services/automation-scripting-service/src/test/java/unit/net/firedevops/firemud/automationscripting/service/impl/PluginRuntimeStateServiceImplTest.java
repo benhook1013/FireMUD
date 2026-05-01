@@ -178,13 +178,30 @@ class PluginRuntimeStateServiceImplTest {
     existing.setActorPrincipal("operator-1");
     existing.setLastChangedAt(java.time.Instant.ofEpochMilli(123));
     PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
     when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
         .thenReturn(Optional.of(existing));
+    when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            GetPublishedPluginVersionResponse.newBuilder()
+                .setPluginVersion(
+                    PublishedPluginVersion.newBuilder()
+                        .setTenantId("1")
+                        .setPluginId("plugin-1")
+                        .setPluginVersionId("plugin-v1")
+                        .setPublicationId(17L)
+                        .setPublicationState(
+                            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setStatusReason("ready_for_activation")
+                        .setLastChangedAtMs(777L)
+                        .build())
+                .build());
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
             repository,
             Mockito.mock(PluginRuntimeEventRepository.class),
-            Mockito.mock(GameDesignControlPlaneClient.class),
+            gameDesignClient,
             Mockito.mock(GameSessionControlPlaneClient.class),
             Mockito.mock(ScriptScheduleInstanceService.class));
 
@@ -197,6 +214,52 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(status.get().lastChangedAtMs()).isEqualTo(123L);
     assertThat(status.get().controlPlaneRequestId()).isEqualTo("req-7");
     assertThat(status.get().actorPrincipal()).isEqualTo("operator-1");
+    assertThat(status.get().activePublication()).isNotNull();
+    assertThat(status.get().activePublication().publicationId()).isEqualTo(17L);
+    assertThat(status.get().activePublication().publicationState())
+        .isEqualTo(VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED);
+    assertThat(status.get().activePublication().statusReason()).isEqualTo("ready_for_activation");
+  }
+
+  @Test
+  void readsRuntimeStatusWithPublicationLookupFailureMetadata() {
+    PluginRuntimeState existing = new PluginRuntimeState();
+    existing.setTenantId("1");
+    existing.setGameInstanceId("game-1");
+    existing.setPluginId("plugin-1");
+    existing.setActivePluginVersionId("plugin-v1");
+    existing.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
+    existing.setStatusReason("operator_activation");
+    existing.setLastChangedAt(java.time.Instant.ofEpochMilli(123));
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(existing));
+    when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            GetPublishedPluginVersionResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("GAME_DESIGN_UNAVAILABLE")
+                        .setMessage("Game Design service unavailable"))
+                .build());
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            Mockito.mock(PluginRuntimeEventRepository.class),
+            gameDesignClient,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
+
+    Optional<PluginRuntimeStateService.PluginRuntimeStatus> status =
+        service.getStatus("1", "game-1", "plugin-1");
+
+    assertThat(status).isPresent();
+    assertThat(status.get().activePublication()).isNotNull();
+    assertThat(status.get().activePublication().pluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(status.get().activePublication().lookupErrorCode())
+        .isEqualTo("GAME_DESIGN_UNAVAILABLE");
   }
 
   @Test

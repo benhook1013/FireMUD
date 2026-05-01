@@ -3,6 +3,7 @@ syntax = "proto3";
 package automation_scripting.v1;
 
 import "entity-management/v1/entity_management_service.proto";
+import "game-design/v1/game_design_service.proto";
 import "shared/v1/errors.proto";
 
 option java_package = "net.firedevops.firemud.automationscripting.v1";
@@ -774,6 +775,16 @@ message GetPluginStatusRequest {
   string plugin_id = 3;
 }
 
+message PluginPublicationLink {
+  string plugin_version_id = 1;
+  int64 publication_id = 2;
+  gamedesign.v1.VersionLifecycleState publication_state = 3;
+  string status_reason = 4;
+  int64 last_changed_at_ms = 5;
+  string lookup_error_code = 6;
+  string lookup_error_message = 7;
+}
+
 message GetPluginStatusResponse {
   string active_plugin_version_id = 1;
   string pending_plugin_version_id = 2;
@@ -785,6 +796,8 @@ message GetPluginStatusResponse {
   int64 last_policy_checked_at_ms = 8;
   bool policy_check_stale = 9;
   shared.v1.ErrorDetail error = 10;
+  PluginPublicationLink active_publication = 11;
+  PluginPublicationLink pending_publication = 12;
 }
 
 message ListPluginRuntimeEventsRequest {

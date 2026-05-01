@@ -62,7 +62,9 @@ class ScriptEventIngressServiceImplTest {
                     100L,
                     "req-1",
                     "admin",
-                    System.currentTimeMillis())));
+                    System.currentTimeMillis(),
+                    null,
+                    null)));
     return service;
   }
 
@@ -341,7 +343,9 @@ class ScriptEventIngressServiceImplTest {
                     100L,
                     "req-1",
                     "admin",
-                    System.currentTimeMillis())));
+                    System.currentTimeMillis(),
+                    null,
+                    null)));
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
             repository,
@@ -415,7 +419,9 @@ class ScriptEventIngressServiceImplTest {
                     100L,
                     "req-1",
                     "admin",
-                    1L)));
+                    1L,
+                    null,
+                    null)));
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
             repository,

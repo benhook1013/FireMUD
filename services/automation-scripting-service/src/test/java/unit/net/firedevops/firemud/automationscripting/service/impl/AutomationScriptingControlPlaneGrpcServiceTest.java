@@ -1025,7 +1025,17 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     55L,
                     "req-1",
                     "operator-1",
-                    System.currentTimeMillis())));
+                    System.currentTimeMillis(),
+                    new PluginRuntimeStateService.PluginPublicationLink(
+                        "plugin-v1",
+                        17L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        "ready_for_activation",
+                        44L,
+                        "",
+                        ""),
+                    null)));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),
@@ -1050,6 +1060,10 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getActorPrincipal()).isEqualTo("operator-1");
     assertThat(ref.get().getLastPolicyCheckedAtMs()).isPositive();
     assertThat(ref.get().getPolicyCheckStale()).isFalse();
+    assertThat(ref.get().getActivePublication().getPluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(ref.get().getActivePublication().getPublicationId()).isEqualTo(17L);
+    assertThat(ref.get().getActivePublication().getStatusReason())
+        .isEqualTo("ready_for_activation");
   }
 
   @Test

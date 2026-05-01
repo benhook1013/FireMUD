@@ -54,6 +54,7 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstances
 import net.firedevops.firemud.automationscripting.v1.ListScriptTimerAuditEventsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptTimerAuditEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.PluginPolicyViolation;
+import net.firedevops.firemud.automationscripting.v1.PluginPublicationLink;
 import net.firedevops.firemud.automationscripting.v1.PluginRuntimeEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsRequest;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsResponse;
@@ -665,17 +666,24 @@ public final class AutomationScriptingControlPlaneGrpcService
       pluginRuntimeStateService
           .getStatus(request.getTenantId(), request.getGameInstanceId(), request.getPluginId())
           .ifPresentOrElse(
-              status ->
-                  response
-                      .setActivePluginVersionId(status.activePluginVersionId())
-                      .setPendingPluginVersionId(status.pendingPluginVersionId())
-                      .setPluginState(status.pluginState())
-                      .setStatusReason(status.statusReason())
-                      .setLastChangedAtMs(status.lastChangedAtMs())
-                      .setControlPlaneRequestId(status.controlPlaneRequestId())
-                      .setActorPrincipal(status.actorPrincipal())
-                      .setLastPolicyCheckedAtMs(status.lastPolicyCheckedAtMs())
-                      .setPolicyCheckStale(isPolicyCheckStale(status.lastPolicyCheckedAtMs())),
+              status -> {
+                response
+                    .setActivePluginVersionId(status.activePluginVersionId())
+                    .setPendingPluginVersionId(status.pendingPluginVersionId())
+                    .setPluginState(status.pluginState())
+                    .setStatusReason(status.statusReason())
+                    .setLastChangedAtMs(status.lastChangedAtMs())
+                    .setControlPlaneRequestId(status.controlPlaneRequestId())
+                    .setActorPrincipal(status.actorPrincipal())
+                    .setLastPolicyCheckedAtMs(status.lastPolicyCheckedAtMs())
+                    .setPolicyCheckStale(isPolicyCheckStale(status.lastPolicyCheckedAtMs()));
+                if (status.activePublication() != null) {
+                  response.setActivePublication(toProto(status.activePublication()));
+                }
+                if (status.pendingPublication() != null) {
+                  response.setPendingPublication(toProto(status.pendingPublication()));
+                }
+              },
               () ->
                   response.setError(notFound("GetPluginStatus", "plugin_runtime_state_not_found")));
     } catch (IllegalArgumentException ex) {
@@ -936,6 +944,19 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setLastChangedAtMs(summary.lastChangedAtMs())
         .setBaseVersionId(summary.baseVersionId())
         .setAbilitySchemaDigest(summary.abilitySchemaDigest())
+        .build();
+  }
+
+  private static PluginPublicationLink toProto(
+      PluginRuntimeStateService.PluginPublicationLink link) {
+    return PluginPublicationLink.newBuilder()
+        .setPluginVersionId(link.pluginVersionId())
+        .setPublicationId(link.publicationId())
+        .setPublicationState(link.publicationState())
+        .setStatusReason(link.statusReason())
+        .setLastChangedAtMs(link.lastChangedAtMs())
+        .setLookupErrorCode(link.lookupErrorCode())
+        .setLookupErrorMessage(link.lookupErrorMessage())
         .build();
   }
 
