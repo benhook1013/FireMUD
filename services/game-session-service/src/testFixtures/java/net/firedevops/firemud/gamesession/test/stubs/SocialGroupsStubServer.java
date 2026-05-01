@@ -78,6 +78,10 @@ public final class SocialGroupsStubServer implements AutoCloseable {
         ListFriendPresenceResponse.newBuilder().addAllPresences(entries).build());
   }
 
+  public ListFriendPresenceResponse currentFriendPresenceResponse() {
+    return friendPresenceResponse.get();
+  }
+
   public void resetState() {
     lastRequest.set(null);
     lastPresenceRequest.set(null);

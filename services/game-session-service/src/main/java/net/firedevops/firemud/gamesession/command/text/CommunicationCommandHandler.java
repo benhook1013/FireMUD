@@ -7,7 +7,6 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
@@ -197,23 +196,17 @@ public class CommunicationCommandHandler {
   }
 
   private PlayableStateScope resolvePlayableStateScope(SessionContext context) {
-    if (StringUtils.hasText(context.playableStateScope())) {
-      return switch (context.playableStateScope()) {
-        case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-        case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-        default ->
-            throw new IllegalStateException(
-                "Unsupported playableStateScope=" + context.playableStateScope());
-      };
+    if (!StringUtils.hasText(context.playableStateScope())) {
+      throw new IllegalStateException(
+          "Missing admitted playableStateScope on session context for communication command");
     }
-    GameplayCatalogProperties.Realm currentRealm =
-        gameplayWorldCatalog
-            .resolveRealmByRuntimeTarget(context.tenantId(), context.gameInstanceId())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "No visible realm matches the current gameplay runtime target"));
-    return toPlayableStateScope(currentRealm);
+    return switch (context.playableStateScope()) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default ->
+          throw new IllegalStateException(
+              "Unsupported playableStateScope=" + context.playableStateScope());
+    };
   }
 
   private CommunicationType mapType(TextCommandType type) {
@@ -265,13 +258,6 @@ public class CommunicationCommandHandler {
       case WHISPER -> "gamesession.command.whisper";
       case TELL -> "gamesession.command.tell";
       default -> "gamesession.command.communication";
-    };
-  }
-
-  private PlayableStateScope toPlayableStateScope(GameplayCatalogProperties.Realm realm) {
-    return switch (realm.getStateScope()) {
-      case SHARED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-      case ISOLATED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
     };
   }
 

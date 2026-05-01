@@ -8,5 +8,9 @@ public interface RemoteFollowupDrainService {
 
   int releaseClaimedFollowups(String tickBatchId, String failureCode, String failureMessage);
 
-  record ClaimOutcome(List<String> followupIds, int claimedCount) {}
+  record ClaimOutcome(List<String> followupIds, int claimedCount) {
+    public ClaimOutcome {
+      followupIds = List.copyOf(followupIds);
+    }
+  }
 }

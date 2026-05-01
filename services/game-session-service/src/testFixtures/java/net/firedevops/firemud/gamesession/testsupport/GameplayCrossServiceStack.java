@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
+import net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -29,6 +30,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   private final SocialGroupsStubServer socialStub;
   private final net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse
       baselineRoomEntities;
+  private final ListFriendPresenceResponse baselineFriendPresenceResponse;
   private CrossServiceAppHarness.GameLogicHolder gameLogic;
   private final CrossServiceAppHarness.GameSessionHolder gameSession;
 
@@ -38,6 +40,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
       EntityManagementStubServer entityStub,
       SocialGroupsStubServer socialStub,
       net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse baselineRoomEntities,
+      ListFriendPresenceResponse baselineFriendPresenceResponse,
       CrossServiceAppHarness.GameLogicHolder gameLogic,
       CrossServiceAppHarness.GameSessionHolder gameSession) {
     this.accountStub = accountStub;
@@ -45,6 +48,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     this.entityStub = entityStub;
     this.socialStub = socialStub;
     this.baselineRoomEntities = baselineRoomEntities;
+    this.baselineFriendPresenceResponse = baselineFriendPresenceResponse;
     this.gameLogic = gameLogic;
     this.gameSession = gameSession;
   }
@@ -136,6 +140,9 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     entityStub.resetItemState();
     if (socialStub != null) {
       socialStub.resetState();
+      if (baselineFriendPresenceResponse != null) {
+        socialStub.setFriendPresenceResponse(baselineFriendPresenceResponse);
+      }
     }
   }
 
@@ -156,7 +163,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     clearRedis();
     JdbcTemplate jdbc = jdbc();
     GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
-    jdbc.update("DELETE FROM game_instances");
+    jdbc.execute("TRUNCATE TABLE game_instances RESTART IDENTITY");
     if (characterIds.length > 0) {
       clearScreenBuffers(tenantId, gameplayInstanceId, characterIds);
     }
@@ -203,6 +210,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     private long defaultAccountId = 7L;
     private String defaultRoomId = LookTestFixtures.ROOM_ID;
     private net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse initialRoomEntities;
+    private ListFriendPresenceResponse initialFriendPresenceResponse;
     private boolean includeSocial;
     private final Map<String, Long> accountMappings = new LinkedHashMap<>();
     private final Map<String, Object> gameLogicProps = new LinkedHashMap<>();
@@ -254,6 +262,11 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
       return this;
     }
 
+    public Builder withInitialFriendPresenceResponse(ListFriendPresenceResponse response) {
+      this.initialFriendPresenceResponse = response == null ? null : response.toBuilder().build();
+      return this;
+    }
+
     public Builder withGameLogicProps(Map<String, Object> props) {
       this.gameLogicProps.putAll(props);
       return this;
@@ -286,6 +299,9 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
         entityStub.setRoomEntities(initialRoomEntities);
       }
       SocialGroupsStubServer socialStub = includeSocial ? new SocialGroupsStubServer(0) : null;
+      if (socialStub != null && initialFriendPresenceResponse != null) {
+        socialStub.setFriendPresenceResponse(initialFriendPresenceResponse);
+      }
 
       CrossServiceAppHarness.GameLogicHolder gameLogic =
           CrossServiceAppHarness.startGameLogic(
@@ -325,6 +341,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
           entityStub,
           socialStub,
           initialRoomEntities,
+          initialFriendPresenceResponse,
           gameLogic,
           gameSession);
     }

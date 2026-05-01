@@ -139,9 +139,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @BeforeEach
-  void clearSharedRuntimeState() {
-    STACK.resetScenarioState();
-    STACK.clearRedis();
+  void clearSharedRuntimeState() throws Exception {
+    ensureTestServicesStarted();
+    STACK.freshGameplayBaseline(TENANT_ID, DEFAULT_GAME_INSTANCE_ID, ACCOUNT_ID, 7L, ACCOUNT_ID);
   }
 
   @Test
@@ -227,8 +227,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void telnetItemAndEquipmentLoopMatchesWebSocketCommandSurface() throws Exception {
     ensureTestServicesStarted();
-    entityStub().resetRoomEntities();
-    entityStub().resetItemState();
 
     String roomInventoryBeforePickup;
     String pickupResponse;
@@ -565,7 +563,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 .withGameSessionConfigs(
                     GameSessionTestOverrides.class, NestedReadinessOverrides.class)
                 .start();
-        DEFAULT_GAME_INSTANCE_ID = STACK.insertRunningGameInstance(TENANT_ID, ACCOUNT_ID, 7L, true);
+        DEFAULT_GAME_INSTANCE_ID =
+            STACK.freshGameplayBaseline(TENANT_ID, 1L, ACCOUNT_ID, 7L, ACCOUNT_ID);
       } catch (IOException e) {
         throw new IllegalStateException("Failed to start shared gameplay stack", e);
       }

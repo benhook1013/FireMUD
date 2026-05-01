@@ -139,21 +139,6 @@ class CommunicationWebSocketCrossServiceTest {
   void websocketFriendsShowsCanonicalCrossGamePresence() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-    socialStub()
-        .setFriendPresenceEntries(
-            List.of(
-                FriendPresenceEntry.newBuilder()
-                    .setFriendAccountId(Long.toString(SORA_ACCOUNT_ID))
-                    .setOnline(true)
-                    .setCharacterId(ChatTestFixtures.PLAYER_SORA)
-                    .setCharacterName("Sora")
-                    .setWorldSlug("demo")
-                    .setWorldDisplayName("Demo World")
-                    .setRealmSlug("production")
-                    .setRealmDisplayName("Live Realm")
-                    .setActivityState(
-                        FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
-                    .build()));
 
     List<String> responses =
         runCommunicationSequence(
@@ -168,6 +153,21 @@ class CommunicationWebSocketCrossServiceTest {
               assertThat(request.getTenantId()).isEqualTo(Long.toString(TENANT_ID));
               assertThat(request.getAccountId()).isEqualTo(Long.toString(ACCOUNT_ID));
             });
+  }
+
+  @Test
+  void freshGameplayBaselineReappliesConfiguredFriendPresenceBaseline() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    socialStub().setFriendPresenceEntries(List.of());
+
+    sessionId = prepareGameInstance();
+    List<String> responses =
+        runCommunicationSequence(
+            sessionId, "FRIENDS", "Sora - online in Demo World / Live Realm (idle)");
+
+    assertThat(responses)
+        .anyMatch(response -> response.contains("Sora - online in Demo World / Live Realm (idle)"));
   }
 
   @Test
@@ -218,7 +218,6 @@ class CommunicationWebSocketCrossServiceTest {
   void websocketItemLoopMovesRoomItemThroughInventoryAndBack() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-    entityStub().resetItemState();
 
     try (GameplayWebSocketDriver client = openReadySessionClient(sessionId, "item-loop-conn")) {
 
@@ -284,7 +283,6 @@ class CommunicationWebSocketCrossServiceTest {
   void websocketEquipmentLoopMovesCarriedItemThroughSlotAndBack() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-    entityStub().resetItemState();
 
     try (GameplayWebSocketDriver client =
         openReadySessionClient(sessionId, "equipment-loop-conn")) {
@@ -334,6 +332,23 @@ class CommunicationWebSocketCrossServiceTest {
               .mapAccountId("sora@example.com", SORA_ACCOUNT_ID)
               .withInitialRoomEntities(ChatTestFixtures.sampleEntities())
               .withSocialEnabled(true)
+              .withInitialFriendPresenceResponse(
+                  net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse.newBuilder()
+                      .addPresences(
+                          FriendPresenceEntry.newBuilder()
+                              .setFriendAccountId(Long.toString(SORA_ACCOUNT_ID))
+                              .setOnline(true)
+                              .setCharacterId(ChatTestFixtures.PLAYER_SORA)
+                              .setCharacterName("Sora")
+                              .setWorldSlug("demo")
+                              .setWorldDisplayName("Demo World")
+                              .setRealmSlug("production")
+                              .setRealmDisplayName("Live Realm")
+                              .setActivityState(
+                                  FriendPresenceActivityState
+                                      .FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
+                              .build())
+                      .build())
               .start();
     }
   }

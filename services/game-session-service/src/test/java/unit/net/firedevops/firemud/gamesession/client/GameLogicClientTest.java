@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -35,7 +36,8 @@ import org.junit.jupiter.api.Test;
 
 class GameLogicClientTest {
   private static final SessionContext SESSION_CONTEXT =
-      new SessionContext(41L, 22L, 0L, "", 123L, "", 1L, "1021", "");
+      new SessionContext(
+          41L, 22L, 0L, "", 123L, "", 1L, "1021", "", null, 1L, "world", "realm", 17L, "SHARED");
 
   @Test
   void resolveLookForwardsGameInstanceIdIntoRoomInstance() throws Exception {
@@ -309,11 +311,37 @@ class GameLogicClientTest {
     assertThat(response.getRoomGroundItem().getItemName()).isEqualTo("Torch");
   }
 
+  @Test
+  void queryInventoryFailsClosedWhenSessionContextDropsAdmittedPlayableStateScope() {
+    GameLogicClient client = newClient();
+    SessionContext missingScope =
+        new SessionContext(
+            SESSION_CONTEXT.sessionId(),
+            SESSION_CONTEXT.tenantId(),
+            SESSION_CONTEXT.accountId(),
+            SESSION_CONTEXT.loginName(),
+            SESSION_CONTEXT.characterId(),
+            SESSION_CONTEXT.characterName(),
+            SESSION_CONTEXT.gameInstanceId(),
+            SESSION_CONTEXT.roomInstanceId(),
+            SESSION_CONTEXT.jwt(),
+            SESSION_CONTEXT.localeTag(),
+            SESSION_CONTEXT.bootstrapGameInstanceId(),
+            SESSION_CONTEXT.worldSlug(),
+            SESSION_CONTEXT.realmSlug(),
+            SESSION_CONTEXT.pointerVersion(),
+            null);
+
+    assertThatThrownBy(() -> client.queryInventory(missingScope))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Missing admitted playableStateScope");
+  }
+
   private static GameLogicClient newClient() {
     GameplaySessionAttestationService attestationService =
         mock(GameplaySessionAttestationService.class);
     when(attestationService.issueGameplaySessionAttestation(
-            "22", "41", "0", "123", "1", "1021", null, null, null, null))
+            "22", "41", "0", "123", "1", "1021", "world", "realm", "17", "SHARED"))
         .thenReturn("attestation");
     GameplayCatalogProperties properties = new GameplayCatalogProperties();
     GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();

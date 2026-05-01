@@ -326,7 +326,7 @@ class LookWebSocketCrossServiceTest {
       client.awaitStartsWith("OK WORLDS");
       enterGameplay(client);
       client.send("LOOK");
-      client.awaitStartsWith("OK LOOK");
+      client.awaitCanonicalLook();
       worldStub().triggerNotFound("room missing for regression");
       client.send("LOOK");
       client.awaitStartsWith("ERROR ROOM_NOT_FOUND");
@@ -338,19 +338,9 @@ class LookWebSocketCrossServiceTest {
     try (GameplayWebSocketDriver client = openSessionClient(sessionId)) {
       enterGameplay(client);
       client.send("north");
-      client.awaitMatching(
-          response ->
-              GameplayTranscriptMatchers.matchesCanonicalMoveOrLookWithOptionalPrompt(
-                      LookTestFixtures.DESTINATION_ROOM_ID)
-                  .test(response.trim()),
-          "destination move refresh");
+      client.awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
       client.send("LOOK");
-      client.awaitMatching(
-          response ->
-              GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
-                      LookTestFixtures.DESTINATION_ROOM_ID)
-                  .test(response.trim()),
-          "destination look with prompt");
+      client.awaitCanonicalLook(LookTestFixtures.DESTINATION_ROOM_ID);
       client.send("west");
       client.awaitStartsWith("ERROR INVALID_EXIT");
       return client.responses();
@@ -377,12 +367,7 @@ class LookWebSocketCrossServiceTest {
             GameplayWebSocketScenarios.DisconnectMode.CLOSE,
             client -> {
               client.send("north");
-              client.awaitMatching(
-                  response ->
-                      GameplayTranscriptMatchers.matchesCanonicalMoveOrLookWithOptionalPrompt(
-                              LookTestFixtures.DESTINATION_ROOM_ID)
-                          .test(response.trim()),
-                  "destination move refresh");
+              client.awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
             })) {
       return scenario.firstResponses();
     }
@@ -405,17 +390,12 @@ class LookWebSocketCrossServiceTest {
             GameplayWebSocketScenarios.DisconnectMode.CLOSE,
             client -> {
               client.send("north");
-              client.awaitMatching(
-                  response ->
-                      GameplayTranscriptMatchers.matchesCanonicalMoveOrLookWithOptionalPrompt(
-                              LookTestFixtures.DESTINATION_ROOM_ID)
-                          .test(response.trim()),
-                  "destination move refresh");
+              client.awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
             })) {
       scenario.reconnecting().send("LOOK");
       scenario
           .reconnecting()
-          .awaitMatching(
+          .awaitResponseMatching(
               response ->
                   GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
                               LookTestFixtures.ROOM_ID)
@@ -444,7 +424,7 @@ class LookWebSocketCrossServiceTest {
     try (GameplayWebSocketDriver client = openSessionClient(sessionId)) {
       client.login("demo@example.com", "swordfish");
       client.send("PLAY demo");
-      client.awaitStartsWith("OK LOOK");
+      client.awaitCanonicalLook();
       return client.responses();
     }
   }

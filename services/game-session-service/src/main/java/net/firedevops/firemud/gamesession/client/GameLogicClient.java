@@ -734,30 +734,17 @@ public class GameLogicClient
   }
 
   private PlayableStateScope resolvePlayableStateScope(SessionContext context) {
-    if (StringUtils.hasText(context.playableStateScope())) {
-      return switch (context.playableStateScope()) {
-        case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-        case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-        default ->
-            throw new IllegalStateException(
-                "Unsupported playableStateScope=" + context.playableStateScope());
-      };
+    if (!StringUtils.hasText(context.playableStateScope())) {
+      throw new IllegalStateException(
+          "Missing admitted playableStateScope on session context for Game Logic request");
     }
-    return gameplayWorldCatalog
-        .resolveRealmByRuntimeTarget(context.tenantId(), context.gameInstanceId())
-        .map(
-            realm ->
-                switch (realm.getStateScope()) {
-                  case SHARED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-                  case ISOLATED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-                })
-        .orElseThrow(
-            () ->
-                new IllegalStateException(
-                    "No gameplay realm found for tenantId="
-                        + context.tenantId()
-                        + " gameInstanceId="
-                        + context.gameInstanceId()));
+    return switch (context.playableStateScope()) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default ->
+          throw new IllegalStateException(
+              "Unsupported playableStateScope=" + context.playableStateScope());
+    };
   }
 
   private GameLogicServiceGrpc.GameLogicServiceBlockingStub callStub() {

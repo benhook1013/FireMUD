@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusReposito
 import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.TickService;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -40,7 +41,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
       GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
-      TickService tickService,
+      @Lazy TickService tickService,
       RemoteFollowupRuntimeService remoteFollowupRuntimeService) {
     this.remoteFollowupRepository = remoteFollowupRepository;
     this.remoteCommandCoordinatorRepository = remoteCommandCoordinatorRepository;
@@ -248,7 +249,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
       return defaultValue;
     }
     long value = node.asLong();
-    return value > 0 ? value : defaultValue;
+    return value > 0 ? Long.valueOf(value) : defaultValue;
   }
 
   private static String jsonStringField(String fieldName, String value) {

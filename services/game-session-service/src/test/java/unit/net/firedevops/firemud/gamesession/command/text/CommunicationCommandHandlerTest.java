@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -40,7 +41,21 @@ class CommunicationCommandHandlerTest {
   private CommunicationCommandHandler handler;
   private final SessionContext sessionContext =
       new SessionContext(
-          1L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 1L, "room-7", "jwt-token");
+          1L,
+          22L,
+          123L,
+          "emberline@example.com",
+          911L,
+          "Emberline",
+          1L,
+          "room-7",
+          "jwt-token",
+          null,
+          1L,
+          "demo",
+          "production",
+          17L,
+          "SHARED");
 
   @BeforeEach
   void setUp() {
@@ -173,6 +188,36 @@ class CommunicationCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("COMMUNICATION_NOT_DELIVERED");
     assertThat(result.commandResult().errorMessage()).isEqualTo("silenced");
+  }
+
+  @Test
+  void tellFailsClosedWhenSessionContextDropsAdmittedPlayableStateScope() {
+    SessionContext missingScope =
+        new SessionContext(
+            sessionContext.sessionId(),
+            sessionContext.tenantId(),
+            sessionContext.accountId(),
+            sessionContext.loginName(),
+            sessionContext.characterId(),
+            sessionContext.characterName(),
+            sessionContext.gameInstanceId(),
+            sessionContext.roomInstanceId(),
+            sessionContext.jwt(),
+            sessionContext.localeTag(),
+            sessionContext.bootstrapGameInstanceId(),
+            sessionContext.worldSlug(),
+            sessionContext.realmSlug(),
+            sessionContext.pointerVersion(),
+            null);
+
+    assertThatThrownBy(
+            () ->
+                handler.handle(
+                    missingScope,
+                    new TextCommand(
+                        TextCommandType.TELL, List.of("Sora", "hello"), "TELL Sora hello")))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Missing admitted playableStateScope");
   }
 
   private static String joinedOutputText(List<PlayerOutput> outputs) {

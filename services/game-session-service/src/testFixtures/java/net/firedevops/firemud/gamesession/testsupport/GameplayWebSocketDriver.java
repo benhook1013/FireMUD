@@ -170,15 +170,42 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
         "response containing '" + expectedSubstring + "'");
   }
 
-  public void awaitMatching(Predicate<String> predicate, String description) throws Exception {
+  public String awaitResponseMatching(Predicate<String> predicate, String description)
+      throws Exception {
     long deadline = System.currentTimeMillis() + waitTimeout.toMillis();
     while (System.currentTimeMillis() < deadline) {
-      if (responses.stream().anyMatch(predicate)) {
-        return;
+      for (String response : responses) {
+        if (predicate.test(response)) {
+          return response;
+        }
       }
       Thread.sleep(50);
     }
     throw new AssertionError("Expected " + description + ", got " + responses);
+  }
+
+  public void awaitMatching(Predicate<String> predicate, String description) throws Exception {
+    awaitResponseMatching(predicate, description);
+  }
+
+  public String awaitCanonicalLook(String roomId) throws Exception {
+    return awaitResponseMatching(
+        response ->
+            GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(roomId)
+                .test(response.trim()),
+        "canonical LOOK transcript for room " + roomId);
+  }
+
+  public String awaitCanonicalLook() throws Exception {
+    return awaitCanonicalLook(net.firedevops.firemud.gamesession.test.LookTestFixtures.ROOM_ID);
+  }
+
+  public String awaitCanonicalMoveOrLook(String roomId) throws Exception {
+    return awaitResponseMatching(
+        response ->
+            GameplayTranscriptMatchers.matchesCanonicalMoveOrLookWithOptionalPrompt(roomId)
+                .test(response.trim()),
+        "canonical movement/look transcript for room " + roomId);
   }
 
   public List<String> responses() {

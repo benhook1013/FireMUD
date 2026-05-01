@@ -14,6 +14,8 @@ import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -40,9 +42,13 @@ public class CommandServiceImpl implements CommandService {
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
   private final SessionContextService sessionContextService;
+  private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final ScriptEventPublisher scriptEventPublisher;
 
   private record QueueTarget(long tenantId, long queueTargetId) {}
+
+  private record RoutingMetadata(
+      String playableStateScope, String worldSlug, String realmSlug, Long pointerVersion) {}
 
   public CommandServiceImpl(
       TickService tickService,
@@ -50,12 +56,14 @@ public class CommandServiceImpl implements CommandService {
       GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
       SessionContextService sessionContextService,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       ScriptEventPublisher scriptEventPublisher) {
     this.tickService = tickService;
     this.sessionRateLimiter = sessionRateLimiter;
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.sessionContextService = sessionContextService;
+    this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.scriptEventPublisher = scriptEventPublisher;
   }
 
@@ -161,6 +169,11 @@ public class CommandServiceImpl implements CommandService {
     gameplayCommand.setAcceptedAt(now);
     gameplayCommand.setLastAttemptAt(now);
     gameplayCommand.setAttemptCount(1);
+    RoutingMetadata routingMetadata = resolveRoutingMetadata(sessionContext, queueTarget);
+    gameplayCommand.setPlayableStateScope(routingMetadata.playableStateScope());
+    gameplayCommand.setWorldSlug(routingMetadata.worldSlug());
+    gameplayCommand.setRealmSlug(routingMetadata.realmSlug());
+    gameplayCommand.setPointerVersion(routingMetadata.pointerVersion());
     return gameplayCommandRepository.save(gameplayCommand);
   }
 
@@ -255,5 +268,60 @@ public class CommandServiceImpl implements CommandService {
     } catch (NumberFormatException ex) {
       return Optional.empty();
     }
+  }
+
+  private RoutingMetadata resolveRoutingMetadata(
+      Optional<SessionContext> sessionContext, QueueTarget queueTarget) {
+    if (sessionContext.isEmpty()) {
+      return new RoutingMetadata("UNSPECIFIED", null, null, null);
+    }
+    SessionContext context = sessionContext.orElseThrow();
+    if (context.playableStateScope() != null && !context.playableStateScope().isBlank()) {
+      return new RoutingMetadata(
+          context.playableStateScope(),
+          blankToNull(context.worldSlug()),
+          blankToNull(context.realmSlug()),
+          context.pointerVersion() > 0 ? context.pointerVersion() : null);
+    }
+    Optional<GameplayAdmissionPointerSnapshot> pointer =
+        resolveRoutingPointer(context, queueTarget);
+    if (pointer.isPresent()) {
+      GameplayAdmissionPointerSnapshot snapshot = pointer.orElseThrow();
+      return new RoutingMetadata(
+          blankToNull(snapshot.stateScope()),
+          blankToNull(snapshot.worldSlug()),
+          blankToNull(snapshot.realmSlug()),
+          snapshot.pointerVersion() > 0 ? snapshot.pointerVersion() : null);
+    }
+    return new RoutingMetadata(
+        "UNSPECIFIED",
+        blankToNull(context.worldSlug()),
+        blankToNull(context.realmSlug()),
+        context.pointerVersion() > 0 ? context.pointerVersion() : null);
+  }
+
+  private Optional<GameplayAdmissionPointerSnapshot> resolveRoutingPointer(
+      SessionContext context, QueueTarget queueTarget) {
+    if (context.worldSlug() != null
+        && !context.worldSlug().isBlank()
+        && context.realmSlug() != null
+        && !context.realmSlug().isBlank()) {
+      return gameplayAdmissionPointerAuthorityService.findPointer(
+          context.worldSlug(), context.realmSlug());
+    }
+    if (context.bootstrapGameInstanceId() > 0) {
+      return gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(
+          context.tenantId(), context.bootstrapGameInstanceId());
+    }
+    if (context.gameInstanceId() > 0) {
+      return gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(
+          context.tenantId(), context.gameInstanceId());
+    }
+    return gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(
+        queueTarget.tenantId(), queueTarget.queueTargetId());
+  }
+
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
   }
 }
