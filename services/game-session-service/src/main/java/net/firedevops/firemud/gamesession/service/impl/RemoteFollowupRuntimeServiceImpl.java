@@ -162,13 +162,16 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         remoteFollowupResultRepository
             .findByTenantIdAndResultId(request.tenantId(), request.resultId())
             .orElseGet(RemoteFollowupResult::new);
-    if (result.getId() != null) {
+    boolean existingReplay = result.getId() != null;
+    if (existingReplay) {
       validateExistingResult(result, request);
+    } else {
+      Instant observedAt = Instant.now(clock);
+      populateResult(result, request, observedAt);
+      remoteFollowupResultRepository.save(result);
     }
-    Instant now = Instant.now(clock);
-    populateResult(result, request, now);
-    remoteFollowupResultRepository.save(result);
 
+    Instant now = Instant.now(clock);
     boolean lateResult = COORDINATOR_REMOTE_TIMEOUT_ABANDONED.equals(coordinator.getState());
     applyFollowupResultState(followup, request.outcome(), now);
     remoteFollowupRepository.save(followup);

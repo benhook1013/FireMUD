@@ -292,6 +292,43 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void recordResultReusesExistingResultIdWithoutRewritingObservedAt() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    RemoteFollowup followup = followup();
+    followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+    followup.setClaimedTickBatchId("tb-1");
+    RemoteFollowupResult existing = new RemoteFollowupResult();
+    existing.setId(99L);
+    existing.setResultId("result-1");
+    existing.setTenantId(1L);
+    existing.setCoordinatorId("coord-1");
+    existing.setFollowupId("followup-1");
+    existing.setOriginRegionId("region-a");
+    existing.setOriginRegionEpoch(4L);
+    existing.setTargetRegionId("region-b");
+    existing.setTargetRegionEpoch(8L);
+    existing.setOutcome("APPLIED");
+    existing.setResultPayloadJson("{\"status\":\"done\"}");
+    existing.setObservedAt(Instant.parse("2026-05-01T00:00:05Z"));
+    when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+    when(resultRepository.findByTenantIdAndResultId(1L, "result-1"))
+        .thenReturn(Optional.of(existing));
+
+    RemoteFollowupRuntimeService.ResultOutcome outcome =
+        service.recordResult(resultRequest("APPLIED"));
+
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, outcome.coordinatorState());
+    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED, outcome.followupStatus());
+    assertEquals(Instant.parse("2026-05-01T00:00:05Z"), existing.getObservedAt());
+    verify(resultRepository, never()).save(any());
+  }
+
+  @Test
   void reconcileResultsAppliesPendingCoordinatorFromDurableInbox() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
