@@ -323,6 +323,7 @@ public class TickServiceImpl implements TickService {
       if (pauseRequested.get()
           || pausedGameInstances.contains(normalizedQueueTargetId)
           || ownership.paused()) {
+        reconcilePausedRemoteFollowupResults(normalizedTenantId, ownership);
         logger.debug("Tick processing skipped while paused");
         return;
       }
@@ -514,6 +515,23 @@ public class TickServiceImpl implements TickService {
           status.getRegionId(),
           status.getRegionEpoch(),
           status.getLastCommittedTickId(),
+          reconciled);
+    }
+  }
+
+  private void reconcilePausedRemoteFollowupResults(Long tenantId, OwnershipSnapshot ownership) {
+    if (ownership == null || ownership.regionId() == null || ownership.regionId().isBlank()) {
+      return;
+    }
+    int reconciled =
+        remoteFollowupRuntimeService.reconcileResults(
+            tenantId, ownership.regionId(), ownership.regionEpoch());
+    if (reconciled > 0) {
+      logger.info(
+          "Reconciled remote followup results while paused tenantId={} regionId={} regionEpoch={} count={}",
+          tenantId,
+          ownership.regionId(),
+          ownership.regionEpoch(),
           reconciled);
     }
   }

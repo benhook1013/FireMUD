@@ -686,6 +686,24 @@ class TickServiceImplTest {
   }
 
   @Test
+  void processTickStillReconcilesRemoteResultsWhileOwnershipPaused() {
+    when(remoteFollowupRuntimeService.reconcileResults(1L, "2", 4L)).thenReturn(1);
+    net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
+        runtimeOwnership(1L, 2L, 4L, "fence-a", true);
+    currentStatus.setLastCommittedTickId(7L);
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(currentStatus));
+
+    service.processTick(1L, 2L);
+
+    verify(remoteFollowupRuntimeService).reconcileResults(1L, "2", 4L);
+    verify(remoteFollowupRuntimeService, never())
+        .reconcileTimeouts(anyLong(), any(), anyLong(), anyLong());
+    verify(valueOps, never())
+        .setIfAbsent(any(String.class), any(Object.class), any(Duration.class));
+  }
+
+  @Test
   void processTickPersistsComparableOrderingInSelectedWorkManifest() {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
