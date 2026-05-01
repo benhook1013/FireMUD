@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -137,6 +138,37 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertTrue(outcome.lateResult());
     assertFalse(outcome.reconciledLateResult());
     verify(coordinatorRepository, never()).save(any());
+  }
+
+  @Test
+  void recordResultRejectsMismatchedTargetScope() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    RemoteFollowup followup = followup();
+    when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.recordResult(
+                    new RemoteFollowupRuntimeService.ResultRequest(
+                        1L,
+                        "result-1",
+                        "coord-1",
+                        "followup-1",
+                        "region-a",
+                        4L,
+                        "region-wrong",
+                        8L,
+                        "APPLIED",
+                        "{\"status\":\"done\"}")));
+
+    assertEquals("target scope does not match remote coordinator", ex.getMessage());
+    verify(resultRepository, never()).save(any());
   }
 
   @Test

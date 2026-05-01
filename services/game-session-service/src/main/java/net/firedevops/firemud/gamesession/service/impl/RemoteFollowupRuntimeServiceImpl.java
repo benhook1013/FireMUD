@@ -154,6 +154,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         remoteFollowupRepository
             .findByTenantIdAndFollowupId(request.tenantId(), request.followupId())
             .orElseThrow(() -> new IllegalArgumentException("remote followup not found"));
+    validateResultScope(request, coordinator, followup);
 
     RemoteFollowupResult result =
         remoteFollowupResultRepository
@@ -323,6 +324,29 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     requireNotBlank(request.originRegionId(), "origin_region_id");
     requireNotBlank(request.targetRegionId(), "target_region_id");
     requireNotBlank(request.outcome(), "outcome");
+  }
+
+  private static void validateResultScope(
+      ResultRequest request, RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
+    if (!request.followupId().equals(coordinator.getFollowupId())) {
+      throw new IllegalArgumentException("coordinator does not reference followup_id");
+    }
+    if (!request.originRegionId().equals(coordinator.getOriginRegionId())
+        || request.originRegionEpoch() != coordinator.getOriginRegionEpoch()) {
+      throw new IllegalArgumentException("origin scope does not match remote coordinator");
+    }
+    if (!request.targetRegionId().equals(coordinator.getTargetRegionId())
+        || request.targetRegionEpoch() != coordinator.getTargetRegionEpoch()) {
+      throw new IllegalArgumentException("target scope does not match remote coordinator");
+    }
+    if (!request.originRegionId().equals(followup.getOriginRegionId())
+        || request.originRegionEpoch() != followup.getOriginRegionEpoch()) {
+      throw new IllegalArgumentException("origin scope does not match remote followup");
+    }
+    if (!request.targetRegionId().equals(followup.getTargetRegionId())
+        || request.targetRegionEpoch() != followup.getTargetRegionEpoch()) {
+      throw new IllegalArgumentException("target scope does not match remote followup");
+    }
   }
 
   private static void requirePositive(long value, String field) {
