@@ -594,6 +594,7 @@ message ScriptScheduleInstanceEntry {
   string pointer_version = 32;
   bool is_pin_stale = 33;
   bool is_runtime_progress_stale = 34;
+  ScriptPatchPublicationLink publication = 35;
 }
 
 message ListScriptScheduleInstancesResponse {

@@ -447,7 +447,16 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "region-1",
                     12L,
                     100L,
-                    runtimeProgressObservedAtMs)));
+                    runtimeProgressObservedAtMs,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        17L,
+                        9L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        140L,
+                        "",
+                        ""))));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),
@@ -480,6 +489,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getSchedules(0).getPointerVersion()).isEqualTo("17");
     assertThat(ref.get().getSchedules(0).getIsPinStale()).isFalse();
     assertThat(ref.get().getSchedules(0).getIsRuntimeProgressStale()).isFalse();
+    assertThat(ref.get().getSchedules(0).getPublication().getVersionId()).isEqualTo(17L);
   }
 
   @Test
@@ -524,7 +534,16 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "region-1",
                     12L,
                     100L,
-                    staleRuntimeProgressObservedAtMs)));
+                    staleRuntimeProgressObservedAtMs,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        18L,
+                        9L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        140L,
+                        "",
+                        ""))));
     ScriptRuntimeProperties runtimeProperties = new ScriptRuntimeProperties();
     runtimeProperties.setPinProjectionStaleThresholdMs(1L);
     runtimeProperties.setScheduleRuntimeProgressStaleThresholdMs(1L);
@@ -551,6 +570,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getSchedulesList()).hasSize(1);
     assertThat(ref.get().getSchedules(0).getIsPinStale()).isTrue();
     assertThat(ref.get().getSchedules(0).getIsRuntimeProgressStale()).isTrue();
+    assertThat(ref.get().getSchedules(0).getPublication().getVersionId()).isEqualTo(18L);
   }
 
   @Test

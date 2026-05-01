@@ -1114,6 +1114,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setIsPinStale(isSchedulePinStale(summary.pinObservedAtMs()))
         .setIsRuntimeProgressStale(
             isScheduleRuntimeProgressStale(summary.lastRuntimeProgressObservedAtMs()))
+        .setPublication(toProto(summary.publication()))
         .build();
   }
 

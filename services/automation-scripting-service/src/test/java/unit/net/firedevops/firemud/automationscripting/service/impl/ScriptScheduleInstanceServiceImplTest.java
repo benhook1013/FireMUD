@@ -653,6 +653,59 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void listInstancesAddsScriptPatchPublicationMetadata() {
+    ScriptScheduleInstance instance = new ScriptScheduleInstance();
+    instance.setTenantId("1");
+    instance.setGameInstanceId("game-1");
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptId("npc-guard");
+    instance.setPlayableStateScope("SHARED");
+    instance.setWorldSlug("demo");
+    instance.setRealmSlug("production");
+    instance.setPointerVersion("17");
+    instance.setPluginId("plugin-1");
+    instance.setPluginVersionId("plugin-v1");
+    instance.setEventType("onTimerExpire");
+    instance.setScheduleDefinitionId("guard.alert.expire.v1");
+    instance.setScheduleKind("TIMER");
+    instance.setCadenceValue(5000L);
+    instance.setCadenceUnit("MILLISECONDS");
+    instance.setPriorityTag("normal");
+    instance.setTargetScopeType("ENTITY");
+    instance.setTargetScopeId("guard-1");
+    instance.setBindingPriority(10);
+    instance.setRequiresExclusiveEvent(false);
+    instance.setMaterializationStatus("READY");
+    instance.setNextDueAt(Instant.ofEpochMilli(5555L));
+    instance.setObservedRuntimeVersionId("runtime-v2");
+    instance.setLastObservedControlPlaneRequestId("req-9");
+    instance.setPinObservedAt(Instant.ofEpochMilli(1234L));
+    instance.setMaterializedAt(Instant.ofEpochMilli(1235L));
+    instance.setUpdatedAt(Instant.ofEpochMilli(1236L));
+    instance.setRuntimeRegionId("region-1");
+    instance.setRuntimeRegionEpoch(12L);
+    instance.setLastObservedTickId(100L);
+    instance.setLastRuntimeProgressObservedAt(Instant.ofEpochMilli(1237L));
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdAndScriptPatchVersionOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1", "patch-1"))
+        .thenReturn(List.of(instance));
+
+    List<ScriptScheduleInstanceService.ScheduleInstanceSummary> result =
+        service.listInstances("1", "game-1", "patch-1", 25);
+
+    assertThat(result)
+        .singleElement()
+        .satisfies(
+            summary -> {
+              assertThat(summary.scheduleDefinitionId()).isEqualTo("guard.alert.expire.v1");
+              assertThat(summary.pluginId()).isEqualTo("plugin-1");
+              assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
+              assertThat(summary.publication().versionId()).isEqualTo(17L);
+            });
+  }
+
+  @Test
   void observeRuntimeTickProgressHandlesMixedTickAndWallClockCandidates() {
     ScriptScheduleInstance tickInstance = new ScriptScheduleInstance();
     tickInstance.setTenantId("1");

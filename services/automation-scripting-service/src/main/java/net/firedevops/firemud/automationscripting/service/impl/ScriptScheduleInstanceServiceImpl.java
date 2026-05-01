@@ -323,6 +323,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 .thenComparing(ScriptScheduleInstance::getScheduleDefinitionId))
         .limit(boundedLimit)
         .map(this::toSummary)
+        .map(summary -> withPublication(tenantId, summary))
         .toList();
   }
 
@@ -891,6 +892,44 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         publicationLink(tenantId, summary.scriptPatchVersion()));
   }
 
+  private ScheduleInstanceSummary withPublication(
+      String tenantId, ScheduleInstanceSummary summary) {
+    return new ScheduleInstanceSummary(
+        summary.tenantId(),
+        summary.gameInstanceId(),
+        summary.scriptPatchVersion(),
+        summary.scriptId(),
+        summary.playableStateScope(),
+        summary.worldSlug(),
+        summary.realmSlug(),
+        summary.pointerVersion(),
+        summary.pluginId(),
+        summary.pluginVersionId(),
+        summary.eventType(),
+        summary.scheduleDefinitionId(),
+        summary.scheduleKind(),
+        summary.cadenceValue(),
+        summary.cadenceUnit(),
+        summary.priorityTag(),
+        summary.targetScopeType(),
+        summary.targetScopeId(),
+        summary.bindingPriority(),
+        summary.requiresExclusiveEvent(),
+        summary.materializationStatus(),
+        summary.nextDueAtMs(),
+        summary.nextDueTickId(),
+        summary.observedRuntimeVersionId(),
+        summary.lastObservedControlPlaneRequestId(),
+        summary.pinObservedAtMs(),
+        summary.materializedAtMs(),
+        summary.updatedAtMs(),
+        summary.runtimeRegionId(),
+        summary.runtimeRegionEpoch(),
+        summary.lastObservedTickId(),
+        summary.lastRuntimeProgressObservedAtMs(),
+        publicationLink(tenantId, summary.scriptPatchVersion()));
+  }
+
   private ScriptWorkItemService.ScriptPatchPublicationLink publicationLink(
       String tenantId, String scriptPatchVersion) {
     GetPublishedScriptPatchVersionResponse response =
@@ -1046,7 +1085,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         instance.getLastObservedTickId() == null ? 0L : instance.getLastObservedTickId(),
         instance.getLastRuntimeProgressObservedAt() == null
             ? 0L
-            : instance.getLastRuntimeProgressObservedAt().toEpochMilli());
+            : instance.getLastRuntimeProgressObservedAt().toEpochMilli(),
+        null);
   }
 
   private static String scopeKey(

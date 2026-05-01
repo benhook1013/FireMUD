@@ -69,7 +69,8 @@ public interface ScriptScheduleInstanceService {
       String runtimeRegionId,
       long runtimeRegionEpoch,
       long lastObservedTickId,
-      long lastRuntimeProgressObservedAtMs) {}
+      long lastRuntimeProgressObservedAtMs,
+      ScriptPatchPublicationLink publication) {}
 
   record TimerAuditEventSummary(
       String tenantId,
