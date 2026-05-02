@@ -2309,6 +2309,60 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void listRemoteFollowupResultsPrefersDurableFollowupLinkForTargetCommandStatus() {
+    RemoteFollowupResult result = new RemoteFollowupResult();
+    result.setResultId("rr-1");
+    result.setTenantId(1L);
+    result.setCoordinatorId("coord-1");
+    result.setFollowupId("followup-1");
+    result.setOriginRegionId("region-a");
+    result.setOriginRegionEpoch(2L);
+    result.setTargetRegionId("region-b");
+    result.setTargetRegionEpoch(5L);
+    result.setOutcome("REMOTE_APPLIED");
+    result.setResultPayloadJson("{\"commandId\":\"payload-cmd\",\"errorCode\":\"RATE_LIMIT\"}");
+    result.setObservedAt(Instant.parse("2026-05-01T00:00:02Z"));
+    RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
+    RemoteCommandCoordinatorRepository coordinatorRepository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    GameplayCommandRepository gameplayCommandRepository =
+        Mockito.mock(GameplayCommandRepository.class);
+    GameplayCommand targetCommand = new GameplayCommand();
+    targetCommand.setCommandId("linked-cmd");
+    targetCommand.setTenantId(1L);
+    targetCommand.setRemoteFollowupId("followup-1");
+    targetCommand.setExecutionOutcome("NOT_APPLIED");
+    targetCommand.setGameplayResult("FAILURE");
+    Mockito.when(repository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(1L, "coord-1"))
+        .thenReturn(List.of(result));
+    Mockito.when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(targetCommand));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(
+            null, coordinatorRepository, repository, gameplayCommandRepository, gameDesignClient());
+
+    AtomicReference<ListRemoteFollowupResultsResponse> responseRef = new AtomicReference<>();
+    service.listRemoteFollowupResults(
+        ListRemoteFollowupResultsRequest.newBuilder()
+            .setTenantId("1")
+            .setCoordinatorId("coord-1")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListRemoteFollowupResultsResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(1, responseRef.get().getResultsCount());
+    assertEquals("payload-cmd", responseRef.get().getResults(0).getResultCommandId());
+    assertEquals("NOT_APPLIED", responseRef.get().getResults(0).getResultCommandExecutionOutcome());
+    assertEquals("FAILURE", responseRef.get().getResults(0).getResultCommandGameplayResult());
+    Mockito.verify(gameplayCommandRepository, Mockito.never()).findByCommandId("payload-cmd");
+  }
+
+  @Test
   void validateInstanceCutoverCompatibilityReturnsCompatibilityReportForAdminCaller() {
     InstanceCutoverCompatibilityService compatibilityService =
         Mockito.mock(InstanceCutoverCompatibilityService.class);

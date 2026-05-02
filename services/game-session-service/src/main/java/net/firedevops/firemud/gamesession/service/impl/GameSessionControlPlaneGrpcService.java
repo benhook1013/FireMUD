@@ -2087,11 +2087,12 @@ public final class GameSessionControlPlaneGrpcService
         result.getAutomationWorkItemId(),
         result.getScriptId());
     String resultCommandId = applyResultSummary(builder, result.getResultPayloadJson());
-    applyTargetCommandStatus(
-        builder,
-        resultCommandId == null
-            ? null
-            : gameplayCommandRepository.findByCommandId(resultCommandId).orElse(null));
+    GameplayCommand targetCommand =
+        linkedTargetCommand(result.getTenantId(), result.getFollowupId());
+    if (targetCommand == null && resultCommandId != null) {
+      targetCommand = gameplayCommandRepository.findByCommandId(resultCommandId).orElse(null);
+    }
+    applyTargetCommandStatus(builder, targetCommand);
     applyRoutingBundle(
         builder,
         result.getPlayableStateScope(),
