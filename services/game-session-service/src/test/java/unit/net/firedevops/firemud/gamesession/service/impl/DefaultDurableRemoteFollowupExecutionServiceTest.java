@@ -155,11 +155,15 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setTargetRegionEpoch(8L);
     followup.setTargetEntityId("321");
     followup.setDueTickId(55L);
+    followup.setPlayableStateScope("SHARED");
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(17L);
     followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
     followup.setClaimedTickBatchId("tb-1");
     followup.setPayloadJson(
         """
-        {"kind":"enqueue_automation_command","automationDispatchId":"dispatch-1","automationWorkItemId":"work-1","scriptId":"script-1","scriptPatchVersion":"patch-1","command":"LOOK"}
+        {"kind":"enqueue_automation_command","command":"LOOK"}
         """);
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setCoordinatorId("coord-1");
@@ -167,6 +171,12 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     coordinator.setFollowupId("followup-1");
     coordinator.setOriginRegionId("region-a");
     coordinator.setOriginRegionEpoch(4L);
+    coordinator.setAutomationDispatchId("dispatch-1");
+    coordinator.setAutomationWorkItemId("work-1");
+    coordinator.setScriptId("script-1");
+    coordinator.setScriptPatchVersion("patch-1");
+    coordinator.setPluginId("plugin-1");
+    coordinator.setPluginVersionId("plugin-v1");
     GameInstance instance = new GameInstance();
     instance.setId(9L);
     instance.setTenantId(1L);

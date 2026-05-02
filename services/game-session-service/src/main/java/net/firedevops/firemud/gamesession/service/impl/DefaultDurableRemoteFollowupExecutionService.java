@@ -161,16 +161,21 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   followup.getTargetGameInstanceId(),
                   followup.getTargetRegionId(),
                   followup.getTargetRegionEpoch(),
-                  requiredText(root, "automationDispatchId"),
-                  requiredText(root, "automationWorkItemId"),
-                  requiredText(root, "scriptId"),
-                  requiredText(root, "scriptPatchVersion"),
-                  optionalText(root, "pluginId"),
-                  optionalText(root, "pluginVersionId"),
-                  optionalText(root, "playableStateScope"),
-                  optionalText(root, "worldSlug"),
-                  optionalText(root, "realmSlug"),
-                  optionalLong(root, "pointerVersion"),
+                  requiredTextOrFallback(
+                      root, "automationDispatchId", coordinator.getAutomationDispatchId()),
+                  requiredTextOrFallback(
+                      root, "automationWorkItemId", coordinator.getAutomationWorkItemId()),
+                  requiredTextOrFallback(root, "scriptId", coordinator.getScriptId()),
+                  requiredTextOrFallback(
+                      root, "scriptPatchVersion", coordinator.getScriptPatchVersion()),
+                  firstNonBlank(optionalText(root, "pluginId"), coordinator.getPluginId()),
+                  firstNonBlank(
+                      optionalText(root, "pluginVersionId"), coordinator.getPluginVersionId()),
+                  firstNonBlank(
+                      optionalText(root, "playableStateScope"), followup.getPlayableStateScope()),
+                  firstNonBlank(optionalText(root, "worldSlug"), followup.getWorldSlug()),
+                  firstNonBlank(optionalText(root, "realmSlug"), followup.getRealmSlug()),
+                  firstNonNull(optionalLong(root, "pointerVersion"), followup.getPointerVersion()),
                   textOrDefault(root, "originSourceKind", "REMOTE_FOLLOWUP"),
                   textOrDefault(root, "originSourceState", "TARGET_REGION_EXECUTED"),
                   optionalLong(root, "originSourceOrdinal", followup.getDueTickId()),
@@ -229,6 +234,15 @@ public final class DefaultDurableRemoteFollowupExecutionService
     return value;
   }
 
+  private static String requiredTextOrFallback(
+      JsonNode root, String fieldName, String fallbackValue) {
+    String value = firstNonBlank(optionalText(root, fieldName), fallbackValue);
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException(fieldName + " is required");
+    }
+    return value;
+  }
+
   private static String optionalText(JsonNode root, String fieldName) {
     String value = root.path(fieldName).asText("").trim();
     return value.isBlank() ? null : value;
@@ -250,6 +264,14 @@ public final class DefaultDurableRemoteFollowupExecutionService
     }
     long value = node.asLong();
     return value > 0 ? Long.valueOf(value) : defaultValue;
+  }
+
+  private static String firstNonBlank(String primary, String fallback) {
+    return primary == null || primary.isBlank() ? fallback : primary;
+  }
+
+  private static Long firstNonNull(Long primary, Long fallback) {
+    return primary != null ? primary : fallback;
   }
 
   private static String jsonStringField(String fieldName, String value) {
