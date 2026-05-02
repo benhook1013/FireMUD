@@ -554,6 +554,9 @@ message RemoteCommandCoordinatorEntry {
   string followup_requested_command = 37;
   string latest_result_command_id = 38;
   string latest_result_error_code = 39;
+  string target_command_id = 40;
+  string target_command_execution_outcome = 41;
+  string target_command_gameplay_result = 42;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -601,6 +604,9 @@ message RemoteFollowupEntry {
   string script_id = 31;
   string payload_kind = 32;
   string requested_command = 33;
+  string target_command_id = 34;
+  string target_command_execution_outcome = 35;
+  string target_command_gameplay_result = 36;
 }
 
 message ListRemoteFollowupsResponse {

@@ -1924,6 +1924,10 @@ public final class GameSessionControlPlaneGrpcService
       RemoteCommandCoordinator coordinator,
       RemoteFollowup followup,
       RemoteFollowupResult latestResult) {
+    GameplayCommand targetCommand =
+        followup == null
+            ? null
+            : linkedTargetCommand(coordinator.getTenantId(), followup.getFollowupId());
     RemoteCommandCoordinatorEntry.Builder builder =
         RemoteCommandCoordinatorEntry.newBuilder()
             .setCoordinatorId(coordinator.getCoordinatorId())
@@ -1988,10 +1992,13 @@ public final class GameSessionControlPlaneGrpcService
         coordinator.getWorldSlug(),
         coordinator.getRealmSlug(),
         coordinator.getPointerVersion());
+    applyTargetCommandStatus(builder, targetCommand);
     return builder.build();
   }
 
   private RemoteFollowupEntry toRemoteFollowupEntry(RemoteFollowup followup) {
+    GameplayCommand targetCommand =
+        linkedTargetCommand(followup.getTenantId(), followup.getFollowupId());
     RemoteFollowupEntry.Builder builder =
         RemoteFollowupEntry.newBuilder()
             .setFollowupId(followup.getFollowupId())
@@ -2046,6 +2053,7 @@ public final class GameSessionControlPlaneGrpcService
         followup.getWorldSlug(),
         followup.getRealmSlug(),
         followup.getPointerVersion());
+    applyTargetCommandStatus(builder, targetCommand);
     return builder.build();
   }
 
@@ -2142,6 +2150,20 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private static void applyTargetCommandStatus(
+      RemoteCommandCoordinatorEntry.Builder builder, GameplayCommand targetCommand) {
+    if (targetCommand == null) {
+      return;
+    }
+    builder.setTargetCommandId(targetCommand.getCommandId());
+    if (targetCommand.getExecutionOutcome() != null) {
+      builder.setTargetCommandExecutionOutcome(targetCommand.getExecutionOutcome());
+    }
+    if (targetCommand.getGameplayResult() != null) {
+      builder.setTargetCommandGameplayResult(targetCommand.getGameplayResult());
+    }
+  }
+
   private void applyDirectCommandProvenance(
       RemoteFollowupEntry.Builder builder,
       long tenantId,
@@ -2197,6 +2219,20 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (pointerVersion != null) {
       builder.setPointerVersion(pointerVersion);
+    }
+  }
+
+  private static void applyTargetCommandStatus(
+      RemoteFollowupEntry.Builder builder, GameplayCommand targetCommand) {
+    if (targetCommand == null) {
+      return;
+    }
+    builder.setTargetCommandId(targetCommand.getCommandId());
+    if (targetCommand.getExecutionOutcome() != null) {
+      builder.setTargetCommandExecutionOutcome(targetCommand.getExecutionOutcome());
+    }
+    if (targetCommand.getGameplayResult() != null) {
+      builder.setTargetCommandGameplayResult(targetCommand.getGameplayResult());
     }
   }
 
@@ -2572,6 +2608,15 @@ public final class GameSessionControlPlaneGrpcService
       return null;
     }
     return results.get(results.size() - 1);
+  }
+
+  private GameplayCommand linkedTargetCommand(long tenantId, String followupId) {
+    if (gameplayCommandRepository == null || followupId == null || followupId.isBlank()) {
+      return null;
+    }
+    return gameplayCommandRepository
+        .findFirstByTenantIdAndRemoteFollowupId(tenantId, followupId)
+        .orElse(null);
   }
 
   private static PlayableStateScope toPlayableStateScopeStatus(String playableStateScope) {
