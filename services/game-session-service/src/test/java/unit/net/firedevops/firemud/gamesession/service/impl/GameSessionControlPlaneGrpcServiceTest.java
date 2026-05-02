@@ -1338,6 +1338,106 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void getGameplayCommandStatusUsesPersistedRemoteFollowupIdentityForTargetCommand() {
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("rfcmd-followup-2");
+    command.setTenantId(1L);
+    command.setGameInstanceId(7L);
+    command.setSessionId(0L);
+    command.setCharacterId(321L);
+    command.setCommandName("LOOK");
+    command.setSanitizedCommandText("LOOK");
+    command.setExecutionOutcome("STAGED");
+    command.setGameplayResult("PENDING");
+    command.setAcceptedAt(Instant.parse("2026-04-15T00:00:00Z"));
+    command.setLastAttemptAt(Instant.parse("2026-04-15T00:00:01Z"));
+    command.setAttemptCount(1);
+    command.setSourceType("REMOTE_FOLLOWUP");
+    command.setTargetEntityId("321");
+    command.setRegionId("region-1");
+    command.setRegionEpoch(12L);
+    command.setRemoteCoordinatorId("coord-2");
+    command.setRemoteFollowupId("followup-2");
+    command.setScriptPatchVersion("patch-2");
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    RemoteFollowupResultRepository remoteFollowupResultRepository =
+        Mockito.mock(RemoteFollowupResultRepository.class);
+    Mockito.when(commandRepository.findByCommandId("rfcmd-followup-2"))
+        .thenReturn(Optional.of(command));
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setTenantId(1L);
+    coordinator.setCommandId("cmd-origin-2");
+    coordinator.setCoordinatorId("coord-2");
+    coordinator.setFollowupId("followup-2");
+    coordinator.setState("REMOTE_APPLIED");
+    Mockito.when(remoteCommandCoordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-2"))
+        .thenReturn(Optional.of(coordinator));
+    RemoteFollowupResult result = new RemoteFollowupResult();
+    result.setTenantId(1L);
+    result.setCoordinatorId("coord-2");
+    result.setOutcome("APPLIED");
+    result.setResultPayloadJson("{\"commandId\":\"rfcmd-followup-2\",\"applied\":true}");
+    result.setObservedAt(Instant.parse("2026-04-15T00:00:05Z"));
+    Mockito.when(
+            remoteFollowupResultRepository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(
+                1L, "coord-2"))
+        .thenReturn(List.of(result));
+    GameDesignClient gameDesignClient = Mockito.mock(GameDesignClient.class);
+    Mockito.when(gameDesignClient.getPublishedScriptPatchVersion(1L, "patch-2"))
+        .thenReturn(
+            GetPublishedScriptPatchVersionResponse.newBuilder()
+                .setScriptPatch(
+                    PublishedScriptPatchVersion.newBuilder()
+                        .setScriptPatchVersion("patch-2")
+                        .setVersionId(23L)
+                        .setBaseVersionId(9L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setLastChangedAtMs(250L)
+                        .build())
+                .build());
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            Mockito.mock(GameInstanceRepository.class),
+            commandRepository,
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(RemoteFollowupRepository.class),
+            remoteCommandCoordinatorRepository,
+            remoteFollowupResultRepository,
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            gameDesignClient,
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry(),
+            new GameSessionProperties());
+
+    AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
+    service.getGameplayCommandStatus(
+        GetGameplayCommandStatusRequest.newBuilder().setCommandId("rfcmd-followup-2").build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetGameplayCommandStatusResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("rfcmd-followup-2", responseRef.get().getCommand().getCommandId());
+    assertEquals("coord-2", responseRef.get().getCommand().getRemoteCoordinatorId());
+    assertEquals("followup-2", responseRef.get().getCommand().getRemoteFollowupId());
+    assertEquals("REMOTE_APPLIED", responseRef.get().getCommand().getRemoteState());
+    assertEquals("APPLIED", responseRef.get().getCommand().getRemoteResultOutcome());
+    assertEquals(
+        "{\"commandId\":\"rfcmd-followup-2\",\"applied\":true}",
+        responseRef.get().getCommand().getRemoteResultPayloadJson());
+    assertEquals("rfcmd-followup-2", responseRef.get().getCommand().getRemoteResultCommandId());
+  }
+
+  @Test
   void enqueueAutomationCommandPersistsDispatchAndStagesTickCommand() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();

@@ -1541,6 +1541,7 @@ public final class GameSessionControlPlaneGrpcService
                 parseGameInstanceId(request.getGameInstanceId()),
                 request.getRegionId(),
                 request.getRegionEpoch(),
+                "AUTOMATION",
                 request.getAutomationDispatchId(),
                 request.getAutomationWorkItemId(),
                 request.getScriptId(),
@@ -1557,6 +1558,8 @@ public final class GameSessionControlPlaneGrpcService
                 request.getOriginSourceDueTickId() > 0 ? request.getOriginSourceDueTickId() : null,
                 request.getOriginSourceDueAtMs() > 0 ? request.getOriginSourceDueAtMs() : null,
                 request.getTargetEntityId(),
+                null,
+                null,
                 request.getCommand(),
                 request.getRequiresSoloTick(),
                 request.getDueTickId() > 0 ? request.getDueTickId() : null),
@@ -2406,12 +2409,7 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private GameplayCommandStatus toStatus(GameplayCommand command) {
-    RemoteCommandCoordinator remoteCoordinator =
-        remoteCommandCoordinatorRepository == null
-            ? null
-            : remoteCommandCoordinatorRepository
-                .findByTenantIdAndCommandId(command.getTenantId(), command.getCommandId())
-                .orElse(null);
+    RemoteCommandCoordinator remoteCoordinator = resolveRemoteCoordinator(command);
     RemoteFollowupResult latestRemoteResult =
         remoteCoordinator == null || remoteFollowupResultRepository == null
             ? null
@@ -2472,6 +2470,12 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (command.getTargetEntityId() != null) {
       builder.setTargetEntityId(command.getTargetEntityId());
+    }
+    if (command.getRemoteCoordinatorId() != null) {
+      builder.setRemoteCoordinatorId(command.getRemoteCoordinatorId());
+    }
+    if (command.getRemoteFollowupId() != null) {
+      builder.setRemoteFollowupId(command.getRemoteFollowupId());
     }
     if (command.getRegionId() != null) {
       builder.setRegionId(command.getRegionId());
@@ -2544,6 +2548,20 @@ public final class GameSessionControlPlaneGrpcService
           scriptPatchPublicationLink(command.getTenantId(), command.getScriptPatchVersion()));
     }
     return builder.build();
+  }
+
+  private RemoteCommandCoordinator resolveRemoteCoordinator(GameplayCommand command) {
+    if (remoteCommandCoordinatorRepository == null) {
+      return null;
+    }
+    if (command.getRemoteCoordinatorId() != null && !command.getRemoteCoordinatorId().isBlank()) {
+      return remoteCommandCoordinatorRepository
+          .findByTenantIdAndCoordinatorId(command.getTenantId(), command.getRemoteCoordinatorId())
+          .orElse(null);
+    }
+    return remoteCommandCoordinatorRepository
+        .findByTenantIdAndCommandId(command.getTenantId(), command.getCommandId())
+        .orElse(null);
   }
 
   private RemoteFollowupResult latestRemoteResult(long tenantId, String coordinatorId) {

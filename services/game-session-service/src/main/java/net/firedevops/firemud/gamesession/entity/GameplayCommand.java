@@ -150,6 +150,12 @@ public class GameplayCommand {
   @Column(name = "target_entity_id", length = 64)
   private String targetEntityId;
 
+  @Column(name = "remote_coordinator_id", length = 128)
+  private String remoteCoordinatorId;
+
+  @Column(name = "remote_followup_id", length = 128)
+  private String remoteFollowupId;
+
   @Column(name = "region_id", length = 64)
   private String regionId;
 

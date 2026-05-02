@@ -30,14 +30,7 @@ final class AutomationGameplayCommandAdmissionSupport {
       throw new IllegalArgumentException("tenant_id does not own game_instance_id");
     }
 
-    Optional<GameplayCommand> existing =
-        gameplayCommandRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
-                request.tenantId(),
-                request.gameInstanceId(),
-                request.regionId(),
-                request.regionEpoch(),
-                request.automationDispatchId());
+    Optional<GameplayCommand> existing = findExistingCommand(request, gameplayCommandRepository);
     if (existing.isPresent()) {
       return new AdmissionResult(
           true, "DUPLICATE_NOOP", existing.orElseThrow().getCommandId(), null, null);
@@ -81,12 +74,41 @@ final class AutomationGameplayCommandAdmissionSupport {
     if (request.regionEpoch() == null || request.regionEpoch() <= 0) {
       throw new IllegalArgumentException("region_epoch must be positive");
     }
-    requireText(request.automationDispatchId(), "automation_dispatch_id is required");
-    requireText(request.automationWorkItemId(), "automation_work_item_id is required");
-    requireText(request.scriptId(), "script_id is required");
-    requireText(request.scriptPatchVersion(), "script_patch_version is required");
+    requireText(request.sourceType(), "source_type is required");
+    if ("AUTOMATION".equals(request.sourceType())) {
+      requireText(request.automationDispatchId(), "automation_dispatch_id is required");
+      requireText(request.automationWorkItemId(), "automation_work_item_id is required");
+      requireText(request.scriptId(), "script_id is required");
+      requireText(request.scriptPatchVersion(), "script_patch_version is required");
+    } else if ("REMOTE_FOLLOWUP".equals(request.sourceType())) {
+      requireText(request.remoteCoordinatorId(), "remote_coordinator_id is required");
+      requireText(request.remoteFollowupId(), "remote_followup_id is required");
+    }
     requireText(request.targetEntityId(), "target_entity_id is required");
     requireText(request.command(), "command is required");
+  }
+
+  private static Optional<GameplayCommand> findExistingCommand(
+      AdmissionRequest request, GameplayCommandRepository gameplayCommandRepository) {
+    if (request.remoteFollowupId() != null && !request.remoteFollowupId().isBlank()) {
+      return gameplayCommandRepository
+          .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+              request.tenantId(),
+              request.gameInstanceId(),
+              request.regionId(),
+              request.regionEpoch(),
+              request.remoteFollowupId());
+    }
+    if (request.automationDispatchId() != null && !request.automationDispatchId().isBlank()) {
+      return gameplayCommandRepository
+          .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+              request.tenantId(),
+              request.gameInstanceId(),
+              request.regionId(),
+              request.regionEpoch(),
+              request.automationDispatchId());
+    }
+    return Optional.empty();
   }
 
   private static Optional<AdmissionResult> rejectIfOwnershipClosed(
@@ -133,7 +155,7 @@ final class AutomationGameplayCommandAdmissionSupport {
   private static GameplayCommand acceptedAutomationCommand(AdmissionRequest request) {
     Instant now = Instant.now();
     GameplayCommand command = new GameplayCommand();
-    command.setCommandId("auto-" + UUID.randomUUID());
+    command.setCommandId(commandId(request));
     command.setTenantId(request.tenantId());
     command.setGameInstanceId(request.gameInstanceId());
     command.setSessionId(0L);
@@ -146,11 +168,11 @@ final class AutomationGameplayCommandAdmissionSupport {
     command.setAcceptedAt(now);
     command.setLastAttemptAt(now);
     command.setAttemptCount(1);
-    command.setSourceType("AUTOMATION");
-    command.setAutomationDispatchId(request.automationDispatchId());
-    command.setAutomationWorkItemId(request.automationWorkItemId());
-    command.setScriptId(request.scriptId());
-    command.setScriptPatchVersion(request.scriptPatchVersion());
+    command.setSourceType(request.sourceType());
+    command.setAutomationDispatchId(blankToNull(request.automationDispatchId()));
+    command.setAutomationWorkItemId(blankToNull(request.automationWorkItemId()));
+    command.setScriptId(blankToNull(request.scriptId()));
+    command.setScriptPatchVersion(blankToNull(request.scriptPatchVersion()));
     command.setPluginId(blankToNull(request.pluginId()));
     command.setPluginVersionId(blankToNull(request.pluginVersionId()));
     command.setPlayableStateScope(blankToNull(request.playableStateScope()));
@@ -163,11 +185,22 @@ final class AutomationGameplayCommandAdmissionSupport {
     command.setOriginSourceDueTickId(request.originSourceDueTickId());
     command.setOriginSourceDueAtMs(request.originSourceDueAtMs());
     command.setTargetEntityId(request.targetEntityId());
+    command.setRemoteCoordinatorId(blankToNull(request.remoteCoordinatorId()));
+    command.setRemoteFollowupId(blankToNull(request.remoteFollowupId()));
     command.setCharacterId(parseGameplayCharacterId(request.targetEntityId()));
     command.setRegionId(request.regionId());
     command.setRegionEpoch(request.regionEpoch());
     command.setDueTickId(request.dueTickId());
     return command;
+  }
+
+  private static String commandId(AdmissionRequest request) {
+    if ("REMOTE_FOLLOWUP".equals(request.sourceType())
+        && request.remoteFollowupId() != null
+        && !request.remoteFollowupId().isBlank()) {
+      return "rfcmd-" + request.remoteFollowupId();
+    }
+    return "auto-" + UUID.randomUUID();
   }
 
   private static void markAutomationStaged(GameplayCommand command) {
@@ -232,6 +265,7 @@ final class AutomationGameplayCommandAdmissionSupport {
       Long gameInstanceId,
       String regionId,
       Long regionEpoch,
+      String sourceType,
       String automationDispatchId,
       String automationWorkItemId,
       String scriptId,
@@ -248,6 +282,8 @@ final class AutomationGameplayCommandAdmissionSupport {
       Long originSourceDueTickId,
       Long originSourceDueAtMs,
       String targetEntityId,
+      String remoteCoordinatorId,
+      String remoteFollowupId,
       String command,
       boolean requiresSoloTick,
       Long dueTickId) {}

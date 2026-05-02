@@ -137,6 +137,9 @@ public final class DefaultDurableRemoteFollowupExecutionService
             "REMOTE_FOLLOWUP_KIND_REQUIRED",
             "Target-side remote followup payload must declare a kind");
       }
+      if ("enqueue_gameplay_command".equals(payloadKind)) {
+        return executeEnqueueGameplayCommand(root, coordinator, followup);
+      }
       if ("enqueue_automation_command".equals(payloadKind)) {
         return executeEnqueueAutomationCommand(root, coordinator, followup);
       }
@@ -161,6 +164,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   followup.getTargetGameInstanceId(),
                   followup.getTargetRegionId(),
                   followup.getTargetRegionEpoch(),
+                  "AUTOMATION",
                   requiredTextOrFallback(
                       root, "automationDispatchId", coordinator.getAutomationDispatchId()),
                   requiredTextOrFallback(
@@ -182,6 +186,8 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   optionalLong(root, "originSourceDueTickId", followup.getDueTickId()),
                   optionalLong(root, "originSourceDueAtMs"),
                   textOrDefault(root, "targetEntityId", followup.getTargetEntityId()),
+                  coordinator.getCoordinatorId(),
+                  followup.getFollowupId(),
                   requiredText(root, "command"),
                   root.path("requiresSoloTick").asBoolean(false),
                   followup.getDueTickId()),
@@ -210,6 +216,70 @@ public final class DefaultDurableRemoteFollowupExecutionService
           payload);
     } catch (IllegalArgumentException ex) {
       return failure("REMOTE_AUTOMATION_PAYLOAD_INVALID", ex.getMessage());
+    }
+  }
+
+  private PayloadExecution executeEnqueueGameplayCommand(
+      JsonNode root, RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
+    try {
+      AutomationGameplayCommandAdmissionSupport.AdmissionResult result =
+          AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+              new AutomationGameplayCommandAdmissionSupport.AdmissionRequest(
+                  followup.getTenantId(),
+                  followup.getTargetGameInstanceId(),
+                  followup.getTargetRegionId(),
+                  followup.getTargetRegionEpoch(),
+                  "REMOTE_FOLLOWUP",
+                  null,
+                  null,
+                  firstNonBlank(optionalText(root, "scriptId"), coordinator.getScriptId()),
+                  firstNonBlank(
+                      optionalText(root, "scriptPatchVersion"),
+                      coordinator.getScriptPatchVersion()),
+                  firstNonBlank(optionalText(root, "pluginId"), coordinator.getPluginId()),
+                  firstNonBlank(
+                      optionalText(root, "pluginVersionId"), coordinator.getPluginVersionId()),
+                  firstNonBlank(
+                      optionalText(root, "playableStateScope"), followup.getPlayableStateScope()),
+                  firstNonBlank(optionalText(root, "worldSlug"), followup.getWorldSlug()),
+                  firstNonBlank(optionalText(root, "realmSlug"), followup.getRealmSlug()),
+                  firstNonNull(optionalLong(root, "pointerVersion"), followup.getPointerVersion()),
+                  textOrDefault(root, "originSourceKind", "REMOTE_FOLLOWUP"),
+                  textOrDefault(root, "originSourceState", "TARGET_REGION_EXECUTED"),
+                  optionalLong(root, "originSourceOrdinal", followup.getDueTickId()),
+                  optionalLong(root, "originSourceDueTickId", followup.getDueTickId()),
+                  optionalLong(root, "originSourceDueAtMs"),
+                  requiredTextOrFallback(root, "targetEntityId", followup.getTargetEntityId()),
+                  coordinator.getCoordinatorId(),
+                  followup.getFollowupId(),
+                  requiredText(root, "command"),
+                  root.path("requiresSoloTick").asBoolean(false),
+                  followup.getDueTickId()),
+              gameInstanceRepository,
+              gameplayCommandRepository,
+              runtimeRegionStatusRepository,
+              tickService);
+      String payload =
+          "{\"admissionOutcome\":\""
+              + jsonEscape(result.admissionOutcome())
+              + "\""
+              + jsonStringField("commandId", result.commandId())
+              + jsonStringField("errorCode", result.errorCode())
+              + jsonStringField("message", result.errorMessage())
+              + "}";
+      if (result.accepted()) {
+        return new PayloadExecution("APPLIED", "APPLIED", null, null, payload);
+      }
+      return new PayloadExecution(
+          "ABANDONED",
+          "ABANDONED",
+          result.errorCode() == null ? "REMOTE_GAMEPLAY_REJECTED" : result.errorCode(),
+          result.errorMessage() == null
+              ? "Target-side remote gameplay command was not admitted"
+              : result.errorMessage(),
+          payload);
+    } catch (IllegalArgumentException ex) {
+      return failure("REMOTE_GAMEPLAY_PAYLOAD_INVALID", ex.getMessage());
     }
   }
 
