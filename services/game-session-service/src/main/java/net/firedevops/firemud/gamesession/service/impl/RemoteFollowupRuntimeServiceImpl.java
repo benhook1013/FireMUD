@@ -524,6 +524,26 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             coordinator != null && coordinator.getPluginVersionId() != null
                 ? coordinator.getPluginVersionId()
                 : followup == null ? null : followup.getPluginVersionId()));
+    result.setCommandId(
+        blankToNull(
+            coordinator != null && coordinator.getCommandId() != null
+                ? coordinator.getCommandId()
+                : followup == null ? null : followup.getCommandId()));
+    result.setAutomationDispatchId(
+        blankToNull(
+            coordinator != null && coordinator.getAutomationDispatchId() != null
+                ? coordinator.getAutomationDispatchId()
+                : followup == null ? null : followup.getAutomationDispatchId()));
+    result.setAutomationWorkItemId(
+        blankToNull(
+            coordinator != null && coordinator.getAutomationWorkItemId() != null
+                ? coordinator.getAutomationWorkItemId()
+                : followup == null ? null : followup.getAutomationWorkItemId()));
+    result.setScriptId(
+        blankToNull(
+            coordinator != null && coordinator.getScriptId() != null
+                ? coordinator.getScriptId()
+                : followup == null ? null : followup.getScriptId()));
     result.setPointerVersion(
         coordinator != null && coordinator.getPointerVersion() != null
             ? coordinator.getPointerVersion()
@@ -543,6 +563,9 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     coordinator.setScriptPatchVersion(blankToNull(command.getScriptPatchVersion()));
     coordinator.setPluginId(blankToNull(command.getPluginId()));
     coordinator.setPluginVersionId(blankToNull(command.getPluginVersionId()));
+    coordinator.setAutomationDispatchId(blankToNull(command.getAutomationDispatchId()));
+    coordinator.setAutomationWorkItemId(blankToNull(command.getAutomationWorkItemId()));
+    coordinator.setScriptId(blankToNull(command.getScriptId()));
   }
 
   private static void applyRoutingBundle(RemoteFollowup followup, GameplayCommand command) {
@@ -556,6 +579,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     followup.setScriptPatchVersion(blankToNull(command.getScriptPatchVersion()));
     followup.setPluginId(blankToNull(command.getPluginId()));
     followup.setPluginVersionId(blankToNull(command.getPluginVersionId()));
+    followup.setCommandId(blankToNull(command.getCommandId()));
+    followup.setAutomationDispatchId(blankToNull(command.getAutomationDispatchId()));
+    followup.setAutomationWorkItemId(blankToNull(command.getAutomationWorkItemId()));
+    followup.setScriptId(blankToNull(command.getScriptId()));
   }
 
   private static void applyTerminalResult(

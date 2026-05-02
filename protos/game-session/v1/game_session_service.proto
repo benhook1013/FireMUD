@@ -545,6 +545,9 @@ message RemoteCommandCoordinatorEntry {
   string world_slug = 30;
   string realm_slug = 31;
   int64 pointer_version = 32;
+  string automation_dispatch_id = 33;
+  string automation_work_item_id = 34;
+  string script_id = 35;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -586,6 +589,10 @@ message RemoteFollowupEntry {
   string world_slug = 25;
   string realm_slug = 26;
   int64 pointer_version = 27;
+  string command_id = 28;
+  string automation_dispatch_id = 29;
+  string automation_work_item_id = 30;
+  string script_id = 31;
 }
 
 message ListRemoteFollowupsResponse {
@@ -618,6 +625,10 @@ message RemoteFollowupResultEntry {
   string world_slug = 17;
   string realm_slug = 18;
   int64 pointer_version = 19;
+  string command_id = 20;
+  string automation_dispatch_id = 21;
+  string automation_work_item_id = 22;
+  string script_id = 23;
 }
 
 message ListRemoteFollowupResultsResponse {

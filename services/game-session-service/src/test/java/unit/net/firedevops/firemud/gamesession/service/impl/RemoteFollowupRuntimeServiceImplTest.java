@@ -98,6 +98,9 @@ class RemoteFollowupRuntimeServiceImplTest {
             argThat(
                 coordinator ->
                     "SHARED".equals(coordinator.getPlayableStateScope())
+                        && "dispatch-1".equals(coordinator.getAutomationDispatchId())
+                        && "work-1".equals(coordinator.getAutomationWorkItemId())
+                        && "script-1".equals(coordinator.getScriptId())
                         && "patch-1".equals(coordinator.getScriptPatchVersion())
                         && "plugin-1".equals(coordinator.getPluginId())
                         && "plugin-v1".equals(coordinator.getPluginVersionId())
@@ -109,6 +112,10 @@ class RemoteFollowupRuntimeServiceImplTest {
             argThat(
                 followup ->
                     "SHARED".equals(followup.getPlayableStateScope())
+                        && "cmd-1".equals(followup.getCommandId())
+                        && "dispatch-1".equals(followup.getAutomationDispatchId())
+                        && "work-1".equals(followup.getAutomationWorkItemId())
+                        && "script-1".equals(followup.getScriptId())
                         && "patch-1".equals(followup.getScriptPatchVersion())
                         && "plugin-1".equals(followup.getPluginId())
                         && "plugin-v1".equals(followup.getPluginVersionId())
@@ -216,6 +223,10 @@ class RemoteFollowupRuntimeServiceImplTest {
             argThat(
                 result ->
                     "SHARED".equals(result.getPlayableStateScope())
+                        && "cmd-1".equals(result.getCommandId())
+                        && "dispatch-1".equals(result.getAutomationDispatchId())
+                        && "work-1".equals(result.getAutomationWorkItemId())
+                        && "script-1".equals(result.getScriptId())
                         && "patch-1".equals(result.getScriptPatchVersion())
                         && "plugin-1".equals(result.getPluginId())
                         && "plugin-v1".equals(result.getPluginVersionId())
@@ -587,6 +598,9 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinator.setWorldSlug("demo");
     coordinator.setRealmSlug("production");
     coordinator.setPointerVersion(17L);
+    coordinator.setAutomationDispatchId("dispatch-1");
+    coordinator.setAutomationWorkItemId("work-1");
+    coordinator.setScriptId("script-1");
     coordinator.setScriptPatchVersion("patch-1");
     coordinator.setPluginId("plugin-1");
     coordinator.setPluginVersionId("plugin-v1");
@@ -611,6 +625,10 @@ class RemoteFollowupRuntimeServiceImplTest {
     followup.setWorldSlug("demo");
     followup.setRealmSlug("production");
     followup.setPointerVersion(17L);
+    followup.setCommandId("cmd-1");
+    followup.setAutomationDispatchId("dispatch-1");
+    followup.setAutomationWorkItemId("work-1");
+    followup.setScriptId("script-1");
     followup.setScriptPatchVersion("patch-1");
     followup.setPluginId("plugin-1");
     followup.setPluginVersionId("plugin-v1");
@@ -637,6 +655,9 @@ class RemoteFollowupRuntimeServiceImplTest {
     command.setWorldSlug("demo");
     command.setRealmSlug("production");
     command.setPointerVersion(17L);
+    command.setAutomationDispatchId("dispatch-1");
+    command.setAutomationWorkItemId("work-1");
+    command.setScriptId("script-1");
     command.setScriptPatchVersion("patch-1");
     command.setPluginId("plugin-1");
     command.setPluginVersionId("plugin-v1");

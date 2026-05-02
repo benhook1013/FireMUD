@@ -1968,6 +1968,11 @@ public final class GameSessionControlPlaneGrpcService
         coordinator.getScriptPatchVersion(),
         coordinator.getPluginId(),
         coordinator.getPluginVersionId());
+    applyDirectCommandIdentity(
+        builder,
+        coordinator.getAutomationDispatchId(),
+        coordinator.getAutomationWorkItemId(),
+        coordinator.getScriptId());
     applyLinkedCommandMetadata(builder, command);
     applyRoutingBundle(
         builder,
@@ -2021,6 +2026,12 @@ public final class GameSessionControlPlaneGrpcService
         followup.getScriptPatchVersion(),
         followup.getPluginId(),
         followup.getPluginVersionId());
+    applyDirectCommandIdentity(
+        builder,
+        followup.getCommandId(),
+        followup.getAutomationDispatchId(),
+        followup.getAutomationWorkItemId(),
+        followup.getScriptId());
     applyLinkedCommandMetadata(builder, command);
     applyRoutingBundle(
         builder,
@@ -2056,6 +2067,12 @@ public final class GameSessionControlPlaneGrpcService
         result.getScriptPatchVersion(),
         result.getPluginId(),
         result.getPluginVersionId());
+    applyDirectCommandIdentity(
+        builder,
+        result.getCommandId(),
+        result.getAutomationDispatchId(),
+        result.getAutomationWorkItemId(),
+        result.getScriptId());
     applyLinkedCommandMetadata(builder, command);
     applyRoutingBundle(
         builder,
@@ -2107,6 +2124,15 @@ public final class GameSessionControlPlaneGrpcService
     if (command == null) {
       return;
     }
+    if (command.getAutomationDispatchId() != null) {
+      builder.setAutomationDispatchId(command.getAutomationDispatchId());
+    }
+    if (command.getAutomationWorkItemId() != null) {
+      builder.setAutomationWorkItemId(command.getAutomationWorkItemId());
+    }
+    if (command.getScriptId() != null) {
+      builder.setScriptId(command.getScriptId());
+    }
     if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
       builder.setScriptPatchVersion(command.getScriptPatchVersion());
       builder.setPublication(
@@ -2135,6 +2161,22 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (pluginVersionId != null) {
       builder.setPluginVersionId(pluginVersionId);
+    }
+  }
+
+  private static void applyDirectCommandIdentity(
+      RemoteCommandCoordinatorEntry.Builder builder,
+      String automationDispatchId,
+      String automationWorkItemId,
+      String scriptId) {
+    if (automationDispatchId != null) {
+      builder.setAutomationDispatchId(automationDispatchId);
+    }
+    if (automationWorkItemId != null) {
+      builder.setAutomationWorkItemId(automationWorkItemId);
+    }
+    if (scriptId != null) {
+      builder.setScriptId(scriptId);
     }
   }
 
@@ -2163,6 +2205,18 @@ public final class GameSessionControlPlaneGrpcService
     if (command == null) {
       return;
     }
+    if (command.getCommandId() != null) {
+      builder.setCommandId(command.getCommandId());
+    }
+    if (command.getAutomationDispatchId() != null) {
+      builder.setAutomationDispatchId(command.getAutomationDispatchId());
+    }
+    if (command.getAutomationWorkItemId() != null) {
+      builder.setAutomationWorkItemId(command.getAutomationWorkItemId());
+    }
+    if (command.getScriptId() != null) {
+      builder.setScriptId(command.getScriptId());
+    }
     if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
       builder.setScriptPatchVersion(command.getScriptPatchVersion());
       builder.setPublication(
@@ -2194,6 +2248,26 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private static void applyDirectCommandIdentity(
+      RemoteFollowupEntry.Builder builder,
+      String commandId,
+      String automationDispatchId,
+      String automationWorkItemId,
+      String scriptId) {
+    if (commandId != null) {
+      builder.setCommandId(commandId);
+    }
+    if (automationDispatchId != null) {
+      builder.setAutomationDispatchId(automationDispatchId);
+    }
+    if (automationWorkItemId != null) {
+      builder.setAutomationWorkItemId(automationWorkItemId);
+    }
+    if (scriptId != null) {
+      builder.setScriptId(scriptId);
+    }
+  }
+
   private static void applyRoutingBundle(
       RemoteFollowupEntry.Builder builder,
       String playableStateScope,
@@ -2218,6 +2292,18 @@ public final class GameSessionControlPlaneGrpcService
       RemoteFollowupResultEntry.Builder builder, GameplayCommand command) {
     if (command == null) {
       return;
+    }
+    if (command.getCommandId() != null) {
+      builder.setCommandId(command.getCommandId());
+    }
+    if (command.getAutomationDispatchId() != null) {
+      builder.setAutomationDispatchId(command.getAutomationDispatchId());
+    }
+    if (command.getAutomationWorkItemId() != null) {
+      builder.setAutomationWorkItemId(command.getAutomationWorkItemId());
+    }
+    if (command.getScriptId() != null) {
+      builder.setScriptId(command.getScriptId());
     }
     if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
       builder.setScriptPatchVersion(command.getScriptPatchVersion());
@@ -2247,6 +2333,26 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (pluginVersionId != null) {
       builder.setPluginVersionId(pluginVersionId);
+    }
+  }
+
+  private static void applyDirectCommandIdentity(
+      RemoteFollowupResultEntry.Builder builder,
+      String commandId,
+      String automationDispatchId,
+      String automationWorkItemId,
+      String scriptId) {
+    if (commandId != null) {
+      builder.setCommandId(commandId);
+    }
+    if (automationDispatchId != null) {
+      builder.setAutomationDispatchId(automationDispatchId);
+    }
+    if (automationWorkItemId != null) {
+      builder.setAutomationWorkItemId(automationWorkItemId);
+    }
+    if (scriptId != null) {
+      builder.setScriptId(scriptId);
     }
   }
 

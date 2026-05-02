@@ -74,6 +74,18 @@ public class RemoteFollowupResult {
   @Column(name = "plugin_version_id", length = 128)
   private String pluginVersionId;
 
+  @Column(name = "command_id", length = 128)
+  private String commandId;
+
+  @Column(name = "automation_dispatch_id", length = 128)
+  private String automationDispatchId;
+
+  @Column(name = "automation_work_item_id", length = 128)
+  private String automationWorkItemId;
+
+  @Column(name = "script_id", length = 128)
+  private String scriptId;
+
   @Column(name = "observed_at", nullable = false)
   private Instant observedAt;
 }
