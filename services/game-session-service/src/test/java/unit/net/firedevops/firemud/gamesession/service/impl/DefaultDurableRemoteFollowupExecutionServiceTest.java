@@ -174,6 +174,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         new net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus();
     runtimeStatus.setTenantId(1L);
     runtimeStatus.setGameInstanceId(9L);
+    runtimeStatus.setRegionId("region-b");
     runtimeStatus.setRegionEpoch(8L);
     when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
     when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))

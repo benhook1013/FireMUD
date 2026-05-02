@@ -104,6 +104,15 @@ final class AutomationGameplayCommandAdmissionSupport {
               "Runtime ownership not found"));
     }
     RuntimeRegionStatus status = maybeStatus.orElseThrow();
+    if (!request.regionId().equals(status.getRegionId())) {
+      return Optional.of(
+          new AdmissionResult(
+              false,
+              "STALE_TIMELINE",
+              null,
+              "stale_region_id",
+              "region_id does not match current runtime ownership"));
+    }
     if (!request.regionEpoch().equals(status.getRegionEpoch())) {
       return Optional.of(
           new AdmissionResult(
