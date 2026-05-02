@@ -2086,7 +2086,12 @@ public final class GameSessionControlPlaneGrpcService
         result.getAutomationDispatchId(),
         result.getAutomationWorkItemId(),
         result.getScriptId());
-    applyResultSummary(builder, result.getResultPayloadJson());
+    String resultCommandId = applyResultSummary(builder, result.getResultPayloadJson());
+    applyTargetCommandStatus(
+        builder,
+        resultCommandId == null
+            ? null
+            : gameplayCommandRepository.findByCommandId(resultCommandId).orElse(null));
     applyRoutingBundle(
         builder,
         result.getPlayableStateScope(),
@@ -2294,6 +2299,19 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private static void applyTargetCommandStatus(
+      RemoteFollowupResultEntry.Builder builder, GameplayCommand targetCommand) {
+    if (targetCommand == null) {
+      return;
+    }
+    if (targetCommand.getExecutionOutcome() != null) {
+      builder.setResultCommandExecutionOutcome(targetCommand.getExecutionOutcome());
+    }
+    if (targetCommand.getGameplayResult() != null) {
+      builder.setResultCommandGameplayResult(targetCommand.getGameplayResult());
+    }
+  }
+
   private static void applyPayloadSummary(
       RemoteCommandCoordinatorEntry.Builder builder, String payloadJson) {
     PayloadSummary summary = payloadSummary(payloadJson);
@@ -2326,7 +2344,7 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
-  private static void applyResultSummary(
+  private static String applyResultSummary(
       RemoteFollowupResultEntry.Builder builder, String payloadJson) {
     ResultSummary summary = resultSummary(payloadJson);
     if (summary.commandId() != null) {
@@ -2335,6 +2353,7 @@ public final class GameSessionControlPlaneGrpcService
     if (summary.errorCode() != null) {
       builder.setResultErrorCode(summary.errorCode());
     }
+    return summary.commandId();
   }
 
   private static void applyResultSummary(

@@ -2254,22 +2254,20 @@ class GameSessionControlPlaneGrpcServiceTest {
     RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
     RemoteCommandCoordinatorRepository coordinatorRepository =
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
-    GameplayCommand command = new GameplayCommand();
-    command.setCommandId("cmd-1");
-    command.setTenantId(1L);
-    command.setScriptPatchVersion("patch-1");
-    command.setPluginId("plugin-1");
-    command.setPluginVersionId("plugin-v1");
+    GameplayCommandRepository gameplayCommandRepository =
+        Mockito.mock(GameplayCommandRepository.class);
+    GameplayCommand targetCommand = new GameplayCommand();
+    targetCommand.setCommandId("auto-1");
+    targetCommand.setExecutionOutcome("APPLIED");
+    targetCommand.setGameplayResult("SUCCESS");
     Mockito.when(repository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(1L, "coord-1"))
         .thenReturn(List.of(result));
+    Mockito.when(gameplayCommandRepository.findByCommandId("auto-1"))
+        .thenReturn(Optional.of(targetCommand));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
-            null,
-            coordinatorRepository,
-            repository,
-            Mockito.mock(GameplayCommandRepository.class),
-            gameDesignClient());
+            null, coordinatorRepository, repository, gameplayCommandRepository, gameDesignClient());
 
     AtomicReference<ListRemoteFollowupResultsResponse> responseRef = new AtomicReference<>();
     service.listRemoteFollowupResults(
@@ -2296,6 +2294,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         responseRef.get().getResults(0).getResultPayloadJson());
     assertEquals("auto-1", responseRef.get().getResults(0).getResultCommandId());
     assertEquals("RATE_LIMIT", responseRef.get().getResults(0).getResultErrorCode());
+    assertEquals("APPLIED", responseRef.get().getResults(0).getResultCommandExecutionOutcome());
+    assertEquals("SUCCESS", responseRef.get().getResults(0).getResultCommandGameplayResult());
     assertEquals("patch-1", responseRef.get().getResults(0).getScriptPatchVersion());
     assertEquals("plugin-1", responseRef.get().getResults(0).getPluginId());
     assertEquals("plugin-v1", responseRef.get().getResults(0).getPluginVersionId());

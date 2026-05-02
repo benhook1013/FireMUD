@@ -645,6 +645,8 @@ message RemoteFollowupResultEntry {
   string script_id = 23;
   string result_command_id = 24;
   string result_error_code = 25;
+  string result_command_execution_outcome = 26;
+  string result_command_gameplay_result = 27;
 }
 
 message ListRemoteFollowupResultsResponse {
