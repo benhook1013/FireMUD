@@ -541,6 +541,10 @@ message RemoteCommandCoordinatorEntry {
   string plugin_id = 26;
   string plugin_version_id = 27;
   ScriptPatchPublicationLink publication = 28;
+  entity_management.v1.PlayableStateScope playable_state_scope = 29;
+  string world_slug = 30;
+  string realm_slug = 31;
+  int64 pointer_version = 32;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -578,6 +582,10 @@ message RemoteFollowupEntry {
   string plugin_id = 21;
   string plugin_version_id = 22;
   ScriptPatchPublicationLink publication = 23;
+  entity_management.v1.PlayableStateScope playable_state_scope = 24;
+  string world_slug = 25;
+  string realm_slug = 26;
+  int64 pointer_version = 27;
 }
 
 message ListRemoteFollowupsResponse {
@@ -606,6 +614,10 @@ message RemoteFollowupResultEntry {
   string plugin_id = 13;
   string plugin_version_id = 14;
   ScriptPatchPublicationLink publication = 15;
+  entity_management.v1.PlayableStateScope playable_state_scope = 16;
+  string world_slug = 17;
+  string realm_slug = 18;
+  int64 pointer_version = 19;
 }
 
 message ListRemoteFollowupResultsResponse {

@@ -53,6 +53,18 @@ public class RemoteFollowupResult {
   @Column(name = "result_payload_json", columnDefinition = "TEXT")
   private String resultPayloadJson;
 
+  @Column(name = "playable_state_scope", length = 32)
+  private String playableStateScope;
+
+  @Column(name = "world_slug", length = 64)
+  private String worldSlug;
+
+  @Column(name = "realm_slug", length = 64)
+  private String realmSlug;
+
+  @Column(name = "pointer_version")
+  private Long pointerVersion;
+
   @Column(name = "observed_at", nullable = false)
   private Instant observedAt;
 }

@@ -103,6 +103,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   public ScheduleOutcome scheduleFollowup(ScheduleRequest request) {
     validateScheduleRequest(request);
     Instant now = Instant.now(clock);
+    GameplayCommand command =
+        gameplayCommandRepository.findByCommandId(request.commandId()).orElse(null);
 
     Optional<RemoteCommandCoordinator> existingCoordinator =
         remoteCommandCoordinatorRepository.findByTenantIdAndCommandId(
@@ -111,7 +113,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         existingCoordinator.orElseGet(RemoteCommandCoordinator::new);
     boolean coordinatorCreated = existingCoordinator.isEmpty();
     existingCoordinator.ifPresent(existing -> validateExistingCoordinator(existing, request));
-    populateCoordinator(coordinator, request, now);
+    populateCoordinator(coordinator, request, command, now);
     remoteCommandCoordinatorRepository.save(coordinator);
     mirrorCoordinatorToCommand(coordinator, now);
 
@@ -124,7 +126,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     RemoteFollowup followup = existingFollowup.orElseGet(RemoteFollowup::new);
     boolean followupCreated = existingFollowup.isEmpty();
     existingFollowup.ifPresent(existing -> validateExistingFollowup(existing, request));
-    populateFollowup(followup, request, now);
+    populateFollowup(followup, request, command, now);
     remoteFollowupRepository.save(followup);
     writeRemoteHint(request.tenantId(), request.targetEntityId());
     remoteFollowupScheduledCounter.increment();
@@ -167,7 +169,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       validateExistingResult(result, request);
     } else {
       Instant observedAt = Instant.now(clock);
-      populateResult(result, request, observedAt);
+      populateResult(result, request, coordinator, followup, observedAt);
       remoteFollowupResultRepository.save(result);
     }
 
@@ -419,7 +421,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   }
 
   private static void populateCoordinator(
-      RemoteCommandCoordinator coordinator, ScheduleRequest request, Instant now) {
+      RemoteCommandCoordinator coordinator,
+      ScheduleRequest request,
+      GameplayCommand command,
+      Instant now) {
     coordinator.setCoordinatorId(request.coordinatorId());
     coordinator.setTenantId(request.tenantId());
     coordinator.setCommandId(request.commandId());
@@ -443,11 +448,12 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       coordinator.setExecutionOutcome(COMMAND_PENDING_REMOTE);
       coordinator.setGameplayResult("PENDING");
     }
+    applyRoutingBundle(coordinator, command);
     coordinator.setUpdatedAt(now);
   }
 
   private static void populateFollowup(
-      RemoteFollowup followup, ScheduleRequest request, Instant now) {
+      RemoteFollowup followup, ScheduleRequest request, GameplayCommand command, Instant now) {
     followup.setFollowupId(request.followupId());
     followup.setTenantId(request.tenantId());
     followup.setOriginGameInstanceId(request.originGameInstanceId());
@@ -465,6 +471,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     followup.setClaimOrdinal(null);
     followup.setFailureCode(null);
     followup.setFailureMessage(null);
+    applyRoutingBundle(followup, command);
     if (followup.getCreatedAt() == null) {
       followup.setCreatedAt(now);
     }
@@ -472,7 +479,11 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   }
 
   private static void populateResult(
-      RemoteFollowupResult result, ResultRequest request, Instant now) {
+      RemoteFollowupResult result,
+      ResultRequest request,
+      RemoteCommandCoordinator coordinator,
+      RemoteFollowup followup,
+      Instant now) {
     result.setResultId(request.resultId());
     result.setTenantId(request.tenantId());
     result.setCoordinatorId(request.coordinatorId());
@@ -483,7 +494,47 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     result.setTargetRegionEpoch(request.targetRegionEpoch());
     result.setOutcome(request.outcome());
     result.setResultPayloadJson(blankToNull(request.resultPayloadJson()));
+    result.setPlayableStateScope(
+        blankToNull(
+            coordinator != null && coordinator.getPlayableStateScope() != null
+                ? coordinator.getPlayableStateScope()
+                : followup == null ? null : followup.getPlayableStateScope()));
+    result.setWorldSlug(
+        blankToNull(
+            coordinator != null && coordinator.getWorldSlug() != null
+                ? coordinator.getWorldSlug()
+                : followup == null ? null : followup.getWorldSlug()));
+    result.setRealmSlug(
+        blankToNull(
+            coordinator != null && coordinator.getRealmSlug() != null
+                ? coordinator.getRealmSlug()
+                : followup == null ? null : followup.getRealmSlug()));
+    result.setPointerVersion(
+        coordinator != null && coordinator.getPointerVersion() != null
+            ? coordinator.getPointerVersion()
+            : followup == null ? null : followup.getPointerVersion());
     result.setObservedAt(now);
+  }
+
+  private static void applyRoutingBundle(
+      RemoteCommandCoordinator coordinator, GameplayCommand command) {
+    if (command == null) {
+      return;
+    }
+    coordinator.setPlayableStateScope(blankToNull(command.getPlayableStateScope()));
+    coordinator.setWorldSlug(blankToNull(command.getWorldSlug()));
+    coordinator.setRealmSlug(blankToNull(command.getRealmSlug()));
+    coordinator.setPointerVersion(command.getPointerVersion());
+  }
+
+  private static void applyRoutingBundle(RemoteFollowup followup, GameplayCommand command) {
+    if (command == null) {
+      return;
+    }
+    followup.setPlayableStateScope(blankToNull(command.getPlayableStateScope()));
+    followup.setWorldSlug(blankToNull(command.getWorldSlug()));
+    followup.setRealmSlug(blankToNull(command.getRealmSlug()));
+    followup.setPointerVersion(command.getPointerVersion());
   }
 
   private static void applyTerminalResult(

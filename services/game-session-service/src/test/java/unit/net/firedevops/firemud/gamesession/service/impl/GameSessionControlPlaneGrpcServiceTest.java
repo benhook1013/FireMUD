@@ -1923,6 +1923,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setOriginDeadlineTickId(88L);
     coordinator.setState("PENDING_REMOTE");
     coordinator.setLateResultPolicy("late_result_safe_to_ignore");
+    coordinator.setPlayableStateScope("SHARED");
+    coordinator.setWorldSlug("demo");
+    coordinator.setRealmSlug("production");
+    coordinator.setPointerVersion(17L);
     coordinator.setUpdatedAt(Instant.parse("2026-05-01T00:00:00Z"));
     RemoteFollowup followup = new RemoteFollowup();
     followup.setFollowupId("rf-1");
@@ -1989,6 +1993,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("plugin-1", responseRef.get().getCoordinator().getPluginId());
     assertEquals("plugin-v1", responseRef.get().getCoordinator().getPluginVersionId());
     assertEquals(17L, responseRef.get().getCoordinator().getPublication().getVersionId());
+    assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getCoordinator().getPlayableStateScope());
+    assertEquals("demo", responseRef.get().getCoordinator().getWorldSlug());
+    assertEquals("production", responseRef.get().getCoordinator().getRealmSlug());
+    assertEquals(17L, responseRef.get().getCoordinator().getPointerVersion());
     assertEquals("CLAIMED", responseRef.get().getCoordinator().getFollowupStatus());
     assertEquals("tb-1", responseRef.get().getCoordinator().getFollowupClaimedTickBatchId());
     assertEquals(3L, responseRef.get().getCoordinator().getFollowupClaimOrdinal());
@@ -2014,6 +2024,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setTargetRegionEpoch(4L);
     followup.setDueTickId(55L);
     followup.setClaimOrdinal(2L);
+    followup.setPlayableStateScope("ISOLATED");
+    followup.setWorldSlug("ops");
+    followup.setRealmSlug("preview");
+    followup.setPointerVersion(29L);
     followup.setEffectKey("damage:1");
     followup.setTargetEntityId("entity-9");
     followup.setStatus("SCHEDULED");
@@ -2068,6 +2082,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("plugin-1", responseRef.get().getFollowups(0).getPluginId());
     assertEquals("plugin-v1", responseRef.get().getFollowups(0).getPluginVersionId());
     assertEquals(17L, responseRef.get().getFollowups(0).getPublication().getVersionId());
+    assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
+        responseRef.get().getFollowups(0).getPlayableStateScope());
+    assertEquals("ops", responseRef.get().getFollowups(0).getWorldSlug());
+    assertEquals("preview", responseRef.get().getFollowups(0).getRealmSlug());
+    assertEquals(29L, responseRef.get().getFollowups(0).getPointerVersion());
   }
 
   @Test
@@ -2083,6 +2103,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setTargetRegionEpoch(4L);
     result.setOutcome("REMOTE_APPLIED");
     result.setResultPayloadJson("{\"damage\":5}");
+    result.setPlayableStateScope("SHARED");
+    result.setWorldSlug("demo");
+    result.setRealmSlug("production");
+    result.setPointerVersion(17L);
     result.setObservedAt(Instant.parse("2026-05-01T00:00:02Z"));
     RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
     RemoteCommandCoordinatorRepository coordinatorRepository =
@@ -2129,6 +2153,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("plugin-1", responseRef.get().getResults(0).getPluginId());
     assertEquals("plugin-v1", responseRef.get().getResults(0).getPluginVersionId());
     assertEquals(17L, responseRef.get().getResults(0).getPublication().getVersionId());
+    assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getResults(0).getPlayableStateScope());
+    assertEquals("demo", responseRef.get().getResults(0).getWorldSlug());
+    assertEquals("production", responseRef.get().getResults(0).getRealmSlug());
+    assertEquals(17L, responseRef.get().getResults(0).getPointerVersion());
   }
 
   @Test

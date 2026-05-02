@@ -74,6 +74,18 @@ public class RemoteFollowup {
   @Column(name = "failure_message", length = 500)
   private String failureMessage;
 
+  @Column(name = "playable_state_scope", length = 32)
+  private String playableStateScope;
+
+  @Column(name = "world_slug", length = 64)
+  private String worldSlug;
+
+  @Column(name = "realm_slug", length = 64)
+  private String realmSlug;
+
+  @Column(name = "pointer_version")
+  private Long pointerVersion;
+
   @Column(name = "created_at", nullable = false)
   private Instant createdAt;
 

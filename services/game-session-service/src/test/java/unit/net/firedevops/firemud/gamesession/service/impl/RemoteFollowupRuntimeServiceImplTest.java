@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -92,6 +93,22 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE, command.getExecutionOutcome());
     assertEquals("PENDING", command.getGameplayResult());
+    verify(coordinatorRepository)
+        .save(
+            argThat(
+                coordinator ->
+                    "SHARED".equals(coordinator.getPlayableStateScope())
+                        && "demo".equals(coordinator.getWorldSlug())
+                        && "production".equals(coordinator.getRealmSlug())
+                        && Long.valueOf(17L).equals(coordinator.getPointerVersion())));
+    verify(followupRepository)
+        .save(
+            argThat(
+                followup ->
+                    "SHARED".equals(followup.getPlayableStateScope())
+                        && "demo".equals(followup.getWorldSlug())
+                        && "production".equals(followup.getRealmSlug())
+                        && Long.valueOf(17L).equals(followup.getPointerVersion())));
     verify(valueOperations).set("remote:1:entity-9", "1", java.time.Duration.ofMillis(60_000L));
   }
 
@@ -188,6 +205,14 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED, outcome.followupStatus());
     assertFalse(outcome.lateResult());
     assertFalse(outcome.reconciledLateResult());
+    verify(resultRepository)
+        .save(
+            argThat(
+                result ->
+                    "SHARED".equals(result.getPlayableStateScope())
+                        && "demo".equals(result.getWorldSlug())
+                        && "production".equals(result.getRealmSlug())
+                        && Long.valueOf(17L).equals(result.getPointerVersion())));
     verify(coordinatorRepository, never()).save(any());
   }
 
@@ -196,8 +221,16 @@ class RemoteFollowupRuntimeServiceImplTest {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
     coordinator.setLateResultPolicy("late_result_safe_to_ignore");
+    coordinator.setPlayableStateScope("SHARED");
+    coordinator.setWorldSlug("demo");
+    coordinator.setRealmSlug("production");
+    coordinator.setPointerVersion(17L);
     RemoteFollowup followup = followup();
     followup.setStatus(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED);
+    followup.setPlayableStateScope("SHARED");
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(17L);
     when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
         .thenReturn(Optional.of(coordinator));
     when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
@@ -577,6 +610,10 @@ class RemoteFollowupRuntimeServiceImplTest {
     command.setAcceptedAt(NOW);
     command.setLastAttemptAt(NOW);
     command.setAttemptCount(1);
+    command.setPlayableStateScope("SHARED");
+    command.setWorldSlug("demo");
+    command.setRealmSlug("production");
+    command.setPointerVersion(17L);
     return command;
   }
 }

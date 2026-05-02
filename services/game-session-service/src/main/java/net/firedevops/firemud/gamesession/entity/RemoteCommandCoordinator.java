@@ -77,6 +77,18 @@ public class RemoteCommandCoordinator {
   @Column(name = "gameplay_result", length = 40)
   private String gameplayResult;
 
+  @Column(name = "playable_state_scope", length = 32)
+  private String playableStateScope;
+
+  @Column(name = "world_slug", length = 64)
+  private String worldSlug;
+
+  @Column(name = "realm_slug", length = 64)
+  private String realmSlug;
+
+  @Column(name = "pointer_version")
+  private Long pointerVersion;
+
   @Column(name = "updated_at", nullable = false)
   private Instant updatedAt;
 }

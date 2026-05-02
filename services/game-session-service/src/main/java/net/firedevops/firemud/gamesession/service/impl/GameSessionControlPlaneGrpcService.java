@@ -1963,6 +1963,12 @@ public final class GameSessionControlPlaneGrpcService
       }
     }
     applyLinkedCommandMetadata(builder, command);
+    applyRoutingBundle(
+        builder,
+        coordinator.getPlayableStateScope(),
+        coordinator.getWorldSlug(),
+        coordinator.getRealmSlug(),
+        coordinator.getPointerVersion());
     return builder.build();
   }
 
@@ -2004,6 +2010,12 @@ public final class GameSessionControlPlaneGrpcService
       builder.setFailureMessage(followup.getFailureMessage());
     }
     applyLinkedCommandMetadata(builder, command);
+    applyRoutingBundle(
+        builder,
+        followup.getPlayableStateScope(),
+        followup.getWorldSlug(),
+        followup.getRealmSlug(),
+        followup.getPointerVersion());
     return builder.build();
   }
 
@@ -2027,6 +2039,12 @@ public final class GameSessionControlPlaneGrpcService
       builder.setResultPayloadJson(result.getResultPayloadJson());
     }
     applyLinkedCommandMetadata(builder, command);
+    applyRoutingBundle(
+        builder,
+        result.getPlayableStateScope(),
+        result.getWorldSlug(),
+        result.getRealmSlug(),
+        result.getPointerVersion());
     return builder.build();
   }
 
@@ -2084,6 +2102,26 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private static void applyRoutingBundle(
+      RemoteCommandCoordinatorEntry.Builder builder,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      Long pointerVersion) {
+    if (playableStateScope != null && !playableStateScope.isBlank()) {
+      builder.setPlayableStateScope(toPlayableStateScopeStatus(playableStateScope));
+    }
+    if (worldSlug != null) {
+      builder.setWorldSlug(worldSlug);
+    }
+    if (realmSlug != null) {
+      builder.setRealmSlug(realmSlug);
+    }
+    if (pointerVersion != null) {
+      builder.setPointerVersion(pointerVersion);
+    }
+  }
+
   private void applyLinkedCommandMetadata(
       RemoteFollowupEntry.Builder builder, GameplayCommand command) {
     if (command == null) {
@@ -2102,6 +2140,26 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private static void applyRoutingBundle(
+      RemoteFollowupEntry.Builder builder,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      Long pointerVersion) {
+    if (playableStateScope != null && !playableStateScope.isBlank()) {
+      builder.setPlayableStateScope(toPlayableStateScopeStatus(playableStateScope));
+    }
+    if (worldSlug != null) {
+      builder.setWorldSlug(worldSlug);
+    }
+    if (realmSlug != null) {
+      builder.setRealmSlug(realmSlug);
+    }
+    if (pointerVersion != null) {
+      builder.setPointerVersion(pointerVersion);
+    }
+  }
+
   private void applyLinkedCommandMetadata(
       RemoteFollowupResultEntry.Builder builder, GameplayCommand command) {
     if (command == null) {
@@ -2117,6 +2175,26 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (command.getPluginVersionId() != null) {
       builder.setPluginVersionId(command.getPluginVersionId());
+    }
+  }
+
+  private static void applyRoutingBundle(
+      RemoteFollowupResultEntry.Builder builder,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      Long pointerVersion) {
+    if (playableStateScope != null && !playableStateScope.isBlank()) {
+      builder.setPlayableStateScope(toPlayableStateScopeStatus(playableStateScope));
+    }
+    if (worldSlug != null) {
+      builder.setWorldSlug(worldSlug);
+    }
+    if (realmSlug != null) {
+      builder.setRealmSlug(realmSlug);
+    }
+    if (pointerVersion != null) {
+      builder.setPointerVersion(pointerVersion);
     }
   }
 
