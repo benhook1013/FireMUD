@@ -1916,7 +1916,6 @@ public final class GameSessionControlPlaneGrpcService
       RemoteCommandCoordinator coordinator,
       RemoteFollowup followup,
       RemoteFollowupResult latestResult) {
-    GameplayCommand command = findLinkedGameplayCommand(coordinator.getCommandId());
     RemoteCommandCoordinatorEntry.Builder builder =
         RemoteCommandCoordinatorEntry.newBuilder()
             .setCoordinatorId(coordinator.getCoordinatorId())
@@ -1973,7 +1972,6 @@ public final class GameSessionControlPlaneGrpcService
         coordinator.getAutomationDispatchId(),
         coordinator.getAutomationWorkItemId(),
         coordinator.getScriptId());
-    applyLinkedCommandMetadata(builder, command);
     applyRoutingBundle(
         builder,
         coordinator.getPlayableStateScope(),
@@ -1984,7 +1982,6 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private RemoteFollowupEntry toRemoteFollowupEntry(RemoteFollowup followup) {
-    GameplayCommand command = findLinkedGameplayCommandForFollowup(followup);
     RemoteFollowupEntry.Builder builder =
         RemoteFollowupEntry.newBuilder()
             .setFollowupId(followup.getFollowupId())
@@ -2032,7 +2029,6 @@ public final class GameSessionControlPlaneGrpcService
         followup.getAutomationDispatchId(),
         followup.getAutomationWorkItemId(),
         followup.getScriptId());
-    applyLinkedCommandMetadata(builder, command);
     applyRoutingBundle(
         builder,
         followup.getPlayableStateScope(),
@@ -2043,8 +2039,6 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private RemoteFollowupResultEntry toRemoteFollowupResultEntry(RemoteFollowupResult result) {
-    GameplayCommand command =
-        findLinkedGameplayCommandForCoordinator(result.getTenantId(), result.getCoordinatorId());
     RemoteFollowupResultEntry.Builder builder =
         RemoteFollowupResultEntry.newBuilder()
             .setResultId(result.getResultId())
@@ -2073,7 +2067,6 @@ public final class GameSessionControlPlaneGrpcService
         result.getAutomationDispatchId(),
         result.getAutomationWorkItemId(),
         result.getScriptId());
-    applyLinkedCommandMetadata(builder, command);
     applyRoutingBundle(
         builder,
         result.getPlayableStateScope(),
@@ -2081,69 +2074,6 @@ public final class GameSessionControlPlaneGrpcService
         result.getRealmSlug(),
         result.getPointerVersion());
     return builder.build();
-  }
-
-  private GameplayCommand findLinkedGameplayCommand(String commandId) {
-    if (gameplayCommandRepository == null || commandId == null || commandId.isBlank()) {
-      return null;
-    }
-    return gameplayCommandRepository.findByCommandId(commandId).orElse(null);
-  }
-
-  private GameplayCommand findLinkedGameplayCommandForFollowup(RemoteFollowup followup) {
-    if (followup == null
-        || remoteCommandCoordinatorRepository == null
-        || followup.getTenantId() == null
-        || followup.getFollowupId() == null
-        || followup.getFollowupId().isBlank()) {
-      return null;
-    }
-    return remoteCommandCoordinatorRepository
-        .findByTenantIdAndFollowupId(followup.getTenantId(), followup.getFollowupId())
-        .map(RemoteCommandCoordinator::getCommandId)
-        .map(this::findLinkedGameplayCommand)
-        .orElse(null);
-  }
-
-  private GameplayCommand findLinkedGameplayCommandForCoordinator(
-      long tenantId, String coordinatorId) {
-    if (remoteCommandCoordinatorRepository == null
-        || coordinatorId == null
-        || coordinatorId.isBlank()) {
-      return null;
-    }
-    return remoteCommandCoordinatorRepository
-        .findByTenantIdAndCoordinatorId(tenantId, coordinatorId)
-        .map(RemoteCommandCoordinator::getCommandId)
-        .map(this::findLinkedGameplayCommand)
-        .orElse(null);
-  }
-
-  private void applyLinkedCommandMetadata(
-      RemoteCommandCoordinatorEntry.Builder builder, GameplayCommand command) {
-    if (command == null) {
-      return;
-    }
-    if (command.getAutomationDispatchId() != null) {
-      builder.setAutomationDispatchId(command.getAutomationDispatchId());
-    }
-    if (command.getAutomationWorkItemId() != null) {
-      builder.setAutomationWorkItemId(command.getAutomationWorkItemId());
-    }
-    if (command.getScriptId() != null) {
-      builder.setScriptId(command.getScriptId());
-    }
-    if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
-      builder.setScriptPatchVersion(command.getScriptPatchVersion());
-      builder.setPublication(
-          scriptPatchPublicationLink(command.getTenantId(), command.getScriptPatchVersion()));
-    }
-    if (command.getPluginId() != null) {
-      builder.setPluginId(command.getPluginId());
-    }
-    if (command.getPluginVersionId() != null) {
-      builder.setPluginVersionId(command.getPluginVersionId());
-    }
   }
 
   private void applyDirectCommandProvenance(
@@ -2197,36 +2127,6 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (pointerVersion != null) {
       builder.setPointerVersion(pointerVersion);
-    }
-  }
-
-  private void applyLinkedCommandMetadata(
-      RemoteFollowupEntry.Builder builder, GameplayCommand command) {
-    if (command == null) {
-      return;
-    }
-    if (command.getCommandId() != null) {
-      builder.setCommandId(command.getCommandId());
-    }
-    if (command.getAutomationDispatchId() != null) {
-      builder.setAutomationDispatchId(command.getAutomationDispatchId());
-    }
-    if (command.getAutomationWorkItemId() != null) {
-      builder.setAutomationWorkItemId(command.getAutomationWorkItemId());
-    }
-    if (command.getScriptId() != null) {
-      builder.setScriptId(command.getScriptId());
-    }
-    if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
-      builder.setScriptPatchVersion(command.getScriptPatchVersion());
-      builder.setPublication(
-          scriptPatchPublicationLink(command.getTenantId(), command.getScriptPatchVersion()));
-    }
-    if (command.getPluginId() != null) {
-      builder.setPluginId(command.getPluginId());
-    }
-    if (command.getPluginVersionId() != null) {
-      builder.setPluginVersionId(command.getPluginVersionId());
     }
   }
 
@@ -2285,36 +2185,6 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (pointerVersion != null) {
       builder.setPointerVersion(pointerVersion);
-    }
-  }
-
-  private void applyLinkedCommandMetadata(
-      RemoteFollowupResultEntry.Builder builder, GameplayCommand command) {
-    if (command == null) {
-      return;
-    }
-    if (command.getCommandId() != null) {
-      builder.setCommandId(command.getCommandId());
-    }
-    if (command.getAutomationDispatchId() != null) {
-      builder.setAutomationDispatchId(command.getAutomationDispatchId());
-    }
-    if (command.getAutomationWorkItemId() != null) {
-      builder.setAutomationWorkItemId(command.getAutomationWorkItemId());
-    }
-    if (command.getScriptId() != null) {
-      builder.setScriptId(command.getScriptId());
-    }
-    if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
-      builder.setScriptPatchVersion(command.getScriptPatchVersion());
-      builder.setPublication(
-          scriptPatchPublicationLink(command.getTenantId(), command.getScriptPatchVersion()));
-    }
-    if (command.getPluginId() != null) {
-      builder.setPluginId(command.getPluginId());
-    }
-    if (command.getPluginVersionId() != null) {
-      builder.setPluginVersionId(command.getPluginVersionId());
     }
   }
 

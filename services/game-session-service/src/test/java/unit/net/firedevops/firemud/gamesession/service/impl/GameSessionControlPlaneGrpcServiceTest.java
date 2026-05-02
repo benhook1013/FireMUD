@@ -1932,6 +1932,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setAutomationDispatchId("dispatch-1");
     coordinator.setAutomationWorkItemId("work-1");
     coordinator.setScriptId("script-1");
+    coordinator.setScriptPatchVersion("patch-1");
+    coordinator.setPluginId("plugin-1");
+    coordinator.setPluginVersionId("plugin-v1");
     coordinator.setUpdatedAt(Instant.parse("2026-05-01T00:00:00Z"));
     RemoteFollowup followup = new RemoteFollowup();
     followup.setFollowupId("rf-1");
@@ -1950,13 +1953,6 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(RemoteFollowupRepository.class);
     RemoteFollowupResultRepository remoteFollowupResultRepository =
         Mockito.mock(RemoteFollowupResultRepository.class);
-    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
-    GameplayCommand command = new GameplayCommand();
-    command.setCommandId("cmd-1");
-    command.setTenantId(1L);
-    command.setScriptPatchVersion("patch-1");
-    command.setPluginId("plugin-1");
-    command.setPluginVersionId("plugin-v1");
     Mockito.when(repository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
         .thenReturn(Optional.of(coordinator));
     Mockito.when(remoteFollowupRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
@@ -1965,14 +1961,13 @@ class GameSessionControlPlaneGrpcServiceTest {
             remoteFollowupResultRepository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(
                 1L, "coord-1"))
         .thenReturn(List.of(result));
-    Mockito.when(commandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
             remoteFollowupRepository,
             repository,
             remoteFollowupResultRepository,
-            commandRepository,
+            Mockito.mock(GameplayCommandRepository.class),
             gameDesignClient());
 
     AtomicReference<GetRemoteCommandCoordinatorResponse> responseRef = new AtomicReference<>();
