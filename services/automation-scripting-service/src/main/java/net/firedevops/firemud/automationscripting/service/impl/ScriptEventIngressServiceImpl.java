@@ -305,6 +305,18 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       return new TriggerAdmission(
           false, OUTCOME_VERSION_UNAVAILABLE, "playable_state_scope_mismatch", 0);
     }
+    if (!request.getRegionId().isBlank()
+        && !runtime.getRuntimeState().getRegionId().isBlank()
+        && !request.getRegionId().equals(runtime.getRuntimeState().getRegionId())) {
+      return new TriggerAdmission(
+          false, OUTCOME_VERSION_UNAVAILABLE, "runtime_region_scope_advanced", 0);
+    }
+    if (request.getRegionEpoch() > 0
+        && runtime.getRuntimeState().getRegionEpoch() > 0
+        && request.getRegionEpoch() != runtime.getRuntimeState().getRegionEpoch()) {
+      return new TriggerAdmission(
+          false, OUTCOME_VERSION_UNAVAILABLE, "runtime_region_scope_advanced", 0);
+    }
     return null;
   }
 
