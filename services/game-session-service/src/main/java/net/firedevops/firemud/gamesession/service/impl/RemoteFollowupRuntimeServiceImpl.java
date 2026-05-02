@@ -448,7 +448,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       coordinator.setExecutionOutcome(COMMAND_PENDING_REMOTE);
       coordinator.setGameplayResult("PENDING");
     }
-    applyRoutingBundle(coordinator, command);
+    applySchedulingMetadata(coordinator, request, command);
     coordinator.setUpdatedAt(now);
   }
 
@@ -471,7 +471,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     followup.setClaimOrdinal(null);
     followup.setFailureCode(null);
     followup.setFailureMessage(null);
-    applyRoutingBundle(followup, command);
+    applySchedulingMetadata(followup, request, command);
     if (followup.getCreatedAt() == null) {
       followup.setCreatedAt(now);
     }
@@ -551,38 +551,83 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     result.setObservedAt(now);
   }
 
-  private static void applyRoutingBundle(
-      RemoteCommandCoordinator coordinator, GameplayCommand command) {
-    if (command == null) {
-      return;
-    }
-    coordinator.setPlayableStateScope(blankToNull(command.getPlayableStateScope()));
-    coordinator.setWorldSlug(blankToNull(command.getWorldSlug()));
-    coordinator.setRealmSlug(blankToNull(command.getRealmSlug()));
-    coordinator.setPointerVersion(command.getPointerVersion());
-    coordinator.setScriptPatchVersion(blankToNull(command.getScriptPatchVersion()));
-    coordinator.setPluginId(blankToNull(command.getPluginId()));
-    coordinator.setPluginVersionId(blankToNull(command.getPluginVersionId()));
-    coordinator.setAutomationDispatchId(blankToNull(command.getAutomationDispatchId()));
-    coordinator.setAutomationWorkItemId(blankToNull(command.getAutomationWorkItemId()));
-    coordinator.setScriptId(blankToNull(command.getScriptId()));
+  private static void applySchedulingMetadata(
+      RemoteCommandCoordinator coordinator, ScheduleRequest request, GameplayCommand command) {
+    coordinator.setPlayableStateScope(
+        metadataValue(
+            request.playableStateScope(),
+            command == null ? null : command.getPlayableStateScope()));
+    coordinator.setWorldSlug(
+        metadataValue(request.worldSlug(), command == null ? null : command.getWorldSlug()));
+    coordinator.setRealmSlug(
+        metadataValue(request.realmSlug(), command == null ? null : command.getRealmSlug()));
+    coordinator.setPointerVersion(
+        metadataLong(
+            request.pointerVersion(), command == null ? null : command.getPointerVersion()));
+    coordinator.setScriptPatchVersion(
+        metadataValue(
+            request.scriptPatchVersion(),
+            command == null ? null : command.getScriptPatchVersion()));
+    coordinator.setPluginId(
+        metadataValue(request.pluginId(), command == null ? null : command.getPluginId()));
+    coordinator.setPluginVersionId(
+        metadataValue(
+            request.pluginVersionId(), command == null ? null : command.getPluginVersionId()));
+    coordinator.setAutomationDispatchId(
+        metadataValue(
+            request.automationDispatchId(),
+            command == null ? null : command.getAutomationDispatchId()));
+    coordinator.setAutomationWorkItemId(
+        metadataValue(
+            request.automationWorkItemId(),
+            command == null ? null : command.getAutomationWorkItemId()));
+    coordinator.setScriptId(
+        metadataValue(request.scriptId(), command == null ? null : command.getScriptId()));
   }
 
-  private static void applyRoutingBundle(RemoteFollowup followup, GameplayCommand command) {
-    if (command == null) {
-      return;
-    }
-    followup.setPlayableStateScope(blankToNull(command.getPlayableStateScope()));
-    followup.setWorldSlug(blankToNull(command.getWorldSlug()));
-    followup.setRealmSlug(blankToNull(command.getRealmSlug()));
-    followup.setPointerVersion(command.getPointerVersion());
-    followup.setScriptPatchVersion(blankToNull(command.getScriptPatchVersion()));
-    followup.setPluginId(blankToNull(command.getPluginId()));
-    followup.setPluginVersionId(blankToNull(command.getPluginVersionId()));
-    followup.setCommandId(blankToNull(command.getCommandId()));
-    followup.setAutomationDispatchId(blankToNull(command.getAutomationDispatchId()));
-    followup.setAutomationWorkItemId(blankToNull(command.getAutomationWorkItemId()));
-    followup.setScriptId(blankToNull(command.getScriptId()));
+  private static void applySchedulingMetadata(
+      RemoteFollowup followup, ScheduleRequest request, GameplayCommand command) {
+    followup.setPlayableStateScope(
+        metadataValue(
+            request.playableStateScope(),
+            command == null ? null : command.getPlayableStateScope()));
+    followup.setWorldSlug(
+        metadataValue(request.worldSlug(), command == null ? null : command.getWorldSlug()));
+    followup.setRealmSlug(
+        metadataValue(request.realmSlug(), command == null ? null : command.getRealmSlug()));
+    followup.setPointerVersion(
+        metadataLong(
+            request.pointerVersion(), command == null ? null : command.getPointerVersion()));
+    followup.setScriptPatchVersion(
+        metadataValue(
+            request.scriptPatchVersion(),
+            command == null ? null : command.getScriptPatchVersion()));
+    followup.setPluginId(
+        metadataValue(request.pluginId(), command == null ? null : command.getPluginId()));
+    followup.setPluginVersionId(
+        metadataValue(
+            request.pluginVersionId(), command == null ? null : command.getPluginVersionId()));
+    followup.setCommandId(
+        metadataValue(request.commandId(), command == null ? null : command.getCommandId()));
+    followup.setAutomationDispatchId(
+        metadataValue(
+            request.automationDispatchId(),
+            command == null ? null : command.getAutomationDispatchId()));
+    followup.setAutomationWorkItemId(
+        metadataValue(
+            request.automationWorkItemId(),
+            command == null ? null : command.getAutomationWorkItemId()));
+    followup.setScriptId(
+        metadataValue(request.scriptId(), command == null ? null : command.getScriptId()));
+  }
+
+  private static String metadataValue(String requestValue, String commandValue) {
+    String normalizedRequest = blankToNull(requestValue);
+    return normalizedRequest != null ? normalizedRequest : blankToNull(commandValue);
+  }
+
+  private static Long metadataLong(Long requestValue, Long commandValue) {
+    return requestValue != null ? requestValue : commandValue;
   }
 
   private static void applyTerminalResult(

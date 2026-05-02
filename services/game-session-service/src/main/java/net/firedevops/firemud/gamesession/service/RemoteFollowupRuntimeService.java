@@ -29,7 +29,17 @@ public interface RemoteFollowupRuntimeService {
       String followupId,
       String effectKey,
       String targetEntityId,
-      String payloadJson) {}
+      String payloadJson,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      Long pointerVersion,
+      String scriptPatchVersion,
+      String pluginId,
+      String pluginVersionId,
+      String automationDispatchId,
+      String automationWorkItemId,
+      String scriptId) {}
 
   record ResultRequest(
       long tenantId,

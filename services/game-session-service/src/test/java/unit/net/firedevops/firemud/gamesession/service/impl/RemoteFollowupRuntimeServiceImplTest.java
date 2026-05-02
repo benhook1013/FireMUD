@@ -126,6 +126,51 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void scheduleFollowupUsesRequestMetadataWhenCommandRowIsMissing() {
+    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+        .thenReturn(Optional.empty());
+    when(followupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            1L, "region-b", 8L, "effect-1"))
+        .thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+
+    RemoteFollowupRuntimeService.ScheduleOutcome outcome =
+        service.scheduleFollowup(scheduleRequest());
+
+    assertTrue(outcome.coordinatorCreated());
+    assertTrue(outcome.followupCreated());
+    verify(coordinatorRepository)
+        .save(
+            argThat(
+                coordinator ->
+                    "SHARED".equals(coordinator.getPlayableStateScope())
+                        && "dispatch-1".equals(coordinator.getAutomationDispatchId())
+                        && "work-1".equals(coordinator.getAutomationWorkItemId())
+                        && "script-1".equals(coordinator.getScriptId())
+                        && "patch-1".equals(coordinator.getScriptPatchVersion())
+                        && "plugin-1".equals(coordinator.getPluginId())
+                        && "plugin-v1".equals(coordinator.getPluginVersionId())
+                        && "demo".equals(coordinator.getWorldSlug())
+                        && "production".equals(coordinator.getRealmSlug())
+                        && Long.valueOf(17L).equals(coordinator.getPointerVersion())));
+    verify(followupRepository)
+        .save(
+            argThat(
+                followup ->
+                    "SHARED".equals(followup.getPlayableStateScope())
+                        && "cmd-1".equals(followup.getCommandId())
+                        && "dispatch-1".equals(followup.getAutomationDispatchId())
+                        && "work-1".equals(followup.getAutomationWorkItemId())
+                        && "script-1".equals(followup.getScriptId())
+                        && "patch-1".equals(followup.getScriptPatchVersion())
+                        && "plugin-1".equals(followup.getPluginId())
+                        && "plugin-v1".equals(followup.getPluginVersionId())
+                        && "demo".equals(followup.getWorldSlug())
+                        && "production".equals(followup.getRealmSlug())
+                        && Long.valueOf(17L).equals(followup.getPointerVersion())));
+  }
+
+  @Test
   void scheduleFollowupRejectsConflictingCoordinatorIdentityReuse() {
     RemoteCommandCoordinator existing = coordinator();
     when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
@@ -153,7 +198,17 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "followup-1",
                         "effect-1",
                         "entity-9",
-                        "{\"type\":\"remote\"}")));
+                        "{\"type\":\"remote\"}",
+                        "SHARED",
+                        "demo",
+                        "production",
+                        17L,
+                        "patch-1",
+                        "plugin-1",
+                        "plugin-v1",
+                        "dispatch-1",
+                        "work-1",
+                        "script-1")));
 
     assertEquals("command_id already maps to a different coordinator_id", ex.getMessage());
     verify(followupRepository, never())
@@ -194,7 +249,17 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "followup-1",
                         "effect-1",
                         "entity-9",
-                        "{\"type\":\"remote\"}")));
+                        "{\"type\":\"remote\"}",
+                        "SHARED",
+                        "demo",
+                        "production",
+                        17L,
+                        "patch-1",
+                        "plugin-1",
+                        "plugin-v1",
+                        "dispatch-1",
+                        "work-1",
+                        "script-1")));
 
     assertEquals("effect_key already maps to a different remote execution scope", ex.getMessage());
   }
@@ -561,7 +626,17 @@ class RemoteFollowupRuntimeServiceImplTest {
         "followup-1",
         "effect-1",
         "entity-9",
-        "{\"type\":\"remote\"}");
+        "{\"type\":\"remote\"}",
+        "SHARED",
+        "demo",
+        "production",
+        17L,
+        "patch-1",
+        "plugin-1",
+        "plugin-v1",
+        "dispatch-1",
+        "work-1",
+        "script-1");
   }
 
   private static RemoteFollowupRuntimeService.ResultRequest resultRequest(String outcome) {
