@@ -1071,6 +1071,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setWorldSlug("demo");
     command.setRealmSlug("production");
     command.setPointerVersion(17L);
+    command.setScriptPatchVersion("patch-1");
     command.setPluginId("plugin-1");
     command.setPluginVersionId("plugin-v1");
     command.setOriginSourceKind("GAMEPLAY_EVENT");
@@ -1210,6 +1211,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setWorldSlug("ops");
     command.setRealmSlug("preview");
     command.setPointerVersion(29L);
+    command.setScriptPatchVersion("patch-2");
     command.setPluginId("plugin-2");
     command.setPluginVersionId("plugin-v2");
     command.setOriginSourceKind("SCHEDULE_TIMER");

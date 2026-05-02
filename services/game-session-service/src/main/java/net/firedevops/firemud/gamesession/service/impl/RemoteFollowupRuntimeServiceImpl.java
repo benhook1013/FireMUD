@@ -509,6 +509,21 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             coordinator != null && coordinator.getRealmSlug() != null
                 ? coordinator.getRealmSlug()
                 : followup == null ? null : followup.getRealmSlug()));
+    result.setScriptPatchVersion(
+        blankToNull(
+            coordinator != null && coordinator.getScriptPatchVersion() != null
+                ? coordinator.getScriptPatchVersion()
+                : followup == null ? null : followup.getScriptPatchVersion()));
+    result.setPluginId(
+        blankToNull(
+            coordinator != null && coordinator.getPluginId() != null
+                ? coordinator.getPluginId()
+                : followup == null ? null : followup.getPluginId()));
+    result.setPluginVersionId(
+        blankToNull(
+            coordinator != null && coordinator.getPluginVersionId() != null
+                ? coordinator.getPluginVersionId()
+                : followup == null ? null : followup.getPluginVersionId()));
     result.setPointerVersion(
         coordinator != null && coordinator.getPointerVersion() != null
             ? coordinator.getPointerVersion()
@@ -525,6 +540,9 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     coordinator.setWorldSlug(blankToNull(command.getWorldSlug()));
     coordinator.setRealmSlug(blankToNull(command.getRealmSlug()));
     coordinator.setPointerVersion(command.getPointerVersion());
+    coordinator.setScriptPatchVersion(blankToNull(command.getScriptPatchVersion()));
+    coordinator.setPluginId(blankToNull(command.getPluginId()));
+    coordinator.setPluginVersionId(blankToNull(command.getPluginVersionId()));
   }
 
   private static void applyRoutingBundle(RemoteFollowup followup, GameplayCommand command) {
@@ -535,6 +553,9 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     followup.setWorldSlug(blankToNull(command.getWorldSlug()));
     followup.setRealmSlug(blankToNull(command.getRealmSlug()));
     followup.setPointerVersion(command.getPointerVersion());
+    followup.setScriptPatchVersion(blankToNull(command.getScriptPatchVersion()));
+    followup.setPluginId(blankToNull(command.getPluginId()));
+    followup.setPluginVersionId(blankToNull(command.getPluginVersionId()));
   }
 
   private static void applyTerminalResult(

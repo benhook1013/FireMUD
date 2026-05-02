@@ -98,6 +98,9 @@ class RemoteFollowupRuntimeServiceImplTest {
             argThat(
                 coordinator ->
                     "SHARED".equals(coordinator.getPlayableStateScope())
+                        && "patch-1".equals(coordinator.getScriptPatchVersion())
+                        && "plugin-1".equals(coordinator.getPluginId())
+                        && "plugin-v1".equals(coordinator.getPluginVersionId())
                         && "demo".equals(coordinator.getWorldSlug())
                         && "production".equals(coordinator.getRealmSlug())
                         && Long.valueOf(17L).equals(coordinator.getPointerVersion())));
@@ -106,6 +109,9 @@ class RemoteFollowupRuntimeServiceImplTest {
             argThat(
                 followup ->
                     "SHARED".equals(followup.getPlayableStateScope())
+                        && "patch-1".equals(followup.getScriptPatchVersion())
+                        && "plugin-1".equals(followup.getPluginId())
+                        && "plugin-v1".equals(followup.getPluginVersionId())
                         && "demo".equals(followup.getWorldSlug())
                         && "production".equals(followup.getRealmSlug())
                         && Long.valueOf(17L).equals(followup.getPointerVersion())));
@@ -210,6 +216,9 @@ class RemoteFollowupRuntimeServiceImplTest {
             argThat(
                 result ->
                     "SHARED".equals(result.getPlayableStateScope())
+                        && "patch-1".equals(result.getScriptPatchVersion())
+                        && "plugin-1".equals(result.getPluginId())
+                        && "plugin-v1".equals(result.getPluginVersionId())
                         && "demo".equals(result.getWorldSlug())
                         && "production".equals(result.getRealmSlug())
                         && Long.valueOf(17L).equals(result.getPointerVersion())));
@@ -574,6 +583,13 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinator.setOriginDeadlineRegionEpoch(4L);
     coordinator.setOriginDeadlineTickId(25L);
     coordinator.setLateResultPolicy("late_result_safe_to_ignore");
+    coordinator.setPlayableStateScope("SHARED");
+    coordinator.setWorldSlug("demo");
+    coordinator.setRealmSlug("production");
+    coordinator.setPointerVersion(17L);
+    coordinator.setScriptPatchVersion("patch-1");
+    coordinator.setPluginId("plugin-1");
+    coordinator.setPluginVersionId("plugin-v1");
     coordinator.setUpdatedAt(NOW);
     return coordinator;
   }
@@ -591,6 +607,13 @@ class RemoteFollowupRuntimeServiceImplTest {
     followup.setEffectKey("effect-1");
     followup.setDueTickId(22L);
     followup.setStatus(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED);
+    followup.setPlayableStateScope("SHARED");
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(17L);
+    followup.setScriptPatchVersion("patch-1");
+    followup.setPluginId("plugin-1");
+    followup.setPluginVersionId("plugin-v1");
     followup.setCreatedAt(NOW);
     followup.setUpdatedAt(NOW);
     return followup;
@@ -614,6 +637,9 @@ class RemoteFollowupRuntimeServiceImplTest {
     command.setWorldSlug("demo");
     command.setRealmSlug("production");
     command.setPointerVersion(17L);
+    command.setScriptPatchVersion("patch-1");
+    command.setPluginId("plugin-1");
+    command.setPluginVersionId("plugin-v1");
     return command;
   }
 }

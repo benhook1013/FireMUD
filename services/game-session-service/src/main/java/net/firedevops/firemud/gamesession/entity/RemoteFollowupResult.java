@@ -65,6 +65,15 @@ public class RemoteFollowupResult {
   @Column(name = "pointer_version")
   private Long pointerVersion;
 
+  @Column(name = "script_patch_version", length = 128)
+  private String scriptPatchVersion;
+
+  @Column(name = "plugin_id", length = 128)
+  private String pluginId;
+
+  @Column(name = "plugin_version_id", length = 128)
+  private String pluginVersionId;
+
   @Column(name = "observed_at", nullable = false)
   private Instant observedAt;
 }

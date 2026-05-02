@@ -1962,6 +1962,12 @@ public final class GameSessionControlPlaneGrpcService
         builder.setLatestResultObservedAtMs(latestResult.getObservedAt().toEpochMilli());
       }
     }
+    applyDirectCommandProvenance(
+        builder,
+        coordinator.getTenantId(),
+        coordinator.getScriptPatchVersion(),
+        coordinator.getPluginId(),
+        coordinator.getPluginVersionId());
     applyLinkedCommandMetadata(builder, command);
     applyRoutingBundle(
         builder,
@@ -2009,6 +2015,12 @@ public final class GameSessionControlPlaneGrpcService
     if (followup.getFailureMessage() != null) {
       builder.setFailureMessage(followup.getFailureMessage());
     }
+    applyDirectCommandProvenance(
+        builder,
+        followup.getTenantId(),
+        followup.getScriptPatchVersion(),
+        followup.getPluginId(),
+        followup.getPluginVersionId());
     applyLinkedCommandMetadata(builder, command);
     applyRoutingBundle(
         builder,
@@ -2038,6 +2050,12 @@ public final class GameSessionControlPlaneGrpcService
     if (result.getResultPayloadJson() != null) {
       builder.setResultPayloadJson(result.getResultPayloadJson());
     }
+    applyDirectCommandProvenance(
+        builder,
+        result.getTenantId(),
+        result.getScriptPatchVersion(),
+        result.getPluginId(),
+        result.getPluginVersionId());
     applyLinkedCommandMetadata(builder, command);
     applyRoutingBundle(
         builder,
@@ -2102,6 +2120,24 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private void applyDirectCommandProvenance(
+      RemoteCommandCoordinatorEntry.Builder builder,
+      long tenantId,
+      String scriptPatchVersion,
+      String pluginId,
+      String pluginVersionId) {
+    if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
+      builder.setScriptPatchVersion(scriptPatchVersion);
+      builder.setPublication(scriptPatchPublicationLink(tenantId, scriptPatchVersion));
+    }
+    if (pluginId != null) {
+      builder.setPluginId(pluginId);
+    }
+    if (pluginVersionId != null) {
+      builder.setPluginVersionId(pluginVersionId);
+    }
+  }
+
   private static void applyRoutingBundle(
       RemoteCommandCoordinatorEntry.Builder builder,
       String playableStateScope,
@@ -2140,6 +2176,24 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private void applyDirectCommandProvenance(
+      RemoteFollowupEntry.Builder builder,
+      long tenantId,
+      String scriptPatchVersion,
+      String pluginId,
+      String pluginVersionId) {
+    if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
+      builder.setScriptPatchVersion(scriptPatchVersion);
+      builder.setPublication(scriptPatchPublicationLink(tenantId, scriptPatchVersion));
+    }
+    if (pluginId != null) {
+      builder.setPluginId(pluginId);
+    }
+    if (pluginVersionId != null) {
+      builder.setPluginVersionId(pluginVersionId);
+    }
+  }
+
   private static void applyRoutingBundle(
       RemoteFollowupEntry.Builder builder,
       String playableStateScope,
@@ -2175,6 +2229,24 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (command.getPluginVersionId() != null) {
       builder.setPluginVersionId(command.getPluginVersionId());
+    }
+  }
+
+  private void applyDirectCommandProvenance(
+      RemoteFollowupResultEntry.Builder builder,
+      long tenantId,
+      String scriptPatchVersion,
+      String pluginId,
+      String pluginVersionId) {
+    if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
+      builder.setScriptPatchVersion(scriptPatchVersion);
+      builder.setPublication(scriptPatchPublicationLink(tenantId, scriptPatchVersion));
+    }
+    if (pluginId != null) {
+      builder.setPluginId(pluginId);
+    }
+    if (pluginVersionId != null) {
+      builder.setPluginVersionId(pluginVersionId);
     }
   }
 
