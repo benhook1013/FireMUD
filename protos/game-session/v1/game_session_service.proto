@@ -472,6 +472,8 @@ message GameplayCommandStatus {
   string remote_result_payload_json = 49;
   int64 remote_result_observed_at_ms = 50;
   ScriptPatchPublicationLink publication = 51;
+  string remote_result_command_id = 52;
+  string remote_result_error_code = 53;
 }
 
 message GetGameplayCommandStatusResponse {

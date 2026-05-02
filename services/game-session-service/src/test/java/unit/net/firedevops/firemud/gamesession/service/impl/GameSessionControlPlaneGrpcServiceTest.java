@@ -1179,6 +1179,9 @@ class GameSessionControlPlaneGrpcServiceTest {
         "{\"failureCode\":\"REMOTE_FOLLOWUP_KIND_UNSUPPORTED\"}",
         responseRef.get().getCommand().getRemoteResultPayloadJson());
     assertEquals(
+        "REMOTE_FOLLOWUP_KIND_UNSUPPORTED",
+        responseRef.get().getCommand().getRemoteResultErrorCode());
+    assertEquals(
         Instant.parse("2026-04-15T00:00:03Z").toEpochMilli(),
         responseRef.get().getCommand().getRemoteResultObservedAtMs());
     assertEquals(
@@ -1244,7 +1247,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setTenantId(1L);
     result.setCoordinatorId("coord-2");
     result.setOutcome("APPLIED");
-    result.setResultPayloadJson("{\"applied\":true}");
+    result.setResultPayloadJson("{\"commandId\":\"auto-1\",\"applied\":true}");
     result.setObservedAt(Instant.parse("2026-04-15T00:00:05Z"));
     Mockito.when(
             remoteFollowupResultRepository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(
@@ -1306,7 +1309,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("followup-2", responseRef.get().getCommand().getRemoteFollowupId());
     assertEquals("REMOTE_APPLIED", responseRef.get().getCommand().getRemoteState());
     assertEquals("APPLIED", responseRef.get().getCommand().getRemoteResultOutcome());
-    assertEquals("{\"applied\":true}", responseRef.get().getCommand().getRemoteResultPayloadJson());
+    assertEquals(
+        "{\"commandId\":\"auto-1\",\"applied\":true}",
+        responseRef.get().getCommand().getRemoteResultPayloadJson());
+    assertEquals("auto-1", responseRef.get().getCommand().getRemoteResultCommandId());
     assertEquals(
         Instant.parse("2026-04-15T00:00:05Z").toEpochMilli(),
         responseRef.get().getCommand().getRemoteResultObservedAtMs());

@@ -2298,6 +2298,17 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private static void applyResultSummary(
+      GameplayCommandStatus.Builder builder, String payloadJson) {
+    ResultSummary summary = resultSummary(payloadJson);
+    if (summary.commandId() != null) {
+      builder.setRemoteResultCommandId(summary.commandId());
+    }
+    if (summary.errorCode() != null) {
+      builder.setRemoteResultErrorCode(summary.errorCode());
+    }
+  }
+
   private static PayloadSummary payloadSummary(String payloadJson) {
     if (payloadJson == null || payloadJson.isBlank()) {
       return new PayloadSummary(null, null);
@@ -2526,6 +2537,7 @@ public final class GameSessionControlPlaneGrpcService
       if (latestRemoteResult.getObservedAt() != null) {
         builder.setRemoteResultObservedAtMs(latestRemoteResult.getObservedAt().toEpochMilli());
       }
+      applyResultSummary(builder, latestRemoteResult.getResultPayloadJson());
     }
     if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
       builder.setPublication(
