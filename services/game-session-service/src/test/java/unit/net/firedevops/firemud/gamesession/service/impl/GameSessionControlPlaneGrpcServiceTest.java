@@ -2135,7 +2135,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         "{\"commandId\":\"auto-1\"}",
         responseRef.get().getCoordinator().getLatestResultPayloadJson());
-    assertEquals("auto-1", responseRef.get().getCoordinator().getLatestResultCommandId());
+    assertEquals("rfcmd-rf-1", responseRef.get().getCoordinator().getLatestResultCommandId());
     assertEquals("rfcmd-rf-1", responseRef.get().getCoordinator().getTargetCommandId());
     assertEquals("STAGED", responseRef.get().getCoordinator().getTargetCommandExecutionOutcome());
     assertEquals("PENDING", responseRef.get().getCoordinator().getTargetCommandGameplayResult());

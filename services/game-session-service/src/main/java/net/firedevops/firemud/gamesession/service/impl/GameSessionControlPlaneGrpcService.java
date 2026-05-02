@@ -2165,6 +2165,7 @@ public final class GameSessionControlPlaneGrpcService
       return;
     }
     builder.setTargetCommandId(targetCommand.getCommandId());
+    builder.setLatestResultCommandId(targetCommand.getCommandId());
     if (targetCommand.getExecutionOutcome() != null) {
       builder.setTargetCommandExecutionOutcome(targetCommand.getExecutionOutcome());
     }
