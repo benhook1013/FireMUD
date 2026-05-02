@@ -1105,6 +1105,21 @@ class GameSessionControlPlaneGrpcServiceTest {
             remoteFollowupResultRepository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(
                 1L, "coord-1"))
         .thenReturn(List.of(result));
+    GameDesignClient gameDesignClient = Mockito.mock(GameDesignClient.class);
+    Mockito.when(gameDesignClient.getPublishedScriptPatchVersion(1L, "patch-1"))
+        .thenReturn(
+            GetPublishedScriptPatchVersionResponse.newBuilder()
+                .setScriptPatch(
+                    PublishedScriptPatchVersion.newBuilder()
+                        .setScriptPatchVersion("patch-1")
+                        .setVersionId(17L)
+                        .setBaseVersionId(7L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setLastChangedAtMs(150L)
+                        .build())
+                .build());
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
@@ -1117,6 +1132,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
+            gameDesignClient,
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry(),
             new GameSessionProperties());
@@ -1143,6 +1159,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(17L, responseRef.get().getCommand().getPointerVersion());
     assertEquals("plugin-1", responseRef.get().getCommand().getPluginId());
     assertEquals("plugin-v1", responseRef.get().getCommand().getPluginVersionId());
+    assertEquals(
+        "patch-1", responseRef.get().getCommand().getPublication().getScriptPatchVersion());
+    assertEquals(17L, responseRef.get().getCommand().getPublication().getVersionId());
     assertEquals("GAMEPLAY_EVENT", responseRef.get().getCommand().getOriginSourceKind());
     assertEquals("WORK_ITEM_PERSISTED", responseRef.get().getCommand().getOriginSourceState());
     assertEquals(41L, responseRef.get().getCommand().getOriginSourceOrdinal());
@@ -1229,6 +1248,21 @@ class GameSessionControlPlaneGrpcServiceTest {
             remoteFollowupResultRepository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(
                 1L, "coord-2"))
         .thenReturn(List.of(result));
+    GameDesignClient gameDesignClient = Mockito.mock(GameDesignClient.class);
+    Mockito.when(gameDesignClient.getPublishedScriptPatchVersion(1L, "patch-2"))
+        .thenReturn(
+            GetPublishedScriptPatchVersionResponse.newBuilder()
+                .setScriptPatch(
+                    PublishedScriptPatchVersion.newBuilder()
+                        .setScriptPatchVersion("patch-2")
+                        .setVersionId(23L)
+                        .setBaseVersionId(9L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setLastChangedAtMs(250L)
+                        .build())
+                .build());
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
@@ -1241,6 +1275,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
+            gameDesignClient,
             Mockito.mock(TickService.class),
             new SimpleMeterRegistry(),
             new GameSessionProperties());
@@ -1281,6 +1316,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(29L, responseRef.get().getCommand().getPointerVersion());
     assertEquals("plugin-2", responseRef.get().getCommand().getPluginId());
     assertEquals("plugin-v2", responseRef.get().getCommand().getPluginVersionId());
+    assertEquals(
+        "patch-2", responseRef.get().getCommand().getPublication().getScriptPatchVersion());
+    assertEquals(23L, responseRef.get().getCommand().getPublication().getVersionId());
     assertEquals("SCHEDULE_TIMER", responseRef.get().getCommand().getOriginSourceKind());
     assertEquals("SCHEDULE_DUE_CLAIMED", responseRef.get().getCommand().getOriginSourceState());
     assertEquals(5000L, responseRef.get().getCommand().getOriginSourceOrdinal());

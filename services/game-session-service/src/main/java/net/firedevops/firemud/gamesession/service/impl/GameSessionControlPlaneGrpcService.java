@@ -2213,6 +2213,10 @@ public final class GameSessionControlPlaneGrpcService
         builder.setRemoteResultObservedAtMs(latestRemoteResult.getObservedAt().toEpochMilli());
       }
     }
+    if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
+      builder.setPublication(
+          scriptPatchPublicationLink(command.getTenantId(), command.getScriptPatchVersion()));
+    }
     return builder.build();
   }
 

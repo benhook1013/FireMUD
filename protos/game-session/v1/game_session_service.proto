@@ -471,6 +471,7 @@ message GameplayCommandStatus {
   string remote_result_outcome = 48;
   string remote_result_payload_json = 49;
   int64 remote_result_observed_at_ms = 50;
+  ScriptPatchPublicationLink publication = 51;
 }
 
 message GetGameplayCommandStatusResponse {
