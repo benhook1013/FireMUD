@@ -1942,6 +1942,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setStatus("CLAIMED");
     followup.setClaimedTickBatchId("tb-1");
     followup.setClaimOrdinal(3L);
+    followup.setPayloadJson("{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}");
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setCoordinatorId("coord-1");
     result.setOutcome("APPLIED");
@@ -2005,10 +2006,14 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("CLAIMED", responseRef.get().getCoordinator().getFollowupStatus());
     assertEquals("tb-1", responseRef.get().getCoordinator().getFollowupClaimedTickBatchId());
     assertEquals(3L, responseRef.get().getCoordinator().getFollowupClaimOrdinal());
+    assertEquals(
+        "enqueue_automation_command", responseRef.get().getCoordinator().getFollowupPayloadKind());
+    assertEquals("LOOK", responseRef.get().getCoordinator().getFollowupRequestedCommand());
     assertEquals("APPLIED", responseRef.get().getCoordinator().getLatestResultOutcome());
     assertEquals(
         "{\"commandId\":\"auto-1\"}",
         responseRef.get().getCoordinator().getLatestResultPayloadJson());
+    assertEquals("auto-1", responseRef.get().getCoordinator().getLatestResultCommandId());
     assertEquals(
         Instant.parse("2026-05-01T00:00:05Z").toEpochMilli(),
         responseRef.get().getCoordinator().getLatestResultObservedAtMs());
@@ -2039,6 +2044,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setPluginId("plugin-1");
     followup.setPluginVersionId("plugin-v1");
     followup.setEffectKey("damage:1");
+    followup.setPayloadJson("{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}");
     followup.setTargetEntityId("entity-9");
     followup.setStatus("SCHEDULED");
     followup.setCreatedAt(Instant.parse("2026-05-01T00:00:00Z"));
@@ -2085,6 +2091,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("dispatch-1", responseRef.get().getFollowups(0).getAutomationDispatchId());
     assertEquals("work-1", responseRef.get().getFollowups(0).getAutomationWorkItemId());
     assertEquals("script-1", responseRef.get().getFollowups(0).getScriptId());
+    assertEquals("enqueue_automation_command", responseRef.get().getFollowups(0).getPayloadKind());
+    assertEquals("LOOK", responseRef.get().getFollowups(0).getRequestedCommand());
     assertEquals("region-b", responseRef.get().getFollowups(0).getTargetRegionId());
     assertEquals(55L, responseRef.get().getFollowups(0).getDueTickId());
     assertEquals(2L, responseRef.get().getFollowups(0).getClaimOrdinal());
@@ -2112,7 +2120,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setTargetRegionId("region-b");
     result.setTargetRegionEpoch(4L);
     result.setOutcome("REMOTE_APPLIED");
-    result.setResultPayloadJson("{\"damage\":5}");
+    result.setResultPayloadJson("{\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\"}");
     result.setPlayableStateScope("SHARED");
     result.setWorldSlug("demo");
     result.setRealmSlug("production");
@@ -2165,7 +2173,11 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("work-1", responseRef.get().getResults(0).getAutomationWorkItemId());
     assertEquals("script-1", responseRef.get().getResults(0).getScriptId());
     assertEquals("REMOTE_APPLIED", responseRef.get().getResults(0).getOutcome());
-    assertEquals("{\"damage\":5}", responseRef.get().getResults(0).getResultPayloadJson());
+    assertEquals(
+        "{\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\"}",
+        responseRef.get().getResults(0).getResultPayloadJson());
+    assertEquals("auto-1", responseRef.get().getResults(0).getResultCommandId());
+    assertEquals("RATE_LIMIT", responseRef.get().getResults(0).getResultErrorCode());
     assertEquals("patch-1", responseRef.get().getResults(0).getScriptPatchVersion());
     assertEquals("plugin-1", responseRef.get().getResults(0).getPluginId());
     assertEquals("plugin-v1", responseRef.get().getResults(0).getPluginVersionId());

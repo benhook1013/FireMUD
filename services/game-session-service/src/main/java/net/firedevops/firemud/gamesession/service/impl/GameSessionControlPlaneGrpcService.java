@@ -1,9 +1,12 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
@@ -107,6 +110,8 @@ import org.springframework.grpc.server.service.GrpcService;
         "Injected repository/services and config properties are internal Spring collaborators")
 public final class GameSessionControlPlaneGrpcService
     extends GameSessionControlPlaneServiceGrpc.GameSessionControlPlaneServiceImplBase {
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
   private static final Logger logger =
       LoggerFactory.getLogger(GameSessionControlPlaneGrpcService.class);
   private static final List<String> ACTIVE_GAMEPLAY_COMMAND_OUTCOMES =
@@ -1951,6 +1956,7 @@ public final class GameSessionControlPlaneGrpcService
       if (followup.getClaimOrdinal() != null) {
         builder.setFollowupClaimOrdinal(followup.getClaimOrdinal());
       }
+      applyPayloadSummary(builder, followup.getPayloadJson());
     }
     if (latestResult != null) {
       builder.setLatestResultOutcome(latestResult.getOutcome());
@@ -1960,6 +1966,7 @@ public final class GameSessionControlPlaneGrpcService
       if (latestResult.getObservedAt() != null) {
         builder.setLatestResultObservedAtMs(latestResult.getObservedAt().toEpochMilli());
       }
+      applyResultSummary(builder, latestResult.getResultPayloadJson());
     }
     applyDirectCommandProvenance(
         builder,
@@ -2029,6 +2036,7 @@ public final class GameSessionControlPlaneGrpcService
         followup.getAutomationDispatchId(),
         followup.getAutomationWorkItemId(),
         followup.getScriptId());
+    applyPayloadSummary(builder, followup.getPayloadJson());
     applyRoutingBundle(
         builder,
         followup.getPlayableStateScope(),
@@ -2067,6 +2075,7 @@ public final class GameSessionControlPlaneGrpcService
         result.getAutomationDispatchId(),
         result.getAutomationWorkItemId(),
         result.getScriptId());
+    applyResultSummary(builder, result.getResultPayloadJson());
     applyRoutingBundle(
         builder,
         result.getPlayableStateScope(),
@@ -2244,6 +2253,88 @@ public final class GameSessionControlPlaneGrpcService
     if (pointerVersion != null) {
       builder.setPointerVersion(pointerVersion);
     }
+  }
+
+  private static void applyPayloadSummary(
+      RemoteCommandCoordinatorEntry.Builder builder, String payloadJson) {
+    PayloadSummary summary = payloadSummary(payloadJson);
+    if (summary.kind() != null) {
+      builder.setFollowupPayloadKind(summary.kind());
+    }
+    if (summary.command() != null) {
+      builder.setFollowupRequestedCommand(summary.command());
+    }
+  }
+
+  private static void applyPayloadSummary(RemoteFollowupEntry.Builder builder, String payloadJson) {
+    PayloadSummary summary = payloadSummary(payloadJson);
+    if (summary.kind() != null) {
+      builder.setPayloadKind(summary.kind());
+    }
+    if (summary.command() != null) {
+      builder.setRequestedCommand(summary.command());
+    }
+  }
+
+  private static void applyResultSummary(
+      RemoteCommandCoordinatorEntry.Builder builder, String payloadJson) {
+    ResultSummary summary = resultSummary(payloadJson);
+    if (summary.commandId() != null) {
+      builder.setLatestResultCommandId(summary.commandId());
+    }
+    if (summary.errorCode() != null) {
+      builder.setLatestResultErrorCode(summary.errorCode());
+    }
+  }
+
+  private static void applyResultSummary(
+      RemoteFollowupResultEntry.Builder builder, String payloadJson) {
+    ResultSummary summary = resultSummary(payloadJson);
+    if (summary.commandId() != null) {
+      builder.setResultCommandId(summary.commandId());
+    }
+    if (summary.errorCode() != null) {
+      builder.setResultErrorCode(summary.errorCode());
+    }
+  }
+
+  private static PayloadSummary payloadSummary(String payloadJson) {
+    if (payloadJson == null || payloadJson.isBlank()) {
+      return new PayloadSummary(null, null);
+    }
+    try {
+      JsonNode root = OBJECT_MAPPER.readTree(payloadJson);
+      String kind = blankToNull(root.path("kind").asText(""));
+      String command = blankToNull(root.path("command").asText(""));
+      return new PayloadSummary(kind, command);
+    } catch (IOException ignored) {
+      return new PayloadSummary(null, null);
+    }
+  }
+
+  private static ResultSummary resultSummary(String payloadJson) {
+    if (payloadJson == null || payloadJson.isBlank()) {
+      return new ResultSummary(null, null);
+    }
+    try {
+      JsonNode root = OBJECT_MAPPER.readTree(payloadJson);
+      String commandId = blankToNull(root.path("commandId").asText(""));
+      String errorCode = blankToNull(root.path("errorCode").asText(""));
+      if (errorCode == null && root.has("failureCode")) {
+        errorCode = blankToNull(root.path("failureCode").asText(""));
+      }
+      return new ResultSummary(commandId, errorCode);
+    } catch (IOException ignored) {
+      return new ResultSummary(null, null);
+    }
+  }
+
+  private record PayloadSummary(String kind, String command) {}
+
+  private record ResultSummary(String commandId, String errorCode) {}
+
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
   }
 
   private CutoverParticipantResult toParticipantResult(

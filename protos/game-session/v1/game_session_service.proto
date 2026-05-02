@@ -548,6 +548,10 @@ message RemoteCommandCoordinatorEntry {
   string automation_dispatch_id = 33;
   string automation_work_item_id = 34;
   string script_id = 35;
+  string followup_payload_kind = 36;
+  string followup_requested_command = 37;
+  string latest_result_command_id = 38;
+  string latest_result_error_code = 39;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -593,6 +597,8 @@ message RemoteFollowupEntry {
   string automation_dispatch_id = 29;
   string automation_work_item_id = 30;
   string script_id = 31;
+  string payload_kind = 32;
+  string requested_command = 33;
 }
 
 message ListRemoteFollowupsResponse {
@@ -629,6 +635,8 @@ message RemoteFollowupResultEntry {
   string automation_dispatch_id = 21;
   string automation_work_item_id = 22;
   string script_id = 23;
+  string result_command_id = 24;
+  string result_error_code = 25;
 }
 
 message ListRemoteFollowupResultsResponse {
