@@ -355,6 +355,8 @@ message GameInstanceRuntimeState {
   string realm_slug = 16;
   int64 pointer_version = 17;
   ScriptPatchPublicationLink publication = 18;
+  string region_id = 19;
+  int64 region_epoch = 20;
 }
 
 message GetGameInstanceRuntimeStateResponse {

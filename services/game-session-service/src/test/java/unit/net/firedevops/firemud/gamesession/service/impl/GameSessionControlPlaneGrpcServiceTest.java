@@ -266,6 +266,11 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setScriptPatchPinnedBy("operator-1");
     instance.setScriptPatchPinnedReason("roll-forward");
     instance.setScriptPatchPinnedControlPlaneRequestId("req-77");
+    RuntimeRegionStatus runtimeStatus = new RuntimeRegionStatus();
+    runtimeStatus.setTenantId(1L);
+    runtimeStatus.setGameInstanceId(7L);
+    runtimeStatus.setRegionId("region-7");
+    runtimeStatus.setRegionEpoch(22L);
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
     Mockito.when(authorityService.findByRuntimeTarget(1L, 7L))
         .thenReturn(
@@ -289,7 +294,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         new GameSessionControlPlaneGrpcService(
             repository,
             Mockito.mock(GameplayCommandRepository.class),
-            Mockito.mock(RuntimeRegionStatusRepository.class),
+            runtimeRepository(runtimeStatus),
             authorityService,
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
@@ -329,6 +334,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("demo", responseRef.get().getRuntimeState().getWorldSlug());
     assertEquals("production", responseRef.get().getRuntimeState().getRealmSlug());
     assertEquals(11L, responseRef.get().getRuntimeState().getPointerVersion());
+    assertEquals("region-7", responseRef.get().getRuntimeState().getRegionId());
+    assertEquals(22L, responseRef.get().getRuntimeState().getRegionEpoch());
     assertEquals(17L, responseRef.get().getRuntimeState().getPublication().getVersionId());
   }
 

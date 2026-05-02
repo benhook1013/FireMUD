@@ -16,6 +16,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRol
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +30,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
   private static final String STATUS_HANDED_OFF = "HANDED_OFF";
   private static final String STATUS_CANCELED = "CANCELED";
   private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
+  private static final String REASON_RUNTIME_REGION_SCOPE_ADVANCED =
+      "runtime_region_scope_advanced";
 
   private final GameSessionControlPlaneClient gameSessionClient;
   private final ScriptWorkItemRepository workItemRepository;
@@ -62,6 +65,11 @@ public class ScriptGameplayCommandHandoffServiceImpl
       Instant now = Instant.now();
       cancelForRollbackEpochAdvance(workItem, command, dispatchId, now);
       return new HandoffResult(false, "rollback_epoch_advanced", "", "");
+    }
+    if (isRuntimeRegionScopeAdvanced(workItem)) {
+      Instant now = Instant.now();
+      cancelForRuntimeRegionScopeAdvance(workItem, command, dispatchId, now);
+      return new HandoffResult(false, REASON_RUNTIME_REGION_SCOPE_ADVANCED, "", "");
     }
     Instant now = Instant.now();
     workItem.setStatus(STATUS_HANDOFF_IN_FLIGHT);
@@ -108,6 +116,45 @@ public class ScriptGameplayCommandHandoffServiceImpl
         "rollback_epoch_advanced",
         now);
     updateAudit(workItem, "HANDOFF", "canceled", "rollback_epoch_advanced", now);
+  }
+
+  private boolean isRuntimeRegionScopeAdvanced(ScriptWorkItem workItem) {
+    if (workItem.getTenantId() == null
+        || workItem.getTenantId().isBlank()
+        || workItem.getGameInstanceId() == null
+        || workItem.getGameInstanceId().isBlank()) {
+      return false;
+    }
+    GetGameInstanceRuntimeStateResponse runtimeState =
+        gameSessionClient.getGameInstanceRuntimeState(
+            workItem.getTenantId(), workItem.getGameInstanceId());
+    if (runtimeState == null
+        || runtimeState.hasError()
+        || !runtimeState.hasRuntimeState()
+        || runtimeState.getRuntimeState().getRegionId().isBlank()
+        || runtimeState.getRuntimeState().getRegionEpoch() <= 0) {
+      return false;
+    }
+    return !runtimeState.getRuntimeState().getRegionId().equals(normalize(workItem.getRegionId()))
+        || runtimeState.getRuntimeState().getRegionEpoch() != workItem.getRegionEpoch();
+  }
+
+  private void cancelForRuntimeRegionScopeAdvance(
+      ScriptWorkItem workItem, EmittedCommand command, String dispatchId, Instant now) {
+    workItem.setStatus(STATUS_CANCELED);
+    workItem.setCancelReason(REASON_RUNTIME_REGION_SCOPE_ADVANCED);
+    workItem.setUpdatedAt(now);
+    workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(workItem);
+    appendHandoffEvent(
+        workItem,
+        command,
+        dispatchId,
+        "",
+        REASON_RUNTIME_REGION_SCOPE_ADVANCED,
+        REASON_RUNTIME_REGION_SCOPE_ADVANCED,
+        now);
+    updateAudit(workItem, "HANDOFF", "canceled", REASON_RUNTIME_REGION_SCOPE_ADVANCED, now);
   }
 
   private EnqueueAutomationCommandIfAbsentRequest toRequest(

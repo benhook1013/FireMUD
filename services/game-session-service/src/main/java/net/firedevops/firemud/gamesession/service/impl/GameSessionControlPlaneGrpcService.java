@@ -1114,6 +1114,10 @@ public final class GameSessionControlPlaneGrpcService
         throw new IllegalArgumentException("tenant_id does not own game_instance_id");
       }
       GameplayRoutingBundle routingBundle = resolveGameplayRouting(instance);
+      RuntimeRegionStatus runtimeStatus =
+          runtimeRegionStatusRepository
+              .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
+              .orElse(null);
       GetGameInstanceRuntimeStateResponse response =
           GetGameInstanceRuntimeStateResponse.newBuilder()
               .setRuntimeState(
@@ -1162,6 +1166,9 @@ public final class GameSessionControlPlaneGrpcService
                       .setWorldSlug(routingBundle.worldSlug())
                       .setRealmSlug(routingBundle.realmSlug())
                       .setPointerVersion(routingBundle.pointerVersion())
+                      .setRegionId(
+                          runtimeStatus == null ? "" : normalizeBlank(runtimeStatus.getRegionId()))
+                      .setRegionEpoch(runtimeStatus == null ? 0L : runtimeStatus.getRegionEpoch())
                       .setPublication(
                           scriptPatchPublicationLink(
                               instance.getTenantId(), instance.getScriptPatchVersion()))
