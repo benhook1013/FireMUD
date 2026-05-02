@@ -548,6 +548,46 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void reconcileResultsMirrorsTargetCommandFailureCodeWhenRemoteCommandFails() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
+    coordinator.setGameplayResult("PENDING");
+    RemoteFollowupResult result = new RemoteFollowupResult();
+    result.setOutcome("APPLIED");
+    GameplayCommand originCommand = gameplayCommand();
+    GameplayCommand targetCommand = gameplayCommand();
+    targetCommand.setCommandId("rfcmd-followup-1");
+    targetCommand.setExecutionOutcome("COMPLETED");
+    targetCommand.setGameplayResult("NOT_APPLIED");
+    targetCommand.setFailureCode("RATE_LIMIT");
+    targetCommand.setFailureMessage("Target region rejected the remote gameplay command");
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
+        .thenReturn(List.of(coordinator));
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
+        .thenReturn(List.of());
+    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+        .thenReturn(Optional.of(result));
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
+    when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(targetCommand));
+
+    int reconciled = service.reconcileResults(1L, "region-a", 4L);
+
+    assertEquals(1, reconciled);
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_ABANDONED, coordinator.getState());
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, originCommand.getExecutionOutcome());
+    assertEquals("NOT_APPLIED", originCommand.getGameplayResult());
+    assertEquals("RATE_LIMIT", originCommand.getFailureCode());
+    assertEquals(
+        "Target region rejected the remote gameplay command", originCommand.getFailureMessage());
+  }
+
+  @Test
   void reconcileResultsMarksLateResultIgnoredAfterTimeoutByDefault() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
