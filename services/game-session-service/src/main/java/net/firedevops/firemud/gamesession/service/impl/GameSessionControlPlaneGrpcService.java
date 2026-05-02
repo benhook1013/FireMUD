@@ -2092,6 +2092,9 @@ public final class GameSessionControlPlaneGrpcService
     if (targetCommand == null && resultCommandId != null) {
       targetCommand = gameplayCommandRepository.findByCommandId(resultCommandId).orElse(null);
     }
+    if (targetCommand != null && targetCommand.getCommandId() != null) {
+      builder.setResultCommandId(targetCommand.getCommandId());
+    }
     applyTargetCommandStatus(builder, targetCommand);
     applyRoutingBundle(
         builder,

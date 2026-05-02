@@ -2356,7 +2356,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals(1, responseRef.get().getResultsCount());
-    assertEquals("payload-cmd", responseRef.get().getResults(0).getResultCommandId());
+    assertEquals("linked-cmd", responseRef.get().getResults(0).getResultCommandId());
     assertEquals("NOT_APPLIED", responseRef.get().getResults(0).getResultCommandExecutionOutcome());
     assertEquals("FAILURE", responseRef.get().getResults(0).getResultCommandGameplayResult());
     Mockito.verify(gameplayCommandRepository, Mockito.never()).findByCommandId("payload-cmd");
