@@ -537,6 +537,10 @@ message RemoteCommandCoordinatorEntry {
   string latest_result_payload_json = 22;
   int64 latest_result_observed_at_ms = 23;
   int64 followup_claim_ordinal = 24;
+  string script_patch_version = 25;
+  string plugin_id = 26;
+  string plugin_version_id = 27;
+  ScriptPatchPublicationLink publication = 28;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -570,6 +574,10 @@ message RemoteFollowupEntry {
   int64 created_at_ms = 17;
   int64 updated_at_ms = 18;
   int64 claim_ordinal = 19;
+  string script_patch_version = 20;
+  string plugin_id = 21;
+  string plugin_version_id = 22;
+  ScriptPatchPublicationLink publication = 23;
 }
 
 message ListRemoteFollowupsResponse {
@@ -594,6 +602,10 @@ message RemoteFollowupResultEntry {
   string outcome = 9;
   string result_payload_json = 10;
   int64 observed_at_ms = 11;
+  string script_patch_version = 12;
+  string plugin_id = 13;
+  string plugin_version_id = 14;
+  ScriptPatchPublicationLink publication = 15;
 }
 
 message ListRemoteFollowupResultsResponse {

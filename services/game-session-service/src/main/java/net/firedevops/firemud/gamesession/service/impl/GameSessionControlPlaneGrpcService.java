@@ -1916,6 +1916,7 @@ public final class GameSessionControlPlaneGrpcService
       RemoteCommandCoordinator coordinator,
       RemoteFollowup followup,
       RemoteFollowupResult latestResult) {
+    GameplayCommand command = findLinkedGameplayCommand(coordinator.getCommandId());
     RemoteCommandCoordinatorEntry.Builder builder =
         RemoteCommandCoordinatorEntry.newBuilder()
             .setCoordinatorId(coordinator.getCoordinatorId())
@@ -1961,10 +1962,12 @@ public final class GameSessionControlPlaneGrpcService
         builder.setLatestResultObservedAtMs(latestResult.getObservedAt().toEpochMilli());
       }
     }
+    applyLinkedCommandMetadata(builder, command);
     return builder.build();
   }
 
   private RemoteFollowupEntry toRemoteFollowupEntry(RemoteFollowup followup) {
+    GameplayCommand command = findLinkedGameplayCommandForFollowup(followup);
     RemoteFollowupEntry.Builder builder =
         RemoteFollowupEntry.newBuilder()
             .setFollowupId(followup.getFollowupId())
@@ -2000,10 +2003,13 @@ public final class GameSessionControlPlaneGrpcService
     if (followup.getFailureMessage() != null) {
       builder.setFailureMessage(followup.getFailureMessage());
     }
+    applyLinkedCommandMetadata(builder, command);
     return builder.build();
   }
 
   private RemoteFollowupResultEntry toRemoteFollowupResultEntry(RemoteFollowupResult result) {
+    GameplayCommand command =
+        findLinkedGameplayCommandForCoordinator(result.getTenantId(), result.getCoordinatorId());
     RemoteFollowupResultEntry.Builder builder =
         RemoteFollowupResultEntry.newBuilder()
             .setResultId(result.getResultId())
@@ -2020,7 +2026,98 @@ public final class GameSessionControlPlaneGrpcService
     if (result.getResultPayloadJson() != null) {
       builder.setResultPayloadJson(result.getResultPayloadJson());
     }
+    applyLinkedCommandMetadata(builder, command);
     return builder.build();
+  }
+
+  private GameplayCommand findLinkedGameplayCommand(String commandId) {
+    if (gameplayCommandRepository == null || commandId == null || commandId.isBlank()) {
+      return null;
+    }
+    return gameplayCommandRepository.findByCommandId(commandId).orElse(null);
+  }
+
+  private GameplayCommand findLinkedGameplayCommandForFollowup(RemoteFollowup followup) {
+    if (followup == null
+        || remoteCommandCoordinatorRepository == null
+        || followup.getTenantId() == null
+        || followup.getFollowupId() == null
+        || followup.getFollowupId().isBlank()) {
+      return null;
+    }
+    return remoteCommandCoordinatorRepository
+        .findByTenantIdAndFollowupId(followup.getTenantId(), followup.getFollowupId())
+        .map(RemoteCommandCoordinator::getCommandId)
+        .map(this::findLinkedGameplayCommand)
+        .orElse(null);
+  }
+
+  private GameplayCommand findLinkedGameplayCommandForCoordinator(
+      long tenantId, String coordinatorId) {
+    if (remoteCommandCoordinatorRepository == null
+        || coordinatorId == null
+        || coordinatorId.isBlank()) {
+      return null;
+    }
+    return remoteCommandCoordinatorRepository
+        .findByTenantIdAndCoordinatorId(tenantId, coordinatorId)
+        .map(RemoteCommandCoordinator::getCommandId)
+        .map(this::findLinkedGameplayCommand)
+        .orElse(null);
+  }
+
+  private void applyLinkedCommandMetadata(
+      RemoteCommandCoordinatorEntry.Builder builder, GameplayCommand command) {
+    if (command == null) {
+      return;
+    }
+    if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
+      builder.setScriptPatchVersion(command.getScriptPatchVersion());
+      builder.setPublication(
+          scriptPatchPublicationLink(command.getTenantId(), command.getScriptPatchVersion()));
+    }
+    if (command.getPluginId() != null) {
+      builder.setPluginId(command.getPluginId());
+    }
+    if (command.getPluginVersionId() != null) {
+      builder.setPluginVersionId(command.getPluginVersionId());
+    }
+  }
+
+  private void applyLinkedCommandMetadata(
+      RemoteFollowupEntry.Builder builder, GameplayCommand command) {
+    if (command == null) {
+      return;
+    }
+    if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
+      builder.setScriptPatchVersion(command.getScriptPatchVersion());
+      builder.setPublication(
+          scriptPatchPublicationLink(command.getTenantId(), command.getScriptPatchVersion()));
+    }
+    if (command.getPluginId() != null) {
+      builder.setPluginId(command.getPluginId());
+    }
+    if (command.getPluginVersionId() != null) {
+      builder.setPluginVersionId(command.getPluginVersionId());
+    }
+  }
+
+  private void applyLinkedCommandMetadata(
+      RemoteFollowupResultEntry.Builder builder, GameplayCommand command) {
+    if (command == null) {
+      return;
+    }
+    if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
+      builder.setScriptPatchVersion(command.getScriptPatchVersion());
+      builder.setPublication(
+          scriptPatchPublicationLink(command.getTenantId(), command.getScriptPatchVersion()));
+    }
+    if (command.getPluginId() != null) {
+      builder.setPluginId(command.getPluginId());
+    }
+    if (command.getPluginVersionId() != null) {
+      builder.setPluginVersionId(command.getPluginVersionId());
+    }
   }
 
   private CutoverParticipantResult toParticipantResult(

@@ -1941,6 +1941,13 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(RemoteFollowupRepository.class);
     RemoteFollowupResultRepository remoteFollowupResultRepository =
         Mockito.mock(RemoteFollowupResultRepository.class);
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("cmd-1");
+    command.setTenantId(1L);
+    command.setScriptPatchVersion("patch-1");
+    command.setPluginId("plugin-1");
+    command.setPluginVersionId("plugin-v1");
     Mockito.when(repository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
         .thenReturn(Optional.of(coordinator));
     Mockito.when(remoteFollowupRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
@@ -1949,10 +1956,15 @@ class GameSessionControlPlaneGrpcServiceTest {
             remoteFollowupResultRepository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(
                 1L, "coord-1"))
         .thenReturn(List.of(result));
+    Mockito.when(commandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
-            remoteFollowupRepository, repository, remoteFollowupResultRepository);
+            remoteFollowupRepository,
+            repository,
+            remoteFollowupResultRepository,
+            commandRepository,
+            gameDesignClient());
 
     AtomicReference<GetRemoteCommandCoordinatorResponse> responseRef = new AtomicReference<>();
     service.getRemoteCommandCoordinator(
@@ -1973,6 +1985,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("region-b", responseRef.get().getCoordinator().getTargetRegionId());
     assertEquals(55L, responseRef.get().getCoordinator().getTargetDueTickId());
     assertEquals("PENDING_REMOTE", responseRef.get().getCoordinator().getState());
+    assertEquals("patch-1", responseRef.get().getCoordinator().getScriptPatchVersion());
+    assertEquals("plugin-1", responseRef.get().getCoordinator().getPluginId());
+    assertEquals("plugin-v1", responseRef.get().getCoordinator().getPluginVersionId());
+    assertEquals(17L, responseRef.get().getCoordinator().getPublication().getVersionId());
     assertEquals("CLAIMED", responseRef.get().getCoordinator().getFollowupStatus());
     assertEquals("tb-1", responseRef.get().getCoordinator().getFollowupClaimedTickBatchId());
     assertEquals(3L, responseRef.get().getCoordinator().getFollowupClaimOrdinal());
@@ -2004,12 +2020,30 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setCreatedAt(Instant.parse("2026-05-01T00:00:00Z"));
     followup.setUpdatedAt(Instant.parse("2026-05-01T00:00:01Z"));
     RemoteFollowupRepository repository = Mockito.mock(RemoteFollowupRepository.class);
+    RemoteCommandCoordinatorRepository coordinatorRepository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setTenantId(1L);
+    coordinator.setFollowupId("rf-1");
+    coordinator.setCommandId("cmd-1");
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("cmd-1");
+    command.setTenantId(1L);
+    command.setScriptPatchVersion("patch-1");
+    command.setPluginId("plugin-1");
+    command.setPluginVersionId("plugin-v1");
     Mockito.when(
             repository.findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAscIdAsc(
                 1L, "region-b", "SCHEDULED"))
         .thenReturn(List.of(followup));
+    Mockito.when(coordinatorRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
+        .thenReturn(Optional.of(coordinator));
+    Mockito.when(commandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
-    GameSessionControlPlaneGrpcService service = remoteControlPlaneService(repository, null, null);
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(
+            repository, coordinatorRepository, null, commandRepository, gameDesignClient());
 
     AtomicReference<ListRemoteFollowupsResponse> responseRef = new AtomicReference<>();
     service.listRemoteFollowups(
@@ -2030,6 +2064,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("region-b", responseRef.get().getFollowups(0).getTargetRegionId());
     assertEquals(55L, responseRef.get().getFollowups(0).getDueTickId());
     assertEquals(2L, responseRef.get().getFollowups(0).getClaimOrdinal());
+    assertEquals("patch-1", responseRef.get().getFollowups(0).getScriptPatchVersion());
+    assertEquals("plugin-1", responseRef.get().getFollowups(0).getPluginId());
+    assertEquals("plugin-v1", responseRef.get().getFollowups(0).getPluginVersionId());
+    assertEquals(17L, responseRef.get().getFollowups(0).getPublication().getVersionId());
   }
 
   @Test
@@ -2047,10 +2085,28 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setResultPayloadJson("{\"damage\":5}");
     result.setObservedAt(Instant.parse("2026-05-01T00:00:02Z"));
     RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
+    RemoteCommandCoordinatorRepository coordinatorRepository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setTenantId(1L);
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setCommandId("cmd-1");
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("cmd-1");
+    command.setTenantId(1L);
+    command.setScriptPatchVersion("patch-1");
+    command.setPluginId("plugin-1");
+    command.setPluginVersionId("plugin-v1");
     Mockito.when(repository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(1L, "coord-1"))
         .thenReturn(List.of(result));
+    Mockito.when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    Mockito.when(commandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
-    GameSessionControlPlaneGrpcService service = remoteControlPlaneService(null, null, repository);
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(
+            null, coordinatorRepository, repository, commandRepository, gameDesignClient());
 
     AtomicReference<ListRemoteFollowupResultsResponse> responseRef = new AtomicReference<>();
     service.listRemoteFollowupResults(
@@ -2069,6 +2125,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("rr-1", responseRef.get().getResults(0).getResultId());
     assertEquals("REMOTE_APPLIED", responseRef.get().getResults(0).getOutcome());
     assertEquals("{\"damage\":5}", responseRef.get().getResults(0).getResultPayloadJson());
+    assertEquals("patch-1", responseRef.get().getResults(0).getScriptPatchVersion());
+    assertEquals("plugin-1", responseRef.get().getResults(0).getPluginId());
+    assertEquals("plugin-v1", responseRef.get().getResults(0).getPluginVersionId());
+    assertEquals(17L, responseRef.get().getResults(0).getPublication().getVersionId());
   }
 
   @Test
@@ -2343,9 +2403,25 @@ class GameSessionControlPlaneGrpcServiceTest {
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository) {
+    return remoteControlPlaneService(
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        remoteFollowupResultRepository,
+        Mockito.mock(GameplayCommandRepository.class),
+        null);
+  }
+
+  private static GameSessionControlPlaneGrpcService remoteControlPlaneService(
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      GameDesignClient gameDesignClient) {
     return new GameSessionControlPlaneGrpcService(
         Mockito.mock(GameInstanceRepository.class),
-        Mockito.mock(GameplayCommandRepository.class),
+        gameplayCommandRepository == null
+            ? Mockito.mock(GameplayCommandRepository.class)
+            : gameplayCommandRepository,
         Mockito.mock(RuntimeRegionStatusRepository.class),
         remoteFollowupRepository == null
             ? Mockito.mock(RemoteFollowupRepository.class)
@@ -2359,6 +2435,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
         Mockito.mock(InstanceCutoverCompatibilityService.class),
         Mockito.mock(VersionUpgradePreparationService.class),
+        gameDesignClient,
         Mockito.mock(TickService.class),
         new SimpleMeterRegistry(),
         new GameSessionProperties());
