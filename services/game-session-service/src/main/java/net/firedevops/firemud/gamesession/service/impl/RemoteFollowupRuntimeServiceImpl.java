@@ -263,7 +263,14 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       if (result == null) {
         continue;
       }
-      applyTerminalResult(coordinator, result.getOutcome(), now);
+      GameplayCommand targetCommand =
+          linkedTargetCommand(coordinator.getTenantId(), coordinator.getFollowupId());
+      if (RESULT_APPLIED.equalsIgnoreCase(result.getOutcome())
+          && targetCommand != null
+          && !isTerminalTargetCommand(targetCommand)) {
+        continue;
+      }
+      applyTerminalResult(coordinator, result.getOutcome(), targetCommand, now);
       remoteCommandCoordinatorRepository.save(coordinator);
       mirrorCoordinatorToCommand(coordinator, now);
       reconciled++;
@@ -282,9 +289,18 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       boolean requiresReconciliation =
           LATE_RESULT_REQUIRES_RECONCILIATION.equals(coordinator.getLateResultPolicy());
       if (requiresReconciliation) {
-        applyTerminalResult(coordinator, result.getOutcome(), now);
+        GameplayCommand targetCommand =
+            linkedTargetCommand(coordinator.getTenantId(), coordinator.getFollowupId());
+        if (RESULT_APPLIED.equalsIgnoreCase(result.getOutcome())
+            && targetCommand != null
+            && !isTerminalTargetCommand(targetCommand)) {
+          continue;
+        }
+        applyTerminalResult(coordinator, result.getOutcome(), targetCommand, now);
         coordinator.setState(COORDINATOR_LATE_RESULT_RECONCILED);
-        coordinator.setGameplayResult("PARTIAL");
+        if (targetCommand == null || isAppliedTargetCommand(targetCommand)) {
+          coordinator.setGameplayResult("PARTIAL");
+        }
       } else {
         coordinator.setState(COORDINATOR_LATE_RESULT_IGNORED);
       }
@@ -304,6 +320,15 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   private Optional<RemoteFollowupResult> latestResult(long tenantId, String coordinatorId) {
     return remoteFollowupResultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(
         tenantId, coordinatorId);
+  }
+
+  private GameplayCommand linkedTargetCommand(long tenantId, String followupId) {
+    if (followupId == null || followupId.isBlank()) {
+      return null;
+    }
+    return gameplayCommandRepository
+        .findFirstByTenantIdAndRemoteFollowupId(tenantId, followupId)
+        .orElse(null);
   }
 
   private static boolean deadlineReached(
@@ -631,7 +656,29 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   }
 
   private static void applyTerminalResult(
-      RemoteCommandCoordinator coordinator, String outcome, Instant now) {
+      RemoteCommandCoordinator coordinator,
+      String outcome,
+      GameplayCommand targetCommand,
+      Instant now) {
+    if (RESULT_APPLIED.equalsIgnoreCase(outcome) && isTerminalTargetCommand(targetCommand)) {
+      if (isAppliedTargetCommand(targetCommand)) {
+        coordinator.setState(COORDINATOR_REMOTE_APPLIED);
+        coordinator.setExecutionOutcome(FOLLOWUP_APPLIED);
+        coordinator.setGameplayResult(
+            targetCommand.getGameplayResult() == null || targetCommand.getGameplayResult().isBlank()
+                ? "APPLIED"
+                : targetCommand.getGameplayResult());
+      } else {
+        coordinator.setState(COORDINATOR_REMOTE_ABANDONED);
+        coordinator.setExecutionOutcome(FOLLOWUP_ABANDONED);
+        coordinator.setGameplayResult(
+            targetCommand.getGameplayResult() == null || targetCommand.getGameplayResult().isBlank()
+                ? "NOT_APPLIED"
+                : targetCommand.getGameplayResult());
+      }
+      coordinator.setUpdatedAt(now);
+      return;
+    }
     if (RESULT_APPLIED.equalsIgnoreCase(outcome)) {
       coordinator.setState(COORDINATOR_REMOTE_APPLIED);
       coordinator.setExecutionOutcome(FOLLOWUP_APPLIED);
@@ -642,6 +689,36 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       coordinator.setGameplayResult("NOT_APPLIED");
     }
     coordinator.setUpdatedAt(now);
+  }
+
+  private static boolean isTerminalTargetCommand(GameplayCommand targetCommand) {
+    if (targetCommand == null) {
+      return false;
+    }
+    String executionOutcome = normalized(targetCommand.getExecutionOutcome());
+    String gameplayResult = normalized(targetCommand.getGameplayResult());
+    if ("PENDING".equals(gameplayResult)) {
+      return false;
+    }
+    return !executionOutcome.isBlank()
+        && !"ACCEPTED".equals(executionOutcome)
+        && !"STAGED".equals(executionOutcome)
+        && !"RETRY_QUEUED".equals(executionOutcome)
+        && !COMMAND_PENDING_REMOTE.equals(executionOutcome);
+  }
+
+  private static boolean isAppliedTargetCommand(GameplayCommand targetCommand) {
+    if (targetCommand == null) {
+      return false;
+    }
+    String executionOutcome = normalized(targetCommand.getExecutionOutcome());
+    String gameplayResult = normalized(targetCommand.getGameplayResult());
+    return "APPLIED".equals(executionOutcome)
+        || "REPLAY_NOOP".equals(executionOutcome)
+        || "APPLIED".equals(gameplayResult)
+        || "REPLAY_NOOP".equals(gameplayResult)
+        || "SUCCESS".equals(gameplayResult)
+        || "PARTIAL".equals(gameplayResult);
   }
 
   private static void applyFollowupResultState(
