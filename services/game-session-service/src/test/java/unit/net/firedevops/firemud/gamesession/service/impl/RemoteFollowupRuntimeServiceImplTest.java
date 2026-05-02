@@ -518,6 +518,36 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void reconcileResultsKeepsPendingCoordinatorWhenAppliedInboxRowHasNoTargetCommand() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
+    coordinator.setGameplayResult("PENDING");
+    RemoteFollowupResult result = new RemoteFollowupResult();
+    result.setOutcome("APPLIED");
+    GameplayCommand originCommand = gameplayCommand();
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
+        .thenReturn(List.of(coordinator));
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
+        .thenReturn(List.of());
+    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+        .thenReturn(Optional.of(result));
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
+    when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.empty());
+
+    int reconciled = service.reconcileResults(1L, "region-a", 4L);
+
+    assertEquals(0, reconciled);
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, coordinator.getState());
+    assertEquals("STAGED", originCommand.getExecutionOutcome());
+    assertEquals("PENDING", originCommand.getGameplayResult());
+  }
+
+  @Test
   void reconcileResultsMarksLateResultIgnoredAfterTimeoutByDefault() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
@@ -527,6 +557,10 @@ class RemoteFollowupRuntimeServiceImplTest {
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setOutcome("APPLIED");
     GameplayCommand command = gameplayCommand();
+    GameplayCommand targetCommand = gameplayCommand();
+    targetCommand.setCommandId("rfcmd-followup-1");
+    targetCommand.setExecutionOutcome("APPLIED");
+    targetCommand.setGameplayResult("APPLIED");
     command.setFailureCode(RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
     command.setFailureMessage("Cross-region remote followup did not apply successfully");
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
@@ -538,6 +572,8 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
         .thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+    when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(targetCommand));
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
 
@@ -563,6 +599,10 @@ class RemoteFollowupRuntimeServiceImplTest {
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setOutcome("APPLIED");
     GameplayCommand command = gameplayCommand();
+    GameplayCommand targetCommand = gameplayCommand();
+    targetCommand.setCommandId("rfcmd-followup-1");
+    targetCommand.setExecutionOutcome("APPLIED");
+    targetCommand.setGameplayResult("APPLIED");
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
         .thenReturn(List.of());
@@ -572,6 +612,8 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
         .thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+    when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(targetCommand));
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
 

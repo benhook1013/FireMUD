@@ -266,7 +266,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       GameplayCommand targetCommand =
           linkedTargetCommand(coordinator.getTenantId(), coordinator.getFollowupId());
       if (RESULT_APPLIED.equalsIgnoreCase(result.getOutcome())
-          && targetCommand != null
           && !isTerminalTargetCommand(targetCommand)) {
         continue;
       }
@@ -292,7 +291,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         GameplayCommand targetCommand =
             linkedTargetCommand(coordinator.getTenantId(), coordinator.getFollowupId());
         if (RESULT_APPLIED.equalsIgnoreCase(result.getOutcome())
-            && targetCommand != null
             && !isTerminalTargetCommand(targetCommand)) {
           continue;
         }
