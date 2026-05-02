@@ -2469,6 +2469,10 @@ public final class GameSessionControlPlaneGrpcService
 
   private GameplayCommandStatus toStatus(GameplayCommand command) {
     RemoteCommandCoordinator remoteCoordinator = resolveRemoteCoordinator(command);
+    GameplayCommand remoteTargetCommand =
+        remoteCoordinator == null
+            ? null
+            : linkedTargetCommand(command.getTenantId(), remoteCoordinator.getFollowupId());
     RemoteFollowupResult latestRemoteResult =
         remoteCoordinator == null || remoteFollowupResultRepository == null
             ? null
@@ -2601,6 +2605,9 @@ public final class GameSessionControlPlaneGrpcService
         builder.setRemoteResultObservedAtMs(latestRemoteResult.getObservedAt().toEpochMilli());
       }
       applyResultSummary(builder, latestRemoteResult.getResultPayloadJson());
+    }
+    if (remoteTargetCommand != null && remoteTargetCommand.getCommandId() != null) {
+      builder.setRemoteResultCommandId(remoteTargetCommand.getCommandId());
     }
     if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
       builder.setPublication(

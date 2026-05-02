@@ -1253,6 +1253,12 @@ class GameSessionControlPlaneGrpcServiceTest {
             remoteFollowupResultRepository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(
                 1L, "coord-2"))
         .thenReturn(List.of(result));
+    GameplayCommand remoteTargetCommand = new GameplayCommand();
+    remoteTargetCommand.setCommandId("rfcmd-followup-2");
+    remoteTargetCommand.setTenantId(1L);
+    remoteTargetCommand.setRemoteFollowupId("followup-2");
+    Mockito.when(commandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-2"))
+        .thenReturn(Optional.of(remoteTargetCommand));
     GameDesignClient gameDesignClient = Mockito.mock(GameDesignClient.class);
     Mockito.when(gameDesignClient.getPublishedScriptPatchVersion(1L, "patch-2"))
         .thenReturn(
@@ -1312,7 +1318,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         "{\"commandId\":\"auto-1\",\"applied\":true}",
         responseRef.get().getCommand().getRemoteResultPayloadJson());
-    assertEquals("auto-1", responseRef.get().getCommand().getRemoteResultCommandId());
+    assertEquals("rfcmd-followup-2", responseRef.get().getCommand().getRemoteResultCommandId());
     assertEquals(
         Instant.parse("2026-04-15T00:00:05Z").toEpochMilli(),
         responseRef.get().getCommand().getRemoteResultObservedAtMs());
@@ -1365,6 +1371,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     RemoteFollowupResultRepository remoteFollowupResultRepository =
         Mockito.mock(RemoteFollowupResultRepository.class);
     Mockito.when(commandRepository.findByCommandId("rfcmd-followup-2"))
+        .thenReturn(Optional.of(command));
+    Mockito.when(commandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-2"))
         .thenReturn(Optional.of(command));
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setTenantId(1L);
