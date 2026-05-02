@@ -114,6 +114,8 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     projection.setWorldSlug(blankToEmpty(runtimeState.getWorldSlug()));
     projection.setRealmSlug(blankToEmpty(runtimeState.getRealmSlug()));
     projection.setPointerVersion(normalizePointerVersion(runtimeState.getPointerVersion()));
+    projection.setRuntimeRegionId(blankToEmpty(runtimeState.getRegionId()));
+    projection.setRuntimeRegionEpoch(Math.max(0L, runtimeState.getRegionEpoch()));
     projection.setLastObservedControlPlaneRequestId(
         runtimeState.getScriptPatchPinnedControlPlaneRequestId());
     projection.setObservedAt(
@@ -138,6 +140,8 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
         projectionAsOfMs,
         projectionLagMs,
         projectionLagMs >= runtimeProperties.getPinProjectionStaleThresholdMs(),
+        blankToEmpty(projection.getRuntimeRegionId()),
+        projection.getRuntimeRegionEpoch(),
         blankToEmpty(projection.getWorldSlug()),
         blankToEmpty(projection.getRealmSlug()),
         blankToEmpty(projection.getPointerVersion()));

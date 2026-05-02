@@ -333,6 +333,8 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setProjectionAsOfMs(summary.projectionAsOfMs())
             .setProjectionLagMs(summary.projectionLagMs())
             .setIsProjectionStale(summary.projectionStale())
+            .setRegionId(summary.runtimeRegionId())
+            .setRegionEpoch(summary.runtimeRegionEpoch())
             .setWorldSlug(summary.worldSlug())
             .setRealmSlug(summary.realmSlug())
             .setPointerVersion(summary.pointerVersion())

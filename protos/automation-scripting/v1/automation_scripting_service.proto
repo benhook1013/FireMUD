@@ -524,6 +524,8 @@ message GetAutomationPinConvergenceResponse {
   string realm_slug = 11;
   string pointer_version = 12;
   ScriptPatchPublicationLink publication = 13;
+  string region_id = 14;
+  int64 region_epoch = 15;
 }
 
 enum ScriptPatchInstanceRolloutStatus {

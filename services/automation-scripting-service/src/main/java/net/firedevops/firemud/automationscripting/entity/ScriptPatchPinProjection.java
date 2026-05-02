@@ -46,6 +46,12 @@ public class ScriptPatchPinProjection {
   @Column(nullable = false, length = 64)
   private String pointerVersion = "";
 
+  @Column(nullable = false, length = 64)
+  private String runtimeRegionId = "";
+
+  @Column(nullable = false)
+  private long runtimeRegionEpoch;
+
   @Column(nullable = false, length = 128)
   private String lastObservedControlPlaneRequestId = "";
 

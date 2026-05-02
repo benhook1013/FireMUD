@@ -21,6 +21,8 @@ public interface ScriptPatchPinProjectionService {
       long projectionAsOfMs,
       long projectionLagMs,
       boolean projectionStale,
+      String runtimeRegionId,
+      long runtimeRegionEpoch,
       String worldSlug,
       String realmSlug,
       String pointerVersion) {}

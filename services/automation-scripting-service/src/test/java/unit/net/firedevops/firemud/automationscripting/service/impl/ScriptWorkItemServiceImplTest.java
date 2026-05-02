@@ -590,7 +590,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", "req-1", 150L, 151L, 0L, false, "", "", "")),
+                        "1", "game-1", "patch-1", "req-1", 150L, 151L, 0L, false, "", 0L, "", "",
+                        "")),
                 "",
                 ""));
     when(rolloutProjectionService.getProjection("1", "game-1", "patch-1"))
@@ -737,7 +738,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-2", "req-2", 260L, 261L, 0L, false, "", "", "")),
+                        "1", "game-1", "patch-2", "req-2", 260L, 261L, 0L, false, "", 0L, "", "",
+                        "")),
                 "",
                 ""));
     when(rolloutProjectionService.listProjections(
@@ -963,7 +965,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", "req-1", 500L, 501L, 0L, false, "", "", "")),
+                        "1", "game-1", "patch-1", "req-1", 500L, 501L, 0L, false, "", 0L, "", "",
+                        "")),
                 "",
                 ""));
     ScriptWorkItemService service =
@@ -1044,7 +1047,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-2", "req-2", 600L, 601L, 0L, false, "", "", "")),
+                        "1", "game-1", "patch-2", "req-2", 600L, 601L, 0L, false, "", 0L, "", "",
+                        "")),
                 "",
                 ""));
     ScriptWorkItemService service =

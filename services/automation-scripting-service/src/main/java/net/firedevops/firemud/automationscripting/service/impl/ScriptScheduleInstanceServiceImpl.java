@@ -205,6 +205,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               .setTenantId(projection.getTenantId())
               .setGameInstanceId(projection.getGameInstanceId())
               .setPinnedScriptPatchVersion(projection.getObservedPinnedScriptPatchVersion())
+              .setRegionId(blankToEmpty(projection.getRuntimeRegionId()))
+              .setRegionEpoch(projection.getRuntimeRegionEpoch())
               .setPlayableStateScope(toPlayableStateScope(projection.getPlayableStateScope()))
               .setWorldSlug(blankToEmpty(projection.getWorldSlug()))
               .setRealmSlug(blankToEmpty(projection.getRealmSlug()))

@@ -767,6 +767,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         230L,
                         4L,
                         false,
+                        "region-7",
+                        22L,
                         "demo",
                         "production",
                         "17")),
@@ -794,6 +796,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getProjectionAsOfMs()).isEqualTo(230L);
     assertThat(ref.get().getProjectionLagMs()).isEqualTo(4L);
     assertThat(ref.get().getIsProjectionStale()).isFalse();
+    assertThat(ref.get().getRegionId()).isEqualTo("region-7");
+    assertThat(ref.get().getRegionEpoch()).isEqualTo(22L);
     assertThat(ref.get().getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getPointerVersion()).isEqualTo("17");
