@@ -45,6 +45,9 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   static final String RESULT_APPLIED = "APPLIED";
   static final String LATE_RESULT_REQUIRES_RECONCILIATION = "late_result_requires_reconciliation";
   static final String COMMAND_PENDING_REMOTE = "PENDING_REMOTE";
+  private static final String PAYLOAD_KIND_ENQUEUE_AUTOMATION_COMMAND =
+      "enqueue_automation_command";
+  private static final String PAYLOAD_KIND_ENQUEUE_GAMEPLAY_COMMAND = "enqueue_gameplay_command";
 
   private final RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
   private final RemoteFollowupRepository remoteFollowupRepository;
@@ -352,6 +355,32 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     requireNotBlank(request.followupId(), "followup_id");
     requireNotBlank(request.effectKey(), "effect_key");
     requireNotBlank(request.lateResultPolicy(), "late_result_policy");
+    validateSchedulePayload(request.payloadJson());
+  }
+
+  private static void validateSchedulePayload(String payloadJson) {
+    if (payloadJson == null || payloadJson.isBlank()) {
+      throw new IllegalArgumentException("payload_json is required");
+    }
+    JsonNode root;
+    try {
+      root = OBJECT_MAPPER.readTree(payloadJson);
+    } catch (IOException ex) {
+      throw new IllegalArgumentException("payload_json must be valid JSON");
+    }
+    String payloadKind = blankToNull(root.path("kind").asText(""));
+    if (payloadKind == null) {
+      throw new IllegalArgumentException("payload kind is required");
+    }
+    if (!PAYLOAD_KIND_ENQUEUE_AUTOMATION_COMMAND.equals(payloadKind)
+        && !PAYLOAD_KIND_ENQUEUE_GAMEPLAY_COMMAND.equals(payloadKind)) {
+      throw new IllegalArgumentException(
+          "payload kind '%s' is not yet supported".formatted(payloadKind));
+    }
+    if (blankToNull(root.path("command").asText("")) == null) {
+      throw new IllegalArgumentException(
+          "payload command is required for kind '%s'".formatted(payloadKind));
+    }
   }
 
   private static void validateResultRequest(ResultRequest request) {
