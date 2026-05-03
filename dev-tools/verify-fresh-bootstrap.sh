@@ -13,15 +13,19 @@ BUILD_JARS_SCRIPT="$ROOT_DIR/dev-tools/build-compose-service-jars.sh"
 # completes immediately in plain mode.
 export TERM="${TERM:-dumb}"
 export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-plain}"
+FIREMUD_SMOKE_SERIAL_BUILD="${FIREMUD_SMOKE_SERIAL_BUILD:-0}"
+export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-4}"
 
 echo "Fresh bootstrap proof: destroy local compose containers, networks, and named volumes, then rebuild and run WebSocket/Telnet LOGIN -> PLAY -> item/container/equipment proofs."
 echo "Destroyed named volumes: postgres-data, redis-coord-data, minio-data"
 
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
 "$BUILD_JARS_SCRIPT"
-while IFS= read -r service; do
-  docker compose "${COMPOSE_FILES[@]}" build "$service"
-done < <(docker compose "${COMPOSE_FILES[@]}" config --services)
+if [[ "$FIREMUD_SMOKE_SERIAL_BUILD" == "1" ]]; then
+  COMPOSE_PARALLEL_LIMIT=1 docker compose "${COMPOSE_FILES[@]}" build
+else
+  docker compose "${COMPOSE_FILES[@]}" build
+fi
 docker compose "${COMPOSE_FILES[@]}" up -d --remove-orphans
 
 "$HEALTH_SCRIPT"

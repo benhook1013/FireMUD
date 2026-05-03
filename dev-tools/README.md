@@ -7,7 +7,7 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 ## Canonical root entrypoints
 
 - `firemud-cli.sh` – simple local stack shortcuts built on top of Gradle tasks.
-- `verify-fresh-bootstrap.sh` – canonical source-built Docker smoke proof from a clean state.
+- `verify-fresh-bootstrap.sh` – canonical source-built Docker smoke proof from a clean state. Defaults `COMPOSE_PARALLEL_LIMIT` to `4` and supports `FIREMUD_SMOKE_SERIAL_BUILD=1` as a local fallback.
 - `verify-restart-state.sh` – canonical source-built Docker smoke proof with preserved local state.
 - `verify-smoke-images.sh` – canonical GHCR/image-tag Docker smoke proof.
 - `build-compose-service-jars.sh` – rebuilds the service boot jars consumed by the source-built Compose stack.
