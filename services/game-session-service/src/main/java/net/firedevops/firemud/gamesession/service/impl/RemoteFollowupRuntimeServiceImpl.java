@@ -871,6 +871,15 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         gameplayCommandRepository.findByCommandId(coordinator.getCommandId()).orElse(null);
     GameplayCommand targetCommand =
         linkedTargetCommand(coordinator.getTenantId(), coordinator.getFollowupId());
+    RemoteFollowupResult latestResult =
+        latestResult(coordinator.getTenantId(), coordinator.getCoordinatorId()).orElse(null);
+    ResultSummary resultSummary =
+        latestResult == null
+            ? new ResultSummary(null, null, null)
+            : new ResultSummary(
+                blankToNull(latestResult.getResultCommandId()),
+                blankToNull(latestResult.getResultErrorCode()),
+                resultSummary(latestResult.getResultPayloadJson()).message());
     if (command == null) {
       return;
     }
@@ -905,6 +914,12 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
                       || targetCommand.getFailureMessage().isBlank()
                   ? "Cross-region remote followup did not apply successfully"
                   : targetCommand.getFailureMessage());
+        } else if (resultSummary.errorCode() != null) {
+          command.setFailureCode(resultSummary.errorCode());
+          command.setFailureMessage(
+              resultSummary.message() == null || resultSummary.message().isBlank()
+                  ? "Cross-region remote followup did not apply successfully"
+                  : resultSummary.message());
         } else {
           command.setFailureCode(coordinator.getState());
           command.setFailureMessage("Cross-region remote followup did not apply successfully");
