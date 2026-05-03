@@ -1945,6 +1945,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(3L, responseRef.get().getOwnership().getPendingGameplayCommandCount());
     assertEquals(2L, responseRef.get().getOwnership().getDueRemoteFollowupCount());
     assertEquals(13L, responseRef.get().getOwnership().getOldestDueRemoteFollowupTickId());
+    assertEquals(2000L, responseRef.get().getOwnership().getRemoteFollowupDrainLagMs());
   }
 
   @Test
@@ -2016,6 +2017,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(0L, responseRef.get().getOwnership().getPendingGameplayCommandCount());
     assertEquals(0L, responseRef.get().getOwnership().getDueRemoteFollowupCount());
     assertEquals(0L, responseRef.get().getOwnership().getOldestDueRemoteFollowupTickId());
+    assertEquals(0L, responseRef.get().getOwnership().getRemoteFollowupDrainLagMs());
     Mockito.verify(repository).findByTenantIdAndRegionId(1L, "region-7");
     Mockito.verify(repository, Mockito.never())
         .findByTenantIdAndGameInstanceId(Mockito.anyLong(), Mockito.anyLong());

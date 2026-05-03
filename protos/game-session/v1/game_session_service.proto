@@ -502,6 +502,7 @@ message RuntimeOwnershipStatus {
   int64 pending_gameplay_command_count = 12;
   int64 due_remote_followup_count = 13;
   int64 oldest_due_remote_followup_tick_id = 14;
+  int64 remote_followup_drain_lag_ms = 15;
 }
 
 message GetRuntimeOwnershipStatusResponse {

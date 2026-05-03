@@ -101,6 +101,7 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -131,6 +132,9 @@ public final class GameSessionControlPlaneGrpcService
   private final BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver;
   private final MeterRegistry meterRegistry;
   private final GameSessionProperties gameSessionProperties;
+
+  @Value("${game.tick-duration-ms:1000}")
+  private long tickDurationMs = 1000L;
 
   public GameSessionControlPlaneGrpcService(
       GameInstanceRepository gameInstanceRepository,
@@ -1899,6 +1903,13 @@ public final class GameSessionControlPlaneGrpcService
                 status.getLastCommittedTickId() + 1L)
             .map(RemoteFollowup::getDueTickId)
             .orElse(0L);
+    long remoteFollowupDrainLagMs =
+        oldestDueRemoteFollowupTickId == 0L
+            ? 0L
+            : Math.max(
+                0L,
+                (status.getLastCommittedTickId() + 1L - oldestDueRemoteFollowupTickId)
+                    * tickDurationMs);
     return RuntimeOwnershipStatus.newBuilder()
         .setTenantId(Long.toString(status.getTenantId()))
         .setGameInstanceId(Long.toString(status.getGameInstanceId()))
@@ -1917,6 +1928,7 @@ public final class GameSessionControlPlaneGrpcService
         .setPendingGameplayCommandCount(pendingGameplayCommandCount)
         .setDueRemoteFollowupCount(dueRemoteFollowupCount)
         .setOldestDueRemoteFollowupTickId(oldestDueRemoteFollowupTickId)
+        .setRemoteFollowupDrainLagMs(remoteFollowupDrainLagMs)
         .build();
   }
 
