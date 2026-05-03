@@ -92,6 +92,7 @@ public final class DefaultDurableGameplayCommandExecutionService
                   "Session context no longer exists for command execution")));
     }
     SessionContext context = maybeContext.orElseThrow();
+    publishCommandEventIfSessionless(context, command);
     if (isDurableItemMutation(parsed.type())) {
       return Optional.of(executeItemMutation(context, parsed, command, effect.getEffectId()));
     }
@@ -335,6 +336,13 @@ public final class DefaultDurableGameplayCommandExecutionService
   private void publishRegionTransitionEvents(
       SessionContext originalContext, SessionContext updatedContext, String effectId) {
     scriptEventPublisher.publishRegionTransitionEvents(originalContext, updatedContext, effectId);
+  }
+
+  private void publishCommandEventIfSessionless(SessionContext context, GameplayCommand command) {
+    if (command.getSessionId() != null && command.getSessionId() > 0) {
+      return;
+    }
+    scriptEventPublisher.publishCommandEvent(context, command);
   }
 
   private boolean isDurableItemMutation(TextCommandType type) {

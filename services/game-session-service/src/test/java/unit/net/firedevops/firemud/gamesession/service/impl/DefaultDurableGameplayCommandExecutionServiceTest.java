@@ -251,6 +251,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     verify(durableGameplayReplayService)
         .save(22L, 42L, "tfx-4", true, null, null, java.util.List.of(output));
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+    verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
   }
 
   @Test
@@ -282,6 +283,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     verify(sessionContextService, never()).findBySessionId(0L);
     verify(sessionContextService).findByGameplayIdentity(22L, 7L, 91L);
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+    verify(scriptEventPublisher).publishCommandEvent(context, command);
   }
 
   @Test
