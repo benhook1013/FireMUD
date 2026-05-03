@@ -2064,7 +2064,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setCoordinatorId("coord-1");
     result.setOutcome("APPLIED");
-    result.setResultPayloadJson("{\"commandId\":\"auto-1\",\"errorCode\":\"payload-error\"}");
+    result.setResultPayloadJson("{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\"}");
+    result.setResultCommandId("auto-1");
     result.setResultErrorCode("RATE_LIMIT");
     result.setObservedAt(Instant.parse("2026-05-01T00:00:05Z"));
     RemoteCommandCoordinatorRepository repository =
@@ -2138,7 +2139,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("LOOK", responseRef.get().getCoordinator().getFollowupRequestedCommand());
     assertEquals("APPLIED", responseRef.get().getCoordinator().getLatestResultOutcome());
     assertEquals(
-        "{\"commandId\":\"auto-1\",\"errorCode\":\"payload-error\"}",
+        "{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\"}",
         responseRef.get().getCoordinator().getLatestResultPayloadJson());
     assertEquals("rfcmd-rf-1", responseRef.get().getCoordinator().getLatestResultCommandId());
     assertEquals("RATE_LIMIT", responseRef.get().getCoordinator().getLatestResultErrorCode());
@@ -2254,7 +2255,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setTargetRegionId("region-b");
     result.setTargetRegionEpoch(4L);
     result.setOutcome("REMOTE_APPLIED");
-    result.setResultPayloadJson("{\"commandId\":\"auto-1\",\"errorCode\":\"payload-error\"}");
+    result.setResultPayloadJson("{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\"}");
+    result.setResultCommandId("auto-1");
     result.setResultErrorCode("RATE_LIMIT");
     result.setPlayableStateScope("SHARED");
     result.setWorldSlug("demo");
@@ -2307,7 +2309,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("script-1", responseRef.get().getResults(0).getScriptId());
     assertEquals("REMOTE_APPLIED", responseRef.get().getResults(0).getOutcome());
     assertEquals(
-        "{\"commandId\":\"auto-1\",\"errorCode\":\"payload-error\"}",
+        "{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\"}",
         responseRef.get().getResults(0).getResultPayloadJson());
     assertEquals("auto-1", responseRef.get().getResults(0).getResultCommandId());
     assertEquals("RATE_LIMIT", responseRef.get().getResults(0).getResultErrorCode());
@@ -2338,6 +2340,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setTargetRegionEpoch(5L);
     result.setOutcome("REMOTE_APPLIED");
     result.setResultPayloadJson("{\"commandId\":\"payload-cmd\",\"errorCode\":\"RATE_LIMIT\"}");
+    result.setResultCommandId("durable-cmd");
     result.setResultErrorCode("TIMEOUT");
     result.setObservedAt(Instant.parse("2026-05-01T00:00:02Z"));
     RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
@@ -2379,6 +2382,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("NOT_APPLIED", responseRef.get().getResults(0).getResultCommandExecutionOutcome());
     assertEquals("FAILURE", responseRef.get().getResults(0).getResultCommandGameplayResult());
     Mockito.verify(gameplayCommandRepository, Mockito.never()).findByCommandId("payload-cmd");
+    Mockito.verify(gameplayCommandRepository, Mockito.never()).findByCommandId("durable-cmd");
   }
 
   @Test

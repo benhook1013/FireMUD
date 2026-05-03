@@ -387,6 +387,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                 result ->
                     "SHARED".equals(result.getPlayableStateScope())
                         && "cmd-1".equals(result.getCommandId())
+                        && "auto-1".equals(result.getResultCommandId())
                         && "RATE_LIMIT".equals(result.getResultErrorCode())
                         && "dispatch-1".equals(result.getAutomationDispatchId())
                         && "work-1".equals(result.getAutomationWorkItemId())
@@ -526,7 +527,8 @@ class RemoteFollowupRuntimeServiceImplTest {
     existing.setTargetRegionId("region-b");
     existing.setTargetRegionEpoch(8L);
     existing.setOutcome("APPLIED");
-    existing.setResultPayloadJson("{\"status\":\"done\",\"errorCode\":\"RATE_LIMIT\"}");
+    existing.setResultPayloadJson(
+        "{\"status\":\"done\",\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\"}");
     existing.setObservedAt(Instant.parse("2026-05-01T00:00:05Z"));
     when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
         .thenReturn(Optional.of(coordinator));
@@ -871,7 +873,7 @@ class RemoteFollowupRuntimeServiceImplTest {
         "region-b",
         8L,
         outcome,
-        "{\"status\":\"done\",\"errorCode\":\"RATE_LIMIT\"}");
+        "{\"status\":\"done\",\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\"}");
   }
 
   private static RemoteCommandCoordinator coordinator() {

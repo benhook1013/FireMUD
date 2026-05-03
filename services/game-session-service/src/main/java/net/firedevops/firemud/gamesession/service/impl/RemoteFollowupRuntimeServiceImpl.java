@@ -595,7 +595,9 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     result.setTargetRegionEpoch(request.targetRegionEpoch());
     result.setOutcome(request.outcome());
     result.setResultPayloadJson(blankToNull(request.resultPayloadJson()));
-    result.setResultErrorCode(resultSummary(request.resultPayloadJson()).errorCode());
+    ResultSummary resultSummary = resultSummary(request.resultPayloadJson());
+    result.setResultCommandId(resultSummary.commandId());
+    result.setResultErrorCode(resultSummary.errorCode());
     result.setPlayableStateScope(
         blankToNull(
             coordinator != null && coordinator.getPlayableStateScope() != null
@@ -738,17 +740,18 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static ResultSummary resultSummary(String payloadJson) {
     if (payloadJson == null || payloadJson.isBlank()) {
-      return new ResultSummary(null);
+      return new ResultSummary(null, null);
     }
     try {
       JsonNode root = OBJECT_MAPPER.readTree(payloadJson);
+      String commandId = blankToNull(root.path("commandId").asText(""));
       String errorCode = blankToNull(root.path("errorCode").asText(""));
       if (errorCode == null && root.has("failureCode")) {
         errorCode = blankToNull(root.path("failureCode").asText(""));
       }
-      return new ResultSummary(errorCode);
+      return new ResultSummary(commandId, errorCode);
     } catch (IOException ignored) {
-      return new ResultSummary(null);
+      return new ResultSummary(null, null);
     }
   }
 
@@ -920,5 +923,5 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private record PayloadSummary(String kind, String command) {}
 
-  private record ResultSummary(String errorCode) {}
+  private record ResultSummary(String commandId, String errorCode) {}
 }

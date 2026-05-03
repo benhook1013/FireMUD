@@ -1990,7 +1990,10 @@ public final class GameSessionControlPlaneGrpcService
         builder.setLatestResultObservedAtMs(latestResult.getObservedAt().toEpochMilli());
       }
       applyResultSummary(
-          builder, latestResult.getResultPayloadJson(), latestResult.getResultErrorCode());
+          builder,
+          latestResult.getResultPayloadJson(),
+          latestResult.getResultCommandId(),
+          latestResult.getResultErrorCode());
     }
     applyDirectCommandProvenance(
         builder,
@@ -2108,7 +2111,11 @@ public final class GameSessionControlPlaneGrpcService
         result.getAutomationWorkItemId(),
         result.getScriptId());
     String resultCommandId =
-        applyResultSummary(builder, result.getResultPayloadJson(), result.getResultErrorCode());
+        applyResultSummary(
+            builder,
+            result.getResultPayloadJson(),
+            result.getResultCommandId(),
+            result.getResultErrorCode());
     GameplayCommand targetCommand =
         linkedTargetCommand(result.getTenantId(), result.getFollowupId());
     if (targetCommand == null && resultCommandId != null) {
@@ -2368,8 +2375,11 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private static void applyResultSummary(
-      RemoteCommandCoordinatorEntry.Builder builder, String payloadJson, String durableErrorCode) {
-    ResultSummary summary = resultSummary(payloadJson, durableErrorCode);
+      RemoteCommandCoordinatorEntry.Builder builder,
+      String payloadJson,
+      String durableCommandId,
+      String durableErrorCode) {
+    ResultSummary summary = resultSummary(payloadJson, durableCommandId, durableErrorCode);
     if (summary.commandId() != null) {
       builder.setLatestResultCommandId(summary.commandId());
     }
@@ -2379,8 +2389,11 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private static String applyResultSummary(
-      RemoteFollowupResultEntry.Builder builder, String payloadJson, String durableErrorCode) {
-    ResultSummary summary = resultSummary(payloadJson, durableErrorCode);
+      RemoteFollowupResultEntry.Builder builder,
+      String payloadJson,
+      String durableCommandId,
+      String durableErrorCode) {
+    ResultSummary summary = resultSummary(payloadJson, durableCommandId, durableErrorCode);
     if (summary.commandId() != null) {
       builder.setResultCommandId(summary.commandId());
     }
@@ -2391,8 +2404,11 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private static void applyResultSummary(
-      GameplayCommandStatus.Builder builder, String payloadJson, String durableErrorCode) {
-    ResultSummary summary = resultSummary(payloadJson, durableErrorCode);
+      GameplayCommandStatus.Builder builder,
+      String payloadJson,
+      String durableCommandId,
+      String durableErrorCode) {
+    ResultSummary summary = resultSummary(payloadJson, durableCommandId, durableErrorCode);
     if (summary.commandId() != null) {
       builder.setRemoteResultCommandId(summary.commandId());
     }
@@ -2420,13 +2436,17 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
-  private static ResultSummary resultSummary(String payloadJson, String durableErrorCode) {
+  private static ResultSummary resultSummary(
+      String payloadJson, String durableCommandId, String durableErrorCode) {
     ResultSummary payloadSummary = resultSummaryFromJson(payloadJson);
-    if (payloadSummary.commandId() != null
+    if ((durableCommandId != null && !durableCommandId.isBlank())
+        || payloadSummary.commandId() != null
         || (durableErrorCode != null && !durableErrorCode.isBlank())
         || payloadSummary.errorCode() != null) {
       return new ResultSummary(
-          payloadSummary.commandId(),
+          durableCommandId != null && !durableCommandId.isBlank()
+              ? durableCommandId
+              : payloadSummary.commandId(),
           durableErrorCode != null && !durableErrorCode.isBlank()
               ? durableErrorCode
               : payloadSummary.errorCode());
@@ -2656,6 +2676,7 @@ public final class GameSessionControlPlaneGrpcService
       applyResultSummary(
           builder,
           latestRemoteResult.getResultPayloadJson(),
+          latestRemoteResult.getResultCommandId(),
           latestRemoteResult.getResultErrorCode());
     }
     if (remoteTargetCommand != null && remoteTargetCommand.getCommandId() != null) {
