@@ -149,6 +149,17 @@ class TickServiceImplTest {
                         1L,
                         "fence-a",
                         false)));
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(anyLong(), any()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    runtimeOwnershipByRegionId(
+                        invocation.getArgument(0),
+                        2L,
+                        invocation.getArgument(1),
+                        1L,
+                        "fence-a",
+                        false)));
     when(tickBatchRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(tickEffectRepository.findByTickBatchId(any())).thenReturn(List.of());
     when(tickEffectRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -592,6 +603,8 @@ class TickServiceImplTest {
         runtimeOwnership(1L, 2L, 1L, "fence-a", false);
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus staleStatus =
         runtimeOwnership(1L, 2L, 2L, "fence-b", true);
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "2"))
+        .thenReturn(Optional.of(initialStatus), Optional.of(staleStatus));
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
         .thenReturn(Optional.of(initialStatus), Optional.of(staleStatus));
 
@@ -709,12 +722,51 @@ class TickServiceImplTest {
   }
 
   @Test
+  void processTickPreservesPersistedRuntimeRegionScopeAcrossTickAdvanceAndBatchManifest() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-1")));
+    net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
+        runtimeOwnershipByRegionId(1L, 2L, "region-alpha", 4L, "fence-a", false);
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
+        .thenReturn(
+            Optional.of(currentStatus), Optional.of(currentStatus), Optional.of(currentStatus));
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(currentStatus));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(1L, currentStatus.getLastCommittedTickId());
+    ArgumentCaptor<ObserveRuntimeTickProgressRequest> requestCaptor =
+        ArgumentCaptor.forClass(ObserveRuntimeTickProgressRequest.class);
+    verify(automationScriptingClient).observeRuntimeTickProgress(requestCaptor.capture());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "region-alpha", requestCaptor.getValue().getRegionId());
+    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.TickBatch> batchCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.TickBatch.class);
+    verify(tickBatchRepository, org.mockito.Mockito.atLeastOnce()).save(batchCaptor.capture());
+    net.firedevops.firemud.gamesession.entity.TickBatch stagedBatch =
+        batchCaptor.getAllValues().stream()
+            .filter(batch -> "FRESH_STAGE".equals(batch.getBatchSource()))
+            .findFirst()
+            .orElseThrow();
+    org.junit.jupiter.api.Assertions.assertEquals("region-alpha", stagedBatch.getRegionId());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"regionId\":\"region-alpha\""));
+  }
+
+  @Test
   void processTickAdvancesAndPublishesRuntimeTickProgress() {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
         runtimeOwnership(1L, 2L, 4L, "fence-a", false);
     currentStatus.setLastCommittedTickId(7L);
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "2"))
+        .thenReturn(Optional.of(currentStatus), Optional.of(currentStatus));
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
         .thenReturn(Optional.of(currentStatus), Optional.of(currentStatus));
 
@@ -743,6 +795,8 @@ class TickServiceImplTest {
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
         runtimeOwnership(1L, 2L, 4L, "fence-a", false);
     currentStatus.setLastCommittedTickId(7L);
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "2"))
+        .thenReturn(Optional.of(currentStatus), Optional.of(currentStatus));
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
         .thenReturn(Optional.of(currentStatus), Optional.of(currentStatus));
 
@@ -758,6 +812,8 @@ class TickServiceImplTest {
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
         runtimeOwnership(1L, 2L, 4L, "fence-a", true);
     currentStatus.setLastCommittedTickId(7L);
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "2"))
+        .thenReturn(Optional.of(currentStatus));
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
         .thenReturn(Optional.of(currentStatus));
 
@@ -1082,10 +1138,27 @@ class TickServiceImplTest {
 
   private static net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus runtimeOwnership(
       Long tenantId, Long gameInstanceId, long regionEpoch, String executorFence, boolean paused) {
+    return runtimeOwnershipByRegionId(
+        tenantId,
+        gameInstanceId,
+        Long.toString(gameInstanceId),
+        regionEpoch,
+        executorFence,
+        paused);
+  }
+
+  private static net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus
+      runtimeOwnershipByRegionId(
+          Long tenantId,
+          Long gameInstanceId,
+          String regionId,
+          long regionEpoch,
+          String executorFence,
+          boolean paused) {
     var status = new net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus();
     status.setTenantId(tenantId);
     status.setGameInstanceId(gameInstanceId);
-    status.setRegionId(Long.toString(gameInstanceId));
+    status.setRegionId(regionId);
     status.setRegionEpoch(regionEpoch);
     status.setExecutorFence(executorFence);
     status.setOwnerService("game-session-service");
@@ -1129,9 +1202,9 @@ class TickServiceImplTest {
       selectionsMethod.setAccessible(true);
       Object selections = selectionsMethod.invoke(service, entries);
       var manifestMethod =
-          TickServiceImpl.class.getDeclaredMethod("selectedWorkManifest", Long.class, List.class);
+          TickServiceImpl.class.getDeclaredMethod("selectedWorkManifest", String.class, List.class);
       manifestMethod.setAccessible(true);
-      return (String) manifestMethod.invoke(service, 2L, selections);
+      return (String) manifestMethod.invoke(service, "2", selections);
     } catch (ReflectiveOperationException e) {
       throw new IllegalStateException("Failed to compute replay manifest json", e);
     }

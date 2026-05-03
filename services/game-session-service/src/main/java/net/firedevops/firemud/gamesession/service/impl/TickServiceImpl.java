@@ -468,13 +468,7 @@ public class TickServiceImpl implements TickService {
   private RuntimeRegionStatus advanceRuntimeTickProgress(
       Long tenantId, Long gameInstanceId, OwnershipSnapshot ownership) {
     RuntimeRegionStatus status =
-        runtimeRegionStatusRepository
-            .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-            .orElseThrow(
-                () ->
-                    new StaleOwnershipException(
-                        "Missing runtime ownership for tenantId=%d gameInstanceId=%d"
-                            .formatted(tenantId, gameInstanceId)));
+        requireRuntimeOwnership(tenantId, gameInstanceId, ownership.regionId());
     if (status.getRegionEpoch() != ownership.regionEpoch()
         || !status.getExecutorFence().equals(ownership.executorFence())
         || status.isPaused()) {
@@ -482,7 +476,6 @@ public class TickServiceImpl implements TickService {
           "Cannot advance stale runtime tick progress for tenantId=%d gameInstanceId=%d"
               .formatted(tenantId, gameInstanceId));
     }
-    status.setRegionId(runtimeRegionId(gameInstanceId));
     status.setLastCommittedTickId(status.getLastCommittedTickId() + 1L);
     status.setUpdatedAt(Instant.now());
     return runtimeRegionStatusRepository.save(status);
@@ -717,7 +710,8 @@ public class TickServiceImpl implements TickService {
           "PENDING_REPLAY", tenantId, gameInstanceId, false, ownership, replayEntries);
     }
     TickBatch batch = existing.orElseThrow();
-    String replayManifest = selectedWorkManifest(gameInstanceId, commandSelections(replayEntries));
+    String replayManifest =
+        selectedWorkManifest(ownership.regionId(), commandSelections(replayEntries));
     String replayDigest = shortHash(replayManifest);
     if (replayDigest.equals(batch.getSelectedWorkManifestDigest())) {
       return batch;
@@ -750,7 +744,7 @@ public class TickServiceImpl implements TickService {
     batch.setTickBatchId("tb-" + UUID.randomUUID());
     batch.setTenantId(tenantId);
     batch.setGameInstanceId(gameInstanceId);
-    batch.setRegionId(runtimeRegionId(gameInstanceId));
+    batch.setRegionId(ownership.regionId());
     batch.setRegionEpoch(ownership.regionEpoch());
     batch.setExecutorFence(ownership.executorFence());
     batch.setBatchSource(batchSource);
@@ -758,7 +752,7 @@ public class TickServiceImpl implements TickService {
     batch.setRequiresSoloTick(requiresSoloTick);
     batch.setCommandCount(entries.size());
     batch.setExpectedEffectCount(entries.size());
-    String selectedWorkManifest = selectedWorkManifest(gameInstanceId, selections);
+    String selectedWorkManifest = selectedWorkManifest(ownership.regionId(), selections);
     batch.setSelectedWorkManifestJson(selectedWorkManifest);
     batch.setSelectedWorkManifestDigest(shortHash(selectedWorkManifest));
     batch.setStagedAt(now);
@@ -1329,13 +1323,8 @@ public class TickServiceImpl implements TickService {
   private Optional<RuntimeRegionStatus> requireCurrentOwnership(
       TickBatch batch, boolean allowPausedOwner) {
     RuntimeRegionStatus status =
-        runtimeRegionStatusRepository
-            .findByTenantIdAndGameInstanceId(batch.getTenantId(), batch.getGameInstanceId())
-            .orElseThrow(
-                () ->
-                    new StaleOwnershipException(
-                        "Missing runtime ownership for tenantId=%d gameInstanceId=%d"
-                            .formatted(batch.getTenantId(), batch.getGameInstanceId())));
+        requireRuntimeOwnership(
+            batch.getTenantId(), batch.getGameInstanceId(), batch.getRegionId());
     if (status.getRegionEpoch() != batch.getRegionEpoch()
         || !status.getExecutorFence().equals(batch.getExecutorFence())
         || (!allowPausedOwner && status.isPaused())) {
@@ -1482,11 +1471,11 @@ public class TickServiceImpl implements TickService {
     return "tfx-" + shortHash(tickBatchId + "|" + effectKey);
   }
 
-  private String selectedWorkManifest(Long gameInstanceId, List<CommandSelection> selections) {
+  private String selectedWorkManifest(String regionId, List<CommandSelection> selections) {
     StringBuilder builder = new StringBuilder();
     builder
         .append("{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"regionId\":\"")
-        .append(jsonEscape(runtimeRegionId(gameInstanceId)))
+        .append(jsonEscape(regionId))
         .append("\",\"items\":[");
     for (int index = 0; index < selections.size(); index++) {
       if (index > 0) {
@@ -1713,13 +1702,12 @@ public class TickServiceImpl implements TickService {
                   RuntimeRegionStatus created = new RuntimeRegionStatus();
                   created.setTenantId(tenantId);
                   created.setGameInstanceId(gameInstanceId);
-                  created.setRegionId(runtimeRegionId(gameInstanceId));
+                  created.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
                   created.setRegionEpoch(1L);
                   created.setExecutorFence("fence-" + UUID.randomUUID());
                   created.setPaused(false);
                   return created;
                 });
-    status.setRegionId(runtimeRegionId(gameInstanceId));
     status.setOwnerService(runtimeIdentity.service());
     status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
     status.setUpdatedAt(now);
@@ -1833,11 +1821,10 @@ public class TickServiceImpl implements TickService {
                   RuntimeRegionStatus created = new RuntimeRegionStatus();
                   created.setTenantId(tenantId);
                   created.setGameInstanceId(gameInstanceId);
-                  created.setRegionId(runtimeRegionId(gameInstanceId));
+                  created.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
                   created.setRegionEpoch(0L);
                   return created;
                 });
-    status.setRegionId(runtimeRegionId(gameInstanceId));
     status.setRegionEpoch(status.getRegionEpoch() + 1L);
     status.setExecutorFence("fence-" + UUID.randomUUID());
     status.setOwnerService(runtimeIdentity.service());
@@ -1847,7 +1834,25 @@ public class TickServiceImpl implements TickService {
     runtimeRegionStatusRepository.save(status);
   }
 
-  private String runtimeRegionId(Long gameInstanceId) {
+  private RuntimeRegionStatus requireRuntimeOwnership(
+      Long tenantId, Long gameInstanceId, String regionId) {
+    if (regionId != null && !regionId.isBlank()) {
+      Optional<RuntimeRegionStatus> byRegionId =
+          runtimeRegionStatusRepository.findByTenantIdAndRegionId(tenantId, regionId);
+      if (byRegionId.isPresent()) {
+        return byRegionId.orElseThrow();
+      }
+    }
+    return runtimeRegionStatusRepository
+        .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
+        .orElseThrow(
+            () ->
+                new StaleOwnershipException(
+                    "Missing runtime ownership for tenantId=%d gameInstanceId=%d regionId=%s"
+                        .formatted(tenantId, gameInstanceId, regionId)));
+  }
+
+  private String defaultCurrentBoundaryRegionId(Long gameInstanceId) {
     return Long.toString(gameInstanceId);
   }
 }
