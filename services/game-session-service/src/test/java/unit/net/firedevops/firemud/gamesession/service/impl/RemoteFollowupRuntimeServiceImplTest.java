@@ -265,6 +265,100 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void scheduleFollowupRejectsCoordinatorMetadataRewriteOnRetry() {
+    RemoteCommandCoordinator existing = coordinator();
+    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+        .thenReturn(Optional.of(existing));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.scheduleFollowup(
+                    new RemoteFollowupRuntimeService.ScheduleRequest(
+                        1L,
+                        "cmd-1",
+                        "coord-1",
+                        7L,
+                        "region-a",
+                        4L,
+                        8L,
+                        "region-b",
+                        8L,
+                        22L,
+                        4L,
+                        25L,
+                        "late_result_safe_to_ignore",
+                        "followup-1",
+                        "effect-1",
+                        "entity-9",
+                        "{\"type\":\"remote\"}",
+                        "SHARED",
+                        "demo",
+                        "production",
+                        17L,
+                        "patch-2",
+                        "plugin-1",
+                        "plugin-v1",
+                        "dispatch-1",
+                        "work-1",
+                        "script-1")));
+
+    assertEquals("command_id already maps to different remote followup metadata", ex.getMessage());
+    verify(followupRepository, never())
+        .findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            anyLong(), anyString(), anyLong(), anyString());
+  }
+
+  @Test
+  void scheduleFollowupRejectsFollowupPayloadRewriteOnRetry() {
+    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+        .thenReturn(Optional.empty());
+    RemoteFollowup existing = followup();
+    when(followupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            1L, "region-b", 8L, "effect-1"))
+        .thenReturn(Optional.of(existing));
+    GameplayCommand command = gameplayCommand();
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.scheduleFollowup(
+                    new RemoteFollowupRuntimeService.ScheduleRequest(
+                        1L,
+                        "cmd-1",
+                        "coord-1",
+                        7L,
+                        "region-a",
+                        4L,
+                        8L,
+                        "region-b",
+                        8L,
+                        22L,
+                        4L,
+                        25L,
+                        "late_result_safe_to_ignore",
+                        "followup-1",
+                        "effect-1",
+                        "entity-9",
+                        "{\"type\":\"rewritten\"}",
+                        "SHARED",
+                        "demo",
+                        "production",
+                        17L,
+                        "patch-1",
+                        "plugin-1",
+                        "plugin-v1",
+                        "dispatch-1",
+                        "work-1",
+                        "script-1")));
+
+    assertEquals("effect_key already maps to different remote followup metadata", ex.getMessage());
+  }
+
+  @Test
   void recordResultPersistsTerminalTargetOutcomeWithoutMutatingPendingCoordinator() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);

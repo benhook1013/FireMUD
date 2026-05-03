@@ -413,6 +413,25 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       throw new IllegalArgumentException(
           "command_id already maps to a different remote execution scope");
     }
+    if (request.targetDueTickId() != existing.getTargetDueTickId()
+        || request.originDeadlineRegionEpoch() != existing.getOriginDeadlineRegionEpoch()
+        || request.originDeadlineTickId() != existing.getOriginDeadlineTickId()
+        || !request.lateResultPolicy().equals(existing.getLateResultPolicy())
+        || !sameSchedulingMetadata(
+            existing.getPlayableStateScope(),
+            existing.getWorldSlug(),
+            existing.getRealmSlug(),
+            existing.getPointerVersion(),
+            existing.getScriptPatchVersion(),
+            existing.getPluginId(),
+            existing.getPluginVersionId(),
+            existing.getAutomationDispatchId(),
+            existing.getAutomationWorkItemId(),
+            existing.getScriptId(),
+            request)) {
+      throw new IllegalArgumentException(
+          "command_id already maps to different remote followup metadata");
+    }
   }
 
   private static void validateExistingFollowup(RemoteFollowup existing, ScheduleRequest request) {
@@ -429,6 +448,58 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       throw new IllegalArgumentException(
           "effect_key already maps to a different remote execution scope");
     }
+    if (request.targetDueTickId() != existing.getDueTickId()
+        || !normalized(blankToNull(request.targetEntityId()))
+            .equals(normalized(existing.getTargetEntityId()))
+        || !normalized(blankToNull(request.payloadJson()))
+            .equals(normalized(existing.getPayloadJson()))
+        || !sameSchedulingMetadata(
+            existing.getPlayableStateScope(),
+            existing.getWorldSlug(),
+            existing.getRealmSlug(),
+            existing.getPointerVersion(),
+            existing.getScriptPatchVersion(),
+            existing.getPluginId(),
+            existing.getPluginVersionId(),
+            existing.getAutomationDispatchId(),
+            existing.getAutomationWorkItemId(),
+            existing.getScriptId(),
+            request)) {
+      throw new IllegalArgumentException(
+          "effect_key already maps to different remote followup metadata");
+    }
+  }
+
+  private static boolean sameSchedulingMetadata(
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      Long pointerVersion,
+      String scriptPatchVersion,
+      String pluginId,
+      String pluginVersionId,
+      String automationDispatchId,
+      String automationWorkItemId,
+      String scriptId,
+      ScheduleRequest request) {
+    return normalized(blankToNull(request.playableStateScope()))
+            .equals(normalized(playableStateScope))
+        && normalized(blankToNull(request.worldSlug())).equals(normalized(worldSlug))
+        && normalized(blankToNull(request.realmSlug())).equals(normalized(realmSlug))
+        && sameLong(pointerVersion, request.pointerVersion())
+        && normalized(blankToNull(request.scriptPatchVersion()))
+            .equals(normalized(scriptPatchVersion))
+        && normalized(blankToNull(request.pluginId())).equals(normalized(pluginId))
+        && normalized(blankToNull(request.pluginVersionId())).equals(normalized(pluginVersionId))
+        && normalized(blankToNull(request.automationDispatchId()))
+            .equals(normalized(automationDispatchId))
+        && normalized(blankToNull(request.automationWorkItemId()))
+            .equals(normalized(automationWorkItemId))
+        && normalized(blankToNull(request.scriptId())).equals(normalized(scriptId));
+  }
+
+  private static boolean sameLong(Long left, Long right) {
+    return left == null ? right == null : left.equals(right);
   }
 
   private static void requirePositive(long value, String field) {
