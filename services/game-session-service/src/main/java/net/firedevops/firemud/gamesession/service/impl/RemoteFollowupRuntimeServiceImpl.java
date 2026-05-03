@@ -177,9 +177,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       remoteFollowupResultRepository.save(result);
     }
 
+    ResultSummary requestSummary = resultSummary(request.resultPayloadJson());
     Instant now = Instant.now(clock);
     boolean lateResult = COORDINATOR_REMOTE_TIMEOUT_ABANDONED.equals(coordinator.getState());
-    applyFollowupResultState(followup, request.outcome(), now);
+    applyFollowupResultState(followup, request.outcome(), requestSummary, now);
     remoteFollowupRepository.save(followup);
     return new ResultOutcome(coordinator.getState(), followup.getStatus(), lateResult, false);
   }
@@ -740,7 +741,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static ResultSummary resultSummary(String payloadJson) {
     if (payloadJson == null || payloadJson.isBlank()) {
-      return new ResultSummary(null, null);
+      return new ResultSummary(null, null, null);
     }
     try {
       JsonNode root = OBJECT_MAPPER.readTree(payloadJson);
@@ -749,9 +750,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       if (errorCode == null && root.has("failureCode")) {
         errorCode = blankToNull(root.path("failureCode").asText(""));
       }
-      return new ResultSummary(commandId, errorCode);
+      String message = blankToNull(root.path("message").asText(""));
+      return new ResultSummary(commandId, errorCode, message);
     } catch (IOException ignored) {
-      return new ResultSummary(null, null);
+      return new ResultSummary(null, null, null);
     }
   }
 
@@ -831,15 +833,19 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   }
 
   private static void applyFollowupResultState(
-      RemoteFollowup followup, String outcome, Instant now) {
+      RemoteFollowup followup, String outcome, ResultSummary resultSummary, Instant now) {
     if (RESULT_APPLIED.equalsIgnoreCase(outcome)) {
       followup.setStatus(FOLLOWUP_APPLIED);
       followup.setFailureCode(null);
       followup.setFailureMessage(null);
     } else {
       followup.setStatus(FOLLOWUP_ABANDONED);
-      followup.setFailureCode("REMOTE_ABANDONED");
-      followup.setFailureMessage("Target region reported terminal abandoned outcome");
+      followup.setFailureCode(
+          resultSummary.errorCode() == null ? "REMOTE_ABANDONED" : resultSummary.errorCode());
+      followup.setFailureMessage(
+          resultSummary.message() == null
+              ? "Target region reported terminal abandoned outcome"
+              : resultSummary.message());
     }
     followup.setClaimedTickBatchId(null);
     followup.setUpdatedAt(now);
@@ -923,5 +929,5 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private record PayloadSummary(String kind, String command) {}
 
-  private record ResultSummary(String commandId, String errorCode) {}
+  private record ResultSummary(String commandId, String errorCode, String message) {}
 }

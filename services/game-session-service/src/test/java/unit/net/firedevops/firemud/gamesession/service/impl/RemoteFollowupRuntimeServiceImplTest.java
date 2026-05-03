@@ -435,6 +435,38 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void recordResultMirrorsConcreteRemoteFailureOntoFollowup() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    RemoteFollowup followup = followup();
+    when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+    when(resultRepository.findByTenantIdAndResultId(1L, "result-1")).thenReturn(Optional.empty());
+
+    RemoteFollowupRuntimeService.ResultOutcome outcome =
+        service.recordResult(
+            new RemoteFollowupRuntimeService.ResultRequest(
+                1L,
+                "result-1",
+                "coord-1",
+                "followup-1",
+                "region-a",
+                4L,
+                "region-b",
+                8L,
+                "ABANDONED",
+                "{\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the command\"}"));
+
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, outcome.coordinatorState());
+    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, outcome.followupStatus());
+    assertEquals("RATE_LIMIT", followup.getFailureCode());
+    assertEquals("Target region rejected the command", followup.getFailureMessage());
+  }
+
+  @Test
   void recordResultRejectsMismatchedTargetScope() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
