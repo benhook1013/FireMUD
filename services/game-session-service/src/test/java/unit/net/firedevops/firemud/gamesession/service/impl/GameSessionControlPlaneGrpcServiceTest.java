@@ -2641,18 +2641,6 @@ class GameSessionControlPlaneGrpcServiceTest {
   private static GameSessionControlPlaneGrpcService remoteControlPlaneService(
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
-      RemoteFollowupResultRepository remoteFollowupResultRepository) {
-    return remoteControlPlaneService(
-        remoteFollowupRepository,
-        remoteCommandCoordinatorRepository,
-        remoteFollowupResultRepository,
-        Mockito.mock(GameplayCommandRepository.class),
-        null);
-  }
-
-  private static GameSessionControlPlaneGrpcService remoteControlPlaneService(
-      RemoteFollowupRepository remoteFollowupRepository,
-      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
       GameplayCommandRepository gameplayCommandRepository,
       GameDesignClient gameDesignClient) {

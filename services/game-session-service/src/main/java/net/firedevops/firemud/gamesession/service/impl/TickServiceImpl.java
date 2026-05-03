@@ -6,6 +6,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
@@ -122,8 +123,10 @@ public class TickServiceImpl implements TickService {
   private final Map<String, Long> retryQueueDepthByTarget = new ConcurrentHashMap<>();
   private final AtomicLong retryQueueDepthTotal = new AtomicLong();
   private final AtomicInteger retryQueueTargetsWithPending = new AtomicInteger();
-  private final Map<String, Long> remoteFollowupDueCountByTarget = new ConcurrentHashMap<>();
-  private final AtomicLong remoteFollowupDueTotal = new AtomicLong();
+  private final Map<String, AtomicLong> remoteFollowupDueGaugeByTarget = new ConcurrentHashMap<>();
+  private final Map<String, AtomicLong> remoteFollowupDrainLagGaugeByTarget =
+      new ConcurrentHashMap<>();
+  private final Map<String, Long> remoteFollowupDuePresenceByTarget = new ConcurrentHashMap<>();
   private final AtomicInteger remoteFollowupTargetsWithDue = new AtomicInteger();
 
   private record OwnershipSnapshot(
@@ -186,7 +189,6 @@ public class TickServiceImpl implements TickService {
     meterRegistry.gauge("game_session_retry_queue_depth_total", retryQueueDepthTotal);
     meterRegistry.gauge(
         "game_session_retry_queue_targets_with_pending", retryQueueTargetsWithPending);
-    meterRegistry.gauge("game_session_remote_followups_due_total", remoteFollowupDueTotal);
     meterRegistry.gauge(
         "game_session_remote_followups_targets_with_due", remoteFollowupTargetsWithDue);
     ResourceScriptSource commitSrc =
@@ -584,18 +586,51 @@ public class TickServiceImpl implements TickService {
             ownership.regionId(),
             RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
             ownership.lastCommittedTickId() + 1L);
+    long drainLagMs =
+        remoteFollowupRepository
+            .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+                tenantId,
+                ownership.regionId(),
+                RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
+                ownership.lastCommittedTickId() + 1L)
+            .map(
+                followup ->
+                    Math.max(
+                        0L,
+                        (ownership.lastCommittedTickId() + 1L - followup.getDueTickId())
+                            * tickDurationMs))
+            .orElse(0L);
     String gaugeKey = tenantId + ":" + ownership.regionId();
-    remoteFollowupDueCountByTarget.compute(
+    remoteFollowupDueGaugeByTarget
+        .computeIfAbsent(
+            gaugeKey,
+            ignored ->
+                meterRegistry.gauge(
+                    "remote_followups_due_total",
+                    Tags.of("tenantId", tenantId.toString(), "regionId", ownership.regionId()),
+                    new AtomicLong()))
+        .set(dueCount);
+    remoteFollowupDrainLagGaugeByTarget
+        .computeIfAbsent(
+            gaugeKey,
+            ignored ->
+                meterRegistry.gauge(
+                    "remote_followups_drain_lag_ms",
+                    Tags.of("tenantId", tenantId.toString(), "regionId", ownership.regionId()),
+                    new AtomicLong()))
+        .set(drainLagMs);
+    remoteFollowupDuePresenceByTarget.compute(
         gaugeKey,
         (ignored, previousDepth) -> {
           long prior = previousDepth != null ? previousDepth : 0L;
-          remoteFollowupDueTotal.addAndGet(dueCount - prior);
           if (prior == 0L && dueCount > 0L) {
             remoteFollowupTargetsWithDue.incrementAndGet();
+            return 1L;
           } else if (prior > 0L && dueCount == 0L) {
             remoteFollowupTargetsWithDue.decrementAndGet();
+            return 0L;
           }
-          return dueCount > 0L ? dueCount : null;
+          return prior;
         });
     if (dueCount > maxRemoteFollowupsPerTick) {
       meterRegistry

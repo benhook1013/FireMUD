@@ -131,6 +131,7 @@ class TickServiceImplTest {
             remoteFollowupRuntimeService,
             automationScriptingClient);
     ((TickServiceImpl) service).init();
+    setField(service, "tickDurationMs", 1000L);
     setField(service, "maxRemoteFollowupsPerTick", 16);
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
     instance.setTenantId(1L);
@@ -155,6 +156,10 @@ class TickServiceImplTest {
             .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
                 anyLong(), any(), any(), anyLong()))
         .thenReturn(0L);
+    when(remoteFollowupRepository
+            .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+                anyLong(), any(), any(), anyLong()))
+        .thenReturn(Optional.empty());
     when(remoteFollowupDrainService.claimDueFollowups(anyLong(), any(), anyLong(), any(), anyInt()))
         .thenReturn(
             new net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService.ClaimOutcome(
@@ -254,6 +259,42 @@ class TickServiceImplTest {
             .tag("regionId", "2")
             .counter()
             .count());
+  }
+
+  @Test
+  void processTickPublishesRemoteFollowupDueAndDrainLagByScope() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(remoteFollowupRepository
+            .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                1L, "2", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 1L))
+        .thenReturn(2L);
+    net.firedevops.firemud.gamesession.entity.RemoteFollowup oldestDue =
+        new net.firedevops.firemud.gamesession.entity.RemoteFollowup();
+    oldestDue.setDueTickId(0L);
+    when(remoteFollowupRepository
+            .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+                1L, "2", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 1L))
+        .thenReturn(Optional.of(oldestDue));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        2.0,
+        meterRegistry
+            .get("remote_followups_due_total")
+            .tag("tenantId", "1")
+            .tag("regionId", "2")
+            .gauge()
+            .value());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1000.0,
+        meterRegistry
+            .get("remote_followups_drain_lag_ms")
+            .tag("tenantId", "1")
+            .tag("regionId", "2")
+            .gauge()
+            .value());
   }
 
   @Test
