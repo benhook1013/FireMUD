@@ -42,6 +42,8 @@ class RemoteFollowupDrainServiceImplTest {
   void claimDueFollowupsMarksClaimedRowsInOrder() {
     RemoteFollowup first = followup("rf-1", 10L);
     first.setTargetEntityId("entity-1");
+    first.setFailureCode("REMOTE_DRAIN_ABORTED");
+    first.setFailureMessage("stale");
     RemoteFollowup second = followup("rf-2", 11L);
     second.setTargetEntityId("entity-2");
     when(remoteFollowupRepository
@@ -61,6 +63,8 @@ class RemoteFollowupDrainServiceImplTest {
     assertEquals(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED, first.getStatus());
     assertEquals("tb-1", first.getClaimedTickBatchId());
     assertEquals(1L, first.getClaimOrdinal());
+    assertEquals(null, first.getFailureCode());
+    assertEquals(null, first.getFailureMessage());
     assertEquals(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED, second.getStatus());
     assertEquals(2L, second.getClaimOrdinal());
   }

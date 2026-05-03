@@ -75,6 +75,8 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
       followup.setStatus(FOLLOWUP_CLAIMED);
       followup.setClaimedTickBatchId(tickBatchId);
       followup.setClaimOrdinal((long) index + 1L);
+      followup.setFailureCode(null);
+      followup.setFailureMessage(null);
       followup.setUpdatedAt(now);
     }
     remoteFollowupRepository.saveAll(followups);
