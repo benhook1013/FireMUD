@@ -53,6 +53,9 @@ public class RemoteFollowupResult {
   @Column(name = "result_payload_json", columnDefinition = "TEXT")
   private String resultPayloadJson;
 
+  @Column(name = "result_error_code", length = 80)
+  private String resultErrorCode;
+
   @Column(name = "playable_state_scope", length = 32)
   private String playableStateScope;
 

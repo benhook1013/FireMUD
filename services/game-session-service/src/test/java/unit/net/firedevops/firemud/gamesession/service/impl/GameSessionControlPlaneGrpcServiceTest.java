@@ -2058,11 +2058,14 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setStatus("CLAIMED");
     followup.setClaimedTickBatchId("tb-1");
     followup.setClaimOrdinal(3L);
-    followup.setPayloadJson("{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}");
+    followup.setPayloadJson("{\"kind\":\"payload_kind\",\"command\":\"payload LOOK\"}");
+    followup.setPayloadKind("enqueue_automation_command");
+    followup.setRequestedCommand("LOOK");
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setCoordinatorId("coord-1");
     result.setOutcome("APPLIED");
-    result.setResultPayloadJson("{\"commandId\":\"auto-1\"}");
+    result.setResultPayloadJson("{\"commandId\":\"auto-1\",\"errorCode\":\"payload-error\"}");
+    result.setResultErrorCode("RATE_LIMIT");
     result.setObservedAt(Instant.parse("2026-05-01T00:00:05Z"));
     RemoteCommandCoordinatorRepository repository =
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
@@ -2135,9 +2138,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("LOOK", responseRef.get().getCoordinator().getFollowupRequestedCommand());
     assertEquals("APPLIED", responseRef.get().getCoordinator().getLatestResultOutcome());
     assertEquals(
-        "{\"commandId\":\"auto-1\"}",
+        "{\"commandId\":\"auto-1\",\"errorCode\":\"payload-error\"}",
         responseRef.get().getCoordinator().getLatestResultPayloadJson());
     assertEquals("rfcmd-rf-1", responseRef.get().getCoordinator().getLatestResultCommandId());
+    assertEquals("RATE_LIMIT", responseRef.get().getCoordinator().getLatestResultErrorCode());
     assertEquals("rfcmd-rf-1", responseRef.get().getCoordinator().getTargetCommandId());
     assertEquals("STAGED", responseRef.get().getCoordinator().getTargetCommandExecutionOutcome());
     assertEquals("PENDING", responseRef.get().getCoordinator().getTargetCommandGameplayResult());
@@ -2171,7 +2175,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setPluginId("plugin-1");
     followup.setPluginVersionId("plugin-v1");
     followup.setEffectKey("damage:1");
-    followup.setPayloadJson("{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}");
+    followup.setPayloadJson("{\"kind\":\"payload_kind\",\"command\":\"payload LOOK\"}");
+    followup.setPayloadKind("enqueue_automation_command");
+    followup.setRequestedCommand("LOOK");
     followup.setTargetEntityId("entity-9");
     followup.setStatus("SCHEDULED");
     followup.setCreatedAt(Instant.parse("2026-05-01T00:00:00Z"));
@@ -2248,7 +2254,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setTargetRegionId("region-b");
     result.setTargetRegionEpoch(4L);
     result.setOutcome("REMOTE_APPLIED");
-    result.setResultPayloadJson("{\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\"}");
+    result.setResultPayloadJson("{\"commandId\":\"auto-1\",\"errorCode\":\"payload-error\"}");
+    result.setResultErrorCode("RATE_LIMIT");
     result.setPlayableStateScope("SHARED");
     result.setWorldSlug("demo");
     result.setRealmSlug("production");
@@ -2300,7 +2307,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("script-1", responseRef.get().getResults(0).getScriptId());
     assertEquals("REMOTE_APPLIED", responseRef.get().getResults(0).getOutcome());
     assertEquals(
-        "{\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\"}",
+        "{\"commandId\":\"auto-1\",\"errorCode\":\"payload-error\"}",
         responseRef.get().getResults(0).getResultPayloadJson());
     assertEquals("auto-1", responseRef.get().getResults(0).getResultCommandId());
     assertEquals("RATE_LIMIT", responseRef.get().getResults(0).getResultErrorCode());
@@ -2331,6 +2338,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setTargetRegionEpoch(5L);
     result.setOutcome("REMOTE_APPLIED");
     result.setResultPayloadJson("{\"commandId\":\"payload-cmd\",\"errorCode\":\"RATE_LIMIT\"}");
+    result.setResultErrorCode("TIMEOUT");
     result.setObservedAt(Instant.parse("2026-05-01T00:00:02Z"));
     RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
     RemoteCommandCoordinatorRepository coordinatorRepository =
@@ -2367,6 +2375,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals(1, responseRef.get().getResultsCount());
     assertEquals("linked-cmd", responseRef.get().getResults(0).getResultCommandId());
+    assertEquals("TIMEOUT", responseRef.get().getResults(0).getResultErrorCode());
     assertEquals("NOT_APPLIED", responseRef.get().getResults(0).getResultCommandExecutionOutcome());
     assertEquals("FAILURE", responseRef.get().getResults(0).getResultCommandGameplayResult());
     Mockito.verify(gameplayCommandRepository, Mockito.never()).findByCommandId("payload-cmd");

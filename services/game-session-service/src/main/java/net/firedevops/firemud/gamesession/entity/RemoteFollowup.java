@@ -68,6 +68,12 @@ public class RemoteFollowup {
   @Column(name = "payload_json", columnDefinition = "TEXT")
   private String payloadJson;
 
+  @Column(name = "payload_kind", length = 80)
+  private String payloadKind;
+
+  @Column(name = "requested_command", length = 500)
+  private String requestedCommand;
+
   @Column(name = "failure_code", length = 80)
   private String failureCode;
 

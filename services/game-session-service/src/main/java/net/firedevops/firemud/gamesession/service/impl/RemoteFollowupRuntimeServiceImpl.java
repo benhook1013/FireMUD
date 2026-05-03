@@ -1,7 +1,10 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -26,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeService {
   private static final Logger logger =
       LoggingUtil.getLogger(RemoteFollowupRuntimeServiceImpl.class);
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   static final String COORDINATOR_PENDING_REMOTE = "PENDING_REMOTE";
   static final String COORDINATOR_REMOTE_APPLIED = "REMOTE_APPLIED";
@@ -560,6 +564,9 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     followup.setEffectKey(request.effectKey());
     followup.setTargetEntityId(blankToNull(request.targetEntityId()));
     followup.setPayloadJson(blankToNull(request.payloadJson()));
+    PayloadSummary payloadSummary = payloadSummary(request.payloadJson());
+    followup.setPayloadKind(payloadSummary.kind());
+    followup.setRequestedCommand(payloadSummary.command());
     followup.setStatus(FOLLOWUP_SCHEDULED);
     followup.setClaimedTickBatchId(null);
     followup.setClaimOrdinal(null);
@@ -588,6 +595,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     result.setTargetRegionEpoch(request.targetRegionEpoch());
     result.setOutcome(request.outcome());
     result.setResultPayloadJson(blankToNull(request.resultPayloadJson()));
+    result.setResultErrorCode(resultSummary(request.resultPayloadJson()).errorCode());
     result.setPlayableStateScope(
         blankToNull(
             coordinator != null && coordinator.getPlayableStateScope() != null
@@ -713,6 +721,35 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             command == null ? null : command.getAutomationWorkItemId()));
     followup.setScriptId(
         metadataValue(request.scriptId(), command == null ? null : command.getScriptId()));
+  }
+
+  private static PayloadSummary payloadSummary(String payloadJson) {
+    if (payloadJson == null || payloadJson.isBlank()) {
+      return new PayloadSummary(null, null);
+    }
+    try {
+      JsonNode root = OBJECT_MAPPER.readTree(payloadJson);
+      return new PayloadSummary(
+          blankToNull(root.path("kind").asText("")), blankToNull(root.path("command").asText("")));
+    } catch (IOException ignored) {
+      return new PayloadSummary(null, null);
+    }
+  }
+
+  private static ResultSummary resultSummary(String payloadJson) {
+    if (payloadJson == null || payloadJson.isBlank()) {
+      return new ResultSummary(null);
+    }
+    try {
+      JsonNode root = OBJECT_MAPPER.readTree(payloadJson);
+      String errorCode = blankToNull(root.path("errorCode").asText(""));
+      if (errorCode == null && root.has("failureCode")) {
+        errorCode = blankToNull(root.path("failureCode").asText(""));
+      }
+      return new ResultSummary(errorCode);
+    } catch (IOException ignored) {
+      return new ResultSummary(null);
+    }
   }
 
   private static String metadataValue(String requestValue, String commandValue) {
@@ -880,4 +917,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         .set(
             "remote:" + tenantId + ":" + targetEntityId, "1", java.time.Duration.ofMillis(60_000L));
   }
+
+  private record PayloadSummary(String kind, String command) {}
+
+  private record ResultSummary(String errorCode) {}
 }
