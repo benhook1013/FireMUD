@@ -319,6 +319,19 @@ class TickServiceImplTest {
     followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
     followup.setClaimedTickBatchId("tb-followup");
     followup.setClaimOrdinal(1L);
+    followup.setCommandId("cmd-1");
+    followup.setAutomationDispatchId("dispatch-1");
+    followup.setAutomationWorkItemId("work-1");
+    followup.setScriptId("script-1");
+    followup.setScriptPatchVersion("patch-1");
+    followup.setPluginId("plugin-1");
+    followup.setPluginVersionId("plugin-v1");
+    followup.setPlayableStateScope("SHARED");
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(17L);
+    followup.setPayloadKind("noop");
+    followup.setRequestedCommand("LOOK");
     followup.setPayloadJson("{\"kind\":\"noop\"}");
     when(remoteFollowupRepository.findByClaimedTickBatchIdOrderByIdAsc(any(String.class)))
         .thenReturn(List.of(followup));
@@ -357,7 +370,20 @@ class TickServiceImplTest {
             .anyMatch(
                 batch ->
                     batch.getSelectedWorkManifestJson().contains("\"sourceOrdinal\":1")
-                        && batch.getSelectedWorkManifestJson().contains("\"sourceDueTickId\":10")));
+                        && batch.getSelectedWorkManifestJson().contains("\"sourceDueTickId\":10")
+                        && batch.getSelectedWorkManifestJson().contains("\"commandId\":\"cmd-1\"")
+                        && batch
+                            .getSelectedWorkManifestJson()
+                            .contains("\"automationDispatchId\":\"dispatch-1\"")
+                        && batch
+                            .getSelectedWorkManifestJson()
+                            .contains("\"scriptPatchVersion\":\"patch-1\"")
+                        && batch.getSelectedWorkManifestJson().contains("\"worldSlug\":\"demo\"")
+                        && batch.getSelectedWorkManifestJson().contains("\"pointerVersion\":17")
+                        && batch.getSelectedWorkManifestJson().contains("\"payloadKind\":\"noop\"")
+                        && batch
+                            .getSelectedWorkManifestJson()
+                            .contains("\"requestedCommand\":\"LOOK\"")));
   }
 
   @Test

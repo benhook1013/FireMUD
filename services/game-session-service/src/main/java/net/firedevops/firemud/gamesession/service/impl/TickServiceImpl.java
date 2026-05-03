@@ -1598,6 +1598,19 @@ public class TickServiceImpl implements TickService {
       appendJsonNumberField(builder, "targetRegionEpoch", followup.getTargetRegionEpoch());
       appendJsonNumberField(builder, "dueTickId", followup.getDueTickId());
       appendJsonStringField(builder, "targetEntityId", followup.getTargetEntityId());
+      appendJsonStringField(builder, "commandId", followup.getCommandId());
+      appendJsonStringField(builder, "automationDispatchId", followup.getAutomationDispatchId());
+      appendJsonStringField(builder, "automationWorkItemId", followup.getAutomationWorkItemId());
+      appendJsonStringField(builder, "scriptId", followup.getScriptId());
+      appendJsonStringField(builder, "scriptPatchVersion", followup.getScriptPatchVersion());
+      appendJsonStringField(builder, "pluginId", followup.getPluginId());
+      appendJsonStringField(builder, "pluginVersionId", followup.getPluginVersionId());
+      appendJsonStringField(builder, "playableStateScope", followup.getPlayableStateScope());
+      appendJsonStringField(builder, "worldSlug", followup.getWorldSlug());
+      appendJsonStringField(builder, "realmSlug", followup.getRealmSlug());
+      appendJsonNumberField(builder, "pointerVersion", followup.getPointerVersion());
+      appendJsonStringField(builder, "payloadKind", followup.getPayloadKind());
+      appendJsonStringField(builder, "requestedCommand", followup.getRequestedCommand());
       appendJsonStringField(builder, "payloadJson", followup.getPayloadJson());
       builder.append('}');
     }
