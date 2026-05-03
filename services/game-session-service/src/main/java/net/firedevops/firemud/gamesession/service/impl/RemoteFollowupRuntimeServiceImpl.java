@@ -599,6 +599,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     ResultSummary resultSummary = resultSummary(request.resultPayloadJson());
     result.setResultCommandId(resultSummary.commandId());
     result.setResultErrorCode(resultSummary.errorCode());
+    result.setResultMessage(truncate(resultSummary.message()));
     result.setPlayableStateScope(
         blankToNull(
             coordinator != null && coordinator.getPlayableStateScope() != null
@@ -879,7 +880,9 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             : new ResultSummary(
                 blankToNull(latestResult.getResultCommandId()),
                 blankToNull(latestResult.getResultErrorCode()),
-                resultSummary(latestResult.getResultPayloadJson()).message());
+                blankToNull(latestResult.getResultMessage()) != null
+                    ? blankToNull(latestResult.getResultMessage())
+                    : resultSummary(latestResult.getResultPayloadJson()).message());
     if (command == null) {
       return;
     }

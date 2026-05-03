@@ -1993,7 +1993,8 @@ public final class GameSessionControlPlaneGrpcService
           builder,
           latestResult.getResultPayloadJson(),
           latestResult.getResultCommandId(),
-          latestResult.getResultErrorCode());
+          latestResult.getResultErrorCode(),
+          latestResult.getResultMessage());
     }
     applyDirectCommandProvenance(
         builder,
@@ -2115,7 +2116,8 @@ public final class GameSessionControlPlaneGrpcService
             builder,
             result.getResultPayloadJson(),
             result.getResultCommandId(),
-            result.getResultErrorCode());
+            result.getResultErrorCode(),
+            result.getResultMessage());
     GameplayCommand targetCommand =
         linkedTargetCommand(result.getTenantId(), result.getFollowupId());
     if (targetCommand == null && resultCommandId != null) {
@@ -2378,13 +2380,18 @@ public final class GameSessionControlPlaneGrpcService
       RemoteCommandCoordinatorEntry.Builder builder,
       String payloadJson,
       String durableCommandId,
-      String durableErrorCode) {
-    ResultSummary summary = resultSummary(payloadJson, durableCommandId, durableErrorCode);
+      String durableErrorCode,
+      String durableMessage) {
+    ResultSummary summary =
+        resultSummary(payloadJson, durableCommandId, durableErrorCode, durableMessage);
     if (summary.commandId() != null) {
       builder.setLatestResultCommandId(summary.commandId());
     }
     if (summary.errorCode() != null) {
       builder.setLatestResultErrorCode(summary.errorCode());
+    }
+    if (summary.message() != null) {
+      builder.setLatestResultMessage(summary.message());
     }
   }
 
@@ -2392,13 +2399,18 @@ public final class GameSessionControlPlaneGrpcService
       RemoteFollowupResultEntry.Builder builder,
       String payloadJson,
       String durableCommandId,
-      String durableErrorCode) {
-    ResultSummary summary = resultSummary(payloadJson, durableCommandId, durableErrorCode);
+      String durableErrorCode,
+      String durableMessage) {
+    ResultSummary summary =
+        resultSummary(payloadJson, durableCommandId, durableErrorCode, durableMessage);
     if (summary.commandId() != null) {
       builder.setResultCommandId(summary.commandId());
     }
     if (summary.errorCode() != null) {
       builder.setResultErrorCode(summary.errorCode());
+    }
+    if (summary.message() != null) {
+      builder.setResultMessage(summary.message());
     }
     return summary.commandId();
   }
@@ -2407,13 +2419,18 @@ public final class GameSessionControlPlaneGrpcService
       GameplayCommandStatus.Builder builder,
       String payloadJson,
       String durableCommandId,
-      String durableErrorCode) {
-    ResultSummary summary = resultSummary(payloadJson, durableCommandId, durableErrorCode);
+      String durableErrorCode,
+      String durableMessage) {
+    ResultSummary summary =
+        resultSummary(payloadJson, durableCommandId, durableErrorCode, durableMessage);
     if (summary.commandId() != null) {
       builder.setRemoteResultCommandId(summary.commandId());
     }
     if (summary.errorCode() != null) {
       builder.setRemoteResultErrorCode(summary.errorCode());
+    }
+    if (summary.message() != null) {
+      builder.setRemoteResultMessage(summary.message());
     }
   }
 
@@ -2437,26 +2454,31 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private static ResultSummary resultSummary(
-      String payloadJson, String durableCommandId, String durableErrorCode) {
+      String payloadJson, String durableCommandId, String durableErrorCode, String durableMessage) {
     ResultSummary payloadSummary = resultSummaryFromJson(payloadJson);
     if ((durableCommandId != null && !durableCommandId.isBlank())
         || payloadSummary.commandId() != null
         || (durableErrorCode != null && !durableErrorCode.isBlank())
-        || payloadSummary.errorCode() != null) {
+        || payloadSummary.errorCode() != null
+        || (durableMessage != null && !durableMessage.isBlank())
+        || payloadSummary.message() != null) {
       return new ResultSummary(
           durableCommandId != null && !durableCommandId.isBlank()
               ? durableCommandId
               : payloadSummary.commandId(),
           durableErrorCode != null && !durableErrorCode.isBlank()
               ? durableErrorCode
-              : payloadSummary.errorCode());
+              : payloadSummary.errorCode(),
+          durableMessage != null && !durableMessage.isBlank()
+              ? durableMessage
+              : payloadSummary.message());
     }
-    return new ResultSummary(null, null);
+    return new ResultSummary(null, null, null);
   }
 
   private static ResultSummary resultSummaryFromJson(String payloadJson) {
     if (payloadJson == null || payloadJson.isBlank()) {
-      return new ResultSummary(null, null);
+      return new ResultSummary(null, null, null);
     }
     try {
       JsonNode root = OBJECT_MAPPER.readTree(payloadJson);
@@ -2465,15 +2487,16 @@ public final class GameSessionControlPlaneGrpcService
       if (errorCode == null && root.has("failureCode")) {
         errorCode = blankToNull(root.path("failureCode").asText(""));
       }
-      return new ResultSummary(commandId, errorCode);
+      String message = blankToNull(root.path("message").asText(""));
+      return new ResultSummary(commandId, errorCode, message);
     } catch (IOException ignored) {
-      return new ResultSummary(null, null);
+      return new ResultSummary(null, null, null);
     }
   }
 
   private record PayloadSummary(String kind, String command) {}
 
-  private record ResultSummary(String commandId, String errorCode) {}
+  private record ResultSummary(String commandId, String errorCode, String message) {}
 
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
@@ -2677,7 +2700,8 @@ public final class GameSessionControlPlaneGrpcService
           builder,
           latestRemoteResult.getResultPayloadJson(),
           latestRemoteResult.getResultCommandId(),
-          latestRemoteResult.getResultErrorCode());
+          latestRemoteResult.getResultErrorCode(),
+          latestRemoteResult.getResultMessage());
     }
     if (remoteTargetCommand != null && remoteTargetCommand.getCommandId() != null) {
       builder.setRemoteResultCommandId(remoteTargetCommand.getCommandId());

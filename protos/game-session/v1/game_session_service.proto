@@ -474,6 +474,7 @@ message GameplayCommandStatus {
   ScriptPatchPublicationLink publication = 51;
   string remote_result_command_id = 52;
   string remote_result_error_code = 53;
+  string remote_result_message = 54;
 }
 
 message GetGameplayCommandStatusResponse {
@@ -558,6 +559,7 @@ message RemoteCommandCoordinatorEntry {
   string target_command_id = 40;
   string target_command_execution_outcome = 41;
   string target_command_gameplay_result = 42;
+  string latest_result_message = 43;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -648,6 +650,7 @@ message RemoteFollowupResultEntry {
   string result_error_code = 25;
   string result_command_execution_outcome = 26;
   string result_command_gameplay_result = 27;
+  string result_message = 28;
 }
 
 message ListRemoteFollowupResultsResponse {

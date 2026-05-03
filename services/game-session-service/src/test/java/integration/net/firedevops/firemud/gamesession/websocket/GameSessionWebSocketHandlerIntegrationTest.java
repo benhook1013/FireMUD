@@ -714,8 +714,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
           "movement command enqueue",
           java.time.Duration.ofSeconds(5),
           () -> {
-            verify(commandService).enqueue("42", "north", false);
-            return true;
+            return org.mockito.Mockito.mockingDetails(commandService).getInvocations().stream()
+                .anyMatch(
+                    invocation ->
+                        "enqueue".equals(invocation.getMethod().getName())
+                            && java.util.List.of(invocation.getArguments())
+                                .equals(java.util.List.of("42", "north", false)));
           });
       payloads = client.responses();
     }

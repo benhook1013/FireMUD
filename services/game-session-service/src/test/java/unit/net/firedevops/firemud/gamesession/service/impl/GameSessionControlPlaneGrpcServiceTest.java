@@ -1100,7 +1100,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setTenantId(1L);
     result.setCoordinatorId("coord-1");
     result.setOutcome("ABANDONED");
-    result.setResultPayloadJson("{\"failureCode\":\"REMOTE_FOLLOWUP_KIND_UNSUPPORTED\"}");
+    result.setResultPayloadJson(
+        "{\"failureCode\":\"REMOTE_FOLLOWUP_KIND_UNSUPPORTED\",\"message\":\"Target region rejected the remote payload kind\"}");
+    result.setResultMessage("Target region rejected the remote payload kind");
     result.setObservedAt(Instant.parse("2026-04-15T00:00:03Z"));
     Mockito.when(
             remoteFollowupResultRepository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(
@@ -1176,11 +1178,14 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("PENDING_REMOTE", responseRef.get().getCommand().getRemoteState());
     assertEquals("ABANDONED", responseRef.get().getCommand().getRemoteResultOutcome());
     assertEquals(
-        "{\"failureCode\":\"REMOTE_FOLLOWUP_KIND_UNSUPPORTED\"}",
+        "{\"failureCode\":\"REMOTE_FOLLOWUP_KIND_UNSUPPORTED\",\"message\":\"Target region rejected the remote payload kind\"}",
         responseRef.get().getCommand().getRemoteResultPayloadJson());
     assertEquals(
         "REMOTE_FOLLOWUP_KIND_UNSUPPORTED",
         responseRef.get().getCommand().getRemoteResultErrorCode());
+    assertEquals(
+        "Target region rejected the remote payload kind",
+        responseRef.get().getCommand().getRemoteResultMessage());
     assertEquals(
         Instant.parse("2026-04-15T00:00:03Z").toEpochMilli(),
         responseRef.get().getCommand().getRemoteResultObservedAtMs());
@@ -2064,9 +2069,11 @@ class GameSessionControlPlaneGrpcServiceTest {
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setCoordinatorId("coord-1");
     result.setOutcome("APPLIED");
-    result.setResultPayloadJson("{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\"}");
+    result.setResultPayloadJson(
+        "{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\",\"message\":\"payload message\"}");
     result.setResultCommandId("auto-1");
     result.setResultErrorCode("RATE_LIMIT");
+    result.setResultMessage("Target region rejected the remote gameplay command");
     result.setObservedAt(Instant.parse("2026-05-01T00:00:05Z"));
     RemoteCommandCoordinatorRepository repository =
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
@@ -2139,10 +2146,13 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("LOOK", responseRef.get().getCoordinator().getFollowupRequestedCommand());
     assertEquals("APPLIED", responseRef.get().getCoordinator().getLatestResultOutcome());
     assertEquals(
-        "{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\"}",
+        "{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\",\"message\":\"payload message\"}",
         responseRef.get().getCoordinator().getLatestResultPayloadJson());
     assertEquals("rfcmd-rf-1", responseRef.get().getCoordinator().getLatestResultCommandId());
     assertEquals("RATE_LIMIT", responseRef.get().getCoordinator().getLatestResultErrorCode());
+    assertEquals(
+        "Target region rejected the remote gameplay command",
+        responseRef.get().getCoordinator().getLatestResultMessage());
     assertEquals("rfcmd-rf-1", responseRef.get().getCoordinator().getTargetCommandId());
     assertEquals("STAGED", responseRef.get().getCoordinator().getTargetCommandExecutionOutcome());
     assertEquals("PENDING", responseRef.get().getCoordinator().getTargetCommandGameplayResult());
@@ -2255,9 +2265,11 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setTargetRegionId("region-b");
     result.setTargetRegionEpoch(4L);
     result.setOutcome("REMOTE_APPLIED");
-    result.setResultPayloadJson("{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\"}");
+    result.setResultPayloadJson(
+        "{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\",\"message\":\"payload message\"}");
     result.setResultCommandId("auto-1");
     result.setResultErrorCode("RATE_LIMIT");
+    result.setResultMessage("Target region rejected the remote gameplay command");
     result.setPlayableStateScope("SHARED");
     result.setWorldSlug("demo");
     result.setRealmSlug("production");
@@ -2309,10 +2321,13 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("script-1", responseRef.get().getResults(0).getScriptId());
     assertEquals("REMOTE_APPLIED", responseRef.get().getResults(0).getOutcome());
     assertEquals(
-        "{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\"}",
+        "{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\",\"message\":\"payload message\"}",
         responseRef.get().getResults(0).getResultPayloadJson());
     assertEquals("auto-1", responseRef.get().getResults(0).getResultCommandId());
     assertEquals("RATE_LIMIT", responseRef.get().getResults(0).getResultErrorCode());
+    assertEquals(
+        "Target region rejected the remote gameplay command",
+        responseRef.get().getResults(0).getResultMessage());
     assertEquals("APPLIED", responseRef.get().getResults(0).getResultCommandExecutionOutcome());
     assertEquals("SUCCESS", responseRef.get().getResults(0).getResultCommandGameplayResult());
     assertEquals("patch-1", responseRef.get().getResults(0).getScriptPatchVersion());
@@ -2339,9 +2354,11 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setTargetRegionId("region-b");
     result.setTargetRegionEpoch(5L);
     result.setOutcome("REMOTE_APPLIED");
-    result.setResultPayloadJson("{\"commandId\":\"payload-cmd\",\"errorCode\":\"RATE_LIMIT\"}");
+    result.setResultPayloadJson(
+        "{\"commandId\":\"payload-cmd\",\"errorCode\":\"RATE_LIMIT\",\"message\":\"payload message\"}");
     result.setResultCommandId("durable-cmd");
     result.setResultErrorCode("TIMEOUT");
+    result.setResultMessage("Target region timed out the remote gameplay command");
     result.setObservedAt(Instant.parse("2026-05-01T00:00:02Z"));
     RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
     RemoteCommandCoordinatorRepository coordinatorRepository =
@@ -2379,6 +2396,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(1, responseRef.get().getResultsCount());
     assertEquals("linked-cmd", responseRef.get().getResults(0).getResultCommandId());
     assertEquals("TIMEOUT", responseRef.get().getResults(0).getResultErrorCode());
+    assertEquals(
+        "Target region timed out the remote gameplay command",
+        responseRef.get().getResults(0).getResultMessage());
     assertEquals("NOT_APPLIED", responseRef.get().getResults(0).getResultCommandExecutionOutcome());
     assertEquals("FAILURE", responseRef.get().getResults(0).getResultCommandGameplayResult());
     Mockito.verify(gameplayCommandRepository, Mockito.never()).findByCommandId("payload-cmd");
