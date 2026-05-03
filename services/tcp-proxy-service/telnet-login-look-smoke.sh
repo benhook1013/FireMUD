@@ -20,6 +20,7 @@ SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_STARTUP_EXPECT=${SMOKE_STARTUP_EXPECT:-"DISCONNECT startup_unavailable"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
 FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
+export FIREMUD_REPO_ROOT
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON=python3
@@ -109,6 +110,7 @@ def drain_available(sock, quiet_timeout=0.25):
 def send_and_expect(sock, responses, line, expected_substrings, label):
     start_index = len(responses)
     sock.sendall(f"{line}\r\n".encode("iso-8859-1"))
+    drain_timeout = 1.0 if label == "PLAY" else 0.25
     response = wait_for_incremental_response(
         lambda: recv_until(sock, "", 0.5),
         responses,
@@ -116,7 +118,7 @@ def send_and_expect(sock, responses, line, expected_substrings, label):
         expected_substrings,
         timeout_seconds,
         "".join,
-        lambda: drain_available(sock),
+        lambda: drain_available(sock, drain_timeout),
     )
     print(f"=== {label} response ===")
     print(response.strip() or "<no data>")
@@ -128,7 +130,7 @@ def verify_pre_readiness_telnet_admission():
     deadline = time.time() + startup_wait_seconds
     observed_unready_window = False
     while time.time() < deadline:
-        if http_readiness_up(readiness_url):
+        if http_readiness_up(readiness_url, timeout_seconds):
             if observed_unready_window:
                 print("Confirmed pre-readiness Telnet refusal before tcp-proxy readiness converged.")
             else:

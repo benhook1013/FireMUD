@@ -17,6 +17,7 @@ SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
 SMOKE_LOOK_TIMEOUT_SECONDS=${SMOKE_LOOK_TIMEOUT_SECONDS:-60}
 FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
+export FIREMUD_REPO_ROOT
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON=python3
@@ -92,14 +93,21 @@ def recv_text(ws, label, timeout):
     raise RuntimeError(f"Timed out waiting for {label} after {timeout}s") from last_error
 
 
+def recv_optional_chunk(ws, label, timeout):
+    try:
+        return recv_text(ws, label, timeout).strip()
+    except RuntimeError:
+        return ""
+
+
 def drain_available(ws, responses, quiet_timeout=0.25):
     deadline = time.time() + quiet_timeout
     while time.time() < deadline:
         remaining = max(0.05, deadline - time.time())
-        try:
-            responses.append(recv_text(ws, "drain chunk", remaining).strip())
-        except RuntimeError:
+        chunk = recv_optional_chunk(ws, "drain chunk", remaining)
+        if not chunk:
             return
+        responses.append(chunk)
 
 def send_and_expect(ws, line, expected_substrings, label, timeout=timeout_seconds):
     if not hasattr(ws, "_smoke_responses"):
@@ -107,7 +115,7 @@ def send_and_expect(ws, line, expected_substrings, label, timeout=timeout_second
     start_index = len(ws._smoke_responses)
     ws.send(line)
     response = wait_for_incremental_response(
-        lambda: recv_text(ws, f"{label} response chunk", min(0.5, timeout)).strip(),
+        lambda: recv_optional_chunk(ws, f"{label} response chunk", min(0.5, timeout)),
         ws._smoke_responses,
         start_index,
         expected_substrings,

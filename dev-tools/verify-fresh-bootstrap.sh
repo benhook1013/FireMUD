@@ -19,7 +19,10 @@ echo "Destroyed named volumes: postgres-data, redis-coord-data, minio-data"
 
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
 "$BUILD_JARS_SCRIPT"
-docker compose "${COMPOSE_FILES[@]}" up -d --build --remove-orphans
+while IFS= read -r service; do
+  docker compose "${COMPOSE_FILES[@]}" build "$service"
+done < <(docker compose "${COMPOSE_FILES[@]}" config --services)
+docker compose "${COMPOSE_FILES[@]}" up -d --remove-orphans
 
 "$HEALTH_SCRIPT"
 # These smoke clients intentionally reuse the same seeded demo account/runtime

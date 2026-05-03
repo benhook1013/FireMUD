@@ -60,3 +60,13 @@ Entry format:
   - Context: re-auditing the converged gameplay proof showed `GameplayCrossServiceStack` now owns the expensive nested app bootstrap, but large websocket and telnet suites still hand-roll per-suite cleanup around it, including Redis flushes, `game_instances` deletion, screen-buffer clears, and first/default session seeding.
   - Observation: once startup is shared but reset-to-known-state remains local, new suites still copy slightly different isolation steps and the harness convergence stalls one layer short of the real repeated pattern.
   - Expected pattern: shared gameplay stack fixtures should expose one canonical “fresh gameplay baseline” helper that resets mutable stubs, clears Redis and replay buffers, wipes seeded runtime rows, and optionally seeds the default running game instance so cross-service suites do not keep rebuilding that cleanup choreography inline.
+
+- `2026-05-03`: Source-built Docker smoke should split `compose build` from `compose up`
+  - Context: running `dev-tools/verify-fresh-bootstrap.sh` locally on WSL/Docker Desktop repeatedly rebuilt all service images successfully but then left `docker compose up -d --build --remove-orphans` hung with no containers created and no further output.
+  - Observation: the combined `up --build` path can wedge after successful image export, while the underlying compose/build steps still succeed; this makes the canonical smoke proof look like a product failure when the problem is the Docker Desktop compose workflow.
+  - Expected pattern: canonical source-built smoke scripts should run `docker compose build` and `docker compose up -d` as separate steps so local Docker hangs are easier to distinguish from actual runtime/bootstrap regressions.
+
+- `2026-05-03`: Canonical WSL Docker smoke should default compose builds to sequential mode
+  - Context: after splitting `compose build` from `compose up`, the same `dev-tools/verify-fresh-bootstrap.sh` proof still stalled inside `docker compose build` on WSL/Docker Desktop while multiple service contexts were building in parallel.
+  - Observation: the local failure mode is not limited to `up --build`; parallel compose builds themselves can wedge after partial progress even when the service Dockerfiles and jars are valid.
+  - Expected pattern: canonical source-built smoke scripts should build compose services one-by-one instead of relying on a single multi-service `docker compose build` invocation.
