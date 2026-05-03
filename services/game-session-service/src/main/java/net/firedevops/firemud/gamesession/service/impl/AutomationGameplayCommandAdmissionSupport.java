@@ -114,8 +114,7 @@ final class AutomationGameplayCommandAdmissionSupport {
   private static Optional<AdmissionResult> rejectIfOwnershipClosed(
       AdmissionRequest request, RuntimeRegionStatusRepository runtimeRegionStatusRepository) {
     Optional<RuntimeRegionStatus> maybeStatus =
-        runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(
-            request.tenantId(), request.gameInstanceId());
+        findRuntimeOwnership(request, runtimeRegionStatusRepository);
     if (maybeStatus.isEmpty()) {
       return Optional.of(
           new AdmissionResult(
@@ -150,6 +149,18 @@ final class AutomationGameplayCommandAdmissionSupport {
               false, "RUNTIME_PAUSED", null, "runtime_paused", "Runtime ownership is paused"));
     }
     return Optional.empty();
+  }
+
+  private static Optional<RuntimeRegionStatus> findRuntimeOwnership(
+      AdmissionRequest request, RuntimeRegionStatusRepository runtimeRegionStatusRepository) {
+    Optional<RuntimeRegionStatus> byRegionId =
+        runtimeRegionStatusRepository.findByTenantIdAndRegionId(
+            request.tenantId(), request.regionId());
+    if (byRegionId.isPresent()) {
+      return byRegionId;
+    }
+    return runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(
+        request.tenantId(), request.gameInstanceId());
   }
 
   private static GameplayCommand acceptedAutomationCommand(AdmissionRequest request) {
