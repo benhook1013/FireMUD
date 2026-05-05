@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.MissingNode;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
@@ -124,38 +125,52 @@ public final class DefaultDurableRemoteFollowupExecutionService
   private PayloadExecution executePayload(
       RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
     String payloadJson = followup.getPayloadJson();
-    if (payloadJson == null || payloadJson.isBlank()) {
+    JsonNode root = MissingNode.getInstance();
+    if (payloadJson != null && !payloadJson.isBlank()) {
+      try {
+        root = objectMapper.readTree(payloadJson);
+      } catch (IOException ex) {
+        if ((followup.getPayloadKind() == null || followup.getPayloadKind().isBlank())
+            && (followup.getRequestedCommand() == null
+                || followup.getRequestedCommand().isBlank())) {
+          return failure(
+              "REMOTE_FOLLOWUP_PAYLOAD_INVALID",
+              "Target-side remote followup payload is not valid JSON");
+        }
+      }
+    }
+    String payloadKind = firstNonBlank(followup.getPayloadKind(), optionalText(root, "kind"));
+    String requestedCommand =
+        firstNonBlank(followup.getRequestedCommand(), optionalText(root, "command"));
+    if ((payloadJson == null || payloadJson.isBlank())
+        && (payloadKind == null || payloadKind.isBlank())
+        && (requestedCommand == null || requestedCommand.isBlank())) {
       return failure(
           "REMOTE_FOLLOWUP_PAYLOAD_REQUIRED",
           "Target-side remote followup execution requires a typed payload");
     }
-    try {
-      JsonNode root = objectMapper.readTree(payloadJson);
-      String payloadKind = root.path("kind").asText("").trim();
-      if (payloadKind.isBlank()) {
-        return failure(
-            "REMOTE_FOLLOWUP_KIND_REQUIRED",
-            "Target-side remote followup payload must declare a kind");
-      }
-      if ("enqueue_gameplay_command".equals(payloadKind)) {
-        return executeEnqueueGameplayCommand(root, coordinator, followup);
-      }
-      if ("enqueue_automation_command".equals(payloadKind)) {
-        return executeEnqueueAutomationCommand(root, coordinator, followup);
-      }
+    if (payloadKind == null || payloadKind.isBlank()) {
       return failure(
-          "REMOTE_FOLLOWUP_KIND_UNSUPPORTED",
-          "Target-side remote followup payload kind '%s' is not yet supported"
-              .formatted(payloadKind));
-    } catch (IOException ex) {
-      return failure(
-          "REMOTE_FOLLOWUP_PAYLOAD_INVALID",
-          "Target-side remote followup payload is not valid JSON");
+          "REMOTE_FOLLOWUP_KIND_REQUIRED",
+          "Target-side remote followup payload must declare a kind");
     }
+    if ("enqueue_gameplay_command".equals(payloadKind)) {
+      return executeEnqueueGameplayCommand(root, requestedCommand, coordinator, followup);
+    }
+    if ("enqueue_automation_command".equals(payloadKind)) {
+      return executeEnqueueAutomationCommand(root, requestedCommand, coordinator, followup);
+    }
+    return failure(
+        "REMOTE_FOLLOWUP_KIND_UNSUPPORTED",
+        "Target-side remote followup payload kind '%s' is not yet supported"
+            .formatted(payloadKind));
   }
 
   private PayloadExecution executeEnqueueAutomationCommand(
-      JsonNode root, RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
+      JsonNode root,
+      String requestedCommand,
+      RemoteCommandCoordinator coordinator,
+      RemoteFollowup followup) {
     try {
       AutomationGameplayCommandAdmissionSupport.AdmissionResult result =
           AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
@@ -188,7 +203,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   textOrDefault(root, "targetEntityId", followup.getTargetEntityId()),
                   coordinator.getCoordinatorId(),
                   followup.getFollowupId(),
-                  requiredText(root, "command"),
+                  requiredTextOrFallback(root, "command", requestedCommand),
                   root.path("requiresSoloTick").asBoolean(false),
                   followup.getDueTickId()),
               gameInstanceRepository,
@@ -220,7 +235,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
   }
 
   private PayloadExecution executeEnqueueGameplayCommand(
-      JsonNode root, RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
+      JsonNode root,
+      String requestedCommand,
+      RemoteCommandCoordinator coordinator,
+      RemoteFollowup followup) {
     try {
       AutomationGameplayCommandAdmissionSupport.AdmissionResult result =
           AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
@@ -252,7 +270,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   requiredTextOrFallback(root, "targetEntityId", followup.getTargetEntityId()),
                   coordinator.getCoordinatorId(),
                   followup.getFollowupId(),
-                  requiredText(root, "command"),
+                  requiredTextOrFallback(root, "command", requestedCommand),
                   root.path("requiresSoloTick").asBoolean(false),
                   followup.getDueTickId()),
               gameInstanceRepository,
@@ -296,14 +314,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
             + "\"}");
   }
 
-  private static String requiredText(JsonNode root, String fieldName) {
-    String value = optionalText(root, fieldName);
-    if (value == null || value.isBlank()) {
-      throw new IllegalArgumentException(fieldName + " is required");
-    }
-    return value;
-  }
-
   private static String requiredTextOrFallback(
       JsonNode root, String fieldName, String fallbackValue) {
     String value = firstNonBlank(optionalText(root, fieldName), fallbackValue);
@@ -314,6 +324,9 @@ public final class DefaultDurableRemoteFollowupExecutionService
   }
 
   private static String optionalText(JsonNode root, String fieldName) {
+    if (root == null) {
+      return null;
+    }
     String value = root.path(fieldName).asText("").trim();
     return value.isBlank() ? null : value;
   }
@@ -328,6 +341,9 @@ public final class DefaultDurableRemoteFollowupExecutionService
   }
 
   private static Long optionalLong(JsonNode root, String fieldName, Long defaultValue) {
+    if (root == null) {
+      return defaultValue;
+    }
     JsonNode node = root.path(fieldName);
     if (!node.isNumber()) {
       return defaultValue;

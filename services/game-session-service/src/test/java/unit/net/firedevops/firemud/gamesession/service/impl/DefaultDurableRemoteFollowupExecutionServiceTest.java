@@ -231,6 +231,75 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   }
 
   @Test
+  void executeUsesDurablePayloadAuthorityWhenPayloadJsonIsMalformed() {
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId("tb-1");
+    effect.setEffectKey("followup-1");
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setFollowupId("followup-1");
+    followup.setTenantId(1L);
+    followup.setTargetGameInstanceId(9L);
+    followup.setTargetRegionId("region-b");
+    followup.setTargetRegionEpoch(8L);
+    followup.setTargetEntityId("321");
+    followup.setDueTickId(55L);
+    followup.setPlayableStateScope("SHARED");
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(17L);
+    followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+    followup.setClaimedTickBatchId("tb-1");
+    followup.setPayloadJson("{not-json");
+    followup.setPayloadKind("enqueue_automation_command");
+    followup.setRequestedCommand("LOOK");
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setTenantId(1L);
+    coordinator.setFollowupId("followup-1");
+    coordinator.setOriginRegionId("region-a");
+    coordinator.setOriginRegionEpoch(4L);
+    coordinator.setAutomationDispatchId("dispatch-1");
+    coordinator.setAutomationWorkItemId("work-1");
+    coordinator.setScriptId("script-1");
+    coordinator.setScriptPatchVersion("patch-1");
+    coordinator.setPluginId("plugin-1");
+    coordinator.setPluginVersionId("plugin-v1");
+    GameInstance instance = new GameInstance();
+    instance.setId(9L);
+    instance.setTenantId(1L);
+    net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus runtimeStatus =
+        new net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus();
+    runtimeStatus.setTenantId(1L);
+    runtimeStatus.setGameInstanceId(9L);
+    runtimeStatus.setRegionId("region-b");
+    runtimeStatus.setRegionEpoch(8L);
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(gameInstanceRepository.findById(9L)).thenReturn(Optional.of(instance));
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 9L))
+        .thenReturn(Optional.of(runtimeStatus));
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                1L, 9L, "region-b", 8L, "dispatch-1"))
+        .thenReturn(Optional.empty());
+    when(gameplayCommandRepository.save(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("APPLIED", result.effectStatus());
+    verify(tickService)
+        .enqueueCommand(
+            org.mockito.Mockito.eq(1L),
+            org.mockito.Mockito.eq(9L),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.Mockito.eq("LOOK"),
+            org.mockito.Mockito.eq(false));
+  }
+
+  @Test
   void executeEnqueuesAutomationCommandUsingRegionScopedOwnershipAuthority() {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
