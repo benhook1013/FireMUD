@@ -210,6 +210,9 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "effect-1",
                         "entity-9",
                         "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}",
+                        "enqueue_automation_command",
+                        "LOOK",
+                        false,
                         "SHARED",
                         "demo",
                         "production",
@@ -266,6 +269,9 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "effect-1",
                         "entity-9",
                         "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}",
+                        "enqueue_automation_command",
+                        "LOOK",
+                        false,
                         "SHARED",
                         "demo",
                         "production",
@@ -314,6 +320,9 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "effect-1",
                         "entity-9",
                         "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}",
+                        "enqueue_automation_command",
+                        "LOOK",
+                        false,
                         "SHARED",
                         "demo",
                         "production",
@@ -370,6 +379,9 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "effect-1",
                         "entity-9",
                         "{\"kind\":\"enqueue_automation_command\",\"command\":\"SAY hi\"}",
+                        "enqueue_automation_command",
+                        "SAY hi",
+                        false,
                         "SHARED",
                         "demo",
                         "production",
@@ -387,6 +399,114 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null)));
 
     assertEquals("effect_key already maps to different remote followup metadata", ex.getMessage());
+  }
+
+  @Test
+  void scheduleFollowupAcceptsExplicitPayloadAuthorityWithoutPayloadJson() {
+    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+        .thenReturn(Optional.empty());
+    when(followupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            1L, "region-b", 8L, "effect-1"))
+        .thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+
+    RemoteFollowupRuntimeService.ScheduleOutcome outcome =
+        service.scheduleFollowup(
+            new RemoteFollowupRuntimeService.ScheduleRequest(
+                1L,
+                "cmd-1",
+                "coord-1",
+                7L,
+                "region-a",
+                4L,
+                8L,
+                "region-b",
+                8L,
+                22L,
+                4L,
+                25L,
+                "late_result_safe_to_ignore",
+                "followup-1",
+                "effect-1",
+                "entity-9",
+                null,
+                "enqueue_automation_command",
+                "LOOK",
+                true,
+                "SHARED",
+                "demo",
+                "production",
+                17L,
+                "patch-1",
+                "plugin-1",
+                "plugin-v1",
+                "dispatch-1",
+                "work-1",
+                "script-1",
+                "REMOTE_FOLLOWUP",
+                "TARGET_REGION_EXECUTED",
+                44L,
+                22L,
+                1700L));
+
+    assertTrue(outcome.coordinatorCreated());
+    assertTrue(outcome.followupCreated());
+    verify(followupRepository)
+        .save(
+            argThat(
+                followup ->
+                    followup.getPayloadJson() == null
+                        && "enqueue_automation_command".equals(followup.getPayloadKind())
+                        && "LOOK".equals(followup.getRequestedCommand())
+                        && followup.isRequiresSoloTick()));
+  }
+
+  @Test
+  void scheduleFollowupRejectsConflictingExplicitPayloadKindAndJson() {
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.scheduleFollowup(
+                    new RemoteFollowupRuntimeService.ScheduleRequest(
+                        1L,
+                        "cmd-1",
+                        "coord-1",
+                        7L,
+                        "region-a",
+                        4L,
+                        8L,
+                        "region-b",
+                        8L,
+                        22L,
+                        4L,
+                        25L,
+                        "late_result_safe_to_ignore",
+                        "followup-1",
+                        "effect-1",
+                        "entity-9",
+                        "{\"kind\":\"enqueue_gameplay_command\",\"command\":\"LOOK\"}",
+                        "enqueue_automation_command",
+                        "LOOK",
+                        false,
+                        "SHARED",
+                        "demo",
+                        "production",
+                        17L,
+                        "patch-1",
+                        "plugin-1",
+                        "plugin-v1",
+                        "dispatch-1",
+                        "work-1",
+                        "script-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null)));
+
+    assertEquals("payload_json kind does not match payload_kind", ex.getMessage());
+    verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
   }
 
   @Test
@@ -414,6 +534,9 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "effect-1",
                         "entity-9",
                         "not-json",
+                        "enqueue_automation_command",
+                        "LOOK",
+                        false,
                         "SHARED",
                         "demo",
                         "production",
@@ -462,6 +585,9 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "effect-1",
                         "entity-9",
                         "{\"kind\":\"teleport\",\"command\":\"LOOK\"}",
+                        "teleport",
+                        "LOOK",
+                        false,
                         "SHARED",
                         "demo",
                         "production",
@@ -510,6 +636,9 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "effect-1",
                         "entity-9",
                         "{\"kind\":\"enqueue_automation_command\"}",
+                        "enqueue_automation_command",
+                        null,
+                        false,
                         "SHARED",
                         "demo",
                         "production",
@@ -1102,6 +1231,9 @@ class RemoteFollowupRuntimeServiceImplTest {
         "effect-1",
         "entity-9",
         "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true}",
+        "enqueue_automation_command",
+        "LOOK",
+        true,
         "SHARED",
         "demo",
         "production",

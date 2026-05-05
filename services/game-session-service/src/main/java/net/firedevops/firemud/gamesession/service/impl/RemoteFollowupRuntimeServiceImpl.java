@@ -355,31 +355,27 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     requireNotBlank(request.followupId(), "followup_id");
     requireNotBlank(request.effectKey(), "effect_key");
     requireNotBlank(request.lateResultPolicy(), "late_result_policy");
-    validateSchedulePayload(request.payloadJson());
+    validateSchedulePayload(request);
   }
 
-  private static void validateSchedulePayload(String payloadJson) {
-    if (payloadJson == null || payloadJson.isBlank()) {
-      throw new IllegalArgumentException("payload_json is required");
-    }
-    JsonNode root;
-    try {
-      root = OBJECT_MAPPER.readTree(payloadJson);
-    } catch (IOException ex) {
-      throw new IllegalArgumentException("payload_json must be valid JSON");
-    }
-    String payloadKind = blankToNull(root.path("kind").asText(""));
-    if (payloadKind == null) {
+  private static void validateSchedulePayload(ScheduleRequest request) {
+    PayloadSummary payloadSummary =
+        payloadSummary(
+            request.payloadJson(),
+            request.payloadKind(),
+            request.requestedCommand(),
+            request.requiresSoloTick());
+    if (payloadSummary.kind() == null) {
       throw new IllegalArgumentException("payload kind is required");
     }
-    if (!PAYLOAD_KIND_ENQUEUE_AUTOMATION_COMMAND.equals(payloadKind)
-        && !PAYLOAD_KIND_ENQUEUE_GAMEPLAY_COMMAND.equals(payloadKind)) {
+    if (!PAYLOAD_KIND_ENQUEUE_AUTOMATION_COMMAND.equals(payloadSummary.kind())
+        && !PAYLOAD_KIND_ENQUEUE_GAMEPLAY_COMMAND.equals(payloadSummary.kind())) {
       throw new IllegalArgumentException(
-          "payload kind '%s' is not yet supported".formatted(payloadKind));
+          "payload kind '%s' is not yet supported".formatted(payloadSummary.kind()));
     }
-    if (blankToNull(root.path("command").asText("")) == null) {
+    if (payloadSummary.command() == null) {
       throw new IllegalArgumentException(
-          "payload command is required for kind '%s'".formatted(payloadKind));
+          "payload command is required for kind '%s'".formatted(payloadSummary.kind()));
     }
   }
 
@@ -483,7 +479,12 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       throw new IllegalArgumentException(
           "effect_key already maps to a different remote execution scope");
     }
-    PayloadSummary payloadSummary = payloadSummary(request.payloadJson());
+    PayloadSummary payloadSummary =
+        payloadSummary(
+            request.payloadJson(),
+            request.payloadKind(),
+            request.requestedCommand(),
+            request.requiresSoloTick());
     if (request.targetDueTickId() != existing.getDueTickId()
         || !normalized(blankToNull(request.targetEntityId()))
             .equals(normalized(existing.getTargetEntityId()))
@@ -597,7 +598,12 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     followup.setEffectKey(request.effectKey());
     followup.setTargetEntityId(blankToNull(request.targetEntityId()));
     followup.setPayloadJson(blankToNull(request.payloadJson()));
-    PayloadSummary payloadSummary = payloadSummary(request.payloadJson());
+    PayloadSummary payloadSummary =
+        payloadSummary(
+            request.payloadJson(),
+            request.payloadKind(),
+            request.requestedCommand(),
+            request.requiresSoloTick());
     followup.setPayloadKind(payloadSummary.kind());
     followup.setRequestedCommand(payloadSummary.command());
     followup.setRequiresSoloTick(payloadSummary.requiresSoloTick());
@@ -771,24 +777,65 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         metadataValue(request.scriptId(), command == null ? null : command.getScriptId()));
   }
 
-  private static PayloadSummary payloadSummary(String payloadJson) {
+  private static PayloadSummary payloadSummary(
+      String payloadJson, String requestPayloadKind, String requestCommand, boolean requestSolo) {
+    PayloadSummary jsonSummary =
+        payloadSummaryFromJson(payloadJson, requestPayloadKind, requestCommand, requestSolo);
+    String payloadKind = metadataValue(requestPayloadKind, jsonSummary.kind());
+    String command = metadataValue(requestCommand, jsonSummary.command());
+    boolean requiresSoloTick = requestSolo || jsonSummary.requiresSoloTick();
+    return new PayloadSummary(
+        payloadKind,
+        command,
+        requiresSoloTick,
+        jsonSummary.originSourceKind(),
+        jsonSummary.originSourceState(),
+        jsonSummary.originSourceOrdinal(),
+        jsonSummary.originSourceDueTickId(),
+        jsonSummary.originSourceDueAtMs());
+  }
+
+  private static PayloadSummary payloadSummaryFromJson(
+      String payloadJson, String requestPayloadKind, String requestCommand, boolean requestSolo) {
     if (payloadJson == null || payloadJson.isBlank()) {
       return new PayloadSummary(null, null, false, null, null, null, null, null);
     }
+    JsonNode root;
     try {
-      JsonNode root = OBJECT_MAPPER.readTree(payloadJson);
-      return new PayloadSummary(
-          blankToNull(root.path("kind").asText("")),
-          blankToNull(root.path("command").asText("")),
-          root.path("requiresSoloTick").asBoolean(false),
-          blankToNull(root.path("originSourceKind").asText("")),
-          blankToNull(root.path("originSourceState").asText("")),
-          positiveLong(root.path("originSourceOrdinal")),
-          positiveLong(root.path("originSourceDueTickId")),
-          positiveLong(root.path("originSourceDueAtMs")));
-    } catch (IOException ignored) {
-      return new PayloadSummary(null, null, false, null, null, null, null, null);
+      root = OBJECT_MAPPER.readTree(payloadJson);
+    } catch (IOException ex) {
+      throw new IllegalArgumentException("payload_json must be valid JSON");
     }
+    String jsonKind = blankToNull(root.path("kind").asText(""));
+    String jsonCommand = blankToNull(root.path("command").asText(""));
+    boolean jsonSolo = root.path("requiresSoloTick").asBoolean(false);
+    if (requestConflict(requestPayloadKind, jsonKind)) {
+      throw new IllegalArgumentException("payload_json kind does not match payload_kind");
+    }
+    if (requestConflict(requestCommand, jsonCommand)) {
+      throw new IllegalArgumentException("payload_json command does not match requested_command");
+    }
+    if (requestSolo && root.has("requiresSoloTick") && !jsonSolo) {
+      throw new IllegalArgumentException(
+          "payload_json requiresSoloTick does not match requires_solo_tick");
+    }
+    return new PayloadSummary(
+        jsonKind,
+        jsonCommand,
+        jsonSolo,
+        blankToNull(root.path("originSourceKind").asText("")),
+        blankToNull(root.path("originSourceState").asText("")),
+        positiveLong(root.path("originSourceOrdinal")),
+        positiveLong(root.path("originSourceDueTickId")),
+        positiveLong(root.path("originSourceDueAtMs")));
+  }
+
+  private static boolean requestConflict(String requestValue, String jsonValue) {
+    String normalizedRequest = blankToNull(requestValue);
+    String normalizedJson = blankToNull(jsonValue);
+    return normalizedRequest != null
+        && normalizedJson != null
+        && !normalizedRequest.equals(normalizedJson);
   }
 
   private static boolean samePayloadAuthority(

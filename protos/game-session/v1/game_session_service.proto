@@ -605,21 +605,24 @@ message ScheduleRemoteFollowupRequest {
   string effect_key = 15;
   string target_entity_id = 16;
   string payload_json = 17;
-  entity_management.v1.PlayableStateScope playable_state_scope = 18;
-  string world_slug = 19;
-  string realm_slug = 20;
-  int64 pointer_version = 21;
-  string script_patch_version = 22;
-  string plugin_id = 23;
-  string plugin_version_id = 24;
-  string automation_dispatch_id = 25;
-  string automation_work_item_id = 26;
-  string script_id = 27;
-  string origin_source_kind = 28;
-  string origin_source_state = 29;
-  int64 origin_source_ordinal = 30;
-  int64 origin_source_due_tick_id = 31;
-  int64 origin_source_due_at_ms = 32;
+  string payload_kind = 18;
+  string requested_command = 19;
+  bool requires_solo_tick = 20;
+  entity_management.v1.PlayableStateScope playable_state_scope = 21;
+  string world_slug = 22;
+  string realm_slug = 23;
+  int64 pointer_version = 24;
+  string script_patch_version = 25;
+  string plugin_id = 26;
+  string plugin_version_id = 27;
+  string automation_dispatch_id = 28;
+  string automation_work_item_id = 29;
+  string script_id = 30;
+  string origin_source_kind = 31;
+  string origin_source_state = 32;
+  int64 origin_source_ordinal = 33;
+  int64 origin_source_due_tick_id = 34;
+  int64 origin_source_due_at_ms = 35;
 }
 
 message ScheduleRemoteFollowupResponse {
