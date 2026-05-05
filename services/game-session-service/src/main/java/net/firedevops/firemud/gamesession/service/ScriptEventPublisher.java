@@ -9,4 +9,6 @@ public interface ScriptEventPublisher {
 
   void publishRegionTransitionEvents(
       SessionContext previousContext, SessionContext currentContext, String effectId);
+
+  void publishRegionExitEvent(SessionContext context, String scriptEventId);
 }

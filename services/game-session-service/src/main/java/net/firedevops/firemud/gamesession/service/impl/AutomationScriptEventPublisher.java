@@ -149,6 +149,35 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         });
   }
 
+  @Override
+  public void publishRegionExitEvent(SessionContext context, String scriptEventId) {
+    submitBestEffort(
+        () -> {
+          if (context == null || !StringUtils.hasText(scriptEventId)) {
+            return;
+          }
+          PublishingScope scope = resolvePublishingScope(context);
+          if (scope == null) {
+            return;
+          }
+          String previousRoomId = normalize(context.roomInstanceId());
+          if (!StringUtils.hasText(previousRoomId)) {
+            return;
+          }
+          publishLifecycleEvent(
+              scope,
+              "onLeaveRegion",
+              scriptEventId,
+              "game-session:onLeaveRegion:"
+                  + scope.gameInstanceId()
+                  + ":"
+                  + scope.regionEpoch()
+                  + ":"
+                  + scriptEventId,
+              regionTransitionPayload(previousRoomId, ""));
+        });
+  }
+
   private static String commandPayload(GameplayCommand command) {
     return "{\"commandId\":\""
         + escape(command.getCommandId())

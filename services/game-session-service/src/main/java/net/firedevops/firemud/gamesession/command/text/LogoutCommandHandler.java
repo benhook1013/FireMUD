@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDispositi
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -25,6 +26,7 @@ public final class LogoutCommandHandler {
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final ScreenBufferService screenBufferService;
+  private final ScriptEventPublisher scriptEventPublisher;
 
   public LogoutCommandHandler(
       SessionAuthenticationService sessionAuthenticationService,
@@ -32,7 +34,8 @@ public final class LogoutCommandHandler {
       GameInstanceService gameInstanceService,
       GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
-      ScreenBufferService screenBufferService) {
+      ScreenBufferService screenBufferService,
+      ScriptEventPublisher scriptEventPublisher) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
@@ -48,6 +51,8 @@ public final class LogoutCommandHandler {
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
     this.screenBufferService =
         Objects.requireNonNull(screenBufferService, "screenBufferService must not be null");
+    this.scriptEventPublisher =
+        Objects.requireNonNull(scriptEventPublisher, "scriptEventPublisher must not be null");
   }
 
   public LogoutCommandHandlingResult handle(String sessionId) {
@@ -60,6 +65,9 @@ public final class LogoutCommandHandler {
 
     SessionContext context = maybeContext.orElseThrow();
     try {
+      if (context.gameInstanceId() > 0 && context.characterId() > 0) {
+        scriptEventPublisher.publishRegionExitEvent(context, logoutEventId(context));
+      }
       if (context.gameInstanceId() > 0) {
         gameInstanceService.stopSession(context.gameInstanceId());
       }
@@ -88,5 +96,14 @@ public final class LogoutCommandHandler {
     return new LogoutCommandHandlingResult(
         CommandEnqueueResult.failure(code, message),
         List.of(PlayerOutput.error(code, message, messageKey, arguments)));
+  }
+
+  private static String logoutEventId(SessionContext context) {
+    return "logout:"
+        + context.sessionId()
+        + ":"
+        + context.gameInstanceId()
+        + ":"
+        + context.characterId();
   }
 }
