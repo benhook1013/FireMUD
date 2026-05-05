@@ -282,6 +282,7 @@ message ScriptDeadLetterEntry {
   string plugin_id = 24;
   string plugin_version_id = 25;
   ScriptPatchPublicationLink publication = 26;
+  PluginPublicationLink plugin_publication = 27;
 }
 
 message ListScriptDeadLettersResponse {
@@ -598,6 +599,7 @@ message ScriptScheduleInstanceEntry {
   bool is_pin_stale = 33;
   bool is_runtime_progress_stale = 34;
   ScriptPatchPublicationLink publication = 35;
+  PluginPublicationLink plugin_publication = 36;
 }
 
 message ListScriptScheduleInstancesResponse {
@@ -645,6 +647,7 @@ message ScriptTimerAuditEventEntry {
   int64 updated_at_ms = 25;
   string work_item_id = 26;
   ScriptPatchPublicationLink publication = 27;
+  PluginPublicationLink plugin_publication = 28;
 }
 
 message ListScriptTimerAuditEventsResponse {
@@ -744,6 +747,7 @@ message ScriptHandoffEventEntry {
   int64 source_due_tick_id = 24;
   int64 source_due_at_ms = 25;
   ScriptPatchPublicationLink publication = 26;
+  PluginPublicationLink plugin_publication = 27;
 }
 
 message ListScriptHandoffEventsResponse {

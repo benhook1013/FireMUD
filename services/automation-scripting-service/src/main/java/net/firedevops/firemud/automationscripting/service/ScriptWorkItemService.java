@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.service;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService.PluginPublicationLink;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService.ReadinessStatusSummary;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
@@ -183,7 +184,8 @@ public interface ScriptWorkItemService {
       String handoffOutcome,
       String handoffReason,
       long observedAtMs,
-      ScriptPatchPublicationLink publication) {}
+      ScriptPatchPublicationLink publication,
+      PluginPublicationLink pluginPublication) {}
 
   record DeadLetterSummary(
       String workItemId,
@@ -211,7 +213,8 @@ public interface ScriptWorkItemService {
       String reason,
       long createdAtMs,
       long updatedAtMs,
-      ScriptPatchPublicationLink publication) {}
+      ScriptPatchPublicationLink publication,
+      PluginPublicationLink pluginPublication) {}
 
   record ReplayDeadLettersCommand(
       String tenantId,

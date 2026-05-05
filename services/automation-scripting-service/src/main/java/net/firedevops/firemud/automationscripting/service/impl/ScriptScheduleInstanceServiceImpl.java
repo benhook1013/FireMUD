@@ -31,6 +31,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptScheduleInsta
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
+import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
@@ -864,6 +865,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   private TimerAuditEventSummary withPublication(String tenantId, TimerAuditEventSummary summary) {
+    PluginRuntimeStateService.PluginPublicationLink pluginPublication =
+        pluginPublicationLink(tenantId, summary.pluginId(), summary.pluginVersionId());
     return new TimerAuditEventSummary(
         summary.tenantId(),
         summary.gameInstanceId(),
@@ -891,11 +894,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.finalReason(),
         summary.createdAtMs(),
         summary.updatedAtMs(),
-        publicationLink(tenantId, summary.scriptPatchVersion()));
+        publicationLink(tenantId, summary.scriptPatchVersion()),
+        pluginPublication);
   }
 
   private ScheduleInstanceSummary withPublication(
       String tenantId, ScheduleInstanceSummary summary) {
+    PluginRuntimeStateService.PluginPublicationLink pluginPublication =
+        pluginPublicationLink(tenantId, summary.pluginId(), summary.pluginVersionId());
     return new ScheduleInstanceSummary(
         summary.tenantId(),
         summary.gameInstanceId(),
@@ -929,7 +935,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.runtimeRegionEpoch(),
         summary.lastObservedTickId(),
         summary.lastRuntimeProgressObservedAtMs(),
-        publicationLink(tenantId, summary.scriptPatchVersion()));
+        publicationLink(tenantId, summary.scriptPatchVersion()),
+        pluginPublication);
   }
 
   private ScriptWorkItemService.ScriptPatchPublicationLink publicationLink(
@@ -952,6 +959,43 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         response.getScriptPatch().getBaseVersionId(),
         response.getScriptPatch().getPublicationState(),
         response.getScriptPatch().getLastChangedAtMs(),
+        "",
+        "");
+  }
+
+  private PluginRuntimeStateService.PluginPublicationLink pluginPublicationLink(
+      String tenantId, String pluginId, String pluginVersionId) {
+    if (blankToEmpty(pluginId).isBlank() || blankToEmpty(pluginVersionId).isBlank()) {
+      return null;
+    }
+    var response =
+        gameDesignControlPlaneClient.getPublishedPluginVersion(tenantId, pluginId, pluginVersionId);
+    if (response == null) {
+      return new PluginRuntimeStateService.PluginPublicationLink(
+          pluginVersionId,
+          0L,
+          VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+          "",
+          0L,
+          "GAME_DESIGN_UNAVAILABLE",
+          "Game Design service unavailable");
+    }
+    if (response.hasError() && !response.getError().getCode().isBlank()) {
+      return new PluginRuntimeStateService.PluginPublicationLink(
+          pluginVersionId,
+          0L,
+          VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+          "",
+          0L,
+          blankToEmpty(response.getError().getCode()),
+          blankToEmpty(response.getError().getMessage()));
+    }
+    return new PluginRuntimeStateService.PluginPublicationLink(
+        blankToEmpty(response.getPluginVersion().getPluginVersionId()),
+        response.getPluginVersion().getPublicationId(),
+        response.getPluginVersion().getPublicationState(),
+        blankToEmpty(response.getPluginVersion().getStatusReason()),
+        response.getPluginVersion().getLastChangedAtMs(),
         "",
         "");
   }
@@ -984,6 +1028,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         audit.getFinalReason(),
         audit.getCreatedAt() == null ? 0L : audit.getCreatedAt().toEpochMilli(),
         audit.getUpdatedAt() == null ? 0L : audit.getUpdatedAt().toEpochMilli(),
+        null,
         null);
   }
 
@@ -1088,6 +1133,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         instance.getLastRuntimeProgressObservedAt() == null
             ? 0L
             : instance.getLastRuntimeProgressObservedAt().toEpochMilli(),
+        null,
         null);
   }
 

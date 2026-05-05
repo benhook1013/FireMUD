@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service;
 
 import java.util.List;
+import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService.PluginPublicationLink;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService.ScriptPatchPublicationLink;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 
@@ -70,7 +71,8 @@ public interface ScriptScheduleInstanceService {
       long runtimeRegionEpoch,
       long lastObservedTickId,
       long lastRuntimeProgressObservedAtMs,
-      ScriptPatchPublicationLink publication) {}
+      ScriptPatchPublicationLink publication,
+      PluginPublicationLink pluginPublication) {}
 
   record TimerAuditEventSummary(
       String tenantId,
@@ -99,5 +101,6 @@ public interface ScriptScheduleInstanceService {
       String finalReason,
       long createdAtMs,
       long updatedAtMs,
-      ScriptPatchPublicationLink publication) {}
+      ScriptPatchPublicationLink publication,
+      PluginPublicationLink pluginPublication) {}
 }

@@ -499,7 +499,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                             .VERSION_LIFECYCLE_STATE_PUBLISHED,
                         140L,
                         "",
-                        ""))));
+                        ""),
+                    null)));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),
@@ -586,7 +587,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                             .VERSION_LIFECYCLE_STATE_PUBLISHED,
                         140L,
                         "",
-                        ""))));
+                        ""),
+                    null)));
     ScriptRuntimeProperties runtimeProperties = new ScriptRuntimeProperties();
     runtimeProperties.setPinProjectionStaleThresholdMs(1L);
     runtimeProperties.setScheduleRuntimeProgressStaleThresholdMs(1L);
@@ -669,7 +671,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                             .VERSION_LIFECYCLE_STATE_PUBLISHED,
                         140L,
                         "",
-                        ""))));
+                        ""),
+                    null)));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),
@@ -1017,7 +1020,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                             .VERSION_LIFECYCLE_STATE_PUBLISHED,
                         140L,
                         "",
-                        ""))));
+                        ""),
+                    null)));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -1096,7 +1100,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                             .VERSION_LIFECYCLE_STATE_PUBLISHED,
                         140L,
                         "",
-                        ""))));
+                        ""),
+                    null)));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,

@@ -1052,34 +1052,38 @@ public final class AutomationScriptingControlPlaneGrpcService
   }
 
   private static ScriptDeadLetterEntry toProto(ScriptWorkItemService.DeadLetterSummary summary) {
-    return ScriptDeadLetterEntry.newBuilder()
-        .setWorkItemId(summary.workItemId())
-        .setTenantId(summary.tenantId())
-        .setGameInstanceId(summary.gameInstanceId())
-        .setRegionId(summary.regionId())
-        .setRegionEpoch(summary.regionEpoch())
-        .setEntityId(summary.entityId())
-        .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
-        .setWorldSlug(summary.worldSlug())
-        .setRealmSlug(summary.realmSlug())
-        .setPointerVersion(summary.pointerVersion())
-        .setSourceKind(summary.sourceKind())
-        .setSourceState(summary.sourceState())
-        .setSourceOrdinal(summary.sourceOrdinal())
-        .setSourceDueTickId(summary.sourceDueTickId())
-        .setSourceDueAtMs(summary.sourceDueAtMs())
-        .setScriptId(summary.scriptId())
-        .setPluginId(summary.pluginId())
-        .setPluginVersionId(summary.pluginVersionId())
-        .setEventType(summary.eventType())
-        .setScriptPatchVersion(summary.scriptPatchVersion())
-        .setScriptEventId(summary.scriptEventId())
-        .setStatus(summary.status())
-        .setReason(summary.reason())
-        .setCreatedAtMs(summary.createdAtMs())
-        .setUpdatedAtMs(summary.updatedAtMs())
-        .setPublication(toProto(summary.publication()))
-        .build();
+    ScriptDeadLetterEntry.Builder builder =
+        ScriptDeadLetterEntry.newBuilder()
+            .setWorkItemId(summary.workItemId())
+            .setTenantId(summary.tenantId())
+            .setGameInstanceId(summary.gameInstanceId())
+            .setRegionId(summary.regionId())
+            .setRegionEpoch(summary.regionEpoch())
+            .setEntityId(summary.entityId())
+            .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
+            .setWorldSlug(summary.worldSlug())
+            .setRealmSlug(summary.realmSlug())
+            .setPointerVersion(summary.pointerVersion())
+            .setSourceKind(summary.sourceKind())
+            .setSourceState(summary.sourceState())
+            .setSourceOrdinal(summary.sourceOrdinal())
+            .setSourceDueTickId(summary.sourceDueTickId())
+            .setSourceDueAtMs(summary.sourceDueAtMs())
+            .setScriptId(summary.scriptId())
+            .setPluginId(summary.pluginId())
+            .setPluginVersionId(summary.pluginVersionId())
+            .setEventType(summary.eventType())
+            .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptEventId(summary.scriptEventId())
+            .setStatus(summary.status())
+            .setReason(summary.reason())
+            .setCreatedAtMs(summary.createdAtMs())
+            .setUpdatedAtMs(summary.updatedAtMs())
+            .setPublication(toProto(summary.publication()));
+    if (summary.pluginPublication() != null) {
+      builder.setPluginPublication(toProto(summary.pluginPublication()));
+    }
+    return builder.build();
   }
 
   private static ScriptPatchInstanceRolloutEntry toProto(
@@ -1115,44 +1119,48 @@ public final class AutomationScriptingControlPlaneGrpcService
 
   private ScriptScheduleInstanceEntry toProto(
       ScriptScheduleInstanceService.ScheduleInstanceSummary summary) {
-    return ScriptScheduleInstanceEntry.newBuilder()
-        .setTenantId(summary.tenantId())
-        .setGameInstanceId(summary.gameInstanceId())
-        .setScriptPatchVersion(summary.scriptPatchVersion())
-        .setScriptId(summary.scriptId())
-        .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
-        .setWorldSlug(summary.worldSlug())
-        .setRealmSlug(summary.realmSlug())
-        .setPointerVersion(summary.pointerVersion())
-        .setPluginId(summary.pluginId())
-        .setPluginVersionId(summary.pluginVersionId())
-        .setEventType(summary.eventType())
-        .setScheduleDefinitionId(summary.scheduleDefinitionId())
-        .setScheduleKind(summary.scheduleKind())
-        .setCadenceValue(summary.cadenceValue())
-        .setCadenceUnit(summary.cadenceUnit())
-        .setPriorityTag(summary.priorityTag())
-        .setTargetScopeType(summary.targetScopeType())
-        .setTargetScopeId(summary.targetScopeId())
-        .setBindingPriority(summary.bindingPriority())
-        .setRequiresExclusiveEvent(summary.requiresExclusiveEvent())
-        .setMaterializationStatus(summary.materializationStatus())
-        .setNextDueAtMs(summary.nextDueAtMs())
-        .setNextDueTickId(summary.nextDueTickId())
-        .setObservedRuntimeVersionId(summary.observedRuntimeVersionId())
-        .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
-        .setPinObservedAtMs(summary.pinObservedAtMs())
-        .setMaterializedAtMs(summary.materializedAtMs())
-        .setUpdatedAtMs(summary.updatedAtMs())
-        .setRuntimeRegionId(summary.runtimeRegionId())
-        .setRuntimeRegionEpoch(summary.runtimeRegionEpoch())
-        .setLastObservedTickId(summary.lastObservedTickId())
-        .setLastRuntimeProgressObservedAtMs(summary.lastRuntimeProgressObservedAtMs())
-        .setIsPinStale(isSchedulePinStale(summary.pinObservedAtMs()))
-        .setIsRuntimeProgressStale(
-            isScheduleRuntimeProgressStale(summary.lastRuntimeProgressObservedAtMs()))
-        .setPublication(toProto(summary.publication()))
-        .build();
+    ScriptScheduleInstanceEntry.Builder builder =
+        ScriptScheduleInstanceEntry.newBuilder()
+            .setTenantId(summary.tenantId())
+            .setGameInstanceId(summary.gameInstanceId())
+            .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptId(summary.scriptId())
+            .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
+            .setWorldSlug(summary.worldSlug())
+            .setRealmSlug(summary.realmSlug())
+            .setPointerVersion(summary.pointerVersion())
+            .setPluginId(summary.pluginId())
+            .setPluginVersionId(summary.pluginVersionId())
+            .setEventType(summary.eventType())
+            .setScheduleDefinitionId(summary.scheduleDefinitionId())
+            .setScheduleKind(summary.scheduleKind())
+            .setCadenceValue(summary.cadenceValue())
+            .setCadenceUnit(summary.cadenceUnit())
+            .setPriorityTag(summary.priorityTag())
+            .setTargetScopeType(summary.targetScopeType())
+            .setTargetScopeId(summary.targetScopeId())
+            .setBindingPriority(summary.bindingPriority())
+            .setRequiresExclusiveEvent(summary.requiresExclusiveEvent())
+            .setMaterializationStatus(summary.materializationStatus())
+            .setNextDueAtMs(summary.nextDueAtMs())
+            .setNextDueTickId(summary.nextDueTickId())
+            .setObservedRuntimeVersionId(summary.observedRuntimeVersionId())
+            .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
+            .setPinObservedAtMs(summary.pinObservedAtMs())
+            .setMaterializedAtMs(summary.materializedAtMs())
+            .setUpdatedAtMs(summary.updatedAtMs())
+            .setRuntimeRegionId(summary.runtimeRegionId())
+            .setRuntimeRegionEpoch(summary.runtimeRegionEpoch())
+            .setLastObservedTickId(summary.lastObservedTickId())
+            .setLastRuntimeProgressObservedAtMs(summary.lastRuntimeProgressObservedAtMs())
+            .setIsPinStale(isSchedulePinStale(summary.pinObservedAtMs()))
+            .setIsRuntimeProgressStale(
+                isScheduleRuntimeProgressStale(summary.lastRuntimeProgressObservedAtMs()))
+            .setPublication(toProto(summary.publication()));
+    if (summary.pluginPublication() != null) {
+      builder.setPluginPublication(toProto(summary.pluginPublication()));
+    }
+    return builder.build();
   }
 
   private static ScriptTimerAuditEventEntry toProto(
@@ -1185,6 +1193,9 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setCreatedAtMs(summary.createdAtMs())
             .setUpdatedAtMs(summary.updatedAtMs())
             .setPublication(toProto(summary.publication()));
+    if (summary.pluginPublication() != null) {
+      builder.setPluginPublication(toProto(summary.pluginPublication()));
+    }
     if (summary.workItemId() > 0) {
       builder.setWorkItemId(Long.toString(summary.workItemId()));
     }
@@ -1193,34 +1204,38 @@ public final class AutomationScriptingControlPlaneGrpcService
 
   private static ScriptHandoffEventEntry toProto(
       ScriptWorkItemService.HandoffEventSummary summary) {
-    return ScriptHandoffEventEntry.newBuilder()
-        .setEventId(summary.eventId())
-        .setTenantId(summary.tenantId())
-        .setGameInstanceId(summary.gameInstanceId())
-        .setScriptPatchVersion(summary.scriptPatchVersion())
-        .setScriptId(summary.scriptId())
-        .setPluginId(summary.pluginId())
-        .setPluginVersionId(summary.pluginVersionId())
-        .setWorkItemId(summary.workItemId())
-        .setCommandOrdinal(summary.commandOrdinal())
-        .setAutomationDispatchId(summary.automationDispatchId())
-        .setGameSessionCommandId(summary.gameSessionCommandId())
-        .setTargetEntityId(summary.targetEntityId())
-        .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
-        .setWorldSlug(summary.worldSlug())
-        .setRealmSlug(summary.realmSlug())
-        .setPointerVersion(summary.pointerVersion())
-        .setSourceKind(summary.sourceKind())
-        .setSourceState(summary.sourceState())
-        .setSourceOrdinal(summary.sourceOrdinal())
-        .setSourceDueTickId(summary.sourceDueTickId())
-        .setSourceDueAtMs(summary.sourceDueAtMs())
-        .setEmittedCommandText(summary.emittedCommandText())
-        .setHandoffOutcome(summary.handoffOutcome())
-        .setHandoffReason(summary.handoffReason())
-        .setObservedAtMs(summary.observedAtMs())
-        .setPublication(toProto(summary.publication()))
-        .build();
+    ScriptHandoffEventEntry.Builder builder =
+        ScriptHandoffEventEntry.newBuilder()
+            .setEventId(summary.eventId())
+            .setTenantId(summary.tenantId())
+            .setGameInstanceId(summary.gameInstanceId())
+            .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptId(summary.scriptId())
+            .setPluginId(summary.pluginId())
+            .setPluginVersionId(summary.pluginVersionId())
+            .setWorkItemId(summary.workItemId())
+            .setCommandOrdinal(summary.commandOrdinal())
+            .setAutomationDispatchId(summary.automationDispatchId())
+            .setGameSessionCommandId(summary.gameSessionCommandId())
+            .setTargetEntityId(summary.targetEntityId())
+            .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
+            .setWorldSlug(summary.worldSlug())
+            .setRealmSlug(summary.realmSlug())
+            .setPointerVersion(summary.pointerVersion())
+            .setSourceKind(summary.sourceKind())
+            .setSourceState(summary.sourceState())
+            .setSourceOrdinal(summary.sourceOrdinal())
+            .setSourceDueTickId(summary.sourceDueTickId())
+            .setSourceDueAtMs(summary.sourceDueAtMs())
+            .setEmittedCommandText(summary.emittedCommandText())
+            .setHandoffOutcome(summary.handoffOutcome())
+            .setHandoffReason(summary.handoffReason())
+            .setObservedAtMs(summary.observedAtMs())
+            .setPublication(toProto(summary.publication()));
+    if (summary.pluginPublication() != null) {
+      builder.setPluginPublication(toProto(summary.pluginPublication()));
+    }
+    return builder.build();
   }
 
   private static PlayableStateScope toPlayableStateScope(String playableStateScope) {

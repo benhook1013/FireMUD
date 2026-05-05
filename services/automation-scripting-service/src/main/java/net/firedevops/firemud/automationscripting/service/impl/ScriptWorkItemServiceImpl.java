@@ -567,6 +567,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private DeadLetterSummary withPublication(String tenantId, DeadLetterSummary summary) {
+    PluginRuntimeStateService.PluginPublicationLink pluginPublication =
+        pluginPublicationLink(tenantId, summary.pluginId(), summary.pluginVersionId());
     return new DeadLetterSummary(
         summary.workItemId(),
         summary.tenantId(),
@@ -593,10 +595,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.reason(),
         summary.createdAtMs(),
         summary.updatedAtMs(),
-        publicationMetadata(tenantId, summary.scriptPatchVersion()).publication());
+        publicationMetadata(tenantId, summary.scriptPatchVersion()).publication(),
+        pluginPublication);
   }
 
   private HandoffEventSummary withPublication(String tenantId, HandoffEventSummary summary) {
+    PluginRuntimeStateService.PluginPublicationLink pluginPublication =
+        pluginPublicationLink(tenantId, summary.pluginId(), summary.pluginVersionId());
     return new HandoffEventSummary(
         summary.eventId(),
         summary.tenantId(),
@@ -623,7 +628,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.handoffOutcome(),
         summary.handoffReason(),
         summary.observedAtMs(),
-        publicationMetadata(tenantId, summary.scriptPatchVersion()).publication());
+        publicationMetadata(tenantId, summary.scriptPatchVersion()).publication(),
+        pluginPublication);
   }
 
   private PublicationMetadata publicationMetadata(String tenantId, String scriptPatchVersion) {
@@ -661,6 +667,43 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             .findFirst()
             .orElse("");
     return new PublicationMetadata(baseVersionId, abilitySchemaDigest, publication);
+  }
+
+  private PluginRuntimeStateService.PluginPublicationLink pluginPublicationLink(
+      String tenantId, String pluginId, String pluginVersionId) {
+    if (blankToEmpty(pluginId).isBlank() || blankToEmpty(pluginVersionId).isBlank()) {
+      return null;
+    }
+    var pluginResponse =
+        gameDesignControlPlaneClient.getPublishedPluginVersion(tenantId, pluginId, pluginVersionId);
+    if (pluginResponse == null) {
+      return new PluginRuntimeStateService.PluginPublicationLink(
+          pluginVersionId,
+          0L,
+          VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+          "",
+          0L,
+          "GAME_DESIGN_UNAVAILABLE",
+          "Game Design service unavailable");
+    }
+    if (pluginResponse.hasError() && !pluginResponse.getError().getCode().isBlank()) {
+      return new PluginRuntimeStateService.PluginPublicationLink(
+          pluginVersionId,
+          0L,
+          VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+          "",
+          0L,
+          pluginResponse.getError().getCode(),
+          pluginResponse.getError().getMessage());
+    }
+    return new PluginRuntimeStateService.PluginPublicationLink(
+        blankToEmpty(pluginResponse.getPluginVersion().getPluginVersionId()),
+        pluginResponse.getPluginVersion().getPublicationId(),
+        pluginResponse.getPluginVersion().getPublicationState(),
+        blankToEmpty(pluginResponse.getPluginVersion().getStatusReason()),
+        pluginResponse.getPluginVersion().getLastChangedAtMs(),
+        "",
+        "");
   }
 
   private ScriptPatchStatus statusFor(List<ScriptWorkItem> workItems) {
@@ -773,6 +816,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         item.getCancelReason() == null ? "" : item.getCancelReason(),
         item.getCreatedAt().toEpochMilli(),
         item.getUpdatedAt().toEpochMilli(),
+        null,
         null);
   }
 
@@ -803,6 +847,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         event.getHandoffOutcome(),
         event.getHandoffReason(),
         event.getObservedAt().toEpochMilli(),
+        null,
         null);
   }
 
