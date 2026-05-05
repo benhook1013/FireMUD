@@ -5,6 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
+import net.firedevops.firemud.automationscripting.v1.TriggerMode;
+import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
+import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.entity.TickEffect;
@@ -34,6 +39,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private final TickService tickService;
   private final RemoteFollowupRuntimeService remoteFollowupRuntimeService;
+  private final AutomationScriptingClient automationScriptingClient;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   public DefaultDurableRemoteFollowupExecutionService(
@@ -43,7 +49,8 @@ public final class DefaultDurableRemoteFollowupExecutionService
       GameplayCommandRepository gameplayCommandRepository,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       @Lazy TickService tickService,
-      RemoteFollowupRuntimeService remoteFollowupRuntimeService) {
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      AutomationScriptingClient automationScriptingClient) {
     this.remoteFollowupRepository = remoteFollowupRepository;
     this.remoteCommandCoordinatorRepository = remoteCommandCoordinatorRepository;
     this.gameInstanceRepository = gameInstanceRepository;
@@ -51,6 +58,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
     this.tickService = tickService;
     this.remoteFollowupRuntimeService = remoteFollowupRuntimeService;
+    this.automationScriptingClient = automationScriptingClient;
   }
 
   @Override
@@ -166,6 +174,9 @@ public final class DefaultDurableRemoteFollowupExecutionService
     if ("enqueue_automation_command".equals(payloadKind)) {
       return executeEnqueueAutomationCommand(
           root, requestedCommand, requiresSoloTick, coordinator, followup);
+    }
+    if ("trigger_script_event".equals(payloadKind)) {
+      return executeTriggerScriptEvent(root, coordinator, followup);
     }
     return failure(
         "REMOTE_FOLLOWUP_KIND_UNSUPPORTED",
@@ -336,6 +347,102 @@ public final class DefaultDurableRemoteFollowupExecutionService
     }
   }
 
+  private PayloadExecution executeTriggerScriptEvent(
+      JsonNode root, RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
+    try {
+      String scriptId = firstNonBlank(optionalText(root, "scriptId"), coordinator.getScriptId());
+      String pluginId = firstNonBlank(optionalText(root, "pluginId"), coordinator.getPluginId());
+      String pluginVersionId =
+          firstNonBlank(optionalText(root, "pluginVersionId"), coordinator.getPluginVersionId());
+      String worldSlug = firstNonBlank(optionalText(root, "worldSlug"), followup.getWorldSlug());
+      String realmSlug = firstNonBlank(optionalText(root, "realmSlug"), followup.getRealmSlug());
+      Long pointerVersion =
+          firstNonNull(optionalLong(root, "pointerVersion"), followup.getPointerVersion());
+      TriggerScriptEventRequest.Builder request =
+          TriggerScriptEventRequest.newBuilder()
+              .setTenantId(Long.toString(followup.getTenantId()))
+              .setGameInstanceId(Long.toString(followup.getTargetGameInstanceId()))
+              .setRegionId(followup.getTargetRegionId())
+              .setRegionEpoch(followup.getTargetRegionEpoch())
+              .setEntityId(requiredTextOrFallback(root, "entityId", followup.getTargetEntityId()))
+              .setEventType(requiredTextOrFallback(root, "eventType", null))
+              .setScriptPatchVersion(
+                  requiredTextOrFallback(
+                      root, "scriptPatchVersion", coordinator.getScriptPatchVersion()))
+              .setScriptEventId(requiredTextOrFallback(root, "scriptEventId", null))
+              .setTriggerMode(triggerMode(root))
+              .setPayloadJson(eventPayloadJson(root))
+              .setEventSchemaVersion(firstNonBlank(optionalText(root, "eventSchemaVersion"), "v1"))
+              .setReadSnapshotToken(requiredTextOrFallback(root, "readSnapshotToken", null))
+              .setPlayableStateScope(playableStateScope(followup.getPlayableStateScope()));
+      if (scriptId != null) {
+        request.setScriptId(scriptId);
+      }
+      if (pluginId != null) {
+        request.setPluginId(pluginId);
+      }
+      if (pluginVersionId != null) {
+        request.setPluginVersionId(pluginVersionId);
+      }
+      if (worldSlug != null) {
+        request.setWorldSlug(worldSlug);
+      }
+      if (realmSlug != null) {
+        request.setRealmSlug(realmSlug);
+      }
+      if (pointerVersion != null) {
+        request.setPointerVersion(Long.toString(pointerVersion));
+      }
+      Long dueTickId = optionalLong(root, "dueTickId", followup.getDueTickId());
+      if (dueTickId != null) {
+        request.setDueTickId(dueTickId);
+      }
+      Long dueAtMs = optionalLong(root, "dueAtMs");
+      if (dueAtMs != null) {
+        request.setDueAtMs(dueAtMs);
+      }
+      TriggerScriptEventResponse response =
+          automationScriptingClient.triggerScriptEvent(request.build());
+      String resultPayload =
+          "{\"admitted\":"
+              + response.getAdmitted()
+              + ",\"admissionOutcome\":\""
+              + jsonEscape(response.getAdmissionOutcome().name())
+              + "\""
+              + jsonStringField("admissionReason", response.getAdmissionReason())
+              + ",\"resolvedHandlerCount\":"
+              + response.getResolvedHandlerCount()
+              + "}";
+      if (!response.hasError() && response.getAdmitted()) {
+        return new PayloadExecution(
+            "APPLIED", "APPLIED", null, null, resultPayload, null, null, null);
+      }
+      String errorCode =
+          response.hasError() && !response.getError().getCode().isBlank()
+              ? response.getError().getCode()
+              : response.getAdmissionReason().isBlank()
+                  ? "REMOTE_SCRIPT_EVENT_REJECTED"
+                  : response.getAdmissionReason().toUpperCase();
+      String errorMessage =
+          response.hasError() && !response.getError().getMessage().isBlank()
+              ? response.getError().getMessage()
+              : response.getAdmissionReason().isBlank()
+                  ? "Target-side remote script event was not admitted"
+                  : response.getAdmissionReason();
+      return new PayloadExecution(
+          "ABANDONED",
+          "ABANDONED",
+          errorCode,
+          errorMessage,
+          resultPayload,
+          null,
+          errorCode,
+          errorMessage);
+    } catch (IllegalArgumentException ex) {
+      return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
+    }
+  }
+
   private PayloadExecution failure(String failureCode, String failureMessage) {
     return new PayloadExecution(
         "ABANDONED",
@@ -372,6 +479,37 @@ public final class DefaultDurableRemoteFollowupExecutionService
   private static String textOrDefault(JsonNode root, String fieldName, String defaultValue) {
     String value = optionalText(root, fieldName);
     return value == null ? defaultValue : value;
+  }
+
+  private static TriggerMode triggerMode(JsonNode root) {
+    String mode = optionalText(root, "triggerMode");
+    if (mode == null) {
+      return TriggerMode.TRIGGER_MODE_NORMAL;
+    }
+    return switch (mode) {
+      case "TRIGGER_MODE_NORMAL", "NORMAL" -> TriggerMode.TRIGGER_MODE_NORMAL;
+      case "TRIGGER_MODE_CATCH_UP", "CATCH_UP" -> TriggerMode.TRIGGER_MODE_CATCH_UP;
+      default -> throw new IllegalArgumentException("triggerMode is not supported");
+    };
+  }
+
+  private String eventPayloadJson(JsonNode root) {
+    JsonNode payloadNode = root.path("eventPayload");
+    if (payloadNode.isMissingNode() || payloadNode.isNull()) {
+      throw new IllegalArgumentException("eventPayload is required");
+    }
+    return payloadNode.toString();
+  }
+
+  private static PlayableStateScope playableStateScope(String value) {
+    if (value == null || value.isBlank()) {
+      return PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+    }
+    return switch (value) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default -> throw new IllegalArgumentException("Unsupported playableStateScope=" + value);
+    };
   }
 
   private static Long optionalLong(JsonNode root, String fieldName) {

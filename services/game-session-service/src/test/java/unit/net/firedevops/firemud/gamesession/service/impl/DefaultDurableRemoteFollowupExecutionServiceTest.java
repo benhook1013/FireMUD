@@ -8,6 +8,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
+import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
+import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
@@ -32,6 +35,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   private RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private TickService tickService;
   private RemoteFollowupRuntimeService remoteFollowupRuntimeService;
+  private AutomationScriptingClient automationScriptingClient;
   private DurableRemoteFollowupExecutionService service;
 
   @BeforeEach
@@ -43,6 +47,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     tickService = mock(TickService.class);
     remoteFollowupRuntimeService = mock(RemoteFollowupRuntimeService.class);
+    automationScriptingClient = mock(AutomationScriptingClient.class);
     when(remoteFollowupRuntimeService.recordResult(org.mockito.ArgumentMatchers.any()))
         .thenReturn(
             new RemoteFollowupRuntimeService.ResultOutcome(
@@ -58,7 +63,8 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             tickService,
-            remoteFollowupRuntimeService);
+            remoteFollowupRuntimeService,
+            automationScriptingClient);
   }
 
   @Test
@@ -325,6 +331,76 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.Mockito.eq("LOOK"),
             org.mockito.Mockito.eq(true));
+  }
+
+  @Test
+  void executeTriggersScriptEventForSupportedPayloadKind() {
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId("tb-1");
+    effect.setEffectKey("followup-1");
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setFollowupId("followup-1");
+    followup.setTenantId(1L);
+    followup.setTargetGameInstanceId(9L);
+    followup.setTargetRegionId("region-b");
+    followup.setTargetRegionEpoch(8L);
+    followup.setTargetEntityId("321");
+    followup.setDueTickId(55L);
+    followup.setPlayableStateScope("SHARED");
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(17L);
+    followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+    followup.setClaimedTickBatchId("tb-1");
+    followup.setPayloadJson(
+        """
+        {"kind":"trigger_script_event","eventType":"onEnterRegion","eventSchemaVersion":"v1","scriptEventId":"remote-enter-1","readSnapshotToken":"game-session:onEnterRegion:9:8:remote-enter-1","eventPayload":{"fromRegionId":"room-a","toRegionId":"room-b"}}
+        """);
+    followup.setPayloadKind("trigger_script_event");
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setTenantId(1L);
+    coordinator.setFollowupId("followup-1");
+    coordinator.setOriginRegionId("region-a");
+    coordinator.setOriginRegionEpoch(4L);
+    coordinator.setScriptId("script-1");
+    coordinator.setScriptPatchVersion("patch-1");
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(automationScriptingClient.triggerScriptEvent(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(
+            TriggerScriptEventResponse.newBuilder()
+                .setAdmitted(true)
+                .setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED)
+                .setAdmissionReason("admitted_for_handler_resolution")
+                .setResolvedHandlerCount(2)
+                .build());
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("APPLIED", result.effectStatus());
+    org.mockito.Mockito.verify(automationScriptingClient)
+        .triggerScriptEvent(
+            org.mockito.ArgumentMatchers.argThat(
+                request ->
+                    "1".equals(request.getTenantId())
+                        && "9".equals(request.getGameInstanceId())
+                        && "region-b".equals(request.getRegionId())
+                        && request.getRegionEpoch() == 8L
+                        && "321".equals(request.getEntityId())
+                        && "script-1".equals(request.getScriptId())
+                        && "patch-1".equals(request.getScriptPatchVersion())
+                        && "onEnterRegion".equals(request.getEventType())
+                        && "remote-enter-1".equals(request.getScriptEventId())
+                        && "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}"
+                            .equals(request.getPayloadJson())));
+    ArgumentCaptor<RemoteFollowupRuntimeService.ResultRequest> requestCaptor =
+        ArgumentCaptor.forClass(RemoteFollowupRuntimeService.ResultRequest.class);
+    org.mockito.Mockito.verify(remoteFollowupRuntimeService).recordResult(requestCaptor.capture());
+    assertEquals("remote-result:followup-1", requestCaptor.getValue().resultId());
+    assertEquals("APPLIED", requestCaptor.getValue().outcome());
   }
 
   @Test

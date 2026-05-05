@@ -462,6 +462,29 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void scheduleFollowupAcceptsTriggerScriptEventPayload() {
+    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+        .thenReturn(Optional.empty());
+    when(followupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            1L, "region-b", 8L, "effect-1"))
+        .thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+
+    RemoteFollowupRuntimeService.ScheduleOutcome outcome =
+        service.scheduleFollowup(triggerScriptEventScheduleRequest());
+
+    assertTrue(outcome.coordinatorCreated());
+    assertTrue(outcome.followupCreated());
+    verify(followupRepository)
+        .save(
+            argThat(
+                followup ->
+                    "trigger_script_event".equals(followup.getPayloadKind())
+                        && followup.getRequestedCommand() == null
+                        && "321".equals(followup.getTargetEntityId())));
+  }
+
+  @Test
   void scheduleFollowupRejectsConflictingExplicitPayloadKindAndJson() {
     IllegalArgumentException ex =
         assertThrows(
@@ -558,6 +581,54 @@ class RemoteFollowupRuntimeServiceImplTest {
     verify(followupRepository, never())
         .findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
             anyLong(), anyString(), anyLong(), anyString());
+  }
+
+  @Test
+  void scheduleFollowupRejectsTriggerScriptEventWithoutSnapshotToken() {
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.scheduleFollowup(
+                    new RemoteFollowupRuntimeService.ScheduleRequest(
+                        1L,
+                        "cmd-1",
+                        "coord-1",
+                        7L,
+                        "region-a",
+                        4L,
+                        8L,
+                        "region-b",
+                        8L,
+                        22L,
+                        4L,
+                        25L,
+                        "late_result_safe_to_ignore",
+                        "followup-1",
+                        "effect-1",
+                        "entity-9",
+                        "{\"kind\":\"trigger_script_event\",\"eventType\":\"onEnterRegion\",\"scriptEventId\":\"remote-enter-1\",\"eventPayload\":{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}}",
+                        "trigger_script_event",
+                        null,
+                        false,
+                        "SHARED",
+                        "demo",
+                        "production",
+                        17L,
+                        "patch-1",
+                        "plugin-1",
+                        "plugin-v1",
+                        "dispatch-1",
+                        "work-1",
+                        "script-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null)));
+
+    assertEquals("payload readSnapshotToken is required", ex.getMessage());
+    verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
   }
 
   @Test
@@ -1360,6 +1431,45 @@ class RemoteFollowupRuntimeServiceImplTest {
         "enqueue_automation_command",
         "LOOK",
         true,
+        "SHARED",
+        "demo",
+        "production",
+        17L,
+        "patch-1",
+        "plugin-1",
+        "plugin-v1",
+        "dispatch-1",
+        "work-1",
+        "script-1",
+        "REMOTE_FOLLOWUP",
+        "TARGET_REGION_EXECUTED",
+        44L,
+        22L,
+        1700L);
+  }
+
+  private static RemoteFollowupRuntimeService.ScheduleRequest triggerScriptEventScheduleRequest() {
+    return new RemoteFollowupRuntimeService.ScheduleRequest(
+        1L,
+        "cmd-1",
+        "coord-1",
+        7L,
+        "region-a",
+        4L,
+        8L,
+        "region-b",
+        8L,
+        22L,
+        4L,
+        25L,
+        "late_result_safe_to_ignore",
+        "followup-1",
+        "effect-1",
+        "321",
+        "{\"kind\":\"trigger_script_event\",\"eventType\":\"onEnterRegion\",\"eventSchemaVersion\":\"v1\",\"scriptEventId\":\"remote-enter-1\",\"readSnapshotToken\":\"game-session:onEnterRegion:9:8:remote-enter-1\",\"eventPayload\":{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}}",
+        "trigger_script_event",
+        null,
+        false,
         "SHARED",
         "demo",
         "production",

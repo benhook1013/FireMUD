@@ -48,6 +48,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   private static final String PAYLOAD_KIND_ENQUEUE_AUTOMATION_COMMAND =
       "enqueue_automation_command";
   private static final String PAYLOAD_KIND_ENQUEUE_GAMEPLAY_COMMAND = "enqueue_gameplay_command";
+  private static final String PAYLOAD_KIND_TRIGGER_SCRIPT_EVENT = "trigger_script_event";
 
   private final RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
   private final RemoteFollowupRepository remoteFollowupRepository;
@@ -374,13 +375,39 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       throw new IllegalArgumentException("payload kind is required");
     }
     if (!PAYLOAD_KIND_ENQUEUE_AUTOMATION_COMMAND.equals(payloadSummary.kind())
-        && !PAYLOAD_KIND_ENQUEUE_GAMEPLAY_COMMAND.equals(payloadSummary.kind())) {
+        && !PAYLOAD_KIND_ENQUEUE_GAMEPLAY_COMMAND.equals(payloadSummary.kind())
+        && !PAYLOAD_KIND_TRIGGER_SCRIPT_EVENT.equals(payloadSummary.kind())) {
       throw new IllegalArgumentException(
           "payload kind '%s' is not yet supported".formatted(payloadSummary.kind()));
+    }
+    if (PAYLOAD_KIND_TRIGGER_SCRIPT_EVENT.equals(payloadSummary.kind())) {
+      validateTriggerScriptEventPayload(request.payloadJson(), request.targetEntityId());
+      return;
     }
     if (payloadSummary.command() == null) {
       throw new IllegalArgumentException(
           "payload command is required for kind '%s'".formatted(payloadSummary.kind()));
+    }
+  }
+
+  private static void validateTriggerScriptEventPayload(String payloadJson, String targetEntityId) {
+    if (payloadJson == null || payloadJson.isBlank()) {
+      throw new IllegalArgumentException(
+          "payload_json is required for kind 'trigger_script_event'");
+    }
+    JsonNode root;
+    try {
+      root = OBJECT_MAPPER.readTree(payloadJson);
+    } catch (IOException ex) {
+      throw new IllegalArgumentException("payload_json must be valid JSON");
+    }
+    requirePayloadField(root, "eventType", "payload eventType is required");
+    requirePayloadField(root, "scriptEventId", "payload scriptEventId is required");
+    requirePayloadField(root, "readSnapshotToken", "payload readSnapshotToken is required");
+    requirePayloadField(root, "eventPayload", "payload eventPayload is required");
+    if (blankToNull(targetEntityId) == null) {
+      throw new IllegalArgumentException(
+          "target_entity_id is required for kind 'trigger_script_event'");
     }
   }
 
@@ -841,6 +868,19 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         positiveLong(root.path("originSourceOrdinal")),
         positiveLong(root.path("originSourceDueTickId")),
         positiveLong(root.path("originSourceDueAtMs")));
+  }
+
+  private static void requirePayloadField(JsonNode root, String fieldName, String message) {
+    JsonNode field = root.path(fieldName);
+    if (field.isMissingNode() || field.isNull()) {
+      throw new IllegalArgumentException(message);
+    }
+    if (field.isTextual() && blankToNull(field.asText("")) == null) {
+      throw new IllegalArgumentException(message);
+    }
+    if (field.isContainerNode() && field.isEmpty()) {
+      throw new IllegalArgumentException(message);
+    }
   }
 
   private static boolean requestConflict(String requestValue, String jsonValue) {
