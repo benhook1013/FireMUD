@@ -43,10 +43,10 @@ That means this parent doc is up to date as a taxonomy and direction lock, but i
 
 ## Current Remaining Work
 
-- continue implementation and closure work in the child slices rather than reopening the parent family definition.
-- keep `08.4` as the publication-boundary companion rather than duplicating it here.
-- add future scripting/runtime work under the `10.x` family instead of burying it under generic hardening or gameplay slices.
-- do not treat the parent `10` doc as a frozen review artifact for service behavior; use it to navigate the child slices, with `10.5` currently the closest thing to a broad read-model/operator deep-dive candidate.
+- [ ] Continue implementation and closure work in the child slices rather than reopening the parent family definition.
+- [x] Keep `08.4` as the publication-boundary companion rather than duplicating it here.
+- [ ] Add future scripting/runtime work under the `10.x` family instead of burying it under generic hardening or gameplay slices.
+- [x] Do not treat the parent `10` doc as a frozen review artifact for service behavior; use it to navigate the child slices, with `10.5` currently the closest thing to a broad read-model/operator deep-dive candidate.
 
 ## Checklist
 
