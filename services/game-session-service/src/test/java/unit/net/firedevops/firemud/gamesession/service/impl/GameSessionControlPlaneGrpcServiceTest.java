@@ -2463,7 +2463,12 @@ class GameSessionControlPlaneGrpcServiceTest {
                         && "plugin-v1".equals(request.pluginVersionId())
                         && "dispatch-1".equals(request.automationDispatchId())
                         && "work-1".equals(request.automationWorkItemId())
-                        && "script-1".equals(request.scriptId())));
+                        && "script-1".equals(request.scriptId())
+                        && "REMOTE_FOLLOWUP".equals(request.originSourceKind())
+                        && "TARGET_REGION_EXECUTED".equals(request.originSourceState())
+                        && Objects.equals(Long.valueOf(44L), request.originSourceOrdinal())
+                        && Objects.equals(Long.valueOf(55L), request.originSourceDueTickId())
+                        && Objects.equals(Long.valueOf(1700L), request.originSourceDueAtMs())));
   }
 
   @Test
@@ -2913,6 +2918,11 @@ class GameSessionControlPlaneGrpcServiceTest {
         .setAutomationDispatchId("dispatch-1")
         .setAutomationWorkItemId("work-1")
         .setScriptId("script-1")
+        .setOriginSourceKind("REMOTE_FOLLOWUP")
+        .setOriginSourceState("TARGET_REGION_EXECUTED")
+        .setOriginSourceOrdinal(44L)
+        .setOriginSourceDueTickId(55L)
+        .setOriginSourceDueAtMs(1700L)
         .build();
   }
 

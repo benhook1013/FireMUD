@@ -39,7 +39,12 @@ public interface RemoteFollowupRuntimeService {
       String pluginVersionId,
       String automationDispatchId,
       String automationWorkItemId,
-      String scriptId) {}
+      String scriptId,
+      String originSourceKind,
+      String originSourceState,
+      Long originSourceOrdinal,
+      Long originSourceDueTickId,
+      Long originSourceDueAtMs) {}
 
   record ResultRequest(
       long tenantId,

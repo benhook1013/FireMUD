@@ -219,7 +219,12 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "plugin-v1",
                         "dispatch-1",
                         "work-1",
-                        "script-1")));
+                        "script-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null)));
 
     assertEquals("command_id already maps to a different coordinator_id", ex.getMessage());
     verify(followupRepository, never())
@@ -270,7 +275,12 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "plugin-v1",
                         "dispatch-1",
                         "work-1",
-                        "script-1")));
+                        "script-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null)));
 
     assertEquals("effect_key already maps to a different remote execution scope", ex.getMessage());
   }
@@ -313,7 +323,12 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "plugin-v1",
                         "dispatch-1",
                         "work-1",
-                        "script-1")));
+                        "script-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null)));
 
     assertEquals("command_id already maps to different remote followup metadata", ex.getMessage());
     verify(followupRepository, never())
@@ -364,7 +379,12 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "plugin-v1",
                         "dispatch-1",
                         "work-1",
-                        "script-1")));
+                        "script-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null)));
 
     assertEquals("effect_key already maps to different remote followup metadata", ex.getMessage());
   }
@@ -403,7 +423,12 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "plugin-v1",
                         "dispatch-1",
                         "work-1",
-                        "script-1")));
+                        "script-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null)));
 
     assertEquals("payload_json must be valid JSON", ex.getMessage());
     verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
@@ -446,7 +471,12 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "plugin-v1",
                         "dispatch-1",
                         "work-1",
-                        "script-1")));
+                        "script-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null)));
 
     assertEquals("payload kind 'teleport' is not yet supported", ex.getMessage());
     verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
@@ -489,7 +519,12 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "plugin-v1",
                         "dispatch-1",
                         "work-1",
-                        "script-1")));
+                        "script-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null)));
 
     assertEquals(
         "payload command is required for kind 'enqueue_automation_command'", ex.getMessage());
@@ -1055,9 +1090,7 @@ class RemoteFollowupRuntimeServiceImplTest {
         "followup-1",
         "effect-1",
         "entity-9",
-        "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true,"
-            + "\"originSourceKind\":\"REMOTE_FOLLOWUP\",\"originSourceState\":\"TARGET_REGION_EXECUTED\","
-            + "\"originSourceOrdinal\":44,\"originSourceDueTickId\":22,\"originSourceDueAtMs\":1700}",
+        "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true}",
         "SHARED",
         "demo",
         "production",
@@ -1067,7 +1100,12 @@ class RemoteFollowupRuntimeServiceImplTest {
         "plugin-v1",
         "dispatch-1",
         "work-1",
-        "script-1");
+        "script-1",
+        "REMOTE_FOLLOWUP",
+        "TARGET_REGION_EXECUTED",
+        44L,
+        22L,
+        1700L);
   }
 
   private static RemoteFollowupRuntimeService.ResultRequest resultRequest(String outcome) {

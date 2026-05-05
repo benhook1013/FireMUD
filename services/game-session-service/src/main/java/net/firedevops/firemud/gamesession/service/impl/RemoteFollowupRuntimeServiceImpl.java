@@ -488,7 +488,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             .equals(normalized(existing.getTargetEntityId()))
         || !normalized(blankToNull(request.payloadJson()))
             .equals(normalized(existing.getPayloadJson()))
-        || !samePayloadAuthority(existing, payloadSummary)
+        || !samePayloadAuthority(existing, request, payloadSummary)
         || !sameSchedulingMetadata(
             existing.getPlayableStateScope(),
             existing.getWorldSlug(),
@@ -600,11 +600,16 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     followup.setPayloadKind(payloadSummary.kind());
     followup.setRequestedCommand(payloadSummary.command());
     followup.setRequiresSoloTick(payloadSummary.requiresSoloTick());
-    followup.setOriginSourceKind(payloadSummary.originSourceKind());
-    followup.setOriginSourceState(payloadSummary.originSourceState());
-    followup.setOriginSourceOrdinal(payloadSummary.originSourceOrdinal());
-    followup.setOriginSourceDueTickId(payloadSummary.originSourceDueTickId());
-    followup.setOriginSourceDueAtMs(payloadSummary.originSourceDueAtMs());
+    followup.setOriginSourceKind(
+        metadataValue(request.originSourceKind(), payloadSummary.originSourceKind()));
+    followup.setOriginSourceState(
+        metadataValue(request.originSourceState(), payloadSummary.originSourceState()));
+    followup.setOriginSourceOrdinal(
+        metadataLong(request.originSourceOrdinal(), payloadSummary.originSourceOrdinal()));
+    followup.setOriginSourceDueTickId(
+        metadataLong(request.originSourceDueTickId(), payloadSummary.originSourceDueTickId()));
+    followup.setOriginSourceDueAtMs(
+        metadataLong(request.originSourceDueAtMs(), payloadSummary.originSourceDueAtMs()));
     followup.setStatus(FOLLOWUP_SCHEDULED);
     followup.setClaimedTickBatchId(null);
     followup.setClaimOrdinal(null);
@@ -784,16 +789,24 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     }
   }
 
-  private static boolean samePayloadAuthority(RemoteFollowup existing, PayloadSummary payload) {
+  private static boolean samePayloadAuthority(
+      RemoteFollowup existing, ScheduleRequest request, PayloadSummary payload) {
     return normalized(payload.kind()).equals(normalized(existing.getPayloadKind()))
         && normalized(payload.command()).equals(normalized(existing.getRequestedCommand()))
         && payload.requiresSoloTick() == existing.isRequiresSoloTick()
-        && normalized(payload.originSourceKind()).equals(normalized(existing.getOriginSourceKind()))
-        && normalized(payload.originSourceState())
+        && normalized(metadataValue(request.originSourceKind(), payload.originSourceKind()))
+            .equals(normalized(existing.getOriginSourceKind()))
+        && normalized(metadataValue(request.originSourceState(), payload.originSourceState()))
             .equals(normalized(existing.getOriginSourceState()))
-        && sameLong(existing.getOriginSourceOrdinal(), payload.originSourceOrdinal())
-        && sameLong(existing.getOriginSourceDueTickId(), payload.originSourceDueTickId())
-        && sameLong(existing.getOriginSourceDueAtMs(), payload.originSourceDueAtMs());
+        && sameLong(
+            existing.getOriginSourceOrdinal(),
+            metadataLong(request.originSourceOrdinal(), payload.originSourceOrdinal()))
+        && sameLong(
+            existing.getOriginSourceDueTickId(),
+            metadataLong(request.originSourceDueTickId(), payload.originSourceDueTickId()))
+        && sameLong(
+            existing.getOriginSourceDueAtMs(),
+            metadataLong(request.originSourceDueAtMs(), payload.originSourceDueAtMs()));
   }
 
   private static ResultSummary resultSummary(String payloadJson) {

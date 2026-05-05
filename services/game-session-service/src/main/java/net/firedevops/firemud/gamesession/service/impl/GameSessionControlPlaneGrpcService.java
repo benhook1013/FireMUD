@@ -755,7 +755,14 @@ public final class GameSessionControlPlaneGrpcService
                   normalizeBlank(request.getPluginVersionId()),
                   normalizeBlank(request.getAutomationDispatchId()),
                   normalizeBlank(request.getAutomationWorkItemId()),
-                  normalizeBlank(request.getScriptId())));
+                  normalizeBlank(request.getScriptId()),
+                  normalizeBlank(request.getOriginSourceKind()),
+                  normalizeBlank(request.getOriginSourceState()),
+                  request.getOriginSourceOrdinal() > 0 ? request.getOriginSourceOrdinal() : null,
+                  request.getOriginSourceDueTickId() > 0
+                      ? request.getOriginSourceDueTickId()
+                      : null,
+                  request.getOriginSourceDueAtMs() > 0 ? request.getOriginSourceDueAtMs() : null));
       responseObserver.onNext(
           ScheduleRemoteFollowupResponse.newBuilder()
               .setCoordinatorId(outcome.coordinatorId())
