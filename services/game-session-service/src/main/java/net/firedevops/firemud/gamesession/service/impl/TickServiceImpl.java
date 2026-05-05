@@ -1600,6 +1600,7 @@ public class TickServiceImpl implements TickService {
       appendJsonNumberField(builder, "pointerVersion", followup.getPointerVersion());
       appendJsonStringField(builder, "payloadKind", followup.getPayloadKind());
       appendJsonStringField(builder, "requestedCommand", followup.getRequestedCommand());
+      appendJsonBooleanField(builder, "requiresSoloTick", followup.isRequiresSoloTick());
       appendJsonStringField(builder, "payloadJson", followup.getPayloadJson());
       builder.append('}');
     }
@@ -1652,6 +1653,11 @@ public class TickServiceImpl implements TickService {
       return;
     }
     builder.append(value);
+  }
+
+  private static void appendJsonBooleanField(
+      StringBuilder builder, String fieldName, boolean value) {
+    builder.append(",\"").append(fieldName).append("\":").append(value);
   }
 
   private static String jsonEscape(String value) {

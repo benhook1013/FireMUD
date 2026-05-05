@@ -343,6 +343,7 @@ class TickServiceImplTest {
     followup.setPointerVersion(17L);
     followup.setPayloadKind("noop");
     followup.setRequestedCommand("LOOK");
+    followup.setRequiresSoloTick(true);
     followup.setPayloadJson("{\"kind\":\"noop\"}");
     when(remoteFollowupRepository.findByClaimedTickBatchIdOrderByIdAsc(any(String.class)))
         .thenReturn(List.of(followup));
@@ -392,6 +393,7 @@ class TickServiceImplTest {
                         && batch.getSelectedWorkManifestJson().contains("\"worldSlug\":\"demo\"")
                         && batch.getSelectedWorkManifestJson().contains("\"pointerVersion\":17")
                         && batch.getSelectedWorkManifestJson().contains("\"payloadKind\":\"noop\"")
+                        && batch.getSelectedWorkManifestJson().contains("\"requiresSoloTick\":true")
                         && batch
                             .getSelectedWorkManifestJson()
                             .contains("\"requestedCommand\":\"LOOK\"")));
