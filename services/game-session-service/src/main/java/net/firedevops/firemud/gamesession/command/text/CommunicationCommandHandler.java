@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
@@ -14,8 +15,10 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.CommunicationOutputMapper;
 import net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
@@ -44,6 +47,7 @@ public class CommunicationCommandHandler {
   private final CommunicationRecipientDeliveryService recipientDeliveryService;
   private final CommunicationOutputMapper communicationOutputMapper;
   private final MeterRegistry meterRegistry;
+  private final ScriptEventPublisher scriptEventPublisher;
 
   public CommunicationCommandHandlingResult handle(SessionContext context, TextCommand command) {
     return handle(context, command, null);
@@ -69,6 +73,7 @@ public class CommunicationCommandHandler {
       }
 
       try {
+        publishCommandEvent(context, command, effectId);
         SendCommunicationResponse response =
             gameLogicClient.sendCommunication(
                 context,
@@ -216,6 +221,34 @@ public class CommunicationCommandHandler {
       case TELL -> CommunicationType.TELL;
       default -> CommunicationType.COMMUNICATION_TYPE_UNSPECIFIED;
     };
+  }
+
+  private void publishCommandEvent(SessionContext context, TextCommand command, String effectId) {
+    try {
+      scriptEventPublisher.publishCommandEvent(context, scriptEventCommand(command, effectId));
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Communication script event publish failed tenantId={} gameInstanceId={} characterId={} type={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.characterId(),
+          command.type(),
+          ex);
+    }
+  }
+
+  private GameplayCommand scriptEventCommand(TextCommand command, String effectId) {
+    GameplayCommand gameplayCommand = new GameplayCommand();
+    gameplayCommand.setCommandId(commandEventId(command, effectId));
+    gameplayCommand.setCommandName(command.type().name());
+    return gameplayCommand;
+  }
+
+  private String commandEventId(TextCommand command, String effectId) {
+    if (StringUtils.hasText(effectId)) {
+      return effectId + ":communication:" + command.type().name().toLowerCase(Locale.ROOT);
+    }
+    return "comm-" + UUID.randomUUID();
   }
 
   private void logFailure(
