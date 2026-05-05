@@ -99,6 +99,8 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     canceledOnLoad.setScriptPatchVersion("patch-1");
     canceledOnLoad.setEventType("onLoad");
     canceledOnLoad.setStatus("CANCELED");
+    canceledOnLoad.setCancelReason("rollback_epoch_advanced");
+    canceledOnLoad.setUpdatedAt(Instant.ofEpochMilli(250));
     when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
         .thenReturn(Optional.of(projection));
     when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
@@ -110,9 +112,42 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     service.refreshFromOnLoadWorkItems("1", "patch-1");
 
     assertThat(projection.getReadinessStatus()).isEqualTo("ROLLED_BACK");
-    assertThat(projection.getStatusReason()).isEqualTo("tenant_readiness_canceled");
+    assertThat(projection.getStatusReason()).isEqualTo("rollback_epoch_advanced");
     assertThat(service.getProjection("1", "patch-1")).isPresent();
     assertThat(service.getProjection("1", "patch-1").get().status())
         .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_ROLLED_BACK);
+  }
+
+  @Test
+  void marksPatchFailedWithConcreteDeadLetterReason() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+    projection.setTenantId("1");
+    projection.setScriptPatchVersion("patch-1");
+    projection.setReadinessStatus("ONLOAD_RUNNING");
+    ScriptWorkItem deadLetteredOnLoad = new ScriptWorkItem();
+    deadLetteredOnLoad.setTenantId("1");
+    deadLetteredOnLoad.setScriptPatchVersion("patch-1");
+    deadLetteredOnLoad.setEventType("onLoad");
+    deadLetteredOnLoad.setStatus("DEAD_LETTERED");
+    deadLetteredOnLoad.setCancelReason("onload_commands_not_allowed");
+    deadLetteredOnLoad.setUpdatedAt(Instant.ofEpochMilli(400));
+    when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(Optional.of(projection));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(List.of(deadLetteredOnLoad));
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+    service.refreshFromOnLoadWorkItems("1", "patch-1");
+
+    assertThat(projection.getReadinessStatus()).isEqualTo("FAILED");
+    assertThat(projection.getStatusReason()).isEqualTo("onload_commands_not_allowed");
+    assertThat(service.getProjection("1", "patch-1")).isPresent();
+    assertThat(service.getProjection("1", "patch-1").get().status())
+        .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
   }
 }

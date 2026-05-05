@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchReadinessProjection;
@@ -83,13 +84,14 @@ public class ScriptPatchReadinessProjectionServiceImpl
     } else if (onLoadWorkItems.stream()
         .anyMatch(item -> "DEAD_LETTERED".equals(item.getStatus()))) {
       projection.setReadinessStatus("FAILED");
-      projection.setStatusReason("onload_failed");
+      projection.setStatusReason(latestCanceledReason(onLoadWorkItems, "onload_failed"));
     } else if (onLoadWorkItems.stream().anyMatch(this::isActiveOnLoadStatus)) {
       projection.setReadinessStatus("ONLOAD_RUNNING");
       projection.setStatusReason("tenant_readiness_running");
     } else if (onLoadWorkItems.stream().anyMatch(item -> "CANCELED".equals(item.getStatus()))) {
       projection.setReadinessStatus("ROLLED_BACK");
-      projection.setStatusReason("tenant_readiness_canceled");
+      projection.setStatusReason(
+          latestCanceledReason(onLoadWorkItems, "tenant_readiness_canceled"));
     } else {
       projection.setReadinessStatus("READY");
       projection.setStatusReason("ready_for_tenant");
@@ -163,6 +165,17 @@ public class ScriptPatchReadinessProjectionServiceImpl
       case "PENDING_EVALUATION", "EVALUATING", "HANDOFF_IN_FLIGHT" -> true;
       default -> false;
     };
+  }
+
+  private static String latestCanceledReason(List<ScriptWorkItem> workItems, String fallback) {
+    return workItems.stream()
+        .filter(
+            item -> "DEAD_LETTERED".equals(item.getStatus()) || "CANCELED".equals(item.getStatus()))
+        .sorted(Comparator.comparing(ScriptWorkItem::getUpdatedAt).reversed())
+        .map(ScriptWorkItem::getCancelReason)
+        .filter(reason -> reason != null && !reason.isBlank())
+        .findFirst()
+        .orElse(fallback);
   }
 
   private boolean isTerminal(String readinessStatus) {
