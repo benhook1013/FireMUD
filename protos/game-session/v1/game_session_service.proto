@@ -573,6 +573,7 @@ message RemoteCommandCoordinatorEntry {
   string target_command_execution_outcome = 41;
   string target_command_gameplay_result = 42;
   string latest_result_message = 43;
+  PluginPublicationLink plugin_publication = 44;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -661,6 +662,7 @@ message RemoteFollowupEntry {
   string target_command_id = 34;
   string target_command_execution_outcome = 35;
   string target_command_gameplay_result = 36;
+  PluginPublicationLink plugin_publication = 37;
 }
 
 message ListRemoteFollowupsResponse {
@@ -702,6 +704,7 @@ message RemoteFollowupResultEntry {
   string result_command_execution_outcome = 26;
   string result_command_gameplay_result = 27;
   string result_message = 28;
+  PluginPublicationLink plugin_publication = 29;
 }
 
 message ListRemoteFollowupResultsResponse {

@@ -108,20 +108,21 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(
             client.getPublishedPluginVersion(
                 Mockito.anyLong(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetPublishedPluginVersionResponse.newBuilder()
-                .setPluginVersion(
-                    PublishedPluginVersion.newBuilder()
-                        .setPluginId("plugin-2")
-                        .setPluginVersionId("plugin-v2")
-                        .setPublicationId(31L)
-                        .setPublicationState(
-                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
-                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
-                        .setStatusReason("signature_verified")
-                        .setLastChangedAtMs(275L)
-                        .build())
-                .build());
+        .thenAnswer(
+            invocation ->
+                GetPublishedPluginVersionResponse.newBuilder()
+                    .setPluginVersion(
+                        PublishedPluginVersion.newBuilder()
+                            .setPluginId(invocation.getArgument(1))
+                            .setPluginVersionId(invocation.getArgument(2))
+                            .setPublicationId(31L)
+                            .setPublicationState(
+                                net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                    .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                            .setStatusReason("signature_verified")
+                            .setLastChangedAtMs(275L)
+                            .build())
+                    .build());
     return client;
   }
 
@@ -2248,6 +2249,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("plugin-v1", responseRef.get().getCoordinator().getPluginVersionId());
     assertEquals(17L, responseRef.get().getCoordinator().getPublication().getVersionId());
     assertEquals(
+        "plugin-v1",
+        responseRef.get().getCoordinator().getPluginPublication().getPluginVersionId());
+    assertEquals(31L, responseRef.get().getCoordinator().getPluginPublication().getPublicationId());
+    assertEquals(
         PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
         responseRef.get().getCoordinator().getPlayableStateScope());
     assertEquals("demo", responseRef.get().getCoordinator().getWorldSlug());
@@ -2362,6 +2367,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("plugin-1", responseRef.get().getFollowups(0).getPluginId());
     assertEquals("plugin-v1", responseRef.get().getFollowups(0).getPluginVersionId());
     assertEquals(17L, responseRef.get().getFollowups(0).getPublication().getVersionId());
+    assertEquals(
+        "plugin-v1", responseRef.get().getFollowups(0).getPluginPublication().getPluginVersionId());
+    assertEquals(31L, responseRef.get().getFollowups(0).getPluginPublication().getPublicationId());
     assertEquals("rfcmd-rf-1", responseRef.get().getFollowups(0).getTargetCommandId());
     assertEquals("APPLIED", responseRef.get().getFollowups(0).getTargetCommandExecutionOutcome());
     assertEquals("SUCCESS", responseRef.get().getFollowups(0).getTargetCommandGameplayResult());
@@ -2539,6 +2547,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("plugin-1", responseRef.get().getResults(0).getPluginId());
     assertEquals("plugin-v1", responseRef.get().getResults(0).getPluginVersionId());
     assertEquals(17L, responseRef.get().getResults(0).getPublication().getVersionId());
+    assertEquals(
+        "plugin-v1", responseRef.get().getResults(0).getPluginPublication().getPluginVersionId());
+    assertEquals(31L, responseRef.get().getResults(0).getPluginPublication().getPublicationId());
     assertEquals(
         PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
         responseRef.get().getResults(0).getPlayableStateScope());

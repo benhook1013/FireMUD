@@ -2234,6 +2234,12 @@ public final class GameSessionControlPlaneGrpcService
     if (pluginVersionId != null) {
       builder.setPluginVersionId(pluginVersionId);
     }
+    if (pluginId != null
+        && !pluginId.isBlank()
+        && pluginVersionId != null
+        && !pluginVersionId.isBlank()) {
+      builder.setPluginPublication(pluginPublicationLink(tenantId, pluginId, pluginVersionId));
+    }
   }
 
   private static void applyDirectCommandIdentity(
@@ -2302,6 +2308,12 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (pluginVersionId != null) {
       builder.setPluginVersionId(pluginVersionId);
+    }
+    if (pluginId != null
+        && !pluginId.isBlank()
+        && pluginVersionId != null
+        && !pluginVersionId.isBlank()) {
+      builder.setPluginPublication(pluginPublicationLink(tenantId, pluginId, pluginVersionId));
     }
   }
 
@@ -2374,6 +2386,12 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (pluginVersionId != null) {
       builder.setPluginVersionId(pluginVersionId);
+    }
+    if (pluginId != null
+        && !pluginId.isBlank()
+        && pluginVersionId != null
+        && !pluginVersionId.isBlank()) {
+      builder.setPluginPublication(pluginPublicationLink(tenantId, pluginId, pluginVersionId));
     }
   }
 
