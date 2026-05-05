@@ -2365,10 +2365,18 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
     GameplayCommandRepository gameplayCommandRepository =
         Mockito.mock(GameplayCommandRepository.class);
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setTenantId(1L);
+    coordinator.setFollowupId("rf-1");
+    coordinator.setOriginDeadlineRegionEpoch(3L);
+    coordinator.setOriginDeadlineTickId(88L);
+    coordinator.setLateResultPolicy("late_result_safe_to_ignore");
     Mockito.when(
             repository.findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAscIdAsc(
                 1L, "region-b", "SCHEDULED"))
         .thenReturn(List.of(followup));
+    Mockito.when(coordinatorRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
+        .thenReturn(Optional.of(coordinator));
     GameplayCommand targetCommand = new GameplayCommand();
     targetCommand.setCommandId("rfcmd-rf-1");
     targetCommand.setExecutionOutcome("APPLIED");
@@ -2427,6 +2435,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("rfcmd-rf-1", responseRef.get().getFollowups(0).getTargetCommandId());
     assertEquals("APPLIED", responseRef.get().getFollowups(0).getTargetCommandExecutionOutcome());
     assertEquals("SUCCESS", responseRef.get().getFollowups(0).getTargetCommandGameplayResult());
+    assertEquals(3L, responseRef.get().getFollowups(0).getOriginDeadlineRegionEpoch());
+    assertEquals(88L, responseRef.get().getFollowups(0).getOriginDeadlineTickId());
+    assertEquals(
+        "late_result_safe_to_ignore", responseRef.get().getFollowups(0).getLateResultPolicy());
     assertEquals(
         PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
         responseRef.get().getFollowups(0).getPlayableStateScope());
@@ -2557,12 +2569,20 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
     GameplayCommandRepository gameplayCommandRepository =
         Mockito.mock(GameplayCommandRepository.class);
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setTenantId(1L);
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setOriginDeadlineRegionEpoch(3L);
+    coordinator.setOriginDeadlineTickId(88L);
+    coordinator.setLateResultPolicy("late_result_safe_to_ignore");
     GameplayCommand targetCommand = new GameplayCommand();
     targetCommand.setCommandId("auto-1");
     targetCommand.setExecutionOutcome("APPLIED");
     targetCommand.setGameplayResult("SUCCESS");
     Mockito.when(repository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(1L, "coord-1"))
         .thenReturn(List.of(result));
+    Mockito.when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
     Mockito.when(gameplayCommandRepository.findByCommandId("auto-1"))
         .thenReturn(Optional.of(targetCommand));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -2605,6 +2625,10 @@ class GameSessionControlPlaneGrpcServiceTest {
         responseRef.get().getResults(0).getResultMessage());
     assertEquals("APPLIED", responseRef.get().getResults(0).getResultCommandExecutionOutcome());
     assertEquals("SUCCESS", responseRef.get().getResults(0).getResultCommandGameplayResult());
+    assertEquals(3L, responseRef.get().getResults(0).getOriginDeadlineRegionEpoch());
+    assertEquals(88L, responseRef.get().getResults(0).getOriginDeadlineTickId());
+    assertEquals(
+        "late_result_safe_to_ignore", responseRef.get().getResults(0).getLateResultPolicy());
     assertEquals("patch-1", responseRef.get().getResults(0).getScriptPatchVersion());
     assertEquals("plugin-1", responseRef.get().getResults(0).getPluginId());
     assertEquals("plugin-v1", responseRef.get().getResults(0).getPluginVersionId());

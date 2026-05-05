@@ -692,6 +692,9 @@ message RemoteFollowupEntry {
   int64 origin_source_ordinal = 41;
   int64 origin_source_due_tick_id = 42;
   int64 origin_source_due_at_ms = 43;
+  int64 origin_deadline_region_epoch = 44;
+  int64 origin_deadline_tick_id = 45;
+  string late_result_policy = 46;
 }
 
 message ListRemoteFollowupsResponse {
@@ -734,6 +737,9 @@ message RemoteFollowupResultEntry {
   string result_command_gameplay_result = 27;
   string result_message = 28;
   PluginPublicationLink plugin_publication = 29;
+  int64 origin_deadline_region_epoch = 30;
+  int64 origin_deadline_tick_id = 31;
+  string late_result_policy = 32;
 }
 
 message ListRemoteFollowupResultsResponse {

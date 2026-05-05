@@ -2114,6 +2114,12 @@ public final class GameSessionControlPlaneGrpcService
   private RemoteFollowupEntry toRemoteFollowupEntry(RemoteFollowup followup) {
     GameplayCommand targetCommand =
         linkedTargetCommand(followup.getTenantId(), followup.getFollowupId());
+    RemoteCommandCoordinator coordinator =
+        remoteCommandCoordinatorRepository == null
+            ? null
+            : remoteCommandCoordinatorRepository
+                .findByTenantIdAndFollowupId(followup.getTenantId(), followup.getFollowupId())
+                .orElse(null);
     RemoteFollowupEntry.Builder builder =
         RemoteFollowupEntry.newBuilder()
             .setFollowupId(followup.getFollowupId())
@@ -2180,11 +2186,18 @@ public final class GameSessionControlPlaneGrpcService
         followup.getWorldSlug(),
         followup.getRealmSlug(),
         followup.getPointerVersion());
+    applyCoordinatorDeadlinePolicy(builder, coordinator);
     applyTargetCommandStatus(builder, targetCommand);
     return builder.build();
   }
 
   private RemoteFollowupResultEntry toRemoteFollowupResultEntry(RemoteFollowupResult result) {
+    RemoteCommandCoordinator coordinator =
+        remoteCommandCoordinatorRepository == null
+            ? null
+            : remoteCommandCoordinatorRepository
+                .findByTenantIdAndCoordinatorId(result.getTenantId(), result.getCoordinatorId())
+                .orElse(null);
     RemoteFollowupResultEntry.Builder builder =
         RemoteFollowupResultEntry.newBuilder()
             .setResultId(result.getResultId())
@@ -2235,6 +2248,7 @@ public final class GameSessionControlPlaneGrpcService
         result.getWorldSlug(),
         result.getRealmSlug(),
         result.getPointerVersion());
+    applyCoordinatorDeadlinePolicy(builder, coordinator);
     return builder.build();
   }
 
@@ -2434,6 +2448,18 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private static void applyCoordinatorDeadlinePolicy(
+      RemoteFollowupEntry.Builder builder, RemoteCommandCoordinator coordinator) {
+    if (coordinator == null) {
+      return;
+    }
+    builder.setOriginDeadlineRegionEpoch(coordinator.getOriginDeadlineRegionEpoch());
+    builder.setOriginDeadlineTickId(coordinator.getOriginDeadlineTickId());
+    if (coordinator.getLateResultPolicy() != null) {
+      builder.setLateResultPolicy(coordinator.getLateResultPolicy());
+    }
+  }
+
   private void applyDirectCommandProvenance(
       RemoteFollowupResultEntry.Builder builder,
       long tenantId,
@@ -2508,6 +2534,18 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (targetCommand.getGameplayResult() != null) {
       builder.setResultCommandGameplayResult(targetCommand.getGameplayResult());
+    }
+  }
+
+  private static void applyCoordinatorDeadlinePolicy(
+      RemoteFollowupResultEntry.Builder builder, RemoteCommandCoordinator coordinator) {
+    if (coordinator == null) {
+      return;
+    }
+    builder.setOriginDeadlineRegionEpoch(coordinator.getOriginDeadlineRegionEpoch());
+    builder.setOriginDeadlineTickId(coordinator.getOriginDeadlineTickId());
+    if (coordinator.getLateResultPolicy() != null) {
+      builder.setLateResultPolicy(coordinator.getLateResultPolicy());
     }
   }
 
