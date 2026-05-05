@@ -2894,6 +2894,12 @@ public final class GameSessionControlPlaneGrpcService
     if (remoteTargetCommand != null && remoteTargetCommand.getCommandId() != null) {
       builder.setRemoteResultCommandId(remoteTargetCommand.getCommandId());
     }
+    if (remoteTargetCommand != null && remoteTargetCommand.getExecutionOutcome() != null) {
+      builder.setRemoteTargetCommandExecutionOutcome(remoteTargetCommand.getExecutionOutcome());
+    }
+    if (remoteTargetCommand != null && remoteTargetCommand.getGameplayResult() != null) {
+      builder.setRemoteTargetCommandGameplayResult(remoteTargetCommand.getGameplayResult());
+    }
     if (command.getScriptPatchVersion() != null && !command.getScriptPatchVersion().isBlank()) {
       builder.setPublication(
           scriptPatchPublicationLink(command.getTenantId(), command.getScriptPatchVersion()));

@@ -495,6 +495,8 @@ message GameplayCommandStatus {
   int64 remote_origin_deadline_region_epoch = 60;
   int64 remote_origin_deadline_tick_id = 61;
   string remote_late_result_policy = 62;
+  string remote_target_command_execution_outcome = 63;
+  string remote_target_command_gameplay_result = 64;
 }
 
 message GetGameplayCommandStatusResponse {

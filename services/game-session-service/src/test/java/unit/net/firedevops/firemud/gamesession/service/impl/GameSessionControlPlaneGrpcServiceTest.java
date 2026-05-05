@@ -1431,6 +1431,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setRemoteCoordinatorId("coord-2");
     command.setRemoteFollowupId("followup-2");
     command.setScriptPatchVersion("patch-2");
+    command.setExecutionOutcome("APPLIED");
+    command.setGameplayResult("APPLIED");
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository =
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
@@ -1438,8 +1440,14 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(RemoteFollowupResultRepository.class);
     Mockito.when(commandRepository.findByCommandId("rfcmd-followup-2"))
         .thenReturn(Optional.of(command));
+    GameplayCommand targetCommand = new GameplayCommand();
+    targetCommand.setCommandId("target-cmd-2");
+    targetCommand.setTenantId(1L);
+    targetCommand.setGameInstanceId(9L);
+    targetCommand.setExecutionOutcome("APPLIED");
+    targetCommand.setGameplayResult("PARTIAL");
     Mockito.when(commandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-2"))
-        .thenReturn(Optional.of(command));
+        .thenReturn(Optional.of(targetCommand));
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setTenantId(1L);
     coordinator.setCommandId("cmd-origin-2");
@@ -1524,7 +1532,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         "{\"commandId\":\"rfcmd-followup-2\",\"applied\":true}",
         responseRef.get().getCommand().getRemoteResultPayloadJson());
-    assertEquals("rfcmd-followup-2", responseRef.get().getCommand().getRemoteResultCommandId());
+    assertEquals("target-cmd-2", responseRef.get().getCommand().getRemoteResultCommandId());
+    assertEquals(
+        "APPLIED", responseRef.get().getCommand().getRemoteTargetCommandExecutionOutcome());
+    assertEquals("PARTIAL", responseRef.get().getCommand().getRemoteTargetCommandGameplayResult());
   }
 
   @Test
