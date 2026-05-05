@@ -168,6 +168,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         """
         {"kind":"enqueue_automation_command","command":"LOOK"}
         """);
+    followup.setRequiresSoloTick(true);
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
@@ -222,7 +223,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
             org.mockito.Mockito.eq(9L),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.Mockito.eq("LOOK"),
-            org.mockito.Mockito.eq(false));
+            org.mockito.Mockito.eq(true));
     ArgumentCaptor<RemoteFollowupRuntimeService.ResultRequest> requestCaptor =
         ArgumentCaptor.forClass(RemoteFollowupRuntimeService.ResultRequest.class);
     org.mockito.Mockito.verify(remoteFollowupRuntimeService).recordResult(requestCaptor.capture());
@@ -252,6 +253,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setPayloadJson("{not-json");
     followup.setPayloadKind("enqueue_automation_command");
     followup.setRequestedCommand("LOOK");
+    followup.setRequiresSoloTick(true);
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
@@ -296,7 +298,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
             org.mockito.Mockito.eq(9L),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.Mockito.eq("LOOK"),
-            org.mockito.Mockito.eq(false));
+            org.mockito.Mockito.eq(true));
   }
 
   @Test

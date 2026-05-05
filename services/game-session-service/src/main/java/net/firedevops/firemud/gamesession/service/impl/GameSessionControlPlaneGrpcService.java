@@ -2061,7 +2061,8 @@ public final class GameSessionControlPlaneGrpcService
           builder,
           followup.getPayloadJson(),
           followup.getPayloadKind(),
-          followup.getRequestedCommand());
+          followup.getRequestedCommand(),
+          followup.isRequiresSoloTick());
     }
     if (latestResult != null) {
       builder.setLatestResultOutcome(latestResult.getOutcome());
@@ -2153,7 +2154,8 @@ public final class GameSessionControlPlaneGrpcService
         builder,
         followup.getPayloadJson(),
         followup.getPayloadKind(),
-        followup.getRequestedCommand());
+        followup.getRequestedCommand(),
+        followup.isRequiresSoloTick());
     applyRoutingBundle(
         builder,
         followup.getPlayableStateScope(),
@@ -2452,13 +2454,18 @@ public final class GameSessionControlPlaneGrpcService
       RemoteCommandCoordinatorEntry.Builder builder,
       String payloadJson,
       String payloadKind,
-      String requestedCommand) {
-    PayloadSummary summary = payloadSummary(payloadJson, payloadKind, requestedCommand);
+      String requestedCommand,
+      boolean requiresSoloTick) {
+    PayloadSummary summary =
+        payloadSummary(payloadJson, payloadKind, requestedCommand, requiresSoloTick);
     if (summary.kind() != null) {
       builder.setFollowupPayloadKind(summary.kind());
     }
     if (summary.command() != null) {
       builder.setFollowupRequestedCommand(summary.command());
+    }
+    if (summary.requiresSoloTick()) {
+      builder.setFollowupRequiresSoloTick(true);
     }
   }
 
@@ -2466,13 +2473,18 @@ public final class GameSessionControlPlaneGrpcService
       RemoteFollowupEntry.Builder builder,
       String payloadJson,
       String payloadKind,
-      String requestedCommand) {
-    PayloadSummary summary = payloadSummary(payloadJson, payloadKind, requestedCommand);
+      String requestedCommand,
+      boolean requiresSoloTick) {
+    PayloadSummary summary =
+        payloadSummary(payloadJson, payloadKind, requestedCommand, requiresSoloTick);
     if (summary.kind() != null) {
       builder.setPayloadKind(summary.kind());
     }
     if (summary.command() != null) {
       builder.setRequestedCommand(summary.command());
+    }
+    if (summary.requiresSoloTick()) {
+      builder.setRequiresSoloTick(true);
     }
   }
 
@@ -2535,21 +2547,23 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private static PayloadSummary payloadSummary(
-      String payloadJson, String payloadKind, String requestedCommand) {
+      String payloadJson, String payloadKind, String requestedCommand, boolean requiresSoloTick) {
     if ((payloadKind != null && !payloadKind.isBlank())
-        || (requestedCommand != null && !requestedCommand.isBlank())) {
-      return new PayloadSummary(blankToNull(payloadKind), blankToNull(requestedCommand));
+        || (requestedCommand != null && !requestedCommand.isBlank())
+        || requiresSoloTick) {
+      return new PayloadSummary(
+          blankToNull(payloadKind), blankToNull(requestedCommand), requiresSoloTick);
     }
     if (payloadJson == null || payloadJson.isBlank()) {
-      return new PayloadSummary(null, null);
+      return new PayloadSummary(null, null, false);
     }
     try {
       JsonNode root = OBJECT_MAPPER.readTree(payloadJson);
       String kind = blankToNull(root.path("kind").asText(""));
       String command = blankToNull(root.path("command").asText(""));
-      return new PayloadSummary(kind, command);
+      return new PayloadSummary(kind, command, root.path("requiresSoloTick").asBoolean(false));
     } catch (IOException ignored) {
-      return new PayloadSummary(null, null);
+      return new PayloadSummary(null, null, false);
     }
   }
 
@@ -2594,7 +2608,7 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
-  private record PayloadSummary(String kind, String command) {}
+  private record PayloadSummary(String kind, String command, boolean requiresSoloTick) {}
 
   private record ResultSummary(String commandId, String errorCode, String message) {}
 

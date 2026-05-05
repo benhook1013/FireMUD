@@ -142,6 +142,8 @@ public final class DefaultDurableRemoteFollowupExecutionService
     String payloadKind = firstNonBlank(followup.getPayloadKind(), optionalText(root, "kind"));
     String requestedCommand =
         firstNonBlank(followup.getRequestedCommand(), optionalText(root, "command"));
+    boolean requiresSoloTick =
+        followup.isRequiresSoloTick() || root.path("requiresSoloTick").asBoolean(false);
     if ((payloadJson == null || payloadJson.isBlank())
         && (payloadKind == null || payloadKind.isBlank())
         && (requestedCommand == null || requestedCommand.isBlank())) {
@@ -155,10 +157,12 @@ public final class DefaultDurableRemoteFollowupExecutionService
           "Target-side remote followup payload must declare a kind");
     }
     if ("enqueue_gameplay_command".equals(payloadKind)) {
-      return executeEnqueueGameplayCommand(root, requestedCommand, coordinator, followup);
+      return executeEnqueueGameplayCommand(
+          root, requestedCommand, requiresSoloTick, coordinator, followup);
     }
     if ("enqueue_automation_command".equals(payloadKind)) {
-      return executeEnqueueAutomationCommand(root, requestedCommand, coordinator, followup);
+      return executeEnqueueAutomationCommand(
+          root, requestedCommand, requiresSoloTick, coordinator, followup);
     }
     return failure(
         "REMOTE_FOLLOWUP_KIND_UNSUPPORTED",
@@ -169,6 +173,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
   private PayloadExecution executeEnqueueAutomationCommand(
       JsonNode root,
       String requestedCommand,
+      boolean requiresSoloTick,
       RemoteCommandCoordinator coordinator,
       RemoteFollowup followup) {
     try {
@@ -204,7 +209,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   coordinator.getCoordinatorId(),
                   followup.getFollowupId(),
                   requiredTextOrFallback(root, "command", requestedCommand),
-                  root.path("requiresSoloTick").asBoolean(false),
+                  requiresSoloTick,
                   followup.getDueTickId()),
               gameInstanceRepository,
               gameplayCommandRepository,
@@ -237,6 +242,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
   private PayloadExecution executeEnqueueGameplayCommand(
       JsonNode root,
       String requestedCommand,
+      boolean requiresSoloTick,
       RemoteCommandCoordinator coordinator,
       RemoteFollowup followup) {
     try {
@@ -271,7 +277,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   coordinator.getCoordinatorId(),
                   followup.getFollowupId(),
                   requiredTextOrFallback(root, "command", requestedCommand),
-                  root.path("requiresSoloTick").asBoolean(false),
+                  requiresSoloTick,
                   followup.getDueTickId()),
               gameInstanceRepository,
               gameplayCommandRepository,

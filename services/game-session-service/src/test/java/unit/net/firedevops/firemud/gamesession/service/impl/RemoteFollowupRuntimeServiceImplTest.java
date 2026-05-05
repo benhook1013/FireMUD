@@ -115,6 +115,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && "cmd-1".equals(followup.getCommandId())
                         && "enqueue_automation_command".equals(followup.getPayloadKind())
                         && "LOOK".equals(followup.getRequestedCommand())
+                        && followup.isRequiresSoloTick()
                         && "dispatch-1".equals(followup.getAutomationDispatchId())
                         && "work-1".equals(followup.getAutomationWorkItemId())
                         && "script-1".equals(followup.getScriptId())
@@ -163,6 +164,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && "cmd-1".equals(followup.getCommandId())
                         && "enqueue_automation_command".equals(followup.getPayloadKind())
                         && "LOOK".equals(followup.getRequestedCommand())
+                        && followup.isRequiresSoloTick()
                         && "dispatch-1".equals(followup.getAutomationDispatchId())
                         && "work-1".equals(followup.getAutomationWorkItemId())
                         && "script-1".equals(followup.getScriptId())
@@ -1048,7 +1050,7 @@ class RemoteFollowupRuntimeServiceImplTest {
         "followup-1",
         "effect-1",
         "entity-9",
-        "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}",
+        "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true}",
         "SHARED",
         "demo",
         "production",

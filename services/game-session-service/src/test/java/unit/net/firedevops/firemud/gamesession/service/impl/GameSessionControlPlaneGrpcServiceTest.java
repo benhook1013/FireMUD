@@ -2181,6 +2181,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setPayloadJson("{\"kind\":\"payload_kind\",\"command\":\"payload LOOK\"}");
     followup.setPayloadKind("enqueue_automation_command");
     followup.setRequestedCommand("LOOK");
+    followup.setRequiresSoloTick(true);
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setCoordinatorId("coord-1");
     result.setOutcome("APPLIED");
@@ -2264,6 +2265,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         "enqueue_automation_command", responseRef.get().getCoordinator().getFollowupPayloadKind());
     assertEquals("LOOK", responseRef.get().getCoordinator().getFollowupRequestedCommand());
+    assertEquals(true, responseRef.get().getCoordinator().getFollowupRequiresSoloTick());
     assertEquals("APPLIED", responseRef.get().getCoordinator().getLatestResultOutcome());
     assertEquals(
         "{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\",\"message\":\"payload message\"}",
@@ -2309,6 +2311,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setPayloadJson("{\"kind\":\"payload_kind\",\"command\":\"payload LOOK\"}");
     followup.setPayloadKind("enqueue_automation_command");
     followup.setRequestedCommand("LOOK");
+    followup.setRequiresSoloTick(true);
     followup.setTargetEntityId("entity-9");
     followup.setStatus("SCHEDULED");
     followup.setCreatedAt(Instant.parse("2026-05-01T00:00:00Z"));
@@ -2360,6 +2363,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("script-1", responseRef.get().getFollowups(0).getScriptId());
     assertEquals("enqueue_automation_command", responseRef.get().getFollowups(0).getPayloadKind());
     assertEquals("LOOK", responseRef.get().getFollowups(0).getRequestedCommand());
+    assertEquals(true, responseRef.get().getFollowups(0).getRequiresSoloTick());
     assertEquals("region-b", responseRef.get().getFollowups(0).getTargetRegionId());
     assertEquals(55L, responseRef.get().getFollowups(0).getDueTickId());
     assertEquals(2L, responseRef.get().getFollowups(0).getClaimOrdinal());

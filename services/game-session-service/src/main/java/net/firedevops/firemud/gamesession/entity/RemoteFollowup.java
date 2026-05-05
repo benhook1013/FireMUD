@@ -74,6 +74,9 @@ public class RemoteFollowup {
   @Column(name = "requested_command", length = 500)
   private String requestedCommand;
 
+  @Column(name = "requires_solo_tick", nullable = false)
+  private boolean requiresSoloTick;
+
   @Column(name = "failure_code", length = 80)
   private String failureCode;
 

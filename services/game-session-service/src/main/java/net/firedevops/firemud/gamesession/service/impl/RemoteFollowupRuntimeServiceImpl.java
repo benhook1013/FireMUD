@@ -597,6 +597,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     PayloadSummary payloadSummary = payloadSummary(request.payloadJson());
     followup.setPayloadKind(payloadSummary.kind());
     followup.setRequestedCommand(payloadSummary.command());
+    followup.setRequiresSoloTick(payloadSummary.requiresSoloTick());
     followup.setStatus(FOLLOWUP_SCHEDULED);
     followup.setClaimedTickBatchId(null);
     followup.setClaimOrdinal(null);
@@ -758,14 +759,16 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static PayloadSummary payloadSummary(String payloadJson) {
     if (payloadJson == null || payloadJson.isBlank()) {
-      return new PayloadSummary(null, null);
+      return new PayloadSummary(null, null, false);
     }
     try {
       JsonNode root = OBJECT_MAPPER.readTree(payloadJson);
       return new PayloadSummary(
-          blankToNull(root.path("kind").asText("")), blankToNull(root.path("command").asText("")));
+          blankToNull(root.path("kind").asText("")),
+          blankToNull(root.path("command").asText("")),
+          root.path("requiresSoloTick").asBoolean(false));
     } catch (IOException ignored) {
-      return new PayloadSummary(null, null);
+      return new PayloadSummary(null, null, false);
     }
   }
 
@@ -974,7 +977,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             "remote:" + tenantId + ":" + targetEntityId, "1", java.time.Duration.ofMillis(60_000L));
   }
 
-  private record PayloadSummary(String kind, String command) {}
+  private record PayloadSummary(String kind, String command, boolean requiresSoloTick) {}
 
   private record ResultSummary(String commandId, String errorCode, String message) {}
 }

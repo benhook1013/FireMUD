@@ -574,6 +574,7 @@ message RemoteCommandCoordinatorEntry {
   string target_command_gameplay_result = 42;
   string latest_result_message = 43;
   PluginPublicationLink plugin_publication = 44;
+  bool followup_requires_solo_tick = 45;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -663,6 +664,7 @@ message RemoteFollowupEntry {
   string target_command_execution_outcome = 35;
   string target_command_gameplay_result = 36;
   PluginPublicationLink plugin_publication = 37;
+  bool requires_solo_tick = 38;
 }
 
 message ListRemoteFollowupsResponse {
