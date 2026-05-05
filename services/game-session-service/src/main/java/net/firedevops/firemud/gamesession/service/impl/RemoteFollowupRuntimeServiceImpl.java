@@ -180,7 +180,12 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       remoteFollowupResultRepository.save(result);
     }
 
-    ResultSummary requestSummary = resultSummary(request.resultPayloadJson());
+    ResultSummary requestSummary =
+        resultSummary(
+            request.resultPayloadJson(),
+            request.resultCommandId(),
+            request.resultErrorCode(),
+            request.resultMessage());
     Instant now = Instant.now(clock);
     boolean lateResult = COORDINATOR_REMOTE_TIMEOUT_ABANDONED.equals(coordinator.getState());
     applyFollowupResultState(followup, request.outcome(), requestSummary, now);
@@ -387,6 +392,11 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     requireNotBlank(request.originRegionId(), "origin_region_id");
     requireNotBlank(request.targetRegionId(), "target_region_id");
     requireNotBlank(request.outcome(), "outcome");
+    resultSummary(
+        request.resultPayloadJson(),
+        request.resultCommandId(),
+        request.resultErrorCode(),
+        request.resultMessage());
   }
 
   private static void validateResultScope(
@@ -420,8 +430,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         || !request.targetRegionId().equals(existing.getTargetRegionId())
         || request.targetRegionEpoch() != existing.getTargetRegionEpoch()
         || !request.outcome().equals(existing.getOutcome())
-        || !normalized(request.resultPayloadJson())
-            .equals(normalized(existing.getResultPayloadJson()))
         || !sameResultAuthority(existing, request)) {
       throw new IllegalArgumentException("result_id already records a different remote outcome");
     }
@@ -645,7 +653,12 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     result.setTargetRegionEpoch(request.targetRegionEpoch());
     result.setOutcome(request.outcome());
     result.setResultPayloadJson(blankToNull(request.resultPayloadJson()));
-    ResultSummary resultSummary = resultSummary(request.resultPayloadJson());
+    ResultSummary resultSummary =
+        resultSummary(
+            request.resultPayloadJson(),
+            request.resultCommandId(),
+            request.resultErrorCode(),
+            request.resultMessage());
     result.setResultCommandId(metadataValue(request.resultCommandId(), resultSummary.commandId()));
     result.setResultErrorCode(metadataValue(request.resultErrorCode(), resultSummary.errorCode()));
     result.setResultMessage(
@@ -859,7 +872,12 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   }
 
   private static boolean sameResultAuthority(RemoteFollowupResult existing, ResultRequest request) {
-    ResultSummary summary = resultSummary(request.resultPayloadJson());
+    ResultSummary summary =
+        resultSummary(
+            request.resultPayloadJson(),
+            request.resultCommandId(),
+            request.resultErrorCode(),
+            request.resultMessage());
     return normalized(metadataValue(request.resultCommandId(), summary.commandId()))
             .equals(normalized(existing.getResultCommandId()))
         && normalized(metadataValue(request.resultErrorCode(), summary.errorCode()))
@@ -868,21 +886,44 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             .equals(normalized(existing.getResultMessage()));
   }
 
-  private static ResultSummary resultSummary(String payloadJson) {
+  private static ResultSummary resultSummary(
+      String payloadJson, String requestCommandId, String requestErrorCode, String requestMessage) {
+    ResultSummary jsonSummary =
+        resultSummaryFromJson(payloadJson, requestCommandId, requestErrorCode, requestMessage);
+    return new ResultSummary(
+        metadataValue(requestCommandId, jsonSummary.commandId()),
+        metadataValue(requestErrorCode, jsonSummary.errorCode()),
+        metadataValue(requestMessage, jsonSummary.message()));
+  }
+
+  private static ResultSummary resultSummaryFromJson(
+      String payloadJson, String requestCommandId, String requestErrorCode, String requestMessage) {
     if (payloadJson == null || payloadJson.isBlank()) {
       return new ResultSummary(null, null, null);
     }
     try {
       JsonNode root = OBJECT_MAPPER.readTree(payloadJson);
-      String commandId = blankToNull(root.path("commandId").asText(""));
-      String errorCode = blankToNull(root.path("errorCode").asText(""));
-      if (errorCode == null && root.has("failureCode")) {
-        errorCode = blankToNull(root.path("failureCode").asText(""));
+      String jsonCommandId = blankToNull(root.path("commandId").asText(""));
+      String jsonErrorCode = blankToNull(root.path("errorCode").asText(""));
+      if (jsonErrorCode == null && root.has("failureCode")) {
+        jsonErrorCode = blankToNull(root.path("failureCode").asText(""));
       }
-      String message = blankToNull(root.path("message").asText(""));
-      return new ResultSummary(commandId, errorCode, message);
-    } catch (IOException ignored) {
-      return new ResultSummary(null, null, null);
+      String jsonMessage = blankToNull(root.path("message").asText(""));
+      if (requestConflict(requestCommandId, jsonCommandId)) {
+        throw new IllegalArgumentException(
+            "result_payload_json commandId does not match result_command_id");
+      }
+      if (requestConflict(requestErrorCode, jsonErrorCode)) {
+        throw new IllegalArgumentException(
+            "result_payload_json errorCode does not match result_error_code");
+      }
+      if (requestConflict(requestMessage, jsonMessage)) {
+        throw new IllegalArgumentException(
+            "result_payload_json message does not match result_message");
+      }
+      return new ResultSummary(jsonCommandId, jsonErrorCode, jsonMessage);
+    } catch (IOException ex) {
+      throw new IllegalArgumentException("result_payload_json must be valid JSON");
     }
   }
 
@@ -1018,7 +1059,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
                 blankToNull(latestResult.getResultErrorCode()),
                 blankToNull(latestResult.getResultMessage()) != null
                     ? blankToNull(latestResult.getResultMessage())
-                    : resultSummary(latestResult.getResultPayloadJson()).message());
+                    : resultSummary(latestResult.getResultPayloadJson(), null, null, null)
+                        .message());
     if (command == null) {
       return;
     }

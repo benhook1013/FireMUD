@@ -772,6 +772,80 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void recordResultAcceptsExplicitAuthorityWithoutPayloadJson() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    RemoteFollowup followup = followup();
+    when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+    when(resultRepository.findByTenantIdAndResultId(1L, "result-1")).thenReturn(Optional.empty());
+
+    RemoteFollowupRuntimeService.ResultOutcome outcome =
+        service.recordResult(
+            new RemoteFollowupRuntimeService.ResultRequest(
+                1L,
+                "result-1",
+                "coord-1",
+                "followup-1",
+                "region-a",
+                4L,
+                "region-b",
+                8L,
+                "ABANDONED",
+                null,
+                "auto-1",
+                "RATE_LIMIT",
+                "Target region rejected the command"));
+
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, outcome.coordinatorState());
+    verify(resultRepository)
+        .save(
+            argThat(
+                result ->
+                    result.getResultPayloadJson() == null
+                        && "auto-1".equals(result.getResultCommandId())
+                        && "RATE_LIMIT".equals(result.getResultErrorCode())
+                        && "Target region rejected the command".equals(result.getResultMessage())));
+  }
+
+  @Test
+  void recordResultRejectsConflictingExplicitErrorCodeAndPayloadJson() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    RemoteFollowup followup = followup();
+    when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.recordResult(
+                    new RemoteFollowupRuntimeService.ResultRequest(
+                        1L,
+                        "result-1",
+                        "coord-1",
+                        "followup-1",
+                        "region-a",
+                        4L,
+                        "region-b",
+                        8L,
+                        "ABANDONED",
+                        "{\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the command\"}",
+                        null,
+                        "OTHER_CODE",
+                        "Target region rejected the command")));
+
+    assertEquals("result_payload_json errorCode does not match result_error_code", ex.getMessage());
+    verify(resultRepository, never()).save(any());
+  }
+
+  @Test
   void recordResultRejectsMismatchedTargetScope() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
@@ -889,6 +963,58 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, outcome.coordinatorState());
     assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED, outcome.followupStatus());
+    assertEquals(Instant.parse("2026-05-01T00:00:05Z"), existing.getObservedAt());
+    verify(resultRepository, never()).save(any());
+  }
+
+  @Test
+  void recordResultReusesExistingResultIdWhenReplayOmitsPayloadJson() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    RemoteFollowup followup = followup();
+    RemoteFollowupResult existing = new RemoteFollowupResult();
+    existing.setId(99L);
+    existing.setResultId("result-1");
+    existing.setTenantId(1L);
+    existing.setCoordinatorId("coord-1");
+    existing.setFollowupId("followup-1");
+    existing.setOriginRegionId("region-a");
+    existing.setOriginRegionEpoch(4L);
+    existing.setTargetRegionId("region-b");
+    existing.setTargetRegionEpoch(8L);
+    existing.setOutcome("APPLIED");
+    existing.setResultPayloadJson(
+        "{\"status\":\"done\",\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the command\"}");
+    existing.setResultCommandId("auto-1");
+    existing.setResultErrorCode("RATE_LIMIT");
+    existing.setResultMessage("Target region rejected the command");
+    existing.setObservedAt(Instant.parse("2026-05-01T00:00:05Z"));
+    when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+    when(resultRepository.findByTenantIdAndResultId(1L, "result-1"))
+        .thenReturn(Optional.of(existing));
+
+    RemoteFollowupRuntimeService.ResultOutcome outcome =
+        service.recordResult(
+            new RemoteFollowupRuntimeService.ResultRequest(
+                1L,
+                "result-1",
+                "coord-1",
+                "followup-1",
+                "region-a",
+                4L,
+                "region-b",
+                8L,
+                "APPLIED",
+                null,
+                "auto-1",
+                "RATE_LIMIT",
+                "Target region rejected the command"));
+
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, outcome.coordinatorState());
     assertEquals(Instant.parse("2026-05-01T00:00:05Z"), existing.getObservedAt());
     verify(resultRepository, never()).save(any());
   }
