@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
@@ -244,6 +245,7 @@ public class PlayCommandHandler {
               && Objects.equals(
                   normalizeName(context.characterName()), normalizeName(characterName))) {
             resumeCounter.increment();
+            publishCommandEvent(context);
             LOG.debug(
                 "PLAY resumed existing gameplay binding for tenant {} gameInstance {} character {} on session {}",
                 selectedRealm.getTenantId(),
@@ -295,6 +297,7 @@ public class PlayCommandHandler {
                   selectedRealm.getStateScope().name());
           sessionContextService.save(updated);
           gameplayPresenceLifecycleService.registerConnected(updated);
+          publishCommandEvent(updated);
           if (!resumedOrTookOver) {
             publishSpawnEvent(updated);
           }
@@ -516,6 +519,35 @@ public class PlayCommandHandler {
           context.sessionId(),
           ex);
     }
+  }
+
+  private void publishCommandEvent(SessionContext context) {
+    try {
+      scriptEventPublisher.publishCommandEvent(context, scriptEventCommand(context));
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "PLAY command event publish failed tenantId={} gameInstanceId={} characterId={} sessionId={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.characterId(),
+          context.sessionId(),
+          ex);
+    }
+  }
+
+  private static GameplayCommand scriptEventCommand(SessionContext context) {
+    GameplayCommand gameplayCommand = new GameplayCommand();
+    gameplayCommand.setCommandId(
+        "play-command:"
+            + context.sessionId()
+            + ":"
+            + context.gameInstanceId()
+            + ":"
+            + context.characterId()
+            + ":"
+            + context.pointerVersion());
+    gameplayCommand.setCommandName(TextCommandType.PLAY.name());
+    return gameplayCommand;
   }
 
   private Optional<PlayCommandHandlingResult> validateRuntimeAdmission(

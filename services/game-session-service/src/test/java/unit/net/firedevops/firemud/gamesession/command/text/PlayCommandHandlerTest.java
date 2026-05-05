@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
@@ -177,6 +178,25 @@ class PlayCommandHandlerTest {
                 1L,
                 "SHARED"));
     Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                7001L,
+                "demo",
+                1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                null,
+                0L,
+                "demo",
+                "production",
+                1L,
+                "SHARED"),
+            command("play-command:1:1:7001:1", "PLAY"));
+    Mockito.verify(scriptEventPublisher)
         .publishSpawnEvent(
             new SessionContext(
                 1L,
@@ -271,6 +291,25 @@ class PlayCommandHandlerTest {
                 1L,
                 "SHARED"));
     Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                9007L,
+                "Emberline",
+                2L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                null,
+                0L,
+                "sandbox",
+                "production",
+                1L,
+                "SHARED"),
+            command("play-command:1:2:9007:1", "PLAY"));
+    Mockito.verify(scriptEventPublisher)
         .publishSpawnEvent(
             new SessionContext(
                 1L,
@@ -318,6 +357,8 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(result.reconnectRedrawRecommended()).isTrue();
+    Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(context, command("play-command:1:1:7001:1", "PLAY"));
     Mockito.verify(scriptEventPublisher, never())
         .publishSpawnEvent(Mockito.any(), Mockito.any(), Mockito.any());
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
@@ -695,6 +736,25 @@ class PlayCommandHandlerTest {
                 .count())
         .isEqualTo(1.0);
     Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                123L,
+                "demo",
+                1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                null,
+                1L,
+                "demo",
+                "production",
+                1L,
+                "SHARED"),
+            command("play-command:1:1:123:1", "PLAY"));
+    Mockito.verify(scriptEventPublisher)
         .publishSpawnEvent(
             new SessionContext(
                 1L,
@@ -751,5 +811,12 @@ class PlayCommandHandlerTest {
     realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
     return realm;
+  }
+
+  private static GameplayCommand command(String commandId, String commandName) {
+    GameplayCommand gameplayCommand = new GameplayCommand();
+    gameplayCommand.setCommandId(commandId);
+    gameplayCommand.setCommandName(commandName);
+    return gameplayCommand;
   }
 }

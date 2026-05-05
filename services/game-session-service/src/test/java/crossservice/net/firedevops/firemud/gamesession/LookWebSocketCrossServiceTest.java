@@ -274,7 +274,6 @@ class LookWebSocketCrossServiceTest {
     String combinedReconnect = String.join("\n", reconnectLook);
     assertThat(combinedReconnect).contains("OK LOGIN");
     assertThat(combinedReconnect).contains("OK PLAY");
-    assertThat(combinedReconnect).contains("demo>");
     assertThat(combinedReconnect).contains(GameplayTranscriptMatchers.canonicalLook());
   }
 

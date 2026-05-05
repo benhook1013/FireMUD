@@ -6,6 +6,7 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
@@ -66,6 +67,9 @@ public final class LogoutCommandHandler {
     SessionContext context = maybeContext.orElseThrow();
     try {
       if (context.gameInstanceId() > 0 && context.characterId() > 0) {
+        scriptEventPublisher.publishCommandEvent(context, logoutCommand(context));
+      }
+      if (context.gameInstanceId() > 0 && context.characterId() > 0) {
         scriptEventPublisher.publishRegionExitEvent(context, logoutEventId(context));
       }
       if (context.gameInstanceId() > 0) {
@@ -105,5 +109,18 @@ public final class LogoutCommandHandler {
         + context.gameInstanceId()
         + ":"
         + context.characterId();
+  }
+
+  private static GameplayCommand logoutCommand(SessionContext context) {
+    GameplayCommand gameplayCommand = new GameplayCommand();
+    gameplayCommand.setCommandId(
+        "logout-command:"
+            + context.sessionId()
+            + ":"
+            + context.gameInstanceId()
+            + ":"
+            + context.characterId());
+    gameplayCommand.setCommandName(TextCommandType.LOGOUT.name());
+    return gameplayCommand;
   }
 }

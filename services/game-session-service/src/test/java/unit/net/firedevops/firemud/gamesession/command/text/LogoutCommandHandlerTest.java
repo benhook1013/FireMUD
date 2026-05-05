@@ -53,6 +53,8 @@ class LogoutCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs()).hasSize(1);
+    verify(scriptEventPublisher)
+        .publishCommandEvent(context, command("logout-command:41:1:123", "LOGOUT"));
     verify(scriptEventPublisher).publishRegionExitEvent(context, "logout:41:1:123");
     verify(gameInstanceService).stopSession(1L);
     verify(screenBufferService).clear(22L, 1L, 123L);
@@ -77,5 +79,14 @@ class LogoutCommandHandlerTest {
     verify(screenBufferService, never())
         .clear(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
     verify(sessionContextService, never()).deleteBySessionId(Mockito.anyLong(), Mockito.anyLong());
+  }
+
+  private static net.firedevops.firemud.gamesession.entity.GameplayCommand command(
+      String commandId, String commandName) {
+    net.firedevops.firemud.gamesession.entity.GameplayCommand gameplayCommand =
+        new net.firedevops.firemud.gamesession.entity.GameplayCommand();
+    gameplayCommand.setCommandId(commandId);
+    gameplayCommand.setCommandName(commandName);
+    return gameplayCommand;
   }
 }
