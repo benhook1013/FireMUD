@@ -56,7 +56,10 @@ public interface RemoteFollowupRuntimeService {
       String targetRegionId,
       long targetRegionEpoch,
       String outcome,
-      String resultPayloadJson) {}
+      String resultPayloadJson,
+      String resultCommandId,
+      String resultErrorCode,
+      String resultMessage) {}
 
   record ScheduleOutcome(
       String coordinatorId,

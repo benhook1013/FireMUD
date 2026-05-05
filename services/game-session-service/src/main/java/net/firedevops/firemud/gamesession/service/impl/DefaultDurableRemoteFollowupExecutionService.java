@@ -111,7 +111,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
             followup.getTargetRegionId(),
             followup.getTargetRegionEpoch(),
             payloadExecution.outcome(),
-            payloadExecution.resultPayloadJson()));
+            payloadExecution.resultPayloadJson(),
+            payloadExecution.resultCommandId(),
+            payloadExecution.resultErrorCode(),
+            payloadExecution.resultMessage()));
     return new DurableRemoteFollowupExecutionResult(
         payloadExecution.effectStatus(),
         payloadExecution.failureCode(),
@@ -233,7 +236,8 @@ public final class DefaultDurableRemoteFollowupExecutionService
               + jsonStringField("message", result.errorMessage())
               + "}";
       if (result.accepted()) {
-        return new PayloadExecution("APPLIED", "APPLIED", null, null, payload);
+        return new PayloadExecution(
+            "APPLIED", "APPLIED", null, null, payload, result.commandId(), null, null);
       }
       return new PayloadExecution(
           "ABANDONED",
@@ -242,7 +246,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
           result.errorMessage() == null
               ? "Target-side remote automation command was not admitted"
               : result.errorMessage(),
-          payload);
+          payload,
+          result.commandId(),
+          result.errorCode(),
+          result.errorMessage());
     } catch (IllegalArgumentException ex) {
       return failure("REMOTE_AUTOMATION_PAYLOAD_INVALID", ex.getMessage());
     }
@@ -310,7 +317,8 @@ public final class DefaultDurableRemoteFollowupExecutionService
               + jsonStringField("message", result.errorMessage())
               + "}";
       if (result.accepted()) {
-        return new PayloadExecution("APPLIED", "APPLIED", null, null, payload);
+        return new PayloadExecution(
+            "APPLIED", "APPLIED", null, null, payload, result.commandId(), null, null);
       }
       return new PayloadExecution(
           "ABANDONED",
@@ -319,7 +327,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
           result.errorMessage() == null
               ? "Target-side remote gameplay command was not admitted"
               : result.errorMessage(),
-          payload);
+          payload,
+          result.commandId(),
+          result.errorCode(),
+          result.errorMessage());
     } catch (IllegalArgumentException ex) {
       return failure("REMOTE_GAMEPLAY_PAYLOAD_INVALID", ex.getMessage());
     }
@@ -335,7 +346,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
             + jsonEscape(failureCode)
             + "\",\"message\":\""
             + jsonEscape(failureMessage)
-            + "\"}");
+            + "\"}",
+        null,
+        failureCode,
+        failureMessage);
   }
 
   private static String requiredTextOrFallback(
@@ -405,5 +419,8 @@ public final class DefaultDurableRemoteFollowupExecutionService
       String outcome,
       String failureCode,
       String failureMessage,
-      String resultPayloadJson) {}
+      String resultPayloadJson,
+      String resultCommandId,
+      String resultErrorCode,
+      String resultMessage) {}
 }

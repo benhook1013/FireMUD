@@ -425,7 +425,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         || request.targetRegionEpoch() != existing.getTargetRegionEpoch()
         || !request.outcome().equals(existing.getOutcome())
         || !normalized(request.resultPayloadJson())
-            .equals(normalized(existing.getResultPayloadJson()))) {
+            .equals(normalized(existing.getResultPayloadJson()))
+        || !sameResultAuthority(existing, request)) {
       throw new IllegalArgumentException("result_id already records a different remote outcome");
     }
   }
@@ -639,9 +640,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     result.setOutcome(request.outcome());
     result.setResultPayloadJson(blankToNull(request.resultPayloadJson()));
     ResultSummary resultSummary = resultSummary(request.resultPayloadJson());
-    result.setResultCommandId(resultSummary.commandId());
-    result.setResultErrorCode(resultSummary.errorCode());
-    result.setResultMessage(truncate(resultSummary.message()));
+    result.setResultCommandId(metadataValue(request.resultCommandId(), resultSummary.commandId()));
+    result.setResultErrorCode(metadataValue(request.resultErrorCode(), resultSummary.errorCode()));
+    result.setResultMessage(
+        truncate(metadataValue(request.resultMessage(), resultSummary.message())));
     result.setPlayableStateScope(
         blankToNull(
             coordinator != null && coordinator.getPlayableStateScope() != null
@@ -807,6 +809,16 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         && sameLong(
             existing.getOriginSourceDueAtMs(),
             metadataLong(request.originSourceDueAtMs(), payload.originSourceDueAtMs()));
+  }
+
+  private static boolean sameResultAuthority(RemoteFollowupResult existing, ResultRequest request) {
+    ResultSummary summary = resultSummary(request.resultPayloadJson());
+    return normalized(metadataValue(request.resultCommandId(), summary.commandId()))
+            .equals(normalized(existing.getResultCommandId()))
+        && normalized(metadataValue(request.resultErrorCode(), summary.errorCode()))
+            .equals(normalized(existing.getResultErrorCode()))
+        && normalized(metadataValue(request.resultMessage(), summary.message()))
+            .equals(normalized(existing.getResultMessage()));
   }
 
   private static ResultSummary resultSummary(String payloadJson) {

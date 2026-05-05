@@ -630,7 +630,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                 "region-b",
                 8L,
                 "ABANDONED",
-                "{\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the command\"}"));
+                "{\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the command\"}",
+                null,
+                "RATE_LIMIT",
+                "Target region rejected the command"));
 
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, outcome.coordinatorState());
@@ -664,7 +667,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "region-wrong",
                         8L,
                         "APPLIED",
-                        "{\"status\":\"done\"}")));
+                        "{\"status\":\"done\"}",
+                        null,
+                        null,
+                        null)));
 
     assertEquals("target scope does not match remote coordinator", ex.getMessage());
     verify(resultRepository, never()).save(any());
@@ -709,7 +715,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "region-b",
                         8L,
                         "ABANDONED",
-                        "{\"status\":\"failed\"}")));
+                        "{\"status\":\"failed\"}",
+                        null,
+                        null,
+                        null)));
 
     assertEquals("result_id already records a different remote outcome", ex.getMessage());
   }
@@ -734,6 +743,8 @@ class RemoteFollowupRuntimeServiceImplTest {
     existing.setOutcome("APPLIED");
     existing.setResultPayloadJson(
         "{\"status\":\"done\",\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the command\"}");
+    existing.setResultCommandId("auto-1");
+    existing.setResultErrorCode("RATE_LIMIT");
     existing.setResultMessage("Target region rejected the command");
     existing.setObservedAt(Instant.parse("2026-05-01T00:00:05Z"));
     when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
@@ -1119,7 +1130,10 @@ class RemoteFollowupRuntimeServiceImplTest {
         "region-b",
         8L,
         outcome,
-        "{\"status\":\"done\",\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the command\"}");
+        "{\"status\":\"done\",\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the command\"}",
+        "auto-1",
+        "RATE_LIMIT",
+        "Target region rejected the command");
   }
 
   private static RemoteCommandCoordinator coordinator() {
