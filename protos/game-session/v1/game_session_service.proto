@@ -575,6 +575,11 @@ message RemoteCommandCoordinatorEntry {
   string latest_result_message = 43;
   PluginPublicationLink plugin_publication = 44;
   bool followup_requires_solo_tick = 45;
+  string followup_origin_source_kind = 46;
+  string followup_origin_source_state = 47;
+  int64 followup_origin_source_ordinal = 48;
+  int64 followup_origin_source_due_tick_id = 49;
+  int64 followup_origin_source_due_at_ms = 50;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -665,6 +670,11 @@ message RemoteFollowupEntry {
   string target_command_gameplay_result = 36;
   PluginPublicationLink plugin_publication = 37;
   bool requires_solo_tick = 38;
+  string origin_source_kind = 39;
+  string origin_source_state = 40;
+  int64 origin_source_ordinal = 41;
+  int64 origin_source_due_tick_id = 42;
+  int64 origin_source_due_at_ms = 43;
 }
 
 message ListRemoteFollowupsResponse {

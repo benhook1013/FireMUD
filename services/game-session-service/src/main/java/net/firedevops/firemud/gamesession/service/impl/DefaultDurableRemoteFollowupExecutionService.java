@@ -200,11 +200,20 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   firstNonBlank(optionalText(root, "worldSlug"), followup.getWorldSlug()),
                   firstNonBlank(optionalText(root, "realmSlug"), followup.getRealmSlug()),
                   firstNonNull(optionalLong(root, "pointerVersion"), followup.getPointerVersion()),
-                  textOrDefault(root, "originSourceKind", "REMOTE_FOLLOWUP"),
-                  textOrDefault(root, "originSourceState", "TARGET_REGION_EXECUTED"),
-                  optionalLong(root, "originSourceOrdinal", followup.getDueTickId()),
-                  optionalLong(root, "originSourceDueTickId", followup.getDueTickId()),
-                  optionalLong(root, "originSourceDueAtMs"),
+                  firstNonBlank(
+                      followup.getOriginSourceKind(),
+                      textOrDefault(root, "originSourceKind", "REMOTE_FOLLOWUP")),
+                  firstNonBlank(
+                      followup.getOriginSourceState(),
+                      textOrDefault(root, "originSourceState", "TARGET_REGION_EXECUTED")),
+                  firstNonNull(
+                      followup.getOriginSourceOrdinal(),
+                      optionalLong(root, "originSourceOrdinal", followup.getDueTickId())),
+                  firstNonNull(
+                      followup.getOriginSourceDueTickId(),
+                      optionalLong(root, "originSourceDueTickId", followup.getDueTickId())),
+                  firstNonNull(
+                      followup.getOriginSourceDueAtMs(), optionalLong(root, "originSourceDueAtMs")),
                   textOrDefault(root, "targetEntityId", followup.getTargetEntityId()),
                   coordinator.getCoordinatorId(),
                   followup.getFollowupId(),
@@ -268,11 +277,20 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   firstNonBlank(optionalText(root, "worldSlug"), followup.getWorldSlug()),
                   firstNonBlank(optionalText(root, "realmSlug"), followup.getRealmSlug()),
                   firstNonNull(optionalLong(root, "pointerVersion"), followup.getPointerVersion()),
-                  textOrDefault(root, "originSourceKind", "REMOTE_FOLLOWUP"),
-                  textOrDefault(root, "originSourceState", "TARGET_REGION_EXECUTED"),
-                  optionalLong(root, "originSourceOrdinal", followup.getDueTickId()),
-                  optionalLong(root, "originSourceDueTickId", followup.getDueTickId()),
-                  optionalLong(root, "originSourceDueAtMs"),
+                  firstNonBlank(
+                      followup.getOriginSourceKind(),
+                      textOrDefault(root, "originSourceKind", "REMOTE_FOLLOWUP")),
+                  firstNonBlank(
+                      followup.getOriginSourceState(),
+                      textOrDefault(root, "originSourceState", "TARGET_REGION_EXECUTED")),
+                  firstNonNull(
+                      followup.getOriginSourceOrdinal(),
+                      optionalLong(root, "originSourceOrdinal", followup.getDueTickId())),
+                  firstNonNull(
+                      followup.getOriginSourceDueTickId(),
+                      optionalLong(root, "originSourceDueTickId", followup.getDueTickId())),
+                  firstNonNull(
+                      followup.getOriginSourceDueAtMs(), optionalLong(root, "originSourceDueAtMs")),
                   requiredTextOrFallback(root, "targetEntityId", followup.getTargetEntityId()),
                   coordinator.getCoordinatorId(),
                   followup.getFollowupId(),

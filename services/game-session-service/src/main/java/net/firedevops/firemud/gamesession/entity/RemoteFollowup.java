@@ -77,6 +77,21 @@ public class RemoteFollowup {
   @Column(name = "requires_solo_tick", nullable = false)
   private boolean requiresSoloTick;
 
+  @Column(name = "origin_source_kind", length = 64)
+  private String originSourceKind;
+
+  @Column(name = "origin_source_state", length = 64)
+  private String originSourceState;
+
+  @Column(name = "origin_source_ordinal")
+  private Long originSourceOrdinal;
+
+  @Column(name = "origin_source_due_tick_id")
+  private Long originSourceDueTickId;
+
+  @Column(name = "origin_source_due_at_ms")
+  private Long originSourceDueAtMs;
+
   @Column(name = "failure_code", length = 80)
   private String failureCode;
 

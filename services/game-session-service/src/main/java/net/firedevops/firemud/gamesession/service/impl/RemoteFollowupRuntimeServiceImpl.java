@@ -482,11 +482,13 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       throw new IllegalArgumentException(
           "effect_key already maps to a different remote execution scope");
     }
+    PayloadSummary payloadSummary = payloadSummary(request.payloadJson());
     if (request.targetDueTickId() != existing.getDueTickId()
         || !normalized(blankToNull(request.targetEntityId()))
             .equals(normalized(existing.getTargetEntityId()))
         || !normalized(blankToNull(request.payloadJson()))
             .equals(normalized(existing.getPayloadJson()))
+        || !samePayloadAuthority(existing, payloadSummary)
         || !sameSchedulingMetadata(
             existing.getPlayableStateScope(),
             existing.getWorldSlug(),
@@ -598,6 +600,11 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     followup.setPayloadKind(payloadSummary.kind());
     followup.setRequestedCommand(payloadSummary.command());
     followup.setRequiresSoloTick(payloadSummary.requiresSoloTick());
+    followup.setOriginSourceKind(payloadSummary.originSourceKind());
+    followup.setOriginSourceState(payloadSummary.originSourceState());
+    followup.setOriginSourceOrdinal(payloadSummary.originSourceOrdinal());
+    followup.setOriginSourceDueTickId(payloadSummary.originSourceDueTickId());
+    followup.setOriginSourceDueAtMs(payloadSummary.originSourceDueAtMs());
     followup.setStatus(FOLLOWUP_SCHEDULED);
     followup.setClaimedTickBatchId(null);
     followup.setClaimOrdinal(null);
@@ -759,17 +766,34 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static PayloadSummary payloadSummary(String payloadJson) {
     if (payloadJson == null || payloadJson.isBlank()) {
-      return new PayloadSummary(null, null, false);
+      return new PayloadSummary(null, null, false, null, null, null, null, null);
     }
     try {
       JsonNode root = OBJECT_MAPPER.readTree(payloadJson);
       return new PayloadSummary(
           blankToNull(root.path("kind").asText("")),
           blankToNull(root.path("command").asText("")),
-          root.path("requiresSoloTick").asBoolean(false));
+          root.path("requiresSoloTick").asBoolean(false),
+          blankToNull(root.path("originSourceKind").asText("")),
+          blankToNull(root.path("originSourceState").asText("")),
+          positiveLong(root.path("originSourceOrdinal")),
+          positiveLong(root.path("originSourceDueTickId")),
+          positiveLong(root.path("originSourceDueAtMs")));
     } catch (IOException ignored) {
-      return new PayloadSummary(null, null, false);
+      return new PayloadSummary(null, null, false, null, null, null, null, null);
     }
+  }
+
+  private static boolean samePayloadAuthority(RemoteFollowup existing, PayloadSummary payload) {
+    return normalized(payload.kind()).equals(normalized(existing.getPayloadKind()))
+        && normalized(payload.command()).equals(normalized(existing.getRequestedCommand()))
+        && payload.requiresSoloTick() == existing.isRequiresSoloTick()
+        && normalized(payload.originSourceKind()).equals(normalized(existing.getOriginSourceKind()))
+        && normalized(payload.originSourceState())
+            .equals(normalized(existing.getOriginSourceState()))
+        && sameLong(existing.getOriginSourceOrdinal(), payload.originSourceOrdinal())
+        && sameLong(existing.getOriginSourceDueTickId(), payload.originSourceDueTickId())
+        && sameLong(existing.getOriginSourceDueAtMs(), payload.originSourceDueAtMs());
   }
 
   private static ResultSummary resultSummary(String payloadJson) {
@@ -899,6 +923,14 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     return value.substring(0, 500);
   }
 
+  private static Long positiveLong(JsonNode node) {
+    if (node == null || !node.isNumber()) {
+      return null;
+    }
+    long value = node.asLong();
+    return value > 0 ? value : null;
+  }
+
   private void mirrorCoordinatorToCommand(RemoteCommandCoordinator coordinator, Instant now) {
     GameplayCommand command =
         gameplayCommandRepository.findByCommandId(coordinator.getCommandId()).orElse(null);
@@ -977,7 +1009,15 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             "remote:" + tenantId + ":" + targetEntityId, "1", java.time.Duration.ofMillis(60_000L));
   }
 
-  private record PayloadSummary(String kind, String command, boolean requiresSoloTick) {}
+  private record PayloadSummary(
+      String kind,
+      String command,
+      boolean requiresSoloTick,
+      String originSourceKind,
+      String originSourceState,
+      Long originSourceOrdinal,
+      Long originSourceDueTickId,
+      Long originSourceDueAtMs) {}
 
   private record ResultSummary(String commandId, String errorCode, String message) {}
 }

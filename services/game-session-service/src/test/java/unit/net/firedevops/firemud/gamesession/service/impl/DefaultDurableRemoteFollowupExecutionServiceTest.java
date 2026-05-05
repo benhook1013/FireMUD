@@ -169,6 +169,11 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         {"kind":"enqueue_automation_command","command":"LOOK"}
         """);
     followup.setRequiresSoloTick(true);
+    followup.setOriginSourceKind("REMOTE_FOLLOWUP");
+    followup.setOriginSourceState("TARGET_REGION_EXECUTED");
+    followup.setOriginSourceOrdinal(44L);
+    followup.setOriginSourceDueTickId(22L);
+    followup.setOriginSourceDueAtMs(1700L);
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
@@ -217,6 +222,11 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("coord-1", admittedCommand.getRemoteCoordinatorId());
     assertEquals("followup-1", admittedCommand.getRemoteFollowupId());
     assertEquals("dispatch-1", admittedCommand.getAutomationDispatchId());
+    assertEquals("REMOTE_FOLLOWUP", admittedCommand.getOriginSourceKind());
+    assertEquals("TARGET_REGION_EXECUTED", admittedCommand.getOriginSourceState());
+    assertEquals(Long.valueOf(44L), admittedCommand.getOriginSourceOrdinal());
+    assertEquals(Long.valueOf(22L), admittedCommand.getOriginSourceDueTickId());
+    assertEquals(Long.valueOf(1700L), admittedCommand.getOriginSourceDueAtMs());
     org.mockito.Mockito.verify(tickService)
         .enqueueCommand(
             org.mockito.Mockito.eq(1L),
@@ -254,6 +264,11 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setPayloadKind("enqueue_automation_command");
     followup.setRequestedCommand("LOOK");
     followup.setRequiresSoloTick(true);
+    followup.setOriginSourceKind("REMOTE_FOLLOWUP");
+    followup.setOriginSourceState("TARGET_REGION_EXECUTED");
+    followup.setOriginSourceOrdinal(44L);
+    followup.setOriginSourceDueTickId(22L);
+    followup.setOriginSourceDueAtMs(1700L);
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
@@ -292,6 +307,17 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         service.execute(effect);
 
     assertEquals("APPLIED", result.effectStatus());
+    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.GameplayCommand> commandCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.GameplayCommand.class);
+    verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce())
+        .save(commandCaptor.capture());
+    net.firedevops.firemud.gamesession.entity.GameplayCommand admittedCommand =
+        commandCaptor.getAllValues().get(0);
+    assertEquals("REMOTE_FOLLOWUP", admittedCommand.getOriginSourceKind());
+    assertEquals("TARGET_REGION_EXECUTED", admittedCommand.getOriginSourceState());
+    assertEquals(Long.valueOf(44L), admittedCommand.getOriginSourceOrdinal());
+    assertEquals(Long.valueOf(22L), admittedCommand.getOriginSourceDueTickId());
+    assertEquals(Long.valueOf(1700L), admittedCommand.getOriginSourceDueAtMs());
     verify(tickService)
         .enqueueCommand(
             org.mockito.Mockito.eq(1L),

@@ -2182,6 +2182,11 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setPayloadKind("enqueue_automation_command");
     followup.setRequestedCommand("LOOK");
     followup.setRequiresSoloTick(true);
+    followup.setOriginSourceKind("REMOTE_FOLLOWUP");
+    followup.setOriginSourceState("TARGET_REGION_EXECUTED");
+    followup.setOriginSourceOrdinal(44L);
+    followup.setOriginSourceDueTickId(55L);
+    followup.setOriginSourceDueAtMs(1700L);
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setCoordinatorId("coord-1");
     result.setOutcome("APPLIED");
@@ -2263,6 +2268,14 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("tb-1", responseRef.get().getCoordinator().getFollowupClaimedTickBatchId());
     assertEquals(3L, responseRef.get().getCoordinator().getFollowupClaimOrdinal());
     assertEquals(
+        "REMOTE_FOLLOWUP", responseRef.get().getCoordinator().getFollowupOriginSourceKind());
+    assertEquals(
+        "TARGET_REGION_EXECUTED",
+        responseRef.get().getCoordinator().getFollowupOriginSourceState());
+    assertEquals(44L, responseRef.get().getCoordinator().getFollowupOriginSourceOrdinal());
+    assertEquals(55L, responseRef.get().getCoordinator().getFollowupOriginSourceDueTickId());
+    assertEquals(1700L, responseRef.get().getCoordinator().getFollowupOriginSourceDueAtMs());
+    assertEquals(
         "enqueue_automation_command", responseRef.get().getCoordinator().getFollowupPayloadKind());
     assertEquals("LOOK", responseRef.get().getCoordinator().getFollowupRequestedCommand());
     assertEquals(true, responseRef.get().getCoordinator().getFollowupRequiresSoloTick());
@@ -2312,6 +2325,11 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setPayloadKind("enqueue_automation_command");
     followup.setRequestedCommand("LOOK");
     followup.setRequiresSoloTick(true);
+    followup.setOriginSourceKind("REMOTE_FOLLOWUP");
+    followup.setOriginSourceState("TARGET_REGION_EXECUTED");
+    followup.setOriginSourceOrdinal(44L);
+    followup.setOriginSourceDueTickId(55L);
+    followup.setOriginSourceDueAtMs(1700L);
     followup.setTargetEntityId("entity-9");
     followup.setStatus("SCHEDULED");
     followup.setCreatedAt(Instant.parse("2026-05-01T00:00:00Z"));
@@ -2364,6 +2382,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("enqueue_automation_command", responseRef.get().getFollowups(0).getPayloadKind());
     assertEquals("LOOK", responseRef.get().getFollowups(0).getRequestedCommand());
     assertEquals(true, responseRef.get().getFollowups(0).getRequiresSoloTick());
+    assertEquals("REMOTE_FOLLOWUP", responseRef.get().getFollowups(0).getOriginSourceKind());
+    assertEquals(
+        "TARGET_REGION_EXECUTED", responseRef.get().getFollowups(0).getOriginSourceState());
+    assertEquals(44L, responseRef.get().getFollowups(0).getOriginSourceOrdinal());
+    assertEquals(55L, responseRef.get().getFollowups(0).getOriginSourceDueTickId());
+    assertEquals(1700L, responseRef.get().getFollowups(0).getOriginSourceDueAtMs());
     assertEquals("region-b", responseRef.get().getFollowups(0).getTargetRegionId());
     assertEquals(55L, responseRef.get().getFollowups(0).getDueTickId());
     assertEquals(2L, responseRef.get().getFollowups(0).getClaimOrdinal());

@@ -116,6 +116,11 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && "enqueue_automation_command".equals(followup.getPayloadKind())
                         && "LOOK".equals(followup.getRequestedCommand())
                         && followup.isRequiresSoloTick()
+                        && "REMOTE_FOLLOWUP".equals(followup.getOriginSourceKind())
+                        && "TARGET_REGION_EXECUTED".equals(followup.getOriginSourceState())
+                        && Long.valueOf(44L).equals(followup.getOriginSourceOrdinal())
+                        && Long.valueOf(22L).equals(followup.getOriginSourceDueTickId())
+                        && Long.valueOf(1700L).equals(followup.getOriginSourceDueAtMs())
                         && "dispatch-1".equals(followup.getAutomationDispatchId())
                         && "work-1".equals(followup.getAutomationWorkItemId())
                         && "script-1".equals(followup.getScriptId())
@@ -1050,7 +1055,9 @@ class RemoteFollowupRuntimeServiceImplTest {
         "followup-1",
         "effect-1",
         "entity-9",
-        "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true}",
+        "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true,"
+            + "\"originSourceKind\":\"REMOTE_FOLLOWUP\",\"originSourceState\":\"TARGET_REGION_EXECUTED\","
+            + "\"originSourceOrdinal\":44,\"originSourceDueTickId\":22,\"originSourceDueAtMs\":1700}",
         "SHARED",
         "demo",
         "production",
@@ -1120,6 +1127,11 @@ class RemoteFollowupRuntimeServiceImplTest {
     followup.setEffectKey("effect-1");
     followup.setDueTickId(22L);
     followup.setStatus(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED);
+    followup.setOriginSourceKind("REMOTE_FOLLOWUP");
+    followup.setOriginSourceState("TARGET_REGION_EXECUTED");
+    followup.setOriginSourceOrdinal(44L);
+    followup.setOriginSourceDueTickId(22L);
+    followup.setOriginSourceDueAtMs(1700L);
     followup.setPlayableStateScope("SHARED");
     followup.setWorldSlug("demo");
     followup.setRealmSlug("production");

@@ -1598,6 +1598,11 @@ public class TickServiceImpl implements TickService {
       appendJsonStringField(builder, "worldSlug", followup.getWorldSlug());
       appendJsonStringField(builder, "realmSlug", followup.getRealmSlug());
       appendJsonNumberField(builder, "pointerVersion", followup.getPointerVersion());
+      appendJsonStringField(builder, "originSourceKind", followup.getOriginSourceKind());
+      appendJsonStringField(builder, "originSourceState", followup.getOriginSourceState());
+      appendJsonNumberField(builder, "originSourceOrdinal", followup.getOriginSourceOrdinal());
+      appendJsonNumberField(builder, "originSourceDueTickId", followup.getOriginSourceDueTickId());
+      appendJsonNumberField(builder, "originSourceDueAtMs", followup.getOriginSourceDueAtMs());
       appendJsonStringField(builder, "payloadKind", followup.getPayloadKind());
       appendJsonStringField(builder, "requestedCommand", followup.getRequestedCommand());
       appendJsonBooleanField(builder, "requiresSoloTick", followup.isRequiresSoloTick());

@@ -2063,6 +2063,7 @@ public final class GameSessionControlPlaneGrpcService
           followup.getPayloadKind(),
           followup.getRequestedCommand(),
           followup.isRequiresSoloTick());
+      applyFollowupOriginSource(builder, followup);
     }
     if (latestResult != null) {
       builder.setLatestResultOutcome(latestResult.getOutcome());
@@ -2156,6 +2157,13 @@ public final class GameSessionControlPlaneGrpcService
         followup.getPayloadKind(),
         followup.getRequestedCommand(),
         followup.isRequiresSoloTick());
+    applyOriginSource(
+        builder,
+        followup.getOriginSourceKind(),
+        followup.getOriginSourceState(),
+        followup.getOriginSourceOrdinal(),
+        followup.getOriginSourceDueTickId(),
+        followup.getOriginSourceDueAtMs());
     applyRoutingBundle(
         builder,
         followup.getPlayableStateScope(),
@@ -2257,6 +2265,49 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (scriptId != null) {
       builder.setScriptId(scriptId);
+    }
+  }
+
+  private static void applyFollowupOriginSource(
+      RemoteCommandCoordinatorEntry.Builder builder, RemoteFollowup followup) {
+    if (followup.getOriginSourceKind() != null) {
+      builder.setFollowupOriginSourceKind(followup.getOriginSourceKind());
+    }
+    if (followup.getOriginSourceState() != null) {
+      builder.setFollowupOriginSourceState(followup.getOriginSourceState());
+    }
+    if (followup.getOriginSourceOrdinal() != null) {
+      builder.setFollowupOriginSourceOrdinal(followup.getOriginSourceOrdinal());
+    }
+    if (followup.getOriginSourceDueTickId() != null) {
+      builder.setFollowupOriginSourceDueTickId(followup.getOriginSourceDueTickId());
+    }
+    if (followup.getOriginSourceDueAtMs() != null) {
+      builder.setFollowupOriginSourceDueAtMs(followup.getOriginSourceDueAtMs());
+    }
+  }
+
+  private static void applyOriginSource(
+      RemoteFollowupEntry.Builder builder,
+      String originSourceKind,
+      String originSourceState,
+      Long originSourceOrdinal,
+      Long originSourceDueTickId,
+      Long originSourceDueAtMs) {
+    if (originSourceKind != null) {
+      builder.setOriginSourceKind(originSourceKind);
+    }
+    if (originSourceState != null) {
+      builder.setOriginSourceState(originSourceState);
+    }
+    if (originSourceOrdinal != null) {
+      builder.setOriginSourceOrdinal(originSourceOrdinal);
+    }
+    if (originSourceDueTickId != null) {
+      builder.setOriginSourceDueTickId(originSourceDueTickId);
+    }
+    if (originSourceDueAtMs != null) {
+      builder.setOriginSourceDueAtMs(originSourceDueAtMs);
     }
   }
 

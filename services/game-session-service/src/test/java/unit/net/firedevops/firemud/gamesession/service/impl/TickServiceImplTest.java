@@ -341,6 +341,11 @@ class TickServiceImplTest {
     followup.setWorldSlug("demo");
     followup.setRealmSlug("production");
     followup.setPointerVersion(17L);
+    followup.setOriginSourceKind("REMOTE_FOLLOWUP");
+    followup.setOriginSourceState("TARGET_REGION_EXECUTED");
+    followup.setOriginSourceOrdinal(44L);
+    followup.setOriginSourceDueTickId(10L);
+    followup.setOriginSourceDueAtMs(1700L);
     followup.setPayloadKind("noop");
     followup.setRequestedCommand("LOOK");
     followup.setRequiresSoloTick(true);
@@ -392,6 +397,12 @@ class TickServiceImplTest {
                             .contains("\"scriptPatchVersion\":\"patch-1\"")
                         && batch.getSelectedWorkManifestJson().contains("\"worldSlug\":\"demo\"")
                         && batch.getSelectedWorkManifestJson().contains("\"pointerVersion\":17")
+                        && batch
+                            .getSelectedWorkManifestJson()
+                            .contains("\"originSourceKind\":\"REMOTE_FOLLOWUP\"")
+                        && batch
+                            .getSelectedWorkManifestJson()
+                            .contains("\"originSourceOrdinal\":44")
                         && batch.getSelectedWorkManifestJson().contains("\"payloadKind\":\"noop\"")
                         && batch.getSelectedWorkManifestJson().contains("\"requiresSoloTick\":true")
                         && batch
