@@ -1445,6 +1445,13 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setCommandId("cmd-origin-2");
     coordinator.setCoordinatorId("coord-2");
     coordinator.setFollowupId("followup-2");
+    coordinator.setOriginRegionId("region-origin");
+    coordinator.setOriginRegionEpoch(7L);
+    coordinator.setTargetRegionId("region-target");
+    coordinator.setTargetRegionEpoch(12L);
+    coordinator.setOriginDeadlineRegionEpoch(8L);
+    coordinator.setOriginDeadlineTickId(144L);
+    coordinator.setLateResultPolicy("late_result_safe_to_ignore");
     coordinator.setState("REMOTE_APPLIED");
     Mockito.when(remoteCommandCoordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-2"))
         .thenReturn(Optional.of(coordinator));
@@ -1505,6 +1512,14 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("coord-2", responseRef.get().getCommand().getRemoteCoordinatorId());
     assertEquals("followup-2", responseRef.get().getCommand().getRemoteFollowupId());
     assertEquals("REMOTE_APPLIED", responseRef.get().getCommand().getRemoteState());
+    assertEquals("region-origin", responseRef.get().getCommand().getRemoteOriginRegionId());
+    assertEquals(7L, responseRef.get().getCommand().getRemoteOriginRegionEpoch());
+    assertEquals("region-target", responseRef.get().getCommand().getRemoteTargetRegionId());
+    assertEquals(12L, responseRef.get().getCommand().getRemoteTargetRegionEpoch());
+    assertEquals(8L, responseRef.get().getCommand().getRemoteOriginDeadlineRegionEpoch());
+    assertEquals(144L, responseRef.get().getCommand().getRemoteOriginDeadlineTickId());
+    assertEquals(
+        "late_result_safe_to_ignore", responseRef.get().getCommand().getRemoteLateResultPolicy());
     assertEquals("APPLIED", responseRef.get().getCommand().getRemoteResultOutcome());
     assertEquals(
         "{\"commandId\":\"rfcmd-followup-2\",\"applied\":true}",

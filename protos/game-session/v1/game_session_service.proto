@@ -488,6 +488,13 @@ message GameplayCommandStatus {
   string remote_result_error_code = 53;
   string remote_result_message = 54;
   PluginPublicationLink plugin_publication = 55;
+  string remote_origin_region_id = 56;
+  int64 remote_origin_region_epoch = 57;
+  string remote_target_region_id = 58;
+  int64 remote_target_region_epoch = 59;
+  int64 remote_origin_deadline_region_epoch = 60;
+  int64 remote_origin_deadline_tick_id = 61;
+  string remote_late_result_policy = 62;
 }
 
 message GetGameplayCommandStatusResponse {
