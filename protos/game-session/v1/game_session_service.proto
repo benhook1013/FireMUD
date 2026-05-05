@@ -50,6 +50,8 @@ service GameSessionControlPlaneService {
       returns (GetRuntimeOwnershipStatusResponse);
   rpc GetRemoteCommandCoordinator(GetRemoteCommandCoordinatorRequest)
       returns (GetRemoteCommandCoordinatorResponse);
+  rpc ScheduleRemoteFollowup(ScheduleRemoteFollowupRequest)
+      returns (ScheduleRemoteFollowupResponse);
   rpc ListRemoteFollowups(ListRemoteFollowupsRequest) returns (ListRemoteFollowupsResponse);
   rpc ListRemoteFollowupResults(ListRemoteFollowupResultsRequest)
       returns (ListRemoteFollowupResultsResponse);
@@ -565,6 +567,44 @@ message RemoteCommandCoordinatorEntry {
 message GetRemoteCommandCoordinatorResponse {
   RemoteCommandCoordinatorEntry coordinator = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message ScheduleRemoteFollowupRequest {
+  string tenant_id = 1;
+  string command_id = 2;
+  string coordinator_id = 3;
+  string origin_game_instance_id = 4;
+  string origin_region_id = 5;
+  int64 origin_region_epoch = 6;
+  string target_game_instance_id = 7;
+  string target_region_id = 8;
+  int64 target_region_epoch = 9;
+  int64 target_due_tick_id = 10;
+  int64 origin_deadline_region_epoch = 11;
+  int64 origin_deadline_tick_id = 12;
+  string late_result_policy = 13;
+  string followup_id = 14;
+  string effect_key = 15;
+  string target_entity_id = 16;
+  string payload_json = 17;
+  entity_management.v1.PlayableStateScope playable_state_scope = 18;
+  string world_slug = 19;
+  string realm_slug = 20;
+  int64 pointer_version = 21;
+  string script_patch_version = 22;
+  string plugin_id = 23;
+  string plugin_version_id = 24;
+  string automation_dispatch_id = 25;
+  string automation_work_item_id = 26;
+  string script_id = 27;
+}
+
+message ScheduleRemoteFollowupResponse {
+  string coordinator_id = 1;
+  string followup_id = 2;
+  bool coordinator_created = 3;
+  bool followup_created = 4;
+  shared.v1.ErrorDetail error = 5;
 }
 
 message ListRemoteFollowupsRequest {

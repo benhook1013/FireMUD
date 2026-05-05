@@ -37,6 +37,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.InstanceCutoverCompatibilityService;
+import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
@@ -88,6 +89,8 @@ import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.RuntimeOwnershipStatus;
+import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupRequest;
+import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupResponse;
 import net.firedevops.firemud.gamesession.v1.ScriptPatchPublicationLink;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
@@ -124,6 +127,7 @@ public final class GameSessionControlPlaneGrpcService
   private final RemoteFollowupRepository remoteFollowupRepository;
   private final RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
   private final RemoteFollowupResultRepository remoteFollowupResultRepository;
+  private final RemoteFollowupRuntimeService remoteFollowupRuntimeService;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final InstanceCutoverCompatibilityService instanceCutoverCompatibilityService;
   private final VersionUpgradePreparationService versionUpgradePreparationService;
@@ -178,6 +182,7 @@ public final class GameSessionControlPlaneGrpcService
         null,
         null,
         null,
+        null,
         gameplayAdmissionPointerAuthorityService,
         instanceCutoverCompatibilityService,
         versionUpgradePreparationService,
@@ -232,6 +237,7 @@ public final class GameSessionControlPlaneGrpcService
         null,
         null,
         null,
+        null,
         gameplayAdmissionPointerAuthorityService,
         instanceCutoverCompatibilityService,
         versionUpgradePreparationService,
@@ -249,6 +255,7 @@ public final class GameSessionControlPlaneGrpcService
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
       VersionUpgradePreparationService versionUpgradePreparationService,
@@ -262,6 +269,7 @@ public final class GameSessionControlPlaneGrpcService
         remoteFollowupRepository,
         remoteCommandCoordinatorRepository,
         remoteFollowupResultRepository,
+        remoteFollowupRuntimeService,
         gameplayAdmissionPointerAuthorityService,
         instanceCutoverCompatibilityService,
         versionUpgradePreparationService,
@@ -278,6 +286,7 @@ public final class GameSessionControlPlaneGrpcService
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
       VersionUpgradePreparationService versionUpgradePreparationService,
@@ -292,6 +301,7 @@ public final class GameSessionControlPlaneGrpcService
         remoteFollowupRepository,
         remoteCommandCoordinatorRepository,
         remoteFollowupResultRepository,
+        remoteFollowupRuntimeService,
         gameplayAdmissionPointerAuthorityService,
         instanceCutoverCompatibilityService,
         versionUpgradePreparationService,
@@ -309,6 +319,7 @@ public final class GameSessionControlPlaneGrpcService
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
       VersionUpgradePreparationService versionUpgradePreparationService,
@@ -323,6 +334,7 @@ public final class GameSessionControlPlaneGrpcService
     this.remoteFollowupRepository = remoteFollowupRepository;
     this.remoteCommandCoordinatorRepository = remoteCommandCoordinatorRepository;
     this.remoteFollowupResultRepository = remoteFollowupResultRepository;
+    this.remoteFollowupRuntimeService = remoteFollowupRuntimeService;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.instanceCutoverCompatibilityService = instanceCutoverCompatibilityService;
     this.versionUpgradePreparationService = versionUpgradePreparationService;
@@ -371,6 +383,7 @@ public final class GameSessionControlPlaneGrpcService
         null,
         null,
         null,
+        null,
         gameplayAdmissionPointerAuthorityService,
         instanceCutoverCompatibilityService,
         versionUpgradePreparationService,
@@ -400,10 +413,12 @@ public final class GameSessionControlPlaneGrpcService
         remoteFollowupRepository,
         remoteCommandCoordinatorRepository,
         remoteFollowupResultRepository,
+        null,
         gameplayAdmissionPointerAuthorityService,
         instanceCutoverCompatibilityService,
         versionUpgradePreparationService,
         null,
+        BuiltInTextCommandAliasResolver.unsupported(),
         tickService,
         meterRegistry,
         gameSessionProperties);
@@ -416,6 +431,7 @@ public final class GameSessionControlPlaneGrpcService
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
       VersionUpgradePreparationService versionUpgradePreparationService,
@@ -430,6 +446,7 @@ public final class GameSessionControlPlaneGrpcService
         remoteFollowupRepository,
         remoteCommandCoordinatorRepository,
         remoteFollowupResultRepository,
+        remoteFollowupRuntimeService,
         gameplayAdmissionPointerAuthorityService,
         instanceCutoverCompatibilityService,
         versionUpgradePreparationService,
@@ -693,6 +710,69 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(
           GetRemoteCommandCoordinatorResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build());
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.scheduleRemoteFollowup")
+  public void scheduleRemoteFollowup(
+      ScheduleRemoteFollowupRequest request,
+      StreamObserver<ScheduleRemoteFollowupResponse> responseObserver) {
+    try {
+      if (remoteFollowupRuntimeService == null) {
+        throw new IllegalStateException("Remote followup runtime service is not configured");
+      }
+      RemoteFollowupRuntimeService.ScheduleOutcome outcome =
+          remoteFollowupRuntimeService.scheduleFollowup(
+              new RemoteFollowupRuntimeService.ScheduleRequest(
+                  parseTenantId(request.getTenantId()),
+                  request.getCommandId(),
+                  request.getCoordinatorId(),
+                  parseGameInstanceId(request.getOriginGameInstanceId()),
+                  request.getOriginRegionId(),
+                  request.getOriginRegionEpoch(),
+                  parseGameInstanceId(request.getTargetGameInstanceId()),
+                  request.getTargetRegionId(),
+                  request.getTargetRegionEpoch(),
+                  request.getTargetDueTickId(),
+                  request.getOriginDeadlineRegionEpoch(),
+                  request.getOriginDeadlineTickId(),
+                  request.getLateResultPolicy(),
+                  request.getFollowupId(),
+                  request.getEffectKey(),
+                  request.getTargetEntityId(),
+                  request.getPayloadJson(),
+                  normalizePlayableStateScope(request.getPlayableStateScope()),
+                  normalizeBlank(request.getWorldSlug()),
+                  normalizeBlank(request.getRealmSlug()),
+                  request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+                  normalizeBlank(request.getScriptPatchVersion()),
+                  normalizeBlank(request.getPluginId()),
+                  normalizeBlank(request.getPluginVersionId()),
+                  normalizeBlank(request.getAutomationDispatchId()),
+                  normalizeBlank(request.getAutomationWorkItemId()),
+                  normalizeBlank(request.getScriptId())));
+      responseObserver.onNext(
+          ScheduleRemoteFollowupResponse.newBuilder()
+              .setCoordinatorId(outcome.coordinatorId())
+              .setFollowupId(outcome.followupId())
+              .setCoordinatorCreated(outcome.coordinatorCreated())
+              .setFollowupCreated(outcome.followupCreated())
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          ScheduleRemoteFollowupResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("ScheduleRemoteFollowup failed", ex);
+      responseObserver.onNext(
+          ScheduleRemoteFollowupResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "ScheduleRemoteFollowup", ex))
               .build());
       responseObserver.onCompleted();
     }
