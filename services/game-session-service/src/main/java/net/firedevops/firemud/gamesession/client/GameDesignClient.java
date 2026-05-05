@@ -8,6 +8,8 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionRequest;
@@ -108,6 +110,24 @@ public final class GameDesignClient
     }
   }
 
+  public GetPublishedPluginVersionResponse getPublishedPluginVersion(
+      long tenantId, String pluginId, String pluginVersionId) {
+    if (stub() == null) {
+      return unavailablePluginVersion();
+    }
+    try {
+      return callStub()
+          .getPublishedPluginVersion(
+              GetPublishedPluginVersionRequest.newBuilder()
+                  .setTenantId(Long.toString(tenantId))
+                  .setPluginId(pluginId)
+                  .setPluginVersionId(pluginVersionId)
+                  .build());
+    } catch (RuntimeException ex) {
+      return unavailablePluginVersion();
+    }
+  }
+
   public GetVersionStateResponse getVersionState(long tenantId, long versionId) {
     return callStub()
         .getVersionState(
@@ -133,6 +153,16 @@ public final class GameDesignClient
 
   private static GetPublishedScriptPatchVersionResponse unavailableScriptPatchVersion() {
     return GetPublishedScriptPatchVersionResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("GAME_DESIGN_UNAVAILABLE")
+                .setMessage("Game Design service unavailable")
+                .build())
+        .build();
+  }
+
+  private static GetPublishedPluginVersionResponse unavailablePluginVersion() {
+    return GetPublishedPluginVersionResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
                 .setCode("GAME_DESIGN_UNAVAILABLE")

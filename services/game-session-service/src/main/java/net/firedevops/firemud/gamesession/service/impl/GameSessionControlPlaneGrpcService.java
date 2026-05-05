@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
@@ -74,6 +75,7 @@ import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsRequest;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsResponse;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
+import net.firedevops.firemud.gamesession.v1.PluginPublicationLink;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.PreparedVersionUpgrade;
@@ -2790,6 +2792,14 @@ public final class GameSessionControlPlaneGrpcService
       builder.setPublication(
           scriptPatchPublicationLink(command.getTenantId(), command.getScriptPatchVersion()));
     }
+    if (command.getPluginId() != null
+        && !command.getPluginId().isBlank()
+        && command.getPluginVersionId() != null
+        && !command.getPluginVersionId().isBlank()) {
+      builder.setPluginPublication(
+          pluginPublicationLink(
+              command.getTenantId(), command.getPluginId(), command.getPluginVersionId()));
+    }
     return builder.build();
   }
 
@@ -2874,6 +2884,34 @@ public final class GameSessionControlPlaneGrpcService
         .setBaseVersionId(response.getScriptPatch().getBaseVersionId())
         .setPublicationState(response.getScriptPatch().getPublicationState())
         .setLastChangedAtMs(response.getScriptPatch().getLastChangedAtMs())
+        .build();
+  }
+
+  private PluginPublicationLink pluginPublicationLink(
+      long tenantId, String pluginId, String pluginVersionId) {
+    String normalizedPluginVersionId = pluginVersionId == null ? "" : pluginVersionId;
+    GetPublishedPluginVersionResponse response =
+        gameDesignClient == null
+            ? GetPublishedPluginVersionResponse.getDefaultInstance()
+            : gameDesignClient.getPublishedPluginVersion(
+                tenantId, pluginId, normalizedPluginVersionId);
+    if (response.hasError() && !response.getError().getCode().isBlank()) {
+      return PluginPublicationLink.newBuilder()
+          .setPluginVersionId(normalizedPluginVersionId)
+          .setPublicationId(0L)
+          .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED)
+          .setStatusReason("")
+          .setLastChangedAtMs(0L)
+          .setLookupErrorCode(response.getError().getCode())
+          .setLookupErrorMessage(response.getError().getMessage())
+          .build();
+    }
+    return PluginPublicationLink.newBuilder()
+        .setPluginVersionId(response.getPluginVersion().getPluginVersionId())
+        .setPublicationId(response.getPluginVersion().getPublicationId())
+        .setPublicationState(response.getPluginVersion().getPublicationState())
+        .setStatusReason(response.getPluginVersion().getStatusReason())
+        .setLastChangedAtMs(response.getPluginVersion().getLastChangedAtMs())
         .build();
   }
 

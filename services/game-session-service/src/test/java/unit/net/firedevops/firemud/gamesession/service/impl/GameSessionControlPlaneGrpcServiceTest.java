@@ -15,7 +15,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishedPluginVersion;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
@@ -101,6 +103,23 @@ class GameSessionControlPlaneGrpcServiceTest {
                             net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
                                 .VERSION_LIFECYCLE_STATE_PUBLISHED)
                         .setLastChangedAtMs(150L)
+                        .build())
+                .build());
+    Mockito.when(
+            client.getPublishedPluginVersion(
+                Mockito.anyLong(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetPublishedPluginVersionResponse.newBuilder()
+                .setPluginVersion(
+                    PublishedPluginVersion.newBuilder()
+                        .setPluginId("plugin-2")
+                        .setPluginVersionId("plugin-v2")
+                        .setPublicationId(31L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setStatusReason("signature_verified")
+                        .setLastChangedAtMs(275L)
                         .build())
                 .build());
     return client;
@@ -1126,6 +1145,21 @@ class GameSessionControlPlaneGrpcServiceTest {
                         .setLastChangedAtMs(150L)
                         .build())
                 .build());
+    Mockito.when(gameDesignClient.getPublishedPluginVersion(1L, "plugin-1", "plugin-v1"))
+        .thenReturn(
+            GetPublishedPluginVersionResponse.newBuilder()
+                .setPluginVersion(
+                    PublishedPluginVersion.newBuilder()
+                        .setPluginId("plugin-1")
+                        .setPluginVersionId("plugin-v1")
+                        .setPublicationId(51L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setStatusReason("signature_verified")
+                        .setLastChangedAtMs(175L)
+                        .build())
+                .build());
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
@@ -1166,6 +1200,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(17L, responseRef.get().getCommand().getPointerVersion());
     assertEquals("plugin-1", responseRef.get().getCommand().getPluginId());
     assertEquals("plugin-v1", responseRef.get().getCommand().getPluginVersionId());
+    assertEquals(
+        "plugin-v1", responseRef.get().getCommand().getPluginPublication().getPluginVersionId());
+    assertEquals(51L, responseRef.get().getCommand().getPluginPublication().getPublicationId());
     assertEquals(
         "patch-1", responseRef.get().getCommand().getPublication().getScriptPatchVersion());
     assertEquals(17L, responseRef.get().getCommand().getPublication().getVersionId());
@@ -1283,6 +1320,21 @@ class GameSessionControlPlaneGrpcServiceTest {
                         .setLastChangedAtMs(250L)
                         .build())
                 .build());
+    Mockito.when(gameDesignClient.getPublishedPluginVersion(1L, "plugin-2", "plugin-v2"))
+        .thenReturn(
+            GetPublishedPluginVersionResponse.newBuilder()
+                .setPluginVersion(
+                    PublishedPluginVersion.newBuilder()
+                        .setPluginId("plugin-2")
+                        .setPluginVersionId("plugin-v2")
+                        .setPublicationId(62L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setStatusReason("signature_verified")
+                        .setLastChangedAtMs(275L)
+                        .build())
+                .build());
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
@@ -1340,6 +1392,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(29L, responseRef.get().getCommand().getPointerVersion());
     assertEquals("plugin-2", responseRef.get().getCommand().getPluginId());
     assertEquals("plugin-v2", responseRef.get().getCommand().getPluginVersionId());
+    assertEquals(
+        "plugin-v2", responseRef.get().getCommand().getPluginPublication().getPluginVersionId());
+    assertEquals(62L, responseRef.get().getCommand().getPluginPublication().getPublicationId());
     assertEquals(
         "patch-2", responseRef.get().getCommand().getPublication().getScriptPatchVersion());
     assertEquals(23L, responseRef.get().getCommand().getPublication().getVersionId());
