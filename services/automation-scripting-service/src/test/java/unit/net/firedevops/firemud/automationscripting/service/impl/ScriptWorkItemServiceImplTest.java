@@ -411,6 +411,7 @@ class ScriptWorkItemServiceImplTest {
   void listsPatchStatusesWithFilters() {
     ScriptWorkItem ready = workItem("patch-ready", "HANDED_OFF", Instant.ofEpochMilli(200));
     ScriptWorkItem failed = workItem("patch-failed", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    failed.setCancelReason("runtime_region_scope_advanced");
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(workItemRepository.findDistinctScriptPatchVersionsByTenantId("1"))
@@ -438,9 +439,41 @@ class ScriptWorkItemServiceImplTest {
     assertThat(statuses).hasSize(1);
     assertThat(statuses.get(0).scriptPatchVersion()).isEqualTo("patch-failed");
     assertThat(statuses.get(0).status()).isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
+    assertThat(statuses.get(0).statusReason()).isEqualTo("runtime_region_scope_advanced");
     assertThat(statuses.get(0).baseVersionId()).isEqualTo(7L);
     assertThat(statuses.get(0).abilitySchemaDigest()).isEqualTo("ability-1");
     assertThat(statuses.get(0).publication().versionId()).isEqualTo(17L);
+  }
+
+  @Test
+  void summarizesRolledBackLegacyPatchStatusWithSpecificCancelReason() {
+    ScriptWorkItem canceledA = workItem("patch-rollback", "CANCELED", Instant.ofEpochMilli(200));
+    canceledA.setCancelReason("rollback_epoch_advanced");
+    ScriptWorkItem canceledB = workItem("patch-rollback", "CANCELED", Instant.ofEpochMilli(300));
+    canceledB.setCancelReason("rollback_epoch_advanced");
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-rollback"))
+        .thenReturn(List.of(canceledA, canceledB));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    Optional<ScriptWorkItemService.PatchStatusSummary> status =
+        service.getPatchStatus("1", "patch-rollback");
+
+    assertThat(status).isPresent();
+    assertThat(status.get().status()).isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_ROLLED_BACK);
+    assertThat(status.get().statusReason()).isEqualTo("rollback_epoch_advanced");
   }
 
   @Test

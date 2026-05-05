@@ -529,7 +529,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         new PatchStatusSummary(
             scriptPatchVersion,
             status,
-            statusReasonFor(status),
+            statusReasonFor(status, workItems),
             "",
             lastChanged.toEpochMilli(),
             publicationMetadata.baseVersionId(),
@@ -682,14 +682,42 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     return workItems.stream().anyMatch(item -> status.equals(item.getStatus()));
   }
 
-  private static String statusReasonFor(ScriptPatchStatus status) {
+  private static String statusReasonFor(ScriptPatchStatus status, List<ScriptWorkItem> workItems) {
     return switch (status) {
-      case SCRIPT_PATCH_STATUS_FAILED -> "terminal_work_failed";
+      case SCRIPT_PATCH_STATUS_FAILED ->
+          latestReasonFor(workItems, STATUS_FAILED, STATUS_DEAD_LETTERED);
       case SCRIPT_PATCH_STATUS_ONLOAD_RUNNING -> "runtime_work_active";
-      case SCRIPT_PATCH_STATUS_ROLLED_BACK -> "runtime_work_canceled";
+      case SCRIPT_PATCH_STATUS_ROLLED_BACK -> rolledBackReasonFor(workItems);
       case SCRIPT_PATCH_STATUS_READY -> "runtime_work_terminal";
       default -> "runtime_status_unknown";
     };
+  }
+
+  private static String latestReasonFor(
+      List<ScriptWorkItem> workItems, String primaryStatus, String secondaryStatus) {
+    return workItems.stream()
+        .filter(
+            item ->
+                primaryStatus.equals(item.getStatus()) || secondaryStatus.equals(item.getStatus()))
+        .sorted(Comparator.comparing(ScriptWorkItem::getUpdatedAt).reversed())
+        .map(ScriptWorkItem::getCancelReason)
+        .filter(reason -> reason != null && !reason.isBlank())
+        .findFirst()
+        .orElse("terminal_work_failed");
+  }
+
+  private static String rolledBackReasonFor(List<ScriptWorkItem> workItems) {
+    List<String> reasons =
+        workItems.stream()
+            .filter(item -> STATUS_CANCELED.equals(item.getStatus()))
+            .map(ScriptWorkItem::getCancelReason)
+            .filter(reason -> reason != null && !reason.isBlank())
+            .distinct()
+            .toList();
+    if (reasons.size() == 1) {
+      return reasons.getFirst();
+    }
+    return "runtime_work_canceled";
   }
 
   private static String blankToEmpty(String value) {
