@@ -13,6 +13,8 @@ ALTER TABLE remote_followup_result
     ALTER COLUMN origin_game_instance_id SET NOT NULL,
     ALTER COLUMN target_game_instance_id SET NOT NULL;
 
+DROP INDEX IF EXISTS idx_remote_followup_result_scope_observed;
+
 CREATE INDEX idx_remote_followup_result_scope_observed
     ON remote_followup_result (
         tenant_id,

@@ -2381,7 +2381,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setOriginSourceKind("REMOTE_FOLLOWUP");
     RemoteCommandCoordinatorRepository repository =
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
-    RemoteFollowupRepository remoteFollowupRepository = Mockito.mock(RemoteFollowupRepository.class);
+    RemoteFollowupRepository remoteFollowupRepository =
+        Mockito.mock(RemoteFollowupRepository.class);
     Mockito.when(
             repository.findForControlPlane(
                 Mockito.anyLong(),
@@ -2401,6 +2402,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.any(),
+                Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),
@@ -2445,6 +2447,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setEffectKey("effect-9")
             .setPayloadKind("enqueue_automation_command")
             .setOriginSourceKind("REMOTE_FOLLOWUP")
+            .setAutomationWorkItemId("work-1")
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -2493,6 +2496,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             "effect-9",
             "enqueue_automation_command",
             "REMOTE_FOLLOWUP",
+            "work-1",
             "dispatch-1",
             "cmd-1",
             org.springframework.data.domain.PageRequest.of(0, 25));
@@ -2568,6 +2572,11 @@ class GameSessionControlPlaneGrpcServiceTest {
                 29L,
                 "enqueue_automation_command",
                 "REMOTE_FOLLOWUP",
+                "work-1",
+                "entity-9",
+                "damage:1",
+                "",
+                true,
                 "dispatch-1",
                 "cmd-1",
                 org.springframework.data.domain.PageRequest.of(0, 25)))
@@ -2612,6 +2621,10 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setPointerVersion(29L)
             .setPayloadKind("enqueue_automation_command")
             .setOriginSourceKind("REMOTE_FOLLOWUP")
+            .setAutomationWorkItemId("work-1")
+            .setTargetEntityId("entity-9")
+            .setEffectKey("damage:1")
+            .setRequiresSoloTick(true)
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -2818,6 +2831,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                 "production",
                 17L,
                 "RATE_LIMIT",
+                "work-1",
+                "auto-1",
                 "dispatch-1",
                 "cmd-1",
                 org.springframework.data.domain.PageRequest.of(0, 25)))
@@ -2858,6 +2873,8 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setRealmSlug("production")
             .setPointerVersion(17L)
             .setResultErrorCode("RATE_LIMIT")
+            .setAutomationWorkItemId("work-1")
+            .setResultCommandId("auto-1")
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -2940,28 +2957,30 @@ class GameSessionControlPlaneGrpcServiceTest {
     targetCommand.setGameplayResult("FAILURE");
     Mockito.when(
             repository.findForControlPlane(
-                1L,
-                "coord-1",
-                "",
-                null,
-                "",
-                0L,
-                null,
-                "",
-                0L,
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                null,
-                "",
-                "",
-                "",
-                org.springframework.data.domain.PageRequest.of(0, 100)))
+                Mockito.anyLong(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyLong(),
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyLong(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any()))
         .thenReturn(List.of(result));
     Mockito.when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
         .thenReturn(Optional.of(targetCommand));

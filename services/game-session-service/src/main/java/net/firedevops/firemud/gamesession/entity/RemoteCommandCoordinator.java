@@ -32,6 +32,9 @@ import lombok.Data;
           columnList =
               "tenant_id, script_patch_version, plugin_version_id, playable_state_scope, world_slug, realm_slug, pointer_version, updated_at"),
       @Index(
+          name = "idx_remote_command_coordinator_work_item_updated",
+          columnList = "tenant_id, automation_work_item_id, updated_at"),
+      @Index(
           name = "idx_remote_command_coordinator_command_id",
           columnList = "tenant_id, command_id",
           unique = true)

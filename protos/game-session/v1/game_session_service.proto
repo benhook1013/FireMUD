@@ -629,6 +629,7 @@ message ListRemoteCommandCoordinatorsRequest {
   string effect_key = 22;
   string payload_kind = 23;
   string origin_source_kind = 24;
+  string automation_work_item_id = 25;
 }
 
 message ListRemoteCommandCoordinatorsResponse {
@@ -705,6 +706,11 @@ message ListRemoteFollowupsRequest {
   int64 pointer_version = 20;
   string payload_kind = 21;
   string origin_source_kind = 22;
+  string automation_work_item_id = 23;
+  string target_entity_id = 24;
+  string effect_key = 25;
+  string failure_code = 26;
+  bool requires_solo_tick = 27;
 }
 
 message RemoteFollowupEntry {
@@ -784,6 +790,8 @@ message ListRemoteFollowupResultsRequest {
   string realm_slug = 20;
   int64 pointer_version = 21;
   string result_error_code = 22;
+  string automation_work_item_id = 23;
+  string result_command_id = 24;
 }
 
 message RemoteFollowupResultEntry {

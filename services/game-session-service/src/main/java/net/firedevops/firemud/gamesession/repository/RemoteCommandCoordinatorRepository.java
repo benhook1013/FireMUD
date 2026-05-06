@@ -50,6 +50,7 @@ public interface RemoteCommandCoordinatorRepository
         and (:effectKey = '' or linkedFollowup.effectKey = :effectKey)
         and (:payloadKind = '' or linkedFollowup.payloadKind = :payloadKind)
         and (:originSourceKind = '' or linkedFollowup.originSourceKind = :originSourceKind)
+        and (:automationWorkItemId = '' or coordinator.automationWorkItemId = :automationWorkItemId)
         and (:automationDispatchId = '' or coordinator.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or coordinator.commandId = :commandId)
       order by coordinator.updatedAt desc, coordinator.id desc
@@ -76,6 +77,7 @@ public interface RemoteCommandCoordinatorRepository
       @Param("effectKey") String effectKey,
       @Param("payloadKind") String payloadKind,
       @Param("originSourceKind") String originSourceKind,
+      @Param("automationWorkItemId") String automationWorkItemId,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       Pageable pageable);

@@ -39,6 +39,8 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
         and (:realmSlug = '' or result.realmSlug = :realmSlug)
         and (:pointerVersion is null or result.pointerVersion = :pointerVersion)
         and (:resultErrorCode = '' or result.resultErrorCode = :resultErrorCode)
+        and (:automationWorkItemId = '' or result.automationWorkItemId = :automationWorkItemId)
+        and (:resultCommandId = '' or result.resultCommandId = :resultCommandId)
         and (:automationDispatchId = '' or result.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or result.commandId = :commandId)
       order by result.observedAt asc, result.id asc
@@ -63,6 +65,8 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
       @Param("realmSlug") String realmSlug,
       @Param("pointerVersion") Long pointerVersion,
       @Param("resultErrorCode") String resultErrorCode,
+      @Param("automationWorkItemId") String automationWorkItemId,
+      @Param("resultCommandId") String resultCommandId,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       Pageable pageable);

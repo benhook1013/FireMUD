@@ -760,6 +760,7 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getEffectKey()),
               blankToEmpty(request.getPayloadKind()),
               blankToEmpty(request.getOriginSourceKind()),
+              blankToEmpty(request.getAutomationWorkItemId()),
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
               PageRequest.of(0, boundedRemoteListLimit(request.getLimit())))
@@ -898,6 +899,11 @@ public final class GameSessionControlPlaneGrpcService
               request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
               blankToEmpty(request.getPayloadKind()),
               blankToEmpty(request.getOriginSourceKind()),
+              blankToEmpty(request.getAutomationWorkItemId()),
+              blankToEmpty(request.getTargetEntityId()),
+              blankToEmpty(request.getEffectKey()),
+              blankToEmpty(request.getFailureCode()),
+              request.getRequiresSoloTick() ? Boolean.TRUE : null,
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
               PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
@@ -956,6 +962,8 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getRealmSlug()),
               request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
               blankToEmpty(request.getResultErrorCode()),
+              blankToEmpty(request.getAutomationWorkItemId()),
+              blankToEmpty(request.getResultCommandId()),
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
               PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
