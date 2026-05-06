@@ -72,6 +72,7 @@ public class TextCommandInterpreter {
                 containerHandler,
                 meterRegistry,
                 scriptEventPublisher),
+            scriptEventPublisher,
             communicationHandler,
             worldsHandler));
   }
@@ -211,6 +212,7 @@ public class TextCommandInterpreter {
                 containerHandler,
                 new SimpleMeterRegistry(),
                 scriptEventPublisher),
+            scriptEventPublisher,
             communicationHandler,
             worldsHandler));
   }
@@ -383,15 +385,16 @@ public class TextCommandInterpreter {
       FriendsCommandHandler friendsHandler,
       AuthoredActionCommandHandler authoredActionHandler,
       ItemCommandHandler itemHandler,
+      ScriptEventPublisher scriptEventPublisher,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler) {
     return new TextCommandDispatcher(
         List.of(
             new EnqueueOnlyTextCommandDispatchHandler(commandService),
-            new WorldsTextCommandDispatchHandler(worldsHandler),
+            new WorldsTextCommandDispatchHandler(worldsHandler, scriptEventPublisher),
             new SessionTextCommandDispatchHandler(loginHandler, logoutHandler, playHandler),
             new ActivityTextCommandDispatchHandler(commandService),
-            new HelpTextCommandDispatchHandler(helpHandler),
+            new HelpTextCommandDispatchHandler(helpHandler, scriptEventPublisher),
             new WhoTextCommandDispatchHandler(whoHandler),
             new FriendsTextCommandDispatchHandler(friendsHandler),
             new AuthoredActionTextCommandDispatchHandler(authoredActionHandler),
