@@ -839,6 +839,13 @@ message ListRemoteFollowupResultsRequest {
   string result_command_id = 24;
   string result_command_execution_outcome = 25;
   string result_command_gameplay_result = 26;
+  string target_entity_id = 27;
+  string effect_key = 28;
+  string failure_code = 29;
+  string payload_kind = 30;
+  string origin_source_kind = 31;
+  string event_type = 32;
+  string script_event_id = 33;
 }
 
 message RemoteFollowupResultEntry {
@@ -876,6 +883,23 @@ message RemoteFollowupResultEntry {
   string late_result_policy = 32;
   string origin_game_instance_id = 33;
   string target_game_instance_id = 34;
+  string target_entity_id = 35;
+  string effect_key = 36;
+  string payload_kind = 37;
+  bool requires_solo_tick = 38;
+  string origin_source_kind = 39;
+  string origin_source_state = 40;
+  int64 origin_source_ordinal = 41;
+  int64 origin_source_due_tick_id = 42;
+  int64 origin_source_due_at_ms = 43;
+  string failure_code = 44;
+  string failure_message = 45;
+  string event_type = 46;
+  string event_schema_version = 47;
+  string script_event_id = 48;
+  string trigger_mode = 49;
+  string read_snapshot_token = 50;
+  string event_payload_json = 51;
 }
 
 message ListRemoteFollowupResultsResponse {

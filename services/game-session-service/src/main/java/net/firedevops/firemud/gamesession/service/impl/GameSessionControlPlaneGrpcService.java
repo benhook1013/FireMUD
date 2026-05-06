@@ -982,6 +982,13 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getResultCommandId()),
               blankToEmpty(request.getResultCommandExecutionOutcome()),
               blankToEmpty(request.getResultCommandGameplayResult()),
+              blankToEmpty(request.getTargetEntityId()),
+              blankToEmpty(request.getEffectKey()),
+              blankToEmpty(request.getFailureCode()),
+              blankToEmpty(request.getPayloadKind()),
+              blankToEmpty(request.getOriginSourceKind()),
+              blankToEmpty(request.getEventType()),
+              blankToEmpty(request.getScriptEventId()),
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
               PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
@@ -2360,6 +2367,12 @@ public final class GameSessionControlPlaneGrpcService
             : remoteCommandCoordinatorRepository
                 .findByTenantIdAndCoordinatorId(result.getTenantId(), result.getCoordinatorId())
                 .orElse(null);
+    RemoteFollowup followup =
+        remoteFollowupRepository == null
+            ? null
+            : remoteFollowupRepository
+                .findByTenantIdAndFollowupId(result.getTenantId(), result.getFollowupId())
+                .orElse(null);
     RemoteFollowupResultEntry.Builder builder =
         RemoteFollowupResultEntry.newBuilder()
             .setResultId(result.getResultId())
@@ -2412,6 +2425,10 @@ public final class GameSessionControlPlaneGrpcService
         result.getWorldSlug(),
         result.getRealmSlug(),
         result.getPointerVersion());
+    applyFollowupIdentity(builder, followup);
+    applyPayloadSummary(builder, followup);
+    applyOriginSource(builder, followup);
+    applyTriggerScriptEventSummary(builder, followup);
     applyCoordinatorDeadlinePolicy(builder, coordinator);
     return builder.build();
   }
@@ -2754,6 +2771,91 @@ public final class GameSessionControlPlaneGrpcService
     builder.setOriginDeadlineTickId(coordinator.getOriginDeadlineTickId());
     if (coordinator.getLateResultPolicy() != null) {
       builder.setLateResultPolicy(coordinator.getLateResultPolicy());
+    }
+  }
+
+  private static void applyFollowupIdentity(
+      RemoteFollowupResultEntry.Builder builder, RemoteFollowup followup) {
+    if (followup == null) {
+      return;
+    }
+    if (followup.getTargetEntityId() != null) {
+      builder.setTargetEntityId(followup.getTargetEntityId());
+    }
+    if (followup.getEffectKey() != null) {
+      builder.setEffectKey(followup.getEffectKey());
+    }
+    if (followup.getFailureCode() != null) {
+      builder.setFailureCode(followup.getFailureCode());
+    }
+    if (followup.getFailureMessage() != null) {
+      builder.setFailureMessage(followup.getFailureMessage());
+    }
+  }
+
+  private static void applyPayloadSummary(
+      RemoteFollowupResultEntry.Builder builder, RemoteFollowup followup) {
+    if (followup == null) {
+      return;
+    }
+    PayloadSummary summary =
+        payloadSummary(
+            followup.getPayloadJson(),
+            followup.getPayloadKind(),
+            followup.getRequestedCommand(),
+            followup.isRequiresSoloTick());
+    if (summary.kind() != null) {
+      builder.setPayloadKind(summary.kind());
+    }
+    if (summary.requiresSoloTick()) {
+      builder.setRequiresSoloTick(true);
+    }
+  }
+
+  private static void applyOriginSource(
+      RemoteFollowupResultEntry.Builder builder, RemoteFollowup followup) {
+    if (followup == null) {
+      return;
+    }
+    if (followup.getOriginSourceKind() != null) {
+      builder.setOriginSourceKind(followup.getOriginSourceKind());
+    }
+    if (followup.getOriginSourceState() != null) {
+      builder.setOriginSourceState(followup.getOriginSourceState());
+    }
+    if (followup.getOriginSourceOrdinal() != null) {
+      builder.setOriginSourceOrdinal(followup.getOriginSourceOrdinal());
+    }
+    if (followup.getOriginSourceDueTickId() != null) {
+      builder.setOriginSourceDueTickId(followup.getOriginSourceDueTickId());
+    }
+    if (followup.getOriginSourceDueAtMs() != null) {
+      builder.setOriginSourceDueAtMs(followup.getOriginSourceDueAtMs());
+    }
+  }
+
+  private static void applyTriggerScriptEventSummary(
+      RemoteFollowupResultEntry.Builder builder, RemoteFollowup followup) {
+    if (followup == null) {
+      return;
+    }
+    if (followup.getEventType() != null) {
+      builder.setEventType(followup.getEventType());
+    }
+    if (followup.getEventSchemaVersion() != null) {
+      builder.setEventSchemaVersion(followup.getEventSchemaVersion());
+    }
+    if (followup.getScriptEventId() != null) {
+      builder.setScriptEventId(followup.getScriptEventId());
+    }
+    if (followup.getTriggerMode() != null) {
+      builder.setTriggerMode(followup.getTriggerMode());
+    }
+    if (followup.getReadSnapshotToken() != null) {
+      builder.setReadSnapshotToken(followup.getReadSnapshotToken());
+    }
+    if (followup.getEventPayloadJson() != null) {
+      builder.setEventPayloadJson(followup.getEventPayloadJson());
     }
   }
 

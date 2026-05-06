@@ -20,6 +20,9 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
   @Query(
       """
       select result from RemoteFollowupResult result
+      left join RemoteFollowup linkedFollowup
+        on linkedFollowup.tenantId = result.tenantId
+       and linkedFollowup.followupId = result.followupId
       left join GameplayCommand resultCommand
         on resultCommand.commandId = result.resultCommandId
       where result.tenantId = :tenantId
@@ -47,6 +50,13 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
              or resultCommand.executionOutcome = :resultCommandExecutionOutcome)
         and (:resultCommandGameplayResult = ''
              or resultCommand.gameplayResult = :resultCommandGameplayResult)
+        and (:targetEntityId = '' or linkedFollowup.targetEntityId = :targetEntityId)
+        and (:effectKey = '' or linkedFollowup.effectKey = :effectKey)
+        and (:failureCode = '' or linkedFollowup.failureCode = :failureCode)
+        and (:payloadKind = '' or linkedFollowup.payloadKind = :payloadKind)
+        and (:originSourceKind = '' or linkedFollowup.originSourceKind = :originSourceKind)
+        and (:eventType = '' or linkedFollowup.eventType = :eventType)
+        and (:scriptEventId = '' or linkedFollowup.scriptEventId = :scriptEventId)
         and (:automationDispatchId = '' or result.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or result.commandId = :commandId)
       order by result.observedAt asc, result.id asc
@@ -75,6 +85,13 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
       @Param("resultCommandId") String resultCommandId,
       @Param("resultCommandExecutionOutcome") String resultCommandExecutionOutcome,
       @Param("resultCommandGameplayResult") String resultCommandGameplayResult,
+      @Param("targetEntityId") String targetEntityId,
+      @Param("effectKey") String effectKey,
+      @Param("failureCode") String failureCode,
+      @Param("payloadKind") String payloadKind,
+      @Param("originSourceKind") String originSourceKind,
+      @Param("eventType") String eventType,
+      @Param("scriptEventId") String scriptEventId,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       Pageable pageable);

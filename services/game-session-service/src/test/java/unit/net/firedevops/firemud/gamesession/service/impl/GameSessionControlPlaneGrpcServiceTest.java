@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import io.grpc.stub.StreamObserver;
@@ -2894,6 +2895,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
     RemoteCommandCoordinatorRepository coordinatorRepository =
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    RemoteFollowupRepository followupRepository = Mockito.mock(RemoteFollowupRepository.class);
     GameplayCommandRepository gameplayCommandRepository =
         Mockito.mock(GameplayCommandRepository.class);
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
@@ -2902,6 +2904,26 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setOriginDeadlineRegionEpoch(3L);
     coordinator.setOriginDeadlineTickId(88L);
     coordinator.setLateResultPolicy("late_result_safe_to_ignore");
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setTenantId(1L);
+    followup.setFollowupId("rf-1");
+    followup.setTargetEntityId("npc-7");
+    followup.setEffectKey("remote-followup:dispatch-1");
+    followup.setFailureCode("REMOTE_REJECTED");
+    followup.setFailureMessage("Target runtime rejected the remote followup");
+    followup.setPayloadKind("trigger_script_event");
+    followup.setRequiresSoloTick(true);
+    followup.setOriginSourceKind("REMOTE_FOLLOWUP");
+    followup.setOriginSourceState("SCHEDULED");
+    followup.setOriginSourceOrdinal(15L);
+    followup.setOriginSourceDueTickId(44L);
+    followup.setOriginSourceDueAtMs(1714521600000L);
+    followup.setEventType("onEnterRegion");
+    followup.setEventSchemaVersion("v1");
+    followup.setScriptEventId("remote-enter-1");
+    followup.setTriggerMode("DIRECT");
+    followup.setReadSnapshotToken("game-session:onEnterRegion:7:3:remote-enter-1");
+    followup.setEventPayloadJson("{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}");
     GameplayCommand targetCommand = new GameplayCommand();
     targetCommand.setCommandId("auto-1");
     targetCommand.setExecutionOutcome("APPLIED");
@@ -2931,18 +2953,27 @@ class GameSessionControlPlaneGrpcServiceTest {
                 "auto-1",
                 "APPLIED",
                 "SUCCESS",
+                "npc-7",
+                "remote-followup:dispatch-1",
+                "REMOTE_REJECTED",
+                "trigger_script_event",
+                "REMOTE_FOLLOWUP",
+                "onEnterRegion",
+                "remote-enter-1",
                 "dispatch-1",
                 "cmd-1",
                 org.springframework.data.domain.PageRequest.of(0, 25)))
         .thenReturn(List.of(result));
     Mockito.when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
         .thenReturn(Optional.of(coordinator));
+    Mockito.when(followupRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
+        .thenReturn(Optional.of(followup));
     Mockito.when(gameplayCommandRepository.findByCommandId("auto-1"))
         .thenReturn(Optional.of(targetCommand));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
-            null,
+            followupRepository,
             coordinatorRepository,
             repository,
             gameplayCommandRepository,
@@ -2975,6 +3006,13 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setResultCommandId("auto-1")
             .setResultCommandExecutionOutcome("APPLIED")
             .setResultCommandGameplayResult("SUCCESS")
+            .setTargetEntityId("npc-7")
+            .setEffectKey("remote-followup:dispatch-1")
+            .setFailureCode("REMOTE_REJECTED")
+            .setPayloadKind("trigger_script_event")
+            .setOriginSourceKind("REMOTE_FOLLOWUP")
+            .setEventType("onEnterRegion")
+            .setScriptEventId("remote-enter-1")
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -3009,6 +3047,29 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(88L, responseRef.get().getResults(0).getOriginDeadlineTickId());
     assertEquals(
         "late_result_safe_to_ignore", responseRef.get().getResults(0).getLateResultPolicy());
+    assertEquals("npc-7", responseRef.get().getResults(0).getTargetEntityId());
+    assertEquals("remote-followup:dispatch-1", responseRef.get().getResults(0).getEffectKey());
+    assertEquals("REMOTE_REJECTED", responseRef.get().getResults(0).getFailureCode());
+    assertEquals(
+        "Target runtime rejected the remote followup",
+        responseRef.get().getResults(0).getFailureMessage());
+    assertEquals("trigger_script_event", responseRef.get().getResults(0).getPayloadKind());
+    assertTrue(responseRef.get().getResults(0).getRequiresSoloTick());
+    assertEquals("REMOTE_FOLLOWUP", responseRef.get().getResults(0).getOriginSourceKind());
+    assertEquals("SCHEDULED", responseRef.get().getResults(0).getOriginSourceState());
+    assertEquals(15L, responseRef.get().getResults(0).getOriginSourceOrdinal());
+    assertEquals(44L, responseRef.get().getResults(0).getOriginSourceDueTickId());
+    assertEquals(1714521600000L, responseRef.get().getResults(0).getOriginSourceDueAtMs());
+    assertEquals("onEnterRegion", responseRef.get().getResults(0).getEventType());
+    assertEquals("v1", responseRef.get().getResults(0).getEventSchemaVersion());
+    assertEquals("remote-enter-1", responseRef.get().getResults(0).getScriptEventId());
+    assertEquals("DIRECT", responseRef.get().getResults(0).getTriggerMode());
+    assertEquals(
+        "game-session:onEnterRegion:7:3:remote-enter-1",
+        responseRef.get().getResults(0).getReadSnapshotToken());
+    assertEquals(
+        "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}",
+        responseRef.get().getResults(0).getEventPayloadJson());
     assertEquals("patch-1", responseRef.get().getResults(0).getScriptPatchVersion());
     assertEquals("plugin-1", responseRef.get().getResults(0).getPluginId());
     assertEquals("plugin-v1", responseRef.get().getResults(0).getPluginVersionId());
@@ -3075,6 +3136,13 @@ class GameSessionControlPlaneGrpcServiceTest {
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),
