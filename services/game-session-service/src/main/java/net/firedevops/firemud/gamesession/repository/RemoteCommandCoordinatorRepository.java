@@ -17,6 +17,12 @@ public interface RemoteCommandCoordinatorRepository
 
   Optional<RemoteCommandCoordinator> findByTenantIdAndFollowupId(Long tenantId, String followupId);
 
+  List<RemoteCommandCoordinator> findByTenantIdAndFollowupIdIn(
+      Long tenantId, java.util.Collection<String> followupIds);
+
+  List<RemoteCommandCoordinator> findByTenantIdAndCoordinatorIdIn(
+      Long tenantId, java.util.Collection<String> coordinatorIds);
+
   List<RemoteCommandCoordinator> findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
       Long tenantId, String originRegionId, String state);
 

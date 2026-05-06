@@ -33,6 +33,9 @@ public interface GameplayCommandRepository extends JpaRepository<GameplayCommand
   Optional<GameplayCommand> findFirstByTenantIdAndRemoteFollowupId(
       Long tenantId, String remoteFollowupId);
 
+  List<GameplayCommand> findByTenantIdAndRemoteFollowupIdIn(
+      Long tenantId, java.util.Collection<String> remoteFollowupIds);
+
   List<GameplayCommand> findByCommandIdIn(Collection<String> commandIds);
 
   long countByTenantIdAndGameInstanceIdAndCompletedAtIsNullAndExecutionOutcomeIn(

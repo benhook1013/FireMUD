@@ -8,7 +8,11 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
@@ -694,15 +698,20 @@ public final class GameSessionControlPlaneGrpcService
               .findByTenantIdAndCoordinatorId(tenantId, request.getCoordinatorId())
               .orElseThrow(
                   () -> new IllegalArgumentException("Remote command coordinator not found"));
+      RemoteFollowup followup =
+          remoteFollowupRepository
+              .findByTenantIdAndFollowupId(tenantId, coordinator.getFollowupId())
+              .orElse(null);
       responseObserver.onNext(
           GetRemoteCommandCoordinatorResponse.newBuilder()
               .setCoordinator(
                   toRemoteCoordinatorEntry(
                       coordinator,
-                      remoteFollowupRepository
-                          .findByTenantIdAndFollowupId(tenantId, coordinator.getFollowupId())
-                          .orElse(null),
-                      latestRemoteResult(tenantId, coordinator.getCoordinatorId())))
+                      followup,
+                      latestRemoteResult(tenantId, coordinator.getCoordinatorId()),
+                      followup == null
+                          ? null
+                          : linkedTargetCommand(tenantId, followup.getFollowupId())))
               .build());
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
@@ -737,8 +746,8 @@ public final class GameSessionControlPlaneGrpcService
       long tenantId = parseTenantId(request.getTenantId());
       ListRemoteCommandCoordinatorsResponse.Builder response =
           ListRemoteCommandCoordinatorsResponse.newBuilder();
-      remoteCommandCoordinatorRepository
-          .findForControlPlane(
+      List<RemoteCommandCoordinator> coordinators =
+          remoteCommandCoordinatorRepository.findForControlPlane(
               tenantId,
               parseOptionalGameInstanceId(request.getOriginGameInstanceId()),
               blankToEmpty(request.getOriginRegionId()),
@@ -768,16 +777,27 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getTargetCommandGameplayResult()),
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
-              PageRequest.of(0, boundedRemoteListLimit(request.getLimit())))
-          .forEach(
-              coordinator ->
-                  response.addCoordinators(
-                      toRemoteCoordinatorEntry(
-                          coordinator,
-                          remoteFollowupRepository
-                              .findByTenantIdAndFollowupId(tenantId, coordinator.getFollowupId())
-                              .orElse(null),
-                          latestRemoteResult(tenantId, coordinator.getCoordinatorId()))));
+              PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
+      Map<String, RemoteFollowup> followupsById =
+          followupMap(
+              tenantId,
+              coordinators.stream().map(RemoteCommandCoordinator::getFollowupId).toList());
+      Map<String, RemoteFollowupResult> latestResultsByCoordinatorId =
+          latestResultMap(
+              tenantId,
+              coordinators.stream().map(RemoteCommandCoordinator::getCoordinatorId).toList());
+      Map<String, GameplayCommand> targetCommandsByFollowupId =
+          targetCommandMap(
+              tenantId,
+              followupsById.values().stream().map(RemoteFollowup::getFollowupId).toList());
+      coordinators.forEach(
+          coordinator ->
+              response.addCoordinators(
+                  toRemoteCoordinatorEntry(
+                      coordinator,
+                      followupsById.get(coordinator.getFollowupId()),
+                      latestResultsByCoordinatorId.get(coordinator.getCoordinatorId()),
+                      targetCommandsByFollowupId.get(coordinator.getFollowupId()))));
       responseObserver.onNext(response.build());
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
@@ -923,8 +943,20 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
               PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
+      Map<String, GameplayCommand> targetCommandsByFollowupId =
+          targetCommandMap(
+              tenantId, followups.stream().map(RemoteFollowup::getFollowupId).toList());
+      Map<String, RemoteCommandCoordinator> coordinatorsByFollowupId =
+          coordinatorByFollowupMap(
+              tenantId, followups.stream().map(RemoteFollowup::getFollowupId).toList());
       ListRemoteFollowupsResponse.Builder response = ListRemoteFollowupsResponse.newBuilder();
-      followups.forEach(followup -> response.addFollowups(toRemoteFollowupEntry(followup)));
+      followups.forEach(
+          followup ->
+              response.addFollowups(
+                  toRemoteFollowupEntry(
+                      followup,
+                      targetCommandsByFollowupId.get(followup.getFollowupId()),
+                      coordinatorsByFollowupId.get(followup.getFollowupId()))));
       responseObserver.onNext(response.build());
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
@@ -992,9 +1024,24 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
               PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
+      Map<String, RemoteCommandCoordinator> coordinatorsById =
+          coordinatorMap(
+              tenantId, results.stream().map(RemoteFollowupResult::getCoordinatorId).toList());
+      Map<String, RemoteFollowup> followupsById =
+          followupMap(tenantId, results.stream().map(RemoteFollowupResult::getFollowupId).toList());
+      Map<String, GameplayCommand> targetCommandsByFollowupId =
+          targetCommandMap(
+              tenantId, results.stream().map(RemoteFollowupResult::getFollowupId).toList());
       ListRemoteFollowupResultsResponse.Builder response =
           ListRemoteFollowupResultsResponse.newBuilder();
-      results.forEach(result -> response.addResults(toRemoteFollowupResultEntry(result)));
+      results.forEach(
+          result ->
+              response.addResults(
+                  toRemoteFollowupResultEntry(
+                      result,
+                      coordinatorsById.get(result.getCoordinatorId()),
+                      followupsById.get(result.getFollowupId()),
+                      targetCommandsByFollowupId.get(result.getFollowupId()))));
       responseObserver.onNext(response.build());
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
@@ -2182,11 +2229,8 @@ public final class GameSessionControlPlaneGrpcService
   private RemoteCommandCoordinatorEntry toRemoteCoordinatorEntry(
       RemoteCommandCoordinator coordinator,
       RemoteFollowup followup,
-      RemoteFollowupResult latestResult) {
-    GameplayCommand targetCommand =
-        followup == null
-            ? null
-            : linkedTargetCommand(coordinator.getTenantId(), followup.getFollowupId());
+      RemoteFollowupResult latestResult,
+      GameplayCommand targetCommand) {
     RemoteCommandCoordinatorEntry.Builder builder =
         RemoteCommandCoordinatorEntry.newBuilder()
             .setCoordinatorId(coordinator.getCoordinatorId())
@@ -2279,15 +2323,10 @@ public final class GameSessionControlPlaneGrpcService
     return builder.build();
   }
 
-  private RemoteFollowupEntry toRemoteFollowupEntry(RemoteFollowup followup) {
-    GameplayCommand targetCommand =
-        linkedTargetCommand(followup.getTenantId(), followup.getFollowupId());
-    RemoteCommandCoordinator coordinator =
-        remoteCommandCoordinatorRepository == null
-            ? null
-            : remoteCommandCoordinatorRepository
-                .findByTenantIdAndFollowupId(followup.getTenantId(), followup.getFollowupId())
-                .orElse(null);
+  private RemoteFollowupEntry toRemoteFollowupEntry(
+      RemoteFollowup followup,
+      GameplayCommand targetCommand,
+      RemoteCommandCoordinator coordinator) {
     RemoteFollowupEntry.Builder builder =
         RemoteFollowupEntry.newBuilder()
             .setFollowupId(followup.getFollowupId())
@@ -2360,19 +2399,11 @@ public final class GameSessionControlPlaneGrpcService
     return builder.build();
   }
 
-  private RemoteFollowupResultEntry toRemoteFollowupResultEntry(RemoteFollowupResult result) {
-    RemoteCommandCoordinator coordinator =
-        remoteCommandCoordinatorRepository == null
-            ? null
-            : remoteCommandCoordinatorRepository
-                .findByTenantIdAndCoordinatorId(result.getTenantId(), result.getCoordinatorId())
-                .orElse(null);
-    RemoteFollowup followup =
-        remoteFollowupRepository == null
-            ? null
-            : remoteFollowupRepository
-                .findByTenantIdAndFollowupId(result.getTenantId(), result.getFollowupId())
-                .orElse(null);
+  private RemoteFollowupResultEntry toRemoteFollowupResultEntry(
+      RemoteFollowupResult result,
+      RemoteCommandCoordinator coordinator,
+      RemoteFollowup followup,
+      GameplayCommand targetCommand) {
     RemoteFollowupResultEntry.Builder builder =
         RemoteFollowupResultEntry.newBuilder()
             .setResultId(result.getResultId())
@@ -2410,8 +2441,6 @@ public final class GameSessionControlPlaneGrpcService
             result.getResultCommandId(),
             result.getResultErrorCode(),
             result.getResultMessage());
-    GameplayCommand targetCommand =
-        linkedTargetCommand(result.getTenantId(), result.getFollowupId());
     if (targetCommand == null && resultCommandId != null) {
       targetCommand = gameplayCommandRepository.findByCommandId(resultCommandId).orElse(null);
     }
@@ -3377,6 +3406,92 @@ public final class GameSessionControlPlaneGrpcService
     return gameplayCommandRepository
         .findFirstByTenantIdAndRemoteFollowupId(tenantId, followupId)
         .orElse(null);
+  }
+
+  private Map<String, RemoteFollowup> followupMap(long tenantId, List<String> followupIds) {
+    if (remoteFollowupRepository == null) {
+      return Map.of();
+    }
+    List<String> distinctIds = distinctNonBlank(followupIds);
+    if (distinctIds.isEmpty()) {
+      return Map.of();
+    }
+    return remoteFollowupRepository.findByTenantIdAndFollowupIdIn(tenantId, distinctIds).stream()
+        .collect(Collectors.toMap(RemoteFollowup::getFollowupId, Function.identity()));
+  }
+
+  private Map<String, RemoteCommandCoordinator> coordinatorByFollowupMap(
+      long tenantId, List<String> followupIds) {
+    if (remoteCommandCoordinatorRepository == null) {
+      return Map.of();
+    }
+    List<String> distinctIds = distinctNonBlank(followupIds);
+    if (distinctIds.isEmpty()) {
+      return Map.of();
+    }
+    return remoteCommandCoordinatorRepository
+        .findByTenantIdAndFollowupIdIn(tenantId, distinctIds)
+        .stream()
+        .collect(Collectors.toMap(RemoteCommandCoordinator::getFollowupId, Function.identity()));
+  }
+
+  private Map<String, RemoteCommandCoordinator> coordinatorMap(
+      long tenantId, List<String> coordinatorIds) {
+    if (remoteCommandCoordinatorRepository == null) {
+      return Map.of();
+    }
+    List<String> distinctIds = distinctNonBlank(coordinatorIds);
+    if (distinctIds.isEmpty()) {
+      return Map.of();
+    }
+    return remoteCommandCoordinatorRepository
+        .findByTenantIdAndCoordinatorIdIn(tenantId, distinctIds)
+        .stream()
+        .collect(Collectors.toMap(RemoteCommandCoordinator::getCoordinatorId, Function.identity()));
+  }
+
+  private Map<String, RemoteFollowupResult> latestResultMap(
+      long tenantId, List<String> coordinatorIds) {
+    List<String> distinctIds = distinctNonBlank(coordinatorIds);
+    if (distinctIds.isEmpty()) {
+      return Map.of();
+    }
+    return remoteFollowupResultRepository
+        .findByTenantIdAndCoordinatorIdInOrderByObservedAtAsc(tenantId, distinctIds)
+        .stream()
+        .collect(
+            Collectors.toMap(
+                RemoteFollowupResult::getCoordinatorId,
+                Function.identity(),
+                (ignored, replacement) -> replacement));
+  }
+
+  private Map<String, GameplayCommand> targetCommandMap(long tenantId, List<String> followupIds) {
+    if (gameplayCommandRepository == null) {
+      return Map.of();
+    }
+    List<String> distinctIds = distinctNonBlank(followupIds);
+    if (distinctIds.isEmpty()) {
+      return Map.of();
+    }
+    return gameplayCommandRepository
+        .findByTenantIdAndRemoteFollowupIdIn(tenantId, distinctIds)
+        .stream()
+        .collect(
+            Collectors.toMap(
+                GameplayCommand::getRemoteFollowupId,
+                Function.identity(),
+                (existing, ignored) -> existing));
+  }
+
+  private static List<String> distinctNonBlank(List<String> values) {
+    LinkedHashSet<String> distinct = new LinkedHashSet<>();
+    for (String value : values) {
+      if (value != null && !value.isBlank()) {
+        distinct.add(value);
+      }
+    }
+    return List.copyOf(distinct);
   }
 
   private static PlayableStateScope toPlayableStateScopeStatus(String playableStateScope) {

@@ -2470,15 +2470,28 @@ class GameSessionControlPlaneGrpcServiceTest {
                 Mockito.anyString(),
                 Mockito.any()))
         .thenReturn(List.of(coordinator));
-    Mockito.when(remoteFollowupRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
-        .thenReturn(Optional.of(followup));
+    Mockito.when(remoteFollowupRepository.findByTenantIdAndFollowupIdIn(1L, List.of("rf-1")))
+        .thenReturn(List.of(followup));
+    RemoteFollowupResultRepository resultRepository =
+        Mockito.mock(RemoteFollowupResultRepository.class);
+    Mockito.when(
+            resultRepository.findByTenantIdAndCoordinatorIdInOrderByObservedAtAsc(
+                1L, List.of("coord-1")))
+        .thenReturn(List.of());
+    GameplayCommandRepository gameplayCommandRepository =
+        Mockito.mock(GameplayCommandRepository.class);
+    GameplayCommand targetCommand = new GameplayCommand();
+    targetCommand.setCommandId("target-cmd-1");
+    targetCommand.setRemoteFollowupId("rf-1");
+    Mockito.when(gameplayCommandRepository.findByTenantIdAndRemoteFollowupIdIn(1L, List.of("rf-1")))
+        .thenReturn(List.of(targetCommand));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
             remoteFollowupRepository,
             repository,
-            Mockito.mock(RemoteFollowupResultRepository.class),
-            Mockito.mock(GameplayCommandRepository.class),
+            resultRepository,
+            gameplayCommandRepository,
             null,
             gameDesignClient());
 
@@ -2663,14 +2676,15 @@ class GameSessionControlPlaneGrpcServiceTest {
                 "cmd-1",
                 org.springframework.data.domain.PageRequest.of(0, 25)))
         .thenReturn(List.of(followup));
-    Mockito.when(coordinatorRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
-        .thenReturn(Optional.of(coordinator));
+    Mockito.when(coordinatorRepository.findByTenantIdAndFollowupIdIn(1L, List.of("rf-1")))
+        .thenReturn(List.of(coordinator));
     GameplayCommand targetCommand = new GameplayCommand();
     targetCommand.setCommandId("target-cmd-1");
+    targetCommand.setRemoteFollowupId("rf-1");
     targetCommand.setExecutionOutcome("APPLIED");
     targetCommand.setGameplayResult("SUCCESS");
-    Mockito.when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "rf-1"))
-        .thenReturn(Optional.of(targetCommand));
+    Mockito.when(gameplayCommandRepository.findByTenantIdAndRemoteFollowupIdIn(1L, List.of("rf-1")))
+        .thenReturn(List.of(targetCommand));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
@@ -2966,10 +2980,17 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(List.of(result));
     Mockito.when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
         .thenReturn(Optional.of(coordinator));
+    Mockito.when(coordinatorRepository.findByTenantIdAndCoordinatorIdIn(1L, List.of("coord-1")))
+        .thenReturn(List.of(coordinator));
     Mockito.when(followupRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
         .thenReturn(Optional.of(followup));
+    Mockito.when(followupRepository.findByTenantIdAndFollowupIdIn(1L, List.of("rf-1")))
+        .thenReturn(List.of(followup));
     Mockito.when(gameplayCommandRepository.findByCommandId("auto-1"))
         .thenReturn(Optional.of(targetCommand));
+    targetCommand.setRemoteFollowupId("rf-1");
+    Mockito.when(gameplayCommandRepository.findByTenantIdAndRemoteFollowupIdIn(1L, List.of("rf-1")))
+        .thenReturn(List.of(targetCommand));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
@@ -3108,6 +3129,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
     RemoteCommandCoordinatorRepository coordinatorRepository =
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    RemoteFollowupRepository followupRepository = Mockito.mock(RemoteFollowupRepository.class);
     GameplayCommandRepository gameplayCommandRepository =
         Mockito.mock(GameplayCommandRepository.class);
     GameplayCommand targetCommand = new GameplayCommand();
@@ -3152,12 +3174,18 @@ class GameSessionControlPlaneGrpcServiceTest {
                 Mockito.anyString(),
                 Mockito.any()))
         .thenReturn(List.of(result));
-    Mockito.when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
-        .thenReturn(Optional.of(targetCommand));
+    Mockito.when(followupRepository.findByTenantIdAndFollowupIdIn(1L, List.of("followup-1")))
+        .thenReturn(List.of());
+    Mockito.when(coordinatorRepository.findByTenantIdAndCoordinatorIdIn(1L, List.of("coord-1")))
+        .thenReturn(List.of());
+    Mockito.when(
+            gameplayCommandRepository.findByTenantIdAndRemoteFollowupIdIn(
+                1L, List.of("followup-1")))
+        .thenReturn(List.of(targetCommand));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
-            null,
+            followupRepository,
             coordinatorRepository,
             repository,
             gameplayCommandRepository,

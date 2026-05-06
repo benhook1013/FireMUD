@@ -17,6 +17,9 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
   List<RemoteFollowupResult> findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(
       Long tenantId, String coordinatorId);
 
+  List<RemoteFollowupResult> findByTenantIdAndCoordinatorIdInOrderByObservedAtAsc(
+      Long tenantId, java.util.Collection<String> coordinatorIds);
+
   @Query(
       """
       select result from RemoteFollowupResult result
