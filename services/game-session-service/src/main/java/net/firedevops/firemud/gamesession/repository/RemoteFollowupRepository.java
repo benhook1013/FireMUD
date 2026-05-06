@@ -52,6 +52,14 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
         and (:followupId = '' or followup.followupId = :followupId)
         and (:scriptId = '' or followup.scriptId = :scriptId)
         and (:pluginId = '' or followup.pluginId = :pluginId)
+        and (:scriptPatchVersion = '' or followup.scriptPatchVersion = :scriptPatchVersion)
+        and (:pluginVersionId = '' or followup.pluginVersionId = :pluginVersionId)
+        and (:playableStateScope = '' or followup.playableStateScope = :playableStateScope)
+        and (:worldSlug = '' or followup.worldSlug = :worldSlug)
+        and (:realmSlug = '' or followup.realmSlug = :realmSlug)
+        and (:pointerVersion is null or followup.pointerVersion = :pointerVersion)
+        and (:payloadKind = '' or followup.payloadKind = :payloadKind)
+        and (:originSourceKind = '' or followup.originSourceKind = :originSourceKind)
         and (:automationDispatchId = '' or followup.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or followup.commandId = :commandId)
       order by followup.dueTickId asc, followup.id asc
@@ -68,6 +76,14 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
       @Param("followupId") String followupId,
       @Param("scriptId") String scriptId,
       @Param("pluginId") String pluginId,
+      @Param("scriptPatchVersion") String scriptPatchVersion,
+      @Param("pluginVersionId") String pluginVersionId,
+      @Param("playableStateScope") String playableStateScope,
+      @Param("worldSlug") String worldSlug,
+      @Param("realmSlug") String realmSlug,
+      @Param("pointerVersion") Long pointerVersion,
+      @Param("payloadKind") String payloadKind,
+      @Param("originSourceKind") String originSourceKind,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       Pageable pageable);

@@ -22,7 +22,11 @@ import lombok.Data;
       @Index(
           name = "idx_remote_followup_result_scope_observed",
           columnList =
-              "tenant_id, origin_game_instance_id, origin_region_id, origin_region_epoch, target_game_instance_id, target_region_id, target_region_epoch, observed_at")
+              "tenant_id, origin_game_instance_id, origin_region_id, origin_region_epoch, target_game_instance_id, target_region_id, target_region_epoch, observed_at"),
+      @Index(
+          name = "idx_remote_followup_result_routing_observed",
+          columnList =
+              "tenant_id, script_patch_version, plugin_version_id, playable_state_scope, world_slug, realm_slug, pointer_version, result_error_code, observed_at")
     })
 public class RemoteFollowupResult {
   @Id

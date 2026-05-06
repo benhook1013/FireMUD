@@ -2376,6 +2376,12 @@ class GameSessionControlPlaneGrpcServiceTest {
                 "rf-1",
                 "script-1",
                 "plugin-1",
+                "patch-1",
+                "plugin-v1",
+                "SHARED",
+                "demo",
+                "production",
+                17L,
                 "dispatch-1",
                 "cmd-1",
                 org.springframework.data.domain.PageRequest.of(0, 25)))
@@ -2404,6 +2410,12 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setFollowupId("rf-1")
             .setScriptId("script-1")
             .setPluginId("plugin-1")
+            .setScriptPatchVersion("patch-1")
+            .setPluginVersionId("plugin-v1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setPointerVersion(17L)
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -2491,6 +2503,14 @@ class GameSessionControlPlaneGrpcServiceTest {
                 "rf-1",
                 "script-1",
                 "plugin-1",
+                "patch-1",
+                "plugin-v1",
+                "ISOLATED",
+                "ops",
+                "preview",
+                29L,
+                "enqueue_automation_command",
+                "REMOTE_FOLLOWUP",
                 "dispatch-1",
                 "cmd-1",
                 org.springframework.data.domain.PageRequest.of(0, 25)))
@@ -2527,6 +2547,14 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setFollowupId("rf-1")
             .setScriptId("script-1")
             .setPluginId("plugin-1")
+            .setScriptPatchVersion("patch-1")
+            .setPluginVersionId("plugin-v1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
+            .setWorldSlug("ops")
+            .setRealmSlug("preview")
+            .setPointerVersion(29L)
+            .setPayloadKind("enqueue_automation_command")
+            .setOriginSourceKind("REMOTE_FOLLOWUP")
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -2726,6 +2754,13 @@ class GameSessionControlPlaneGrpcServiceTest {
                 "REMOTE_APPLIED",
                 "script-1",
                 "plugin-1",
+                "patch-1",
+                "plugin-v1",
+                "SHARED",
+                "demo",
+                "production",
+                17L,
+                "RATE_LIMIT",
                 "dispatch-1",
                 "cmd-1",
                 org.springframework.data.domain.PageRequest.of(0, 25)))
@@ -2759,6 +2794,13 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setOutcome("REMOTE_APPLIED")
             .setScriptId("script-1")
             .setPluginId("plugin-1")
+            .setScriptPatchVersion("patch-1")
+            .setPluginVersionId("plugin-v1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setPointerVersion(17L)
+            .setResultErrorCode("RATE_LIMIT")
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -2852,6 +2894,13 @@ class GameSessionControlPlaneGrpcServiceTest {
                 0L,
                 "",
                 "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                null,
                 "",
                 "",
                 "",

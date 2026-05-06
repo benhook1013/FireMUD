@@ -37,6 +37,12 @@ public interface RemoteCommandCoordinatorRepository
         and (:followupId = '' or coordinator.followupId = :followupId)
         and (:scriptId = '' or coordinator.scriptId = :scriptId)
         and (:pluginId = '' or coordinator.pluginId = :pluginId)
+        and (:scriptPatchVersion = '' or coordinator.scriptPatchVersion = :scriptPatchVersion)
+        and (:pluginVersionId = '' or coordinator.pluginVersionId = :pluginVersionId)
+        and (:playableStateScope = '' or coordinator.playableStateScope = :playableStateScope)
+        and (:worldSlug = '' or coordinator.worldSlug = :worldSlug)
+        and (:realmSlug = '' or coordinator.realmSlug = :realmSlug)
+        and (:pointerVersion is null or coordinator.pointerVersion = :pointerVersion)
         and (:automationDispatchId = '' or coordinator.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or coordinator.commandId = :commandId)
       order by coordinator.updatedAt desc, coordinator.id desc
@@ -53,6 +59,12 @@ public interface RemoteCommandCoordinatorRepository
       @Param("followupId") String followupId,
       @Param("scriptId") String scriptId,
       @Param("pluginId") String pluginId,
+      @Param("scriptPatchVersion") String scriptPatchVersion,
+      @Param("pluginVersionId") String pluginVersionId,
+      @Param("playableStateScope") String playableStateScope,
+      @Param("worldSlug") String worldSlug,
+      @Param("realmSlug") String realmSlug,
+      @Param("pointerVersion") Long pointerVersion,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       Pageable pageable);

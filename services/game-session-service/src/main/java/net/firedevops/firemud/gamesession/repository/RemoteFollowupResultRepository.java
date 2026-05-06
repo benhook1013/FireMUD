@@ -32,6 +32,13 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
         and (:outcome = '' or result.outcome = :outcome)
         and (:scriptId = '' or result.scriptId = :scriptId)
         and (:pluginId = '' or result.pluginId = :pluginId)
+        and (:scriptPatchVersion = '' or result.scriptPatchVersion = :scriptPatchVersion)
+        and (:pluginVersionId = '' or result.pluginVersionId = :pluginVersionId)
+        and (:playableStateScope = '' or result.playableStateScope = :playableStateScope)
+        and (:worldSlug = '' or result.worldSlug = :worldSlug)
+        and (:realmSlug = '' or result.realmSlug = :realmSlug)
+        and (:pointerVersion is null or result.pointerVersion = :pointerVersion)
+        and (:resultErrorCode = '' or result.resultErrorCode = :resultErrorCode)
         and (:automationDispatchId = '' or result.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or result.commandId = :commandId)
       order by result.observedAt asc, result.id asc
@@ -49,6 +56,13 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
       @Param("outcome") String outcome,
       @Param("scriptId") String scriptId,
       @Param("pluginId") String pluginId,
+      @Param("scriptPatchVersion") String scriptPatchVersion,
+      @Param("pluginVersionId") String pluginVersionId,
+      @Param("playableStateScope") String playableStateScope,
+      @Param("worldSlug") String worldSlug,
+      @Param("realmSlug") String realmSlug,
+      @Param("pointerVersion") Long pointerVersion,
+      @Param("resultErrorCode") String resultErrorCode,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       Pageable pageable);

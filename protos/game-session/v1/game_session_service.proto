@@ -615,6 +615,12 @@ message ListRemoteCommandCoordinatorsRequest {
   int64 origin_region_epoch = 12;
   string target_game_instance_id = 13;
   int64 target_region_epoch = 14;
+  string script_patch_version = 15;
+  string plugin_version_id = 16;
+  entity_management.v1.PlayableStateScope playable_state_scope = 17;
+  string world_slug = 18;
+  string realm_slug = 19;
+  int64 pointer_version = 20;
 }
 
 message ListRemoteCommandCoordinatorsResponse {
@@ -683,6 +689,14 @@ message ListRemoteFollowupsRequest {
   string command_id = 12;
   int32 limit = 13;
   int64 origin_region_epoch = 14;
+  string script_patch_version = 15;
+  string plugin_version_id = 16;
+  entity_management.v1.PlayableStateScope playable_state_scope = 17;
+  string world_slug = 18;
+  string realm_slug = 19;
+  int64 pointer_version = 20;
+  string payload_kind = 21;
+  string origin_source_kind = 22;
 }
 
 message RemoteFollowupEntry {
@@ -755,6 +769,13 @@ message ListRemoteFollowupResultsRequest {
   string target_game_instance_id = 13;
   int64 origin_region_epoch = 14;
   int64 target_region_epoch = 15;
+  string script_patch_version = 16;
+  string plugin_version_id = 17;
+  entity_management.v1.PlayableStateScope playable_state_scope = 18;
+  string world_slug = 19;
+  string realm_slug = 20;
+  int64 pointer_version = 21;
+  string result_error_code = 22;
 }
 
 message RemoteFollowupResultEntry {
