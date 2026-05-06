@@ -732,22 +732,27 @@ message ScriptHandoffEventEntry {
   int32 command_ordinal = 9;
   string automation_dispatch_id = 10;
   string game_session_command_id = 11;
-  string target_entity_id = 12;
-  string emitted_command_text = 13;
-  string handoff_outcome = 14;
-  string handoff_reason = 15;
-  int64 observed_at_ms = 16;
-  entity_management.v1.PlayableStateScope playable_state_scope = 17;
-  string world_slug = 18;
-  string realm_slug = 19;
-  string pointer_version = 20;
-  string source_kind = 21;
-  string source_state = 22;
-  int64 source_ordinal = 23;
-  int64 source_due_tick_id = 24;
-  int64 source_due_at_ms = 25;
-  ScriptPatchPublicationLink publication = 26;
-  PluginPublicationLink plugin_publication = 27;
+  string target_game_instance_id = 12;
+  string target_region_id = 13;
+  int64 target_region_epoch = 14;
+  string remote_coordinator_id = 15;
+  string remote_followup_id = 16;
+  string target_entity_id = 17;
+  string emitted_command_text = 18;
+  string handoff_outcome = 19;
+  string handoff_reason = 20;
+  int64 observed_at_ms = 21;
+  entity_management.v1.PlayableStateScope playable_state_scope = 22;
+  string world_slug = 23;
+  string realm_slug = 24;
+  string pointer_version = 25;
+  string source_kind = 26;
+  string source_state = 27;
+  int64 source_ordinal = 28;
+  int64 source_due_tick_id = 29;
+  int64 source_due_at_ms = 30;
+  ScriptPatchPublicationLink publication = 31;
+  PluginPublicationLink plugin_publication = 32;
 }
 
 message ListScriptHandoffEventsResponse {

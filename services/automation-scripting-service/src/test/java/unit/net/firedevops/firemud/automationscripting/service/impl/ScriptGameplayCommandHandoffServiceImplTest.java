@@ -20,6 +20,8 @@ import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentReq
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupRequest;
+import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -72,8 +74,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(
             workItem(),
-            new ScriptGameplayCommandHandoffService.EmittedCommand(
-                "say hello", "target-entity-1", false, 34L, 0));
+            emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0));
 
     assertThat(result.accepted()).isTrue();
     assertThat(result.outcome()).isEqualTo("ENQUEUED");
@@ -107,6 +108,11 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     verify(handoffEventRepository).save(handoffCaptor.capture());
     assertThat(handoffCaptor.getValue().getAutomationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(handoffCaptor.getValue().getGameSessionCommandId()).isEqualTo("auto-1");
+    assertThat(handoffCaptor.getValue().getTargetGameInstanceId()).isEqualTo("7");
+    assertThat(handoffCaptor.getValue().getTargetRegionId()).isEqualTo("region-1");
+    assertThat(handoffCaptor.getValue().getTargetRegionEpoch()).isEqualTo(12L);
+    assertThat(handoffCaptor.getValue().getRemoteCoordinatorId()).isBlank();
+    assertThat(handoffCaptor.getValue().getRemoteFollowupId()).isBlank();
     assertThat(handoffCaptor.getValue().getSourceKind()).isEqualTo("SCHEDULE_TIMER");
     assertThat(handoffCaptor.getValue().getSourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
     assertThat(handoffCaptor.getValue().getSourceOrdinal()).isEqualTo(5000L);
@@ -150,9 +156,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
 
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(
-            workItem(),
-            new ScriptGameplayCommandHandoffService.EmittedCommand(
-                "say hello", "entity-1", false, 34L, 0));
+            workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
 
     assertThat(result.accepted()).isFalse();
     assertThat(result.errorCode()).isEqualTo("STALE_TIMELINE");
@@ -208,9 +212,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
 
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(
-            workItem(),
-            new ScriptGameplayCommandHandoffService.EmittedCommand(
-                "say hello", "entity-1", false, 34L, 0));
+            workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
 
     assertThat(result.accepted()).isFalse();
     assertThat(result.outcome()).isEqualTo("rollback_epoch_advanced");
@@ -259,9 +261,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
 
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(
-            workItem(),
-            new ScriptGameplayCommandHandoffService.EmittedCommand(
-                "say hello", "entity-1", false, 34L, 0));
+            workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
 
     assertThat(result.accepted()).isFalse();
     assertThat(result.outcome()).isEqualTo("runtime_region_scope_advanced");
@@ -280,6 +280,90 @@ class ScriptGameplayCommandHandoffServiceImplTest {
         .isEqualTo("runtime_region_scope_advanced");
     assertThat(handoffCaptor.getValue().getHandoffReason())
         .isEqualTo("runtime_region_scope_advanced");
+  }
+
+  @Test
+  void remoteTargetSchedulesDurableFollowupAndMarksWorkItemHandedOff() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setRegionId("region-1")
+                        .setRegionEpoch(12L))
+                .build());
+    when(gameSessionClient.scheduleRemoteFollowup(Mockito.any()))
+        .thenReturn(
+            ScheduleRemoteFollowupResponse.newBuilder()
+                .setCoordinatorId("remote-coordinator:workItem:99#0")
+                .setFollowupId("remote-followup:workItem:99#0")
+                .build());
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            handoffEventRepository,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            workItem(), emittedCommand("say hello", "entity-remote", "8", "region-2", 77L, 45L, 0));
+
+    assertThat(result.accepted()).isTrue();
+    assertThat(result.outcome()).isEqualTo("REMOTE_SCHEDULED");
+    assertThat(result.remoteCoordinatorId()).isEqualTo("remote-coordinator:workItem:99#0");
+    assertThat(result.remoteFollowupId()).isEqualTo("remote-followup:workItem:99#0");
+    verify(gameSessionClient, Mockito.never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+    ArgumentCaptor<ScheduleRemoteFollowupRequest> requestCaptor =
+        ArgumentCaptor.forClass(ScheduleRemoteFollowupRequest.class);
+    verify(gameSessionClient).scheduleRemoteFollowup(requestCaptor.capture());
+    assertThat(requestCaptor.getValue().getCommandId()).isEqualTo("workItem:99#0");
+    assertThat(requestCaptor.getValue().getOriginGameInstanceId()).isEqualTo("7");
+    assertThat(requestCaptor.getValue().getOriginRegionId()).isEqualTo("region-1");
+    assertThat(requestCaptor.getValue().getTargetGameInstanceId()).isEqualTo("8");
+    assertThat(requestCaptor.getValue().getTargetRegionId()).isEqualTo("region-2");
+    assertThat(requestCaptor.getValue().getTargetRegionEpoch()).isEqualTo(77L);
+    assertThat(requestCaptor.getValue().getPayloadKind()).isEqualTo("enqueue_automation_command");
+    assertThat(requestCaptor.getValue().getRequestedCommand()).isEqualTo("say hello");
+    ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
+        ArgumentCaptor.forClass(ScriptHandoffEvent.class);
+    verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getRemoteCoordinatorId())
+        .isEqualTo("remote-coordinator:workItem:99#0");
+    assertThat(handoffCaptor.getValue().getRemoteFollowupId())
+        .isEqualTo("remote-followup:workItem:99#0");
+    assertThat(handoffCaptor.getValue().getTargetGameInstanceId()).isEqualTo("8");
+    assertThat(handoffCaptor.getValue().getTargetRegionId()).isEqualTo("region-2");
+    assertThat(handoffCaptor.getValue().getTargetRegionEpoch()).isEqualTo(77L);
+  }
+
+  private static ScriptGameplayCommandHandoffService.EmittedCommand emittedCommand(
+      String commandText,
+      String targetEntityId,
+      String targetGameInstanceId,
+      String targetRegionId,
+      Long targetRegionEpoch,
+      long dueTickId,
+      int ordinal) {
+    return new ScriptGameplayCommandHandoffService.EmittedCommand(
+        commandText,
+        targetEntityId,
+        targetGameInstanceId,
+        targetRegionId,
+        targetRegionEpoch,
+        false,
+        dueTickId,
+        ordinal);
   }
 
   private static ScriptWorkItem workItem() {

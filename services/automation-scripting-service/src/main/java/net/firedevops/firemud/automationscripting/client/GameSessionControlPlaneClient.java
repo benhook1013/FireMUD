@@ -12,6 +12,8 @@ import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRes
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupRequest;
+import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupResponse;
 import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasRequest;
 import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -90,6 +92,21 @@ public class GameSessionControlPlaneClient
     }
   }
 
+  public ScheduleRemoteFollowupResponse scheduleRemoteFollowup(
+      ScheduleRemoteFollowupRequest request) {
+    if (stub() == null) {
+      return remoteFollowupUnavailable();
+    }
+    try {
+      return stub()
+          .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+          .scheduleRemoteFollowup(request);
+    } catch (RuntimeException ex) {
+      logger.warn("Game Session scheduleRemoteFollowup failed", ex);
+      return remoteFollowupUnavailable();
+    }
+  }
+
   public ValidateBuiltInCommandAliasResponse validateBuiltInCommandAlias(String alias) {
     if (stub() == null) {
       return aliasUnavailable();
@@ -127,6 +144,15 @@ public class GameSessionControlPlaneClient
 
   private static ValidateBuiltInCommandAliasResponse aliasUnavailable() {
     return ValidateBuiltInCommandAliasResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("GAME_SESSION_UNAVAILABLE")
+                .setMessage("Game Session service unavailable"))
+        .build();
+  }
+
+  private static ScheduleRemoteFollowupResponse remoteFollowupUnavailable() {
+    return ScheduleRemoteFollowupResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
                 .setCode("GAME_SESSION_UNAVAILABLE")

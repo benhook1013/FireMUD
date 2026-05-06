@@ -52,6 +52,21 @@ public class ScriptHandoffEvent {
   private String gameSessionCommandId;
 
   @Column(nullable = false, length = 64)
+  private String targetGameInstanceId = "";
+
+  @Column(nullable = false, length = 64)
+  private String targetRegionId = "";
+
+  @Column(nullable = false)
+  private long targetRegionEpoch;
+
+  @Column(length = 128)
+  private String remoteCoordinatorId;
+
+  @Column(length = 128)
+  private String remoteFollowupId;
+
+  @Column(nullable = false, length = 64)
   private String targetEntityId;
 
   @Column(nullable = false, length = 32)

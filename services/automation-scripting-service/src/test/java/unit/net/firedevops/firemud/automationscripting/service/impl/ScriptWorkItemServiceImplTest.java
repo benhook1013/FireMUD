@@ -903,6 +903,11 @@ class ScriptWorkItemServiceImplTest {
     event.setCommandOrdinal(0);
     event.setAutomationDispatchId("workItem:99#0");
     event.setGameSessionCommandId("command-1");
+    event.setTargetGameInstanceId("game-2");
+    event.setTargetRegionId("region-2");
+    event.setTargetRegionEpoch(17L);
+    event.setRemoteCoordinatorId("remote-coordinator:workItem:99#0");
+    event.setRemoteFollowupId("remote-followup:workItem:99#0");
     event.setTargetEntityId("target-1");
     event.setSourceKind("SCHEDULE_TIMER");
     event.setSourceState("SCHEDULE_DUE_CLAIMED");
@@ -941,6 +946,10 @@ class ScriptWorkItemServiceImplTest {
     assertThat(events).hasSize(1);
     assertThat(events.get(0).automationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(events.get(0).gameSessionCommandId()).isEqualTo("command-1");
+    assertThat(events.get(0).targetGameInstanceId()).isEqualTo("game-2");
+    assertThat(events.get(0).targetRegionId()).isEqualTo("region-2");
+    assertThat(events.get(0).targetRegionEpoch()).isEqualTo(17L);
+    assertThat(events.get(0).remoteCoordinatorId()).isEqualTo("remote-coordinator:workItem:99#0");
     assertThat(events.get(0).sourceKind()).isEqualTo("SCHEDULE_TIMER");
     assertThat(events.get(0).sourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
     assertThat(events.get(0).sourceOrdinal()).isEqualTo(5000L);

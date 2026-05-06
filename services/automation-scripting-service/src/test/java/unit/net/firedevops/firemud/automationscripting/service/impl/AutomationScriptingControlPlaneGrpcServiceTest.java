@@ -998,6 +998,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     0,
                     "workItem:99#0",
                     "command-1",
+                    "game-2",
+                    "region-2",
+                    17L,
+                    "remote-coordinator:workItem:99#0",
+                    "remote-followup:workItem:99#0",
                     "target-1",
                     "SHARED",
                     "demo",
@@ -1047,6 +1052,13 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEventsList()).hasSize(1);
     assertThat(ref.get().getEvents(0).getAutomationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(ref.get().getEvents(0).getGameSessionCommandId()).isEqualTo("command-1");
+    assertThat(ref.get().getEvents(0).getTargetGameInstanceId()).isEqualTo("game-2");
+    assertThat(ref.get().getEvents(0).getTargetRegionId()).isEqualTo("region-2");
+    assertThat(ref.get().getEvents(0).getTargetRegionEpoch()).isEqualTo(17L);
+    assertThat(ref.get().getEvents(0).getRemoteCoordinatorId())
+        .isEqualTo("remote-coordinator:workItem:99#0");
+    assertThat(ref.get().getEvents(0).getRemoteFollowupId())
+        .isEqualTo("remote-followup:workItem:99#0");
     assertThat(ref.get().getEvents(0).getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getEvents(0).getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getEvents(0).getPointerVersion()).isEqualTo("17");

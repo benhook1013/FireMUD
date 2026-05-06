@@ -17,6 +17,8 @@ import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupRequest;
+import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +34,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
   private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
   private static final String REASON_RUNTIME_REGION_SCOPE_ADVANCED =
       "runtime_region_scope_advanced";
+  private static final String REMOTE_LATE_RESULT_POLICY = "late_result_safe_to_ignore";
 
   private final GameSessionControlPlaneClient gameSessionClient;
   private final ScriptWorkItemRepository workItemRepository;
@@ -64,12 +67,12 @@ public class ScriptGameplayCommandHandoffServiceImpl
     if (isEpochAdvanced(workItem)) {
       Instant now = Instant.now();
       cancelForRollbackEpochAdvance(workItem, command, dispatchId, now);
-      return new HandoffResult(false, "rollback_epoch_advanced", "", "");
+      return new HandoffResult(false, "rollback_epoch_advanced", "", "", "", "");
     }
     if (isRuntimeRegionScopeAdvanced(workItem)) {
       Instant now = Instant.now();
       cancelForRuntimeRegionScopeAdvance(workItem, command, dispatchId, now);
-      return new HandoffResult(false, REASON_RUNTIME_REGION_SCOPE_ADVANCED, "", "");
+      return new HandoffResult(false, REASON_RUNTIME_REGION_SCOPE_ADVANCED, "", "", "", "");
     }
     Instant now = Instant.now();
     workItem.setStatus(STATUS_HANDOFF_IN_FLIGHT);
@@ -78,14 +81,33 @@ public class ScriptGameplayCommandHandoffServiceImpl
     rolloutProjectionService.refreshForWorkItem(workItem);
 
     EnqueueAutomationCommandIfAbsentResponse response =
-        gameSessionClient.enqueueAutomationCommandIfAbsent(
-            toRequest(workItem, command, dispatchId));
-    HandoffResult result =
-        new HandoffResult(
-            response.getAccepted(),
-            response.getAdmissionOutcome(),
-            response.getCommandId(),
-            response.hasError() ? response.getError().getCode() : "");
+        requiresRemoteHandoff(workItem, command)
+            ? null
+            : gameSessionClient.enqueueAutomationCommandIfAbsent(
+                toRequest(workItem, command, dispatchId));
+    HandoffResult result;
+    if (response != null) {
+      result =
+          new HandoffResult(
+              response.getAccepted(),
+              response.getAdmissionOutcome(),
+              response.getCommandId(),
+              "",
+              "",
+              response.hasError() ? response.getError().getCode() : "");
+    } else {
+      ScheduleRemoteFollowupResponse remoteResponse =
+          gameSessionClient.scheduleRemoteFollowup(
+              toRemoteScheduleRequest(workItem, command, dispatchId));
+      result =
+          new HandoffResult(
+              !remoteResponse.hasError(),
+              remoteResponse.hasError() ? "REMOTE_REJECTED" : "REMOTE_SCHEDULED",
+              "",
+              remoteResponse.getCoordinatorId(),
+              remoteResponse.getFollowupId(),
+              remoteResponse.hasError() ? remoteResponse.getError().getCode() : "");
+    }
     applyOutcome(workItem, command, dispatchId, result, now);
     return result;
   }
@@ -111,9 +133,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
         workItem,
         command,
         dispatchId,
-        "",
-        "rollback_epoch_advanced",
-        "rollback_epoch_advanced",
+        new HandoffResult(false, "rollback_epoch_advanced", "", "", "", "rollback_epoch_advanced"),
         now);
     updateAudit(workItem, "HANDOFF", "canceled", "rollback_epoch_advanced", now);
   }
@@ -150,9 +170,13 @@ public class ScriptGameplayCommandHandoffServiceImpl
         workItem,
         command,
         dispatchId,
-        "",
-        REASON_RUNTIME_REGION_SCOPE_ADVANCED,
-        REASON_RUNTIME_REGION_SCOPE_ADVANCED,
+        new HandoffResult(
+            false,
+            REASON_RUNTIME_REGION_SCOPE_ADVANCED,
+            "",
+            "",
+            "",
+            REASON_RUNTIME_REGION_SCOPE_ADVANCED),
         now);
     updateAudit(workItem, "HANDOFF", "canceled", REASON_RUNTIME_REGION_SCOPE_ADVANCED, now);
   }
@@ -186,6 +210,48 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .build();
   }
 
+  private ScheduleRemoteFollowupRequest toRemoteScheduleRequest(
+      ScriptWorkItem workItem, EmittedCommand command, String dispatchId) {
+    long targetDueTickId = command.dueTickId() > 0 ? command.dueTickId() : 0L;
+    long originDeadlineTickId = originDeadlineTickId(workItem, command);
+    return ScheduleRemoteFollowupRequest.newBuilder()
+        .setTenantId(workItem.getTenantId())
+        .setCommandId(dispatchId)
+        .setCoordinatorId("remote-coordinator:" + dispatchId)
+        .setOriginGameInstanceId(workItem.getGameInstanceId())
+        .setOriginRegionId(workItem.getRegionId())
+        .setOriginRegionEpoch(workItem.getRegionEpoch())
+        .setTargetGameInstanceId(normalize(command.targetGameInstanceId()))
+        .setTargetRegionId(normalize(command.targetRegionId()))
+        .setTargetRegionEpoch(zeroIfNull(command.targetRegionEpoch()))
+        .setTargetDueTickId(targetDueTickId)
+        .setOriginDeadlineRegionEpoch(workItem.getRegionEpoch())
+        .setOriginDeadlineTickId(originDeadlineTickId)
+        .setLateResultPolicy(REMOTE_LATE_RESULT_POLICY)
+        .setFollowupId("remote-followup:" + dispatchId)
+        .setEffectKey("remote-followup:" + dispatchId)
+        .setTargetEntityId(command.targetEntityId())
+        .setPayloadKind("enqueue_automation_command")
+        .setRequestedCommand(command.commandText())
+        .setRequiresSoloTick(command.requiresSoloTick())
+        .setPlayableStateScope(toPlayableStateScope(workItem.getPlayableStateScope()))
+        .setWorldSlug(normalize(workItem.getWorldSlug()))
+        .setRealmSlug(normalize(workItem.getRealmSlug()))
+        .setPointerVersion(parsePointerVersion(workItem.getPointerVersion()))
+        .setScriptPatchVersion(workItem.getScriptPatchVersion())
+        .setPluginId(normalize(workItem.getPluginId()))
+        .setPluginVersionId(normalize(workItem.getPluginVersionId()))
+        .setAutomationDispatchId(dispatchId)
+        .setAutomationWorkItemId(workItem.getId().toString())
+        .setScriptId(workItem.getScriptId())
+        .setOriginSourceKind(normalize(workItem.getSourceKind()))
+        .setOriginSourceState(normalize(workItem.getSourceState()))
+        .setOriginSourceOrdinal(zeroIfNull(workItem.getSourceOrdinal()))
+        .setOriginSourceDueTickId(zeroIfNull(workItem.getSourceDueTickId()))
+        .setOriginSourceDueAtMs(zeroIfNull(workItem.getSourceDueAtMs()))
+        .build();
+  }
+
   private void applyOutcome(
       ScriptWorkItem workItem,
       EmittedCommand command,
@@ -193,11 +259,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
       HandoffResult result,
       Instant now) {
     String outcome = result.outcome().toLowerCase(Locale.ROOT);
-    String reason =
-        result.accepted()
-            ? "game_session_accepted"
-            : result.errorCode().isBlank() ? result.outcome() : result.errorCode();
-    appendHandoffEvent(workItem, command, dispatchId, result.commandId(), outcome, reason, now);
+    String reason = handoffReason(result);
+    appendHandoffEvent(workItem, command, dispatchId, result, now);
     if (result.accepted()) {
       workItem.setStatus(STATUS_HANDED_OFF);
       workItem.setUpdatedAt(now);
@@ -236,10 +299,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
       ScriptWorkItem workItem,
       EmittedCommand command,
       String dispatchId,
-      String gameSessionCommandId,
-      String outcome,
-      String reason,
+      HandoffResult result,
       Instant now) {
+    String outcome = result.outcome().toLowerCase(Locale.ROOT);
+    String reason = handoffReason(result);
     ScriptHandoffEvent event = new ScriptHandoffEvent();
     event.setEventId("she-" + UUID.randomUUID());
     event.setTenantId(workItem.getTenantId());
@@ -251,8 +314,13 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setWorkItemId(workItem.getId());
     event.setCommandOrdinal(command.ordinal());
     event.setAutomationDispatchId(dispatchId);
-    event.setGameSessionCommandId(normalize(gameSessionCommandId));
+    event.setGameSessionCommandId(normalize(result.commandId()));
+    event.setRemoteCoordinatorId(normalize(result.remoteCoordinatorId()));
+    event.setRemoteFollowupId(normalize(result.remoteFollowupId()));
     event.setTargetEntityId(command.targetEntityId());
+    event.setTargetGameInstanceId(normalize(command.targetGameInstanceId()));
+    event.setTargetRegionId(normalize(command.targetRegionId()));
+    event.setTargetRegionEpoch(zeroIfNull(command.targetRegionEpoch()));
     event.setPlayableStateScope(normalize(workItem.getPlayableStateScope()));
     event.setWorldSlug(normalize(workItem.getWorldSlug()));
     event.setRealmSlug(normalize(workItem.getRealmSlug()));
@@ -269,12 +337,45 @@ public class ScriptGameplayCommandHandoffServiceImpl
     handoffEventRepository.save(event);
   }
 
+  private static String handoffReason(HandoffResult result) {
+    if (result.accepted()) {
+      return result.remoteFollowupId().isBlank()
+          ? "game_session_accepted"
+          : "remote_followup_scheduled";
+    }
+    return result.errorCode().isBlank() ? result.outcome() : result.errorCode();
+  }
+
+  private static boolean requiresRemoteHandoff(ScriptWorkItem workItem, EmittedCommand command) {
+    return !normalize(workItem.getGameInstanceId())
+            .equals(normalize(command.targetGameInstanceId()))
+        || !normalize(workItem.getRegionId()).equals(normalize(command.targetRegionId()))
+        || workItem.getRegionEpoch() != zeroIfNull(command.targetRegionEpoch());
+  }
+
+  private static long originDeadlineTickId(ScriptWorkItem workItem, EmittedCommand command) {
+    if (command.dueTickId() > 0) {
+      return command.dueTickId() + 1;
+    }
+    if (workItem.getSourceDueTickId() != null && workItem.getSourceDueTickId() > 0) {
+      return workItem.getSourceDueTickId() + 1;
+    }
+    return Long.MAX_VALUE;
+  }
+
   private static String normalize(String value) {
     return value == null ? "" : value;
   }
 
   private static long zeroIfNull(Long value) {
     return value == null ? 0L : value;
+  }
+
+  private static long parsePointerVersion(String pointerVersion) {
+    if (pointerVersion == null || pointerVersion.isBlank()) {
+      return 0L;
+    }
+    return Long.parseLong(pointerVersion);
   }
 
   private static PlayableStateScope toPlayableStateScope(String playableStateScope) {
@@ -297,6 +398,15 @@ public class ScriptGameplayCommandHandoffServiceImpl
     }
     if (command.targetEntityId() == null || command.targetEntityId().isBlank()) {
       throw new IllegalArgumentException("target_entity_id is required");
+    }
+    if (command.targetGameInstanceId() == null || command.targetGameInstanceId().isBlank()) {
+      throw new IllegalArgumentException("target_game_instance_id is required");
+    }
+    if (command.targetRegionId() == null || command.targetRegionId().isBlank()) {
+      throw new IllegalArgumentException("target_region_id is required");
+    }
+    if (zeroIfNull(command.targetRegionEpoch()) <= 0) {
+      throw new IllegalArgumentException("target_region_epoch must be positive");
     }
     if (command.ordinal() < 0) {
       throw new IllegalArgumentException("command ordinal must be non-negative");
