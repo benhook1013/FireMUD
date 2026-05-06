@@ -757,7 +757,9 @@ class RemoteFollowupRuntimeServiceImplTest {
         .save(
             argThat(
                 result ->
-                    "SHARED".equals(result.getPlayableStateScope())
+                    Long.valueOf(7L).equals(result.getOriginGameInstanceId())
+                        && Long.valueOf(8L).equals(result.getTargetGameInstanceId())
+                        && "SHARED".equals(result.getPlayableStateScope())
                         && "cmd-1".equals(result.getCommandId())
                         && "auto-1".equals(result.getResultCommandId())
                         && "RATE_LIMIT".equals(result.getResultErrorCode())

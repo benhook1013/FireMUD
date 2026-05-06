@@ -674,8 +674,16 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     result.setTenantId(request.tenantId());
     result.setCoordinatorId(request.coordinatorId());
     result.setFollowupId(request.followupId());
+    result.setOriginGameInstanceId(
+        coordinator != null && coordinator.getOriginGameInstanceId() != null
+            ? coordinator.getOriginGameInstanceId()
+            : followup == null ? null : followup.getOriginGameInstanceId());
     result.setOriginRegionId(request.originRegionId());
     result.setOriginRegionEpoch(request.originRegionEpoch());
+    result.setTargetGameInstanceId(
+        coordinator != null && coordinator.getTargetGameInstanceId() != null
+            ? coordinator.getTargetGameInstanceId()
+            : followup == null ? null : followup.getTargetGameInstanceId());
     result.setTargetRegionId(request.targetRegionId());
     result.setTargetRegionEpoch(request.targetRegionEpoch());
     result.setOutcome(request.outcome());

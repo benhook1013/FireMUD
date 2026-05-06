@@ -16,7 +16,13 @@ import lombok.Data;
       @Index(
           name = "idx_remote_followup_result_coordinator_observed",
           columnList = "tenant_id, coordinator_id, observed_at"),
-      @Index(name = "idx_remote_followup_result_followup_id", columnList = "tenant_id, followup_id")
+      @Index(
+          name = "idx_remote_followup_result_followup_id",
+          columnList = "tenant_id, followup_id"),
+      @Index(
+          name = "idx_remote_followup_result_scope_observed",
+          columnList =
+              "tenant_id, origin_game_instance_id, origin_region_id, target_game_instance_id, target_region_id, observed_at")
     })
 public class RemoteFollowupResult {
   @Id
@@ -35,11 +41,17 @@ public class RemoteFollowupResult {
   @Column(name = "followup_id", nullable = false, length = 64)
   private String followupId;
 
+  @Column(name = "origin_game_instance_id", nullable = false)
+  private Long originGameInstanceId;
+
   @Column(name = "origin_region_id", nullable = false, length = 64)
   private String originRegionId;
 
   @Column(name = "origin_region_epoch", nullable = false)
   private long originRegionEpoch;
+
+  @Column(name = "target_game_instance_id", nullable = false)
+  private Long targetGameInstanceId;
 
   @Column(name = "target_region_id", nullable = false, length = 64)
   private String targetRegionId;

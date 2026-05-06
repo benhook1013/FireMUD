@@ -23,7 +23,9 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
       where result.tenantId = :tenantId
         and (:coordinatorId = '' or result.coordinatorId = :coordinatorId)
         and (:followupId = '' or result.followupId = :followupId)
+        and (:originGameInstanceId is null or result.originGameInstanceId = :originGameInstanceId)
         and (:originRegionId = '' or result.originRegionId = :originRegionId)
+        and (:targetGameInstanceId is null or result.targetGameInstanceId = :targetGameInstanceId)
         and (:targetRegionId = '' or result.targetRegionId = :targetRegionId)
         and (:outcome = '' or result.outcome = :outcome)
         and (:scriptId = '' or result.scriptId = :scriptId)
@@ -36,7 +38,9 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
       @Param("tenantId") Long tenantId,
       @Param("coordinatorId") String coordinatorId,
       @Param("followupId") String followupId,
+      @Param("originGameInstanceId") Long originGameInstanceId,
       @Param("originRegionId") String originRegionId,
+      @Param("targetGameInstanceId") Long targetGameInstanceId,
       @Param("targetRegionId") String targetRegionId,
       @Param("outcome") String outcome,
       @Param("scriptId") String scriptId,

@@ -748,6 +748,8 @@ message ListRemoteFollowupResultsRequest {
   string automation_dispatch_id = 9;
   string command_id = 10;
   int32 limit = 11;
+  string origin_game_instance_id = 12;
+  string target_game_instance_id = 13;
 }
 
 message RemoteFollowupResultEntry {
@@ -783,6 +785,8 @@ message RemoteFollowupResultEntry {
   int64 origin_deadline_region_epoch = 30;
   int64 origin_deadline_tick_id = 31;
   string late_result_policy = 32;
+  string origin_game_instance_id = 33;
+  string target_game_instance_id = 34;
 }
 
 message ListRemoteFollowupResultsResponse {

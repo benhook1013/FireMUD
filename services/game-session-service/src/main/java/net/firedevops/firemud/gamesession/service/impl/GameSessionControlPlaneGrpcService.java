@@ -921,7 +921,9 @@ public final class GameSessionControlPlaneGrpcService
               tenantId,
               blankToEmpty(request.getCoordinatorId()),
               blankToEmpty(request.getFollowupId()),
+              parseOptionalGameInstanceId(request.getOriginGameInstanceId()),
               blankToEmpty(request.getOriginRegionId()),
+              parseOptionalGameInstanceId(request.getTargetGameInstanceId()),
               blankToEmpty(request.getTargetRegionId()),
               blankToEmpty(request.getOutcome()),
               blankToEmpty(request.getScriptId()),
@@ -2296,8 +2298,10 @@ public final class GameSessionControlPlaneGrpcService
             .setTenantId(Long.toString(result.getTenantId()))
             .setCoordinatorId(result.getCoordinatorId())
             .setFollowupId(result.getFollowupId())
+            .setOriginGameInstanceId(Long.toString(result.getOriginGameInstanceId()))
             .setOriginRegionId(result.getOriginRegionId())
             .setOriginRegionEpoch(result.getOriginRegionEpoch())
+            .setTargetGameInstanceId(Long.toString(result.getTargetGameInstanceId()))
             .setTargetRegionId(result.getTargetRegionId())
             .setTargetRegionEpoch(result.getTargetRegionEpoch())
             .setOutcome(result.getOutcome())

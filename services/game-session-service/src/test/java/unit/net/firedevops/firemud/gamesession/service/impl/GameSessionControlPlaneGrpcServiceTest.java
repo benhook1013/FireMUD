@@ -2659,8 +2659,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setTenantId(1L);
     result.setCoordinatorId("coord-1");
     result.setFollowupId("rf-1");
+    result.setOriginGameInstanceId(7L);
     result.setOriginRegionId("region-a");
     result.setOriginRegionEpoch(3L);
+    result.setTargetGameInstanceId(9L);
     result.setTargetRegionId("region-b");
     result.setTargetRegionEpoch(4L);
     result.setOutcome("REMOTE_APPLIED");
@@ -2701,7 +2703,9 @@ class GameSessionControlPlaneGrpcServiceTest {
                 1L,
                 "coord-1",
                 "rf-1",
+                7L,
                 "region-a",
+                9L,
                 "region-b",
                 "REMOTE_APPLIED",
                 "script-1",
@@ -2730,7 +2734,9 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setTenantId("1")
             .setCoordinatorId("coord-1")
             .setFollowupId("rf-1")
+            .setOriginGameInstanceId("7")
             .setOriginRegionId("region-a")
+            .setTargetGameInstanceId("9")
             .setTargetRegionId("region-b")
             .setOutcome("REMOTE_APPLIED")
             .setScriptId("script-1")
@@ -2748,6 +2754,8 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals(1, responseRef.get().getResultsCount());
     assertEquals("rr-1", responseRef.get().getResults(0).getResultId());
+    assertEquals("7", responseRef.get().getResults(0).getOriginGameInstanceId());
+    assertEquals("9", responseRef.get().getResults(0).getTargetGameInstanceId());
     assertEquals("cmd-1", responseRef.get().getResults(0).getCommandId());
     assertEquals("dispatch-1", responseRef.get().getResults(0).getAutomationDispatchId());
     assertEquals("work-1", responseRef.get().getResults(0).getAutomationWorkItemId());
@@ -2789,8 +2797,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setTenantId(1L);
     result.setCoordinatorId("coord-1");
     result.setFollowupId("followup-1");
+    result.setOriginGameInstanceId(7L);
     result.setOriginRegionId("region-a");
     result.setOriginRegionEpoch(2L);
+    result.setTargetGameInstanceId(9L);
     result.setTargetRegionId("region-b");
     result.setTargetRegionEpoch(5L);
     result.setOutcome("REMOTE_APPLIED");
@@ -2816,7 +2826,9 @@ class GameSessionControlPlaneGrpcServiceTest {
                 1L,
                 "coord-1",
                 "",
+                null,
                 "",
+                null,
                 "",
                 "",
                 "",
