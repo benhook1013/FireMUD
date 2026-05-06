@@ -29,6 +29,9 @@ public interface RemoteCommandCoordinatorRepository
       left join RemoteFollowup linkedFollowup
         on linkedFollowup.tenantId = coordinator.tenantId
        and linkedFollowup.followupId = coordinator.followupId
+      left join GameplayCommand targetCommand
+        on targetCommand.tenantId = coordinator.tenantId
+       and targetCommand.remoteFollowupId = coordinator.followupId
       where coordinator.tenantId = :tenantId
         and (:originGameInstanceId is null or coordinator.originGameInstanceId = :originGameInstanceId)
         and (:originRegionId = '' or coordinator.originRegionId = :originRegionId)
@@ -55,6 +58,11 @@ public interface RemoteCommandCoordinatorRepository
         and (:scriptEventId = '' or linkedFollowup.scriptEventId = :scriptEventId)
         and (:automationDispatchId = '' or coordinator.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or coordinator.commandId = :commandId)
+        and (:targetCommandId = '' or targetCommand.commandId = :targetCommandId)
+        and (:targetCommandExecutionOutcome = ''
+             or targetCommand.executionOutcome = :targetCommandExecutionOutcome)
+        and (:targetCommandGameplayResult = ''
+             or targetCommand.gameplayResult = :targetCommandGameplayResult)
       order by coordinator.updatedAt desc, coordinator.id desc
       """)
   List<RemoteCommandCoordinator> findForControlPlane(
@@ -84,5 +92,8 @@ public interface RemoteCommandCoordinatorRepository
       @Param("scriptEventId") String scriptEventId,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
+      @Param("targetCommandId") String targetCommandId,
+      @Param("targetCommandExecutionOutcome") String targetCommandExecutionOutcome,
+      @Param("targetCommandGameplayResult") String targetCommandGameplayResult,
       Pageable pageable);
 }

@@ -655,6 +655,9 @@ message ListRemoteCommandCoordinatorsRequest {
   string automation_work_item_id = 25;
   string event_type = 26;
   string script_event_id = 27;
+  string target_command_id = 28;
+  string target_command_execution_outcome = 29;
+  string target_command_gameplay_result = 30;
 }
 
 message ListRemoteCommandCoordinatorsResponse {
@@ -744,6 +747,9 @@ message ListRemoteFollowupsRequest {
   bool requires_solo_tick = 27;
   string event_type = 28;
   string script_event_id = 29;
+  string target_command_id = 30;
+  string target_command_execution_outcome = 31;
+  string target_command_gameplay_result = 32;
 }
 
 message RemoteFollowupEntry {

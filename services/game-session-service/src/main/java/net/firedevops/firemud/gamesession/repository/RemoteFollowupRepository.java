@@ -41,6 +41,9 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
   @Query(
       """
       select followup from RemoteFollowup followup
+      left join GameplayCommand targetCommand
+        on targetCommand.tenantId = followup.tenantId
+       and targetCommand.remoteFollowupId = followup.followupId
       where followup.tenantId = :tenantId
         and (:targetRegionId = '' or followup.targetRegionId = :targetRegionId)
         and (:status = '' or followup.status = :status)
@@ -69,6 +72,11 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
         and (:scriptEventId = '' or followup.scriptEventId = :scriptEventId)
         and (:automationDispatchId = '' or followup.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or followup.commandId = :commandId)
+        and (:targetCommandId = '' or targetCommand.commandId = :targetCommandId)
+        and (:targetCommandExecutionOutcome = ''
+             or targetCommand.executionOutcome = :targetCommandExecutionOutcome)
+        and (:targetCommandGameplayResult = ''
+             or targetCommand.gameplayResult = :targetCommandGameplayResult)
       order by followup.dueTickId asc, followup.id asc
       """)
   List<RemoteFollowup> findForControlPlane(
@@ -100,5 +108,8 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
       @Param("scriptEventId") String scriptEventId,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
+      @Param("targetCommandId") String targetCommandId,
+      @Param("targetCommandExecutionOutcome") String targetCommandExecutionOutcome,
+      @Param("targetCommandGameplayResult") String targetCommandGameplayResult,
       Pageable pageable);
 }

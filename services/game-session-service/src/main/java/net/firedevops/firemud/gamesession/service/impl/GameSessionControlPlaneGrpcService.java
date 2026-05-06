@@ -763,6 +763,9 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getAutomationWorkItemId()),
               blankToEmpty(request.getEventType()),
               blankToEmpty(request.getScriptEventId()),
+              blankToEmpty(request.getTargetCommandId()),
+              blankToEmpty(request.getTargetCommandExecutionOutcome()),
+              blankToEmpty(request.getTargetCommandGameplayResult()),
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
               PageRequest.of(0, boundedRemoteListLimit(request.getLimit())))
@@ -914,6 +917,9 @@ public final class GameSessionControlPlaneGrpcService
               request.getRequiresSoloTick() ? Boolean.TRUE : null,
               blankToEmpty(request.getEventType()),
               blankToEmpty(request.getScriptEventId()),
+              blankToEmpty(request.getTargetCommandId()),
+              blankToEmpty(request.getTargetCommandExecutionOutcome()),
+              blankToEmpty(request.getTargetCommandGameplayResult()),
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
               PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));

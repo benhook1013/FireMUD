@@ -2464,6 +2464,9 @@ class GameSessionControlPlaneGrpcServiceTest {
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
                 Mockito.any()))
         .thenReturn(List.of(coordinator));
     Mockito.when(remoteFollowupRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
@@ -2505,6 +2508,9 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setAutomationWorkItemId("work-1")
             .setEventType("onEnterRegion")
             .setScriptEventId("evt-1")
+            .setTargetCommandId("target-cmd-1")
+            .setTargetCommandExecutionOutcome("APPLIED")
+            .setTargetCommandGameplayResult("SUCCESS")
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -2558,6 +2564,9 @@ class GameSessionControlPlaneGrpcServiceTest {
             "work-1",
             "onEnterRegion",
             "evt-1",
+            "target-cmd-1",
+            "APPLIED",
+            "SUCCESS",
             "dispatch-1",
             "cmd-1",
             org.springframework.data.domain.PageRequest.of(0, 25));
@@ -2646,6 +2655,9 @@ class GameSessionControlPlaneGrpcServiceTest {
                 true,
                 "onEnterRegion",
                 "evt-1",
+                "target-cmd-1",
+                "APPLIED",
+                "SUCCESS",
                 "dispatch-1",
                 "cmd-1",
                 org.springframework.data.domain.PageRequest.of(0, 25)))
@@ -2653,7 +2665,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(coordinatorRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
         .thenReturn(Optional.of(coordinator));
     GameplayCommand targetCommand = new GameplayCommand();
-    targetCommand.setCommandId("rfcmd-rf-1");
+    targetCommand.setCommandId("target-cmd-1");
     targetCommand.setExecutionOutcome("APPLIED");
     targetCommand.setGameplayResult("SUCCESS");
     Mockito.when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "rf-1"))
@@ -2696,6 +2708,9 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setRequiresSoloTick(true)
             .setEventType("onEnterRegion")
             .setScriptEventId("evt-1")
+            .setTargetCommandId("target-cmd-1")
+            .setTargetCommandExecutionOutcome("APPLIED")
+            .setTargetCommandGameplayResult("SUCCESS")
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -2742,7 +2757,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         "plugin-v1", responseRef.get().getFollowups(0).getPluginPublication().getPluginVersionId());
     assertEquals(31L, responseRef.get().getFollowups(0).getPluginPublication().getPublicationId());
-    assertEquals("rfcmd-rf-1", responseRef.get().getFollowups(0).getTargetCommandId());
+    assertEquals("target-cmd-1", responseRef.get().getFollowups(0).getTargetCommandId());
     assertEquals("APPLIED", responseRef.get().getFollowups(0).getTargetCommandExecutionOutcome());
     assertEquals("SUCCESS", responseRef.get().getFollowups(0).getTargetCommandGameplayResult());
     assertEquals(3L, responseRef.get().getFollowups(0).getOriginDeadlineRegionEpoch());
