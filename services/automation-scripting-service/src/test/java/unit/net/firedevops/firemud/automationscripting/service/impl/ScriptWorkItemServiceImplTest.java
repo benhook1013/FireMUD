@@ -923,6 +923,14 @@ class ScriptWorkItemServiceImplTest {
             Mockito.eq("patch-1"),
             Mockito.eq(99L),
             Mockito.eq("enqueued"),
+            Mockito.eq("game-2"),
+            Mockito.eq("region-2"),
+            Mockito.eq(17L),
+            Mockito.eq("remote-coordinator:workItem:99#0"),
+            Mockito.eq("remote-followup:workItem:99#0"),
+            Mockito.eq("script-1"),
+            Mockito.eq("plugin-1"),
+            Mockito.eq("workItem:99#0"),
             Mockito.any(),
             Mockito.any(),
             Mockito.any()))
@@ -941,7 +949,23 @@ class ScriptWorkItemServiceImplTest {
             gameDesignClient());
 
     List<ScriptWorkItemService.HandoffEventSummary> events =
-        service.listHandoffEvents("1", "game-1", "patch-1", "99", "enqueued", 10L, 20L, 25);
+        service.listHandoffEvents(
+            "1",
+            "game-1",
+            "patch-1",
+            "99",
+            "enqueued",
+            "game-2",
+            "region-2",
+            17L,
+            "remote-coordinator:workItem:99#0",
+            "remote-followup:workItem:99#0",
+            "script-1",
+            "plugin-1",
+            "workItem:99#0",
+            10L,
+            20L,
+            25);
 
     assertThat(events).hasSize(1);
     assertThat(events.get(0).automationDispatchId()).isEqualTo("workItem:99#0");

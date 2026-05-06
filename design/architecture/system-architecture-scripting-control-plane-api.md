@@ -334,6 +334,9 @@ Inputs:
 - Optional `scriptPatchVersion`
 - Optional `workItemId`
 - Optional `handoffOutcome`
+- Optional target runtime scope filters (`targetGameInstanceId`, `targetRegionId`, `targetRegionEpoch`)
+- Optional durable remote-id filters (`remoteCoordinatorId`, `remoteFollowupId`)
+- Optional origin identity filters (`scriptId`, `pluginId`, `automationDispatchId`)
 - Optional `changedAfter` / `changedBefore`
 - Optional bounded `limit`
 
@@ -347,6 +350,7 @@ Contract rules:
 - Automation must persist one durable handoff event per attempted emitted command, including pre-handoff rollback fencing and Game Session acceptance/rejection outcomes.
 - `automationDispatchId` is the canonical low-cardinality correlation key between Automation handoff history and the Game Session gameplay-command ledger; metrics still must not label by it. Operator/debug reads can resolve the Game Session side either from the returned `gameSessionCommandId` or from the full automation identity tuple `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)` when the command id is not yet known to the caller.
 - Operators use this read to answer which emitted command ordinal reached Game Session, which rendered command text, target entity, and target runtime scope it addressed, whether it stayed local or became a durable remote follow-up, and whether the failure happened before handoff, at Game Session admission, or after later gameplay-side execution disposition.
+- Because remote follow-up legs are now durable first-class runtime rows, this read must support direct filtering by target runtime scope, remote coordinator/follow-up ids, and origin script/plugin/dispatch identity rather than assuming one bulk history scan plus client-side correlation.
 
 #### `CancelPendingWorkItemsForPluginVersion`
 

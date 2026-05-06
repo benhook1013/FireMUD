@@ -983,7 +983,22 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     Mockito.when(
             workItemService.listHandoffEvents(
-                "1", "game-1", "patch-1", "99", "enqueued", 10L, 20L, 50))
+                "1",
+                "game-1",
+                "patch-1",
+                "99",
+                "enqueued",
+                "game-2",
+                "region-2",
+                17L,
+                "remote-coordinator:workItem:99#0",
+                "remote-followup:workItem:99#0",
+                "script-1",
+                "plugin-1",
+                "workItem:99#0",
+                10L,
+                20L,
+                50))
         .thenReturn(
             List.of(
                 new ScriptWorkItemService.HandoffEventSummary(
@@ -1042,6 +1057,14 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setScriptPatchVersion("patch-1")
             .setWorkItemId("99")
             .setHandoffOutcome("enqueued")
+            .setTargetGameInstanceId("game-2")
+            .setTargetRegionId("region-2")
+            .setTargetRegionEpoch(17L)
+            .setRemoteCoordinatorId("remote-coordinator:workItem:99#0")
+            .setRemoteFollowupId("remote-followup:workItem:99#0")
+            .setScriptId("script-1")
+            .setPluginId("plugin-1")
+            .setAutomationDispatchId("workItem:99#0")
             .setChangedAfterMs(10L)
             .setChangedBeforeMs(20L)
             .setLimit(50)

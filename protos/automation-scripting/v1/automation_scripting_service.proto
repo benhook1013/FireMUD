@@ -718,6 +718,14 @@ message ListScriptHandoffEventsRequest {
   int64 changed_after_ms = 6;
   int64 changed_before_ms = 7;
   int32 limit = 8;
+  string target_game_instance_id = 9;
+  string target_region_id = 10;
+  int64 target_region_epoch = 11;
+  string remote_coordinator_id = 12;
+  string remote_followup_id = 13;
+  string script_id = 14;
+  string plugin_id = 15;
+  string automation_dispatch_id = 16;
 }
 
 message ScriptHandoffEventEntry {
