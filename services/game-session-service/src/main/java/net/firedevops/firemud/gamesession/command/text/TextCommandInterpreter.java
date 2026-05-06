@@ -397,7 +397,8 @@ public class TextCommandInterpreter {
             new HelpTextCommandDispatchHandler(helpHandler, scriptEventPublisher),
             new WhoTextCommandDispatchHandler(whoHandler),
             new FriendsTextCommandDispatchHandler(friendsHandler),
-            new AuthoredActionTextCommandDispatchHandler(authoredActionHandler),
+            new AuthoredActionTextCommandDispatchHandler(
+                authoredActionHandler, scriptEventPublisher),
             new ItemTextCommandDispatchHandler(commandService, itemHandler),
             new CommunicationTextCommandDispatchHandler(commandService),
             new MoveTextCommandDispatchHandler(commandService),
