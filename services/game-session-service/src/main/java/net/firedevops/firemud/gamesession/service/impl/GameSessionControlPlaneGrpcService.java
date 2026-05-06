@@ -69,6 +69,8 @@ import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
+import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsRequest;
+import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsRequest;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsRequest;
@@ -719,6 +721,61 @@ public final class GameSessionControlPlaneGrpcService
       logger.error("GetRemoteCommandCoordinator failed", ex);
       responseObserver.onNext(
           GetRemoteCommandCoordinatorResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build());
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.listRemoteCommandCoordinators")
+  public void listRemoteCommandCoordinators(
+      ListRemoteCommandCoordinatorsRequest request,
+      StreamObserver<ListRemoteCommandCoordinatorsResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      long tenantId = parseTenantId(request.getTenantId());
+      ListRemoteCommandCoordinatorsResponse.Builder response =
+          ListRemoteCommandCoordinatorsResponse.newBuilder();
+      remoteCommandCoordinatorRepository
+          .findForControlPlane(
+              tenantId,
+              blankToEmpty(request.getOriginRegionId()),
+              blankToEmpty(request.getTargetRegionId()),
+              blankToEmpty(request.getState()),
+              blankToEmpty(request.getFollowupId()),
+              blankToEmpty(request.getScriptId()),
+              blankToEmpty(request.getPluginId()),
+              blankToEmpty(request.getAutomationDispatchId()),
+              blankToEmpty(request.getCommandId()),
+              PageRequest.of(0, boundedRemoteListLimit(request.getLimit())))
+          .forEach(
+              coordinator ->
+                  response.addCoordinators(
+                      toRemoteCoordinatorEntry(
+                          coordinator,
+                          remoteFollowupRepository
+                              .findByTenantIdAndFollowupId(tenantId, coordinator.getFollowupId())
+                              .orElse(null),
+                          latestRemoteResult(tenantId, coordinator.getCoordinatorId()))));
+      responseObserver.onNext(response.build());
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          ListRemoteCommandCoordinatorsResponse.newBuilder()
+              .setError(authorizationError("ListRemoteCommandCoordinators", ex))
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          ListRemoteCommandCoordinatorsResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("ListRemoteCommandCoordinators failed", ex);
+      responseObserver.onNext(
+          ListRemoteCommandCoordinatorsResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build());
       responseObserver.onCompleted();

@@ -50,6 +50,8 @@ service GameSessionControlPlaneService {
       returns (GetRuntimeOwnershipStatusResponse);
   rpc GetRemoteCommandCoordinator(GetRemoteCommandCoordinatorRequest)
       returns (GetRemoteCommandCoordinatorResponse);
+  rpc ListRemoteCommandCoordinators(ListRemoteCommandCoordinatorsRequest)
+      returns (ListRemoteCommandCoordinatorsResponse);
   rpc ScheduleRemoteFollowup(ScheduleRemoteFollowupRequest)
       returns (ScheduleRemoteFollowupResponse);
   rpc ListRemoteFollowups(ListRemoteFollowupsRequest) returns (ListRemoteFollowupsResponse);
@@ -593,6 +595,24 @@ message RemoteCommandCoordinatorEntry {
 
 message GetRemoteCommandCoordinatorResponse {
   RemoteCommandCoordinatorEntry coordinator = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListRemoteCommandCoordinatorsRequest {
+  string tenant_id = 1;
+  string origin_region_id = 2;
+  string target_region_id = 3;
+  string state = 4;
+  string followup_id = 5;
+  string script_id = 6;
+  string plugin_id = 7;
+  string automation_dispatch_id = 8;
+  string command_id = 9;
+  int32 limit = 10;
+}
+
+message ListRemoteCommandCoordinatorsResponse {
+  repeated RemoteCommandCoordinatorEntry coordinators = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

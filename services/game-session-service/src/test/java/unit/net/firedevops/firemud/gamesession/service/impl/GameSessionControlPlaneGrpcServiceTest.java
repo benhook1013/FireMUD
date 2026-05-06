@@ -64,6 +64,8 @@ import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
+import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsRequest;
+import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsRequest;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsRequest;
@@ -2320,6 +2322,87 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         Instant.parse("2026-05-01T00:00:05Z").toEpochMilli(),
         responseRef.get().getCoordinator().getLatestResultObservedAtMs());
+  }
+
+  @Test
+  void listRemoteCommandCoordinatorsReturnsFilteredRowsForAdminCaller() {
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setTenantId(1L);
+    coordinator.setCommandId("cmd-1");
+    coordinator.setFollowupId("rf-1");
+    coordinator.setOriginGameInstanceId(7L);
+    coordinator.setOriginRegionId("region-a");
+    coordinator.setOriginRegionEpoch(3L);
+    coordinator.setTargetGameInstanceId(9L);
+    coordinator.setTargetRegionId("region-b");
+    coordinator.setTargetRegionEpoch(4L);
+    coordinator.setTargetDueTickId(55L);
+    coordinator.setOriginDeadlineRegionEpoch(3L);
+    coordinator.setOriginDeadlineTickId(88L);
+    coordinator.setState("PENDING_REMOTE");
+    coordinator.setLateResultPolicy("late_result_safe_to_ignore");
+    coordinator.setAutomationDispatchId("dispatch-1");
+    coordinator.setAutomationWorkItemId("work-1");
+    coordinator.setScriptId("script-1");
+    coordinator.setScriptPatchVersion("patch-1");
+    coordinator.setPluginId("plugin-1");
+    coordinator.setPluginVersionId("plugin-v1");
+    coordinator.setUpdatedAt(Instant.parse("2026-05-01T00:00:00Z"));
+    RemoteCommandCoordinatorRepository repository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    Mockito.when(
+            repository.findForControlPlane(
+                1L,
+                "region-a",
+                "region-b",
+                "PENDING_REMOTE",
+                "rf-1",
+                "script-1",
+                "plugin-1",
+                "dispatch-1",
+                "cmd-1",
+                org.springframework.data.domain.PageRequest.of(0, 25)))
+        .thenReturn(List.of(coordinator));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(
+            Mockito.mock(RemoteFollowupRepository.class),
+            repository,
+            Mockito.mock(RemoteFollowupResultRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
+            null,
+            gameDesignClient());
+
+    AtomicReference<ListRemoteCommandCoordinatorsResponse> responseRef = new AtomicReference<>();
+    service.listRemoteCommandCoordinators(
+        ListRemoteCommandCoordinatorsRequest.newBuilder()
+            .setTenantId("1")
+            .setOriginRegionId("region-a")
+            .setTargetRegionId("region-b")
+            .setState("PENDING_REMOTE")
+            .setFollowupId("rf-1")
+            .setScriptId("script-1")
+            .setPluginId("plugin-1")
+            .setAutomationDispatchId("dispatch-1")
+            .setCommandId("cmd-1")
+            .setLimit(25)
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListRemoteCommandCoordinatorsResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(1, responseRef.get().getCoordinatorsCount());
+    assertEquals("coord-1", responseRef.get().getCoordinators(0).getCoordinatorId());
+    assertEquals("rf-1", responseRef.get().getCoordinators(0).getFollowupId());
+    assertEquals("dispatch-1", responseRef.get().getCoordinators(0).getAutomationDispatchId());
+    assertEquals("script-1", responseRef.get().getCoordinators(0).getScriptId());
+    assertEquals("plugin-1", responseRef.get().getCoordinators(0).getPluginId());
+    assertEquals("patch-1", responseRef.get().getCoordinators(0).getScriptPatchVersion());
+    assertEquals(17L, responseRef.get().getCoordinators(0).getPublication().getVersionId());
   }
 
   @Test
