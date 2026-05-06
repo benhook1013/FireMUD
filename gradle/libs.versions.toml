@@ -70,7 +70,7 @@ jjwt-jackson = { module = "io.jsonwebtoken:jjwt-jackson", version = "0.13.0" }
 argon2 = { module = "de.mkammerer:argon2-jvm", version = "2.12" }
 
 grpc-spring-boot-starter = { module = "org.springframework.grpc:spring-grpc-spring-boot-starter", version = "1.0.3" }
-postgresql = { module = "org.postgresql:postgresql", version = "42.7.10" }
+postgresql = { module = "org.postgresql:postgresql", version = "42.7.11" }
 aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.41" }
 h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
