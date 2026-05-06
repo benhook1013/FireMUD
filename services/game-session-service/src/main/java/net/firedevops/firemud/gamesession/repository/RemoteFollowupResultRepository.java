@@ -20,6 +20,8 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
   @Query(
       """
       select result from RemoteFollowupResult result
+      left join GameplayCommand resultCommand
+        on resultCommand.commandId = result.resultCommandId
       where result.tenantId = :tenantId
         and (:coordinatorId = '' or result.coordinatorId = :coordinatorId)
         and (:followupId = '' or result.followupId = :followupId)
@@ -41,6 +43,10 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
         and (:resultErrorCode = '' or result.resultErrorCode = :resultErrorCode)
         and (:automationWorkItemId = '' or result.automationWorkItemId = :automationWorkItemId)
         and (:resultCommandId = '' or result.resultCommandId = :resultCommandId)
+        and (:resultCommandExecutionOutcome = ''
+             or resultCommand.executionOutcome = :resultCommandExecutionOutcome)
+        and (:resultCommandGameplayResult = ''
+             or resultCommand.gameplayResult = :resultCommandGameplayResult)
         and (:automationDispatchId = '' or result.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or result.commandId = :commandId)
       order by result.observedAt asc, result.id asc
@@ -67,6 +73,8 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
       @Param("resultErrorCode") String resultErrorCode,
       @Param("automationWorkItemId") String automationWorkItemId,
       @Param("resultCommandId") String resultCommandId,
+      @Param("resultCommandExecutionOutcome") String resultCommandExecutionOutcome,
+      @Param("resultCommandGameplayResult") String resultCommandGameplayResult,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       Pageable pageable);

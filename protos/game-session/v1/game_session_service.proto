@@ -837,6 +837,8 @@ message ListRemoteFollowupResultsRequest {
   string result_error_code = 22;
   string automation_work_item_id = 23;
   string result_command_id = 24;
+  string result_command_execution_outcome = 25;
+  string result_command_gameplay_result = 26;
 }
 
 message RemoteFollowupResultEntry {

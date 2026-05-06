@@ -2929,6 +2929,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                 "RATE_LIMIT",
                 "work-1",
                 "auto-1",
+                "APPLIED",
+                "SUCCESS",
                 "dispatch-1",
                 "cmd-1",
                 org.springframework.data.domain.PageRequest.of(0, 25)))
@@ -2971,6 +2973,8 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setResultErrorCode("RATE_LIMIT")
             .setAutomationWorkItemId("work-1")
             .setResultCommandId("auto-1")
+            .setResultCommandExecutionOutcome("APPLIED")
+            .setResultCommandGameplayResult("SUCCESS")
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -3071,6 +3075,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),

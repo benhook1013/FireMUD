@@ -980,6 +980,8 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getResultErrorCode()),
               blankToEmpty(request.getAutomationWorkItemId()),
               blankToEmpty(request.getResultCommandId()),
+              blankToEmpty(request.getResultCommandExecutionOutcome()),
+              blankToEmpty(request.getResultCommandGameplayResult()),
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
               PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
