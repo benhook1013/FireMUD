@@ -26,6 +26,9 @@ public interface RemoteCommandCoordinatorRepository
   @Query(
       """
       select coordinator from RemoteCommandCoordinator coordinator
+      left join RemoteFollowup linkedFollowup
+        on linkedFollowup.tenantId = coordinator.tenantId
+       and linkedFollowup.followupId = coordinator.followupId
       where coordinator.tenantId = :tenantId
         and (:originGameInstanceId is null or coordinator.originGameInstanceId = :originGameInstanceId)
         and (:originRegionId = '' or coordinator.originRegionId = :originRegionId)
@@ -43,6 +46,10 @@ public interface RemoteCommandCoordinatorRepository
         and (:worldSlug = '' or coordinator.worldSlug = :worldSlug)
         and (:realmSlug = '' or coordinator.realmSlug = :realmSlug)
         and (:pointerVersion is null or coordinator.pointerVersion = :pointerVersion)
+        and (:targetEntityId = '' or linkedFollowup.targetEntityId = :targetEntityId)
+        and (:effectKey = '' or linkedFollowup.effectKey = :effectKey)
+        and (:payloadKind = '' or linkedFollowup.payloadKind = :payloadKind)
+        and (:originSourceKind = '' or linkedFollowup.originSourceKind = :originSourceKind)
         and (:automationDispatchId = '' or coordinator.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or coordinator.commandId = :commandId)
       order by coordinator.updatedAt desc, coordinator.id desc
@@ -65,6 +72,10 @@ public interface RemoteCommandCoordinatorRepository
       @Param("worldSlug") String worldSlug,
       @Param("realmSlug") String realmSlug,
       @Param("pointerVersion") Long pointerVersion,
+      @Param("targetEntityId") String targetEntityId,
+      @Param("effectKey") String effectKey,
+      @Param("payloadKind") String payloadKind,
+      @Param("originSourceKind") String originSourceKind,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       Pageable pageable);

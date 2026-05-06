@@ -756,6 +756,10 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getWorldSlug()),
               blankToEmpty(request.getRealmSlug()),
               request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+              blankToEmpty(request.getTargetEntityId()),
+              blankToEmpty(request.getEffectKey()),
+              blankToEmpty(request.getPayloadKind()),
+              blankToEmpty(request.getOriginSourceKind()),
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
               PageRequest.of(0, boundedRemoteListLimit(request.getLimit())))
@@ -2178,12 +2182,24 @@ public final class GameSessionControlPlaneGrpcService
       builder.setGameplayResult(coordinator.getGameplayResult());
     }
     if (followup != null) {
+      if (followup.getTargetEntityId() != null) {
+        builder.setTargetEntityId(followup.getTargetEntityId());
+      }
+      if (followup.getEffectKey() != null) {
+        builder.setFollowupEffectKey(followup.getEffectKey());
+      }
       builder.setFollowupStatus(followup.getStatus());
       if (followup.getClaimedTickBatchId() != null) {
         builder.setFollowupClaimedTickBatchId(followup.getClaimedTickBatchId());
       }
       if (followup.getClaimOrdinal() != null) {
         builder.setFollowupClaimOrdinal(followup.getClaimOrdinal());
+      }
+      if (followup.getFailureCode() != null) {
+        builder.setFollowupFailureCode(followup.getFailureCode());
+      }
+      if (followup.getFailureMessage() != null) {
+        builder.setFollowupFailureMessage(followup.getFailureMessage());
       }
       applyPayloadSummary(
           builder,

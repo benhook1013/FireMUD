@@ -593,6 +593,10 @@ message RemoteCommandCoordinatorEntry {
   int64 followup_origin_source_ordinal = 48;
   int64 followup_origin_source_due_tick_id = 49;
   int64 followup_origin_source_due_at_ms = 50;
+  string target_entity_id = 51;
+  string followup_effect_key = 52;
+  string followup_failure_code = 53;
+  string followup_failure_message = 54;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -621,6 +625,10 @@ message ListRemoteCommandCoordinatorsRequest {
   string world_slug = 18;
   string realm_slug = 19;
   int64 pointer_version = 20;
+  string target_entity_id = 21;
+  string effect_key = 22;
+  string payload_kind = 23;
+  string origin_source_kind = 24;
 }
 
 message ListRemoteCommandCoordinatorsResponse {

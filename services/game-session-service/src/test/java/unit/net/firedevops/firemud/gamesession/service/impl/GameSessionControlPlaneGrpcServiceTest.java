@@ -2218,6 +2218,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setStatus("CLAIMED");
     followup.setClaimedTickBatchId("tb-1");
     followup.setClaimOrdinal(3L);
+    followup.setTargetEntityId("entity-9");
+    followup.setEffectKey("effect-9");
     followup.setPayloadJson("{\"kind\":\"payload_kind\",\"command\":\"payload LOOK\"}");
     followup.setPayloadKind("enqueue_automation_command");
     followup.setRequestedCommand("LOOK");
@@ -2227,6 +2229,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setOriginSourceOrdinal(44L);
     followup.setOriginSourceDueTickId(55L);
     followup.setOriginSourceDueAtMs(1700L);
+    followup.setFailureCode("REMOTE_REJECTED");
+    followup.setFailureMessage("Target runtime rejected the remote followup");
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setCoordinatorId("coord-1");
     result.setOutcome("APPLIED");
@@ -2307,6 +2311,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("CLAIMED", responseRef.get().getCoordinator().getFollowupStatus());
     assertEquals("tb-1", responseRef.get().getCoordinator().getFollowupClaimedTickBatchId());
     assertEquals(3L, responseRef.get().getCoordinator().getFollowupClaimOrdinal());
+    assertEquals("entity-9", responseRef.get().getCoordinator().getTargetEntityId());
+    assertEquals("effect-9", responseRef.get().getCoordinator().getFollowupEffectKey());
+    assertEquals("REMOTE_REJECTED", responseRef.get().getCoordinator().getFollowupFailureCode());
+    assertEquals(
+        "Target runtime rejected the remote followup",
+        responseRef.get().getCoordinator().getFollowupFailureMessage());
     assertEquals(
         "REMOTE_FOLLOWUP", responseRef.get().getCoordinator().getFollowupOriginSourceKind());
     assertEquals(
@@ -2361,35 +2371,50 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setPluginId("plugin-1");
     coordinator.setPluginVersionId("plugin-v1");
     coordinator.setUpdatedAt(Instant.parse("2026-05-01T00:00:00Z"));
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setTenantId(1L);
+    followup.setFollowupId("rf-1");
+    followup.setStatus("SCHEDULED");
+    followup.setTargetEntityId("entity-9");
+    followup.setEffectKey("effect-9");
+    followup.setPayloadKind("enqueue_automation_command");
+    followup.setOriginSourceKind("REMOTE_FOLLOWUP");
     RemoteCommandCoordinatorRepository repository =
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    RemoteFollowupRepository remoteFollowupRepository = Mockito.mock(RemoteFollowupRepository.class);
     Mockito.when(
             repository.findForControlPlane(
-                1L,
-                7L,
-                "region-a",
-                3L,
-                9L,
-                "region-b",
-                4L,
-                "PENDING_REMOTE",
-                "rf-1",
-                "script-1",
-                "plugin-1",
-                "patch-1",
-                "plugin-v1",
-                "SHARED",
-                "demo",
-                "production",
-                17L,
-                "dispatch-1",
-                "cmd-1",
-                org.springframework.data.domain.PageRequest.of(0, 25)))
+                Mockito.anyLong(),
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyLong(),
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyLong(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any()))
         .thenReturn(List.of(coordinator));
+    Mockito.when(remoteFollowupRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
+        .thenReturn(Optional.of(followup));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
-            Mockito.mock(RemoteFollowupRepository.class),
+            remoteFollowupRepository,
             repository,
             Mockito.mock(RemoteFollowupResultRepository.class),
             Mockito.mock(GameplayCommandRepository.class),
@@ -2416,6 +2441,10 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setWorldSlug("demo")
             .setRealmSlug("production")
             .setPointerVersion(17L)
+            .setTargetEntityId("entity-9")
+            .setEffectKey("effect-9")
+            .setPayloadKind("enqueue_automation_command")
+            .setOriginSourceKind("REMOTE_FOLLOWUP")
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -2438,7 +2467,35 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("script-1", responseRef.get().getCoordinators(0).getScriptId());
     assertEquals("plugin-1", responseRef.get().getCoordinators(0).getPluginId());
     assertEquals("patch-1", responseRef.get().getCoordinators(0).getScriptPatchVersion());
+    assertEquals("entity-9", responseRef.get().getCoordinators(0).getTargetEntityId());
+    assertEquals("effect-9", responseRef.get().getCoordinators(0).getFollowupEffectKey());
     assertEquals(17L, responseRef.get().getCoordinators(0).getPublication().getVersionId());
+    Mockito.verify(repository)
+        .findForControlPlane(
+            1L,
+            7L,
+            "region-a",
+            3L,
+            9L,
+            "region-b",
+            4L,
+            "PENDING_REMOTE",
+            "rf-1",
+            "script-1",
+            "plugin-1",
+            "patch-1",
+            "plugin-v1",
+            "SHARED",
+            "demo",
+            "production",
+            17L,
+            "entity-9",
+            "effect-9",
+            "enqueue_automation_command",
+            "REMOTE_FOLLOWUP",
+            "dispatch-1",
+            "cmd-1",
+            org.springframework.data.domain.PageRequest.of(0, 25));
   }
 
   @Test
