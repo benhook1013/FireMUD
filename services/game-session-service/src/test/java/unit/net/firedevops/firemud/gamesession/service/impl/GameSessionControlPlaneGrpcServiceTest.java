@@ -2485,6 +2485,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                 "SCHEDULED",
                 7L,
                 "region-a",
+                3L,
                 9L,
                 4L,
                 "rf-1",
@@ -2520,6 +2521,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setStatus("SCHEDULED")
             .setOriginGameInstanceId("7")
             .setOriginRegionId("region-a")
+            .setOriginRegionEpoch(3L)
             .setTargetGameInstanceId("9")
             .setTargetRegionEpoch(4L)
             .setFollowupId("rf-1")
@@ -2717,8 +2719,10 @@ class GameSessionControlPlaneGrpcServiceTest {
                 "rf-1",
                 7L,
                 "region-a",
+                3L,
                 9L,
                 "region-b",
+                4L,
                 "REMOTE_APPLIED",
                 "script-1",
                 "plugin-1",
@@ -2748,8 +2752,10 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setFollowupId("rf-1")
             .setOriginGameInstanceId("7")
             .setOriginRegionId("region-a")
+            .setOriginRegionEpoch(3L)
             .setTargetGameInstanceId("9")
             .setTargetRegionId("region-b")
+            .setTargetRegionEpoch(4L)
             .setOutcome("REMOTE_APPLIED")
             .setScriptId("script-1")
             .setPluginId("plugin-1")
@@ -2840,8 +2846,10 @@ class GameSessionControlPlaneGrpcServiceTest {
                 "",
                 null,
                 "",
+                0L,
                 null,
                 "",
+                0L,
                 "",
                 "",
                 "",

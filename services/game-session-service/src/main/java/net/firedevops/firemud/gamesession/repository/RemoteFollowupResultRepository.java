@@ -25,8 +25,10 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
         and (:followupId = '' or result.followupId = :followupId)
         and (:originGameInstanceId is null or result.originGameInstanceId = :originGameInstanceId)
         and (:originRegionId = '' or result.originRegionId = :originRegionId)
+        and (:originRegionEpoch <= 0 or result.originRegionEpoch = :originRegionEpoch)
         and (:targetGameInstanceId is null or result.targetGameInstanceId = :targetGameInstanceId)
         and (:targetRegionId = '' or result.targetRegionId = :targetRegionId)
+        and (:targetRegionEpoch <= 0 or result.targetRegionEpoch = :targetRegionEpoch)
         and (:outcome = '' or result.outcome = :outcome)
         and (:scriptId = '' or result.scriptId = :scriptId)
         and (:pluginId = '' or result.pluginId = :pluginId)
@@ -40,8 +42,10 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
       @Param("followupId") String followupId,
       @Param("originGameInstanceId") Long originGameInstanceId,
       @Param("originRegionId") String originRegionId,
+      @Param("originRegionEpoch") long originRegionEpoch,
       @Param("targetGameInstanceId") Long targetGameInstanceId,
       @Param("targetRegionId") String targetRegionId,
+      @Param("targetRegionEpoch") long targetRegionEpoch,
       @Param("outcome") String outcome,
       @Param("scriptId") String scriptId,
       @Param("pluginId") String pluginId,

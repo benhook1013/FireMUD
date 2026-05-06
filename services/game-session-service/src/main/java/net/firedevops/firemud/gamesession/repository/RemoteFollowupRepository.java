@@ -46,6 +46,7 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
         and (:status = '' or followup.status = :status)
         and (:originGameInstanceId is null or followup.originGameInstanceId = :originGameInstanceId)
         and (:originRegionId = '' or followup.originRegionId = :originRegionId)
+        and (:originRegionEpoch <= 0 or followup.originRegionEpoch = :originRegionEpoch)
         and (:targetGameInstanceId is null or followup.targetGameInstanceId = :targetGameInstanceId)
         and (:targetRegionEpoch <= 0 or followup.targetRegionEpoch = :targetRegionEpoch)
         and (:followupId = '' or followup.followupId = :followupId)
@@ -61,6 +62,7 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
       @Param("status") String status,
       @Param("originGameInstanceId") Long originGameInstanceId,
       @Param("originRegionId") String originRegionId,
+      @Param("originRegionEpoch") long originRegionEpoch,
       @Param("targetGameInstanceId") Long targetGameInstanceId,
       @Param("targetRegionEpoch") long targetRegionEpoch,
       @Param("followupId") String followupId,
