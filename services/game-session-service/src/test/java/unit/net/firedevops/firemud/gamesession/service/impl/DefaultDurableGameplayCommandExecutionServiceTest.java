@@ -251,6 +251,39 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     verify(durableGameplayReplayService)
         .save(22L, 42L, "tfx-4", true, null, null, java.util.List.of(output));
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+    verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
+  }
+
+  @Test
+  void executeResolvesAutomationCommandByGameplayIdentityWhenSessionIdIsUnset() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("SAY", "SAY Hello there");
+    command.setSessionId(0L);
+    command.setTenantId(22L);
+    command.setGameInstanceId(7L);
+    command.setCharacterId(91L);
+    command.setTargetEntityId("91");
+    TickEffect effect = tickEffect("tfx-4b", "cmd-4b");
+    TextCommand parsed =
+        new TextCommand(TextCommandType.SAY, java.util.List.of("Hello there"), "SAY Hello there");
+    PlayerOutput output = PlayerOutput.message("You say, \"Hello there.\"");
+    when(parser.parse("SAY Hello there")).thenReturn(parsed);
+    when(sessionContextService.findByGameplayIdentity(22L, 7L, 91L))
+        .thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-4b")).thenReturn(Optional.empty());
+    when(communicationCommandHandler.handle(context, parsed, "tfx-4b"))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandlingResult(
+                CommandEnqueueResult.success(), java.util.List.of(output)));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("APPLIED");
+    verify(sessionContextService, never()).findBySessionId(0L);
+    verify(sessionContextService).findByGameplayIdentity(22L, 7L, 91L);
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+    verify(scriptEventPublisher).publishCommandEvent(context, command);
   }
 
   @Test

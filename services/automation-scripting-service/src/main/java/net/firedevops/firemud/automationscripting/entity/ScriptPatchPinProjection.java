@@ -34,6 +34,24 @@ public class ScriptPatchPinProjection {
   @Column(nullable = false, length = 128)
   private String observedPinnedScriptPatchVersion = "";
 
+  @Column(nullable = false, length = 32)
+  private String playableStateScope = "";
+
+  @Column(nullable = false, length = 64)
+  private String worldSlug = "";
+
+  @Column(nullable = false, length = 64)
+  private String realmSlug = "";
+
+  @Column(nullable = false, length = 64)
+  private String pointerVersion = "";
+
+  @Column(nullable = false, length = 64)
+  private String runtimeRegionId = "";
+
+  @Column(nullable = false)
+  private long runtimeRegionEpoch;
+
   @Column(nullable = false, length = 128)
   private String lastObservedControlPlaneRequestId = "";
 

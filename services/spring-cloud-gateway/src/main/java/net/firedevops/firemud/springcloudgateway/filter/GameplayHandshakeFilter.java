@@ -1,5 +1,6 @@
 package net.firedevops.firemud.springcloudgateway.filter;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.Jws;
@@ -41,6 +42,9 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
   static final String CONNECT_TOKEN_HEADER = "X-Firemud-Connect-Token";
   static final String CONNECT_CONTEXT_HEADER = "X-Firemud-Connect-Context";
   static final String TRANSPORT_SESSION_HEADER = "X-Firemud-Transport-Session-Id";
+  static final String WORLD_SLUG_HEADER = "X-World-Slug";
+  static final String REALM_SLUG_HEADER = "X-Realm-Slug";
+  static final String POINTER_VERSION_HEADER = "X-Pointer-Version";
   static final String CONNECTION_MODE_FIRST_PARTY_WEB = "first_party_web";
   static final String CONNECTION_MODE_TRUSTED_TCP_PROXY = "trusted_tcp_proxy";
   static final String CONNECT_TOKEN_REJECTED = "CONNECT_TOKEN_REJECTED";
@@ -59,6 +63,9 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
   private final boolean allowLocalReplayFallback;
   private final ConcurrentHashMap<String, Long> replayCache = new ConcurrentHashMap<>();
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected collaborators remain internal filter dependencies.")
   public GameplayHandshakeFilter(
       JwtUtil jwtUtil,
       RuntimeIdentity runtimeIdentity,
@@ -71,7 +78,7 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
     this.allowLocalReplayFallback =
         Arrays.stream(environment.getActiveProfiles())
             .map(String::toLowerCase)
-            .anyMatch(profile -> profile.equals("dev") || profile.equals("test"));
+            .anyMatch(profile -> profile.equals("test"));
   }
 
   @Override
@@ -122,7 +129,10 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
               Mono.defer(
                   () -> {
                     if (mismatched(exchange, "X-Tenant-Id", tenantId)
-                        || mismatched(exchange, "X-Game-Instance-Id", gameInstanceId)) {
+                        || mismatched(exchange, "X-Game-Instance-Id", gameInstanceId)
+                        || mismatched(exchange, WORLD_SLUG_HEADER, worldSlug)
+                        || mismatched(exchange, REALM_SLUG_HEADER, realmSlug)
+                        || mismatched(exchange, POINTER_VERSION_HEADER, pointerVersion)) {
                       return reject(exchange, CONNECT_SCOPE_MISMATCH, "connect scope mismatch");
                     }
 
@@ -157,6 +167,9 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
                                       stablePositiveLong(exchange.getRequest().getId())));
                               headers.set("X-Tenant-Id", tenantId);
                               headers.set("X-Game-Instance-Id", gameInstanceId);
+                              headers.set(WORLD_SLUG_HEADER, worldSlug);
+                              headers.set(REALM_SLUG_HEADER, realmSlug);
+                              headers.set(POINTER_VERSION_HEADER, pointerVersion);
                             }));
                   }))
           .onErrorResume(

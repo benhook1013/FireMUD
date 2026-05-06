@@ -3,6 +3,8 @@ package net.firedevops.firemud.springcloudgateway.filter;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -285,7 +287,7 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
         }
       }
       return false;
-    } catch (Exception ignored) {
+    } catch (CertificateEncodingException | NoSuchAlgorithmException ignored) {
       return false;
     }
   }

@@ -16,4 +16,10 @@ public record PublishedReleaseBundleDto(
     String generationConfigRevision,
     boolean scriptOnly,
     String scriptPatchVersion,
-    LocalDateTime publishedAt) {}
+    LocalDateTime publishedAt) {
+  public PublishedReleaseBundleDto {
+    requiredManifestAssetKeys =
+        List.copyOf(requiredManifestAssetKeys == null ? List.of() : requiredManifestAssetKeys);
+    participantDigests = List.copyOf(participantDigests == null ? List.of() : participantDigests);
+  }
+}

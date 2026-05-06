@@ -218,6 +218,10 @@ public final class EntityManagementClient
         Long.toString(context.accountId()),
         Long.toString(context.characterId()),
         gameInstanceId,
-        roomInstanceId);
+        roomInstanceId,
+        context.worldSlug(),
+        context.realmSlug(),
+        context.pointerVersion() > 0 ? Long.toString(context.pointerVersion()) : null,
+        context.playableStateScope());
   }
 }

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.springcloudgateway.websocket;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -31,12 +32,18 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
   private static final String CONNECTION_MODE_HEADER = "X-Firemud-Connection-Mode";
   private static final String CONNECT_CONTEXT_HEADER = "X-Firemud-Connect-Context";
   private static final String TRANSPORT_SESSION_HEADER = "X-Firemud-Transport-Session-Id";
+  private static final String WORLD_SLUG_HEADER = "X-World-Slug";
+  private static final String REALM_SLUG_HEADER = "X-Realm-Slug";
+  private static final String POINTER_VERSION_HEADER = "X-Pointer-Version";
   private static final CloseStatus BACKEND_UNAVAILABLE =
       new CloseStatus(1011, "backend_unavailable");
   private static final List<String> FORWARDED_HEADERS =
       List.of(
           "X-Game-Instance-Id",
           "X-Tenant-Id",
+          WORLD_SLUG_HEADER,
+          REALM_SLUG_HEADER,
+          POINTER_VERSION_HEADER,
           "X-Requires-Solo-Tick",
           "X-Proxy-Connection-Id",
           CONNECTION_MODE_HEADER,
@@ -47,6 +54,9 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
   private final GameplayWebSocketBridgeProperties properties;
   private final RuntimeIdentity runtimeIdentity;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected client, properties, and runtime identity remain internal.")
   public GameplayWebSocketBridgeHandler(
       ReactorNettyWebSocketClient client,
       GameplayWebSocketBridgeProperties properties,

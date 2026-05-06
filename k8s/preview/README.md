@@ -55,30 +55,34 @@ These manifests prepare the preview cluster itself. The repository now also cont
 - create/update preview gRPC TLS secrets
 - render preview manifests
 - validate those manifests against the live cluster API with server-side dry-run
+- deploy or upgrade a real Helm release into `pr-*` namespaces
+- seed the preview bootstrap state needed for reviewer proof
+- run hosted smoke against the TCP/Telnet path
 
-The next hosted preview milestone is:
+Current implementation limitations:
 
-- real Helm apply into `pr-*` namespaces
-- real reviewer-accessible preview traffic
-- manual `LOGIN -> PLAY -> LOOK` proof over the TCP/Telnet path first
+- preview redeploy is intentionally clean-state today; the workflow resets the namespace before deploy rather than preserving mutable PR state across updates
+- the first hosted proof target remains manual and smoke-backed `LOGIN -> PLAY -> LOOK` over the TCP/Telnet path, not a broader browser-first environment contract
+- the dedicated first-party frontend/runtime delivery path remains later work
 
 ## Current secrets and JWT stance
 
 - Preview target state requires PR-unique JWT signing material and JWKS data for each preview namespace so tokens minted in one PR environment cannot validate in another.
-- The current checked-in Helm values still include static inline `FIREMUD_AUTH_JWT_SECRET` material for preview bring-up. That value is a bootstrap placeholder, not the compliant target-state preview contract.
-- The current preview render script does not generate per-namespace JWT signing material or a namespace-local JWKS resource. Until that wiring exists, preview JWT/JWKS isolation is not proven by the default workflow.
+- The current checked-in Helm values mount signing material through `jwt-signing-keys` and `jwt-jwks` resources and point services at file-mounted JWT paths. That matches the broader Kubernetes application contract better than the older inline-secret model.
+- The preview value renderer now generates namespace-local signing-key and JWKS content for each rendered deployment, so preview no longer depends on one static inline shared JWT secret. The remaining gap is lifecycle ownership and rotation proof, not generation itself.
 - The target preview contract is to create or inject a namespace-local signing-key Secret and matching JWKS resource during preview namespace preparation, then mount or reference those resources through the same application-level contract used by the rest of the Kubernetes-backed stack, with ConfigMap JWKS allowed only because preview keys are explicitly test-only material.
 
 ## Current transport stance
 
 - Preview keeps the **target-state** service topology, auth/session model, and per-PR namespace isolation.
-- Preview currently uses a temporary plaintext internal gRPC exception while the Spring gRPC SSL-bundle migration is still being re-proven. That exception is preview-only, must remain documented here and in the transport-alignment slice, and must be removed once preview mTLS is validated end-to-end again.
-- The canonical non-local target state remains Spring Boot SSL bundles plus Spring gRPC server SSL-bundle binding for internal gRPC everywhere outside intentionally relaxed local development.
-- The explicit cleanup path is:
-  - keep preview transport expectations documented,
-  - migrate services away from legacy top-level `grpc.server.*` assumptions to `spring.grpc.server.ssl.*` with `spring.ssl.bundle.*`,
-  - add CI/static checks to prevent legacy server-TLS property drift,
-  - remove the temporary preview plaintext exception after preview mTLS is re-proved.
+- Preview now follows the same Spring Boot SSL-bundle plus Spring gRPC server SSL-bundle binding contract as the other Kubernetes-backed environments.
+- The checked-in Helm values mount workload mTLS material, set `FIREMUD_GRPC_PLAINTEXT: "false"`, and keep the internal gRPC topology aligned with the non-local target state rather than carrying a separate preview-only plaintext mode.
+- The remaining transport distinction in preview is the TCP bridge's `ws://spring-cloud-gateway/ws/game` bootstrap path for reviewer-facing Telnet smoke, not an internal gRPC plaintext exception.
+
+## Current network-policy stance
+
+- Hosted preview now renders checked-in baseline internal-service `NetworkPolicy` resources from the Helm chart.
+- The player-facing Kustomize/base path and the hosted preview/dev-demo path now share one checked-in baseline policy posture, even though the actual environment classes still differ in lifecycle and operational scope.
 
 ## Current TCP bootstrap contract
 

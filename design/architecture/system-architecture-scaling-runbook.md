@@ -94,6 +94,7 @@ When deciding **what** to scale, prefer signals tied to the tick model and Redis
   - If coordination tail-loss regularly exceeds `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`, prioritize scaling or tuning **Coordination Redis** (hardware, AOF configuration, or shard layout) before adding more tick producers.
 - Cross-region backlog:
   - Use `remote_followups_due_total`, `remote_followups_drain_lag_ms`, and `remote_followups_backlog_over_budget_total` from `system-architecture-tick-execution-flows.md` to decide whether target regions are draining remote work fast enough.
+  - Use Game Session runtime ownership/control-plane reads for region-specific backlog diagnosis; these Prometheus series are aggregate process signals and must not regain raw tenant/region labels.
   - When these metrics stay elevated, consider increasing draining budgets for the affected regions or adjusting region layout; avoid unboundedly scaling origin regions that enqueue remote follow-ups.
 - Retry and contention signals:
   - Track `tick_retry_queue_depth`, `tick_conflict_hotspot_detected_total`, and stalled-region indicators from the tick concepts/failures docs.

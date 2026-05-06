@@ -10,7 +10,7 @@ This document defines the authoritative preflight policy gate for staging and pr
 
 ## Implementation Notes
 
-`./dev-tools/deploy/preflight.sh` is the canonical executable preflight entrypoint for this contract. It currently emits the required policy ID set, consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` into reports, validates the mounted JWT/JWKS contract, validates first-pass expected binding shape, and enforces production and hobby/self-hosted traffic-open backup gates when the run declares `FIREMUD_TRAFFIC_OPEN_EVENT=first-live|reopen`. Production promotion validation now also checks that the referenced staging deployment record points to a readable staging preflight report with the expected bindings manifest reference and no failing required checks; hobby traffic-open evidence now proves the same link for its referenced preflight report.
+`./dev-tools/deploy/preflight.py` is the canonical executable preflight entrypoint for this contract. It currently emits the required policy ID set, consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` into reports, validates the mounted JWT/JWKS contract, validates first-pass expected binding shape, and enforces production and hobby/self-hosted traffic-open backup gates when the run declares `FIREMUD_TRAFFIC_OPEN_EVENT=first-live|reopen`. Production promotion validation now also checks that the referenced staging deployment record points to a readable staging preflight report with the expected bindings manifest reference and no failing required checks; hobby traffic-open evidence now proves the same link for its referenced preflight report.
 
 The remaining limitation is evidence depth, not missing policy IDs: the expected-binding checks validate repository manifests and declared binding refs, while real first-live and reopen decisions still require current environment evidence files produced by operators or automation. A successful static report without traffic-open evidence is not enough to open player-facing traffic.
 
@@ -30,7 +30,7 @@ Bootstrap resources must be unique to the environment boundary. Reusing staging 
 
 ## Authoritative Entrypoint
 
-- Command: `./dev-tools/deploy/preflight.sh <staging|production|hobby-self-hosted>`
+- Command: `./dev-tools/deploy/preflight.py <staging|production|hobby-self-hosted>`
 - Input: target environment and resolved overlay/manifests for that environment.
 - `hobby-self-hosted` runs must provide an explicit render input via `FIREMUD_PREFLIGHT_RENDER_PATH`; falling back to the stage overlay is not an allowed substitute for hobby deployment validation.
 - Output: non-zero exit code on failure and a machine-readable report artifact (for example JSON).
@@ -43,7 +43,7 @@ Bootstrap resources must be unique to the environment boundary. Reusing staging 
 ## Enforcement Boundaries
 
 - Overlay PR CI (`validate-kustomize-overlays.yml`) enforces static checks: digest pinning, image existence, attestation schema/digest matching, repository policy markers, and production backup-readiness binding when required.
-- Operator pre-apply execution (`preflight.sh`) enforces resolved-manifest and target-environment checks: required secret/key contracts, JWT/JWKS contracts, Redis role split, bridge alignment, bootstrap completeness, and external integration isolation.
+- Operator pre-apply execution (`preflight.py`) enforces resolved-manifest and target-environment checks: required secret/key contracts, JWT/JWKS contracts, Redis role split, bridge alignment, bootstrap completeness, and external integration isolation.
 - Deployment apply is blocked unless required checks for the target class pass (or an explicit break-glass waiver is recorded).
 
 ## Environment Applicability

@@ -99,10 +99,12 @@ public class FriendServiceImpl implements FriendService {
               friendAccountId,
               visibleOnline(entry),
               visibleGameInstanceId(entry),
+              visiblePlayableStateScope(entry),
               visibleWorldSlug(entry),
               visibleWorldDisplayName(entry),
               visibleRealmSlug(entry),
               visibleRealmDisplayName(entry),
+              visiblePointerVersion(entry),
               visibleCharacterId(entry),
               visibleCharacterName(entry),
               visibleActivityState(entry),
@@ -118,6 +120,8 @@ public class FriendServiceImpl implements FriendService {
                     new FriendPresenceDto(
                         friendAccountId,
                         false,
+                        null,
+                        null,
                         null,
                         null,
                         null,
@@ -175,6 +179,20 @@ public class FriendServiceImpl implements FriendService {
     };
   }
 
+  private String visiblePlayableStateScope(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default ->
+          switch (entry.getPlayableStateScope()) {
+            case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
+            case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
+            default -> null;
+          };
+    };
+  }
+
   private String visibleWorldDisplayName(AccountPresenceEntry entry) {
     return switch (entry.getVisibilityPolicy()) {
       case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
@@ -199,6 +217,15 @@ public class FriendServiceImpl implements FriendService {
           ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
           null;
       default -> entry.getRealmDisplayName().isBlank() ? null : entry.getRealmDisplayName();
+    };
+  }
+
+  private Long visiblePointerVersion(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getPointerVersion() > 0 ? entry.getPointerVersion() : null;
     };
   }
 

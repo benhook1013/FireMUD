@@ -603,6 +603,105 @@ class ScriptWorkItemExecutionServiceImplTest {
   }
 
   @Test
+  void marksOnLoadWithoutCommandsAsReadinessSuccess() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptOutputProperties outputProperties = new ScriptOutputProperties();
+    ScriptWorkItem item = workItem();
+    item.setGameInstanceId("");
+    item.setRegionId("");
+    item.setEntityId("");
+    item.setEventType("onLoad");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition("{\"eventHandlers\":{\"onLoad\":{}}}");
+    when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            outputProperties,
+            denyingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result =
+        service.processPendingWorkItems(10);
+
+    assertThat(result.completedCount()).isEqualTo(1);
+    Mockito.verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
+    Mockito.verify(definitionRepository)
+        .findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1");
+    assertThat(item.getStatus()).isEqualTo("HANDED_OFF");
+    assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
+    assertThat(audit.getFinalOutcome()).isEqualTo("readiness_success");
+    assertThat(audit.getFinalReason()).isEqualTo("ready_for_tenant");
+  }
+
+  @Test
+  void rejectsOnLoadThatEmitsCommands() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptOutputProperties outputProperties = new ScriptOutputProperties();
+    ScriptWorkItem item = workItem();
+    item.setGameInstanceId("");
+    item.setRegionId("");
+    item.setEntityId("");
+    item.setEventType("onLoad");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition(
+        "{\"eventHandlers\":{\"onLoad\":{\"emitCommands\":[{\"commandText\":\"say nope\",\"targetEntityId\":\"entity-9\"}]}}}");
+    when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            outputProperties,
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result =
+        service.processPendingWorkItems(10);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    Mockito.verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(item.getCancelReason()).isEqualTo("onload_commands_not_allowed");
+    assertThat(audit.getFinalOutcome()).isEqualTo("definition_invalid");
+    assertThat(audit.getFinalReason()).isEqualTo("onload_commands_not_allowed");
+  }
+
+  @Test
   void dryRunDoesNotAcquireLiveScriptQuotaOrHandoffCommands() {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     ScriptDefinitionRepository definitionRepository =

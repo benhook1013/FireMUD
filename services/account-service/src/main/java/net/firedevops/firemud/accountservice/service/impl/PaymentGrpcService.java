@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -32,6 +33,9 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
   }
 
   @Autowired
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected service and registry remain internal collaborators.")
   public PaymentGrpcService(PaymentService paymentService, MeterRegistry meterRegistry) {
     this.paymentService = paymentService;
     this.meterRegistry = meterRegistry;

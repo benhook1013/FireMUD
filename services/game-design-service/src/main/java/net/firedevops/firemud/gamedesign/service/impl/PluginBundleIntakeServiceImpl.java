@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -202,7 +203,7 @@ public class PluginBundleIntakeServiceImpl implements PluginBundleIntakeService 
       signature.initVerify(publicKey);
       signature.update(bundleDigest.getBytes(StandardCharsets.UTF_8));
       return signature.verify(Base64.getDecoder().decode(encodedSignature));
-    } catch (Exception ex) {
+    } catch (GeneralSecurityException | IllegalArgumentException ex) {
       throw new IllegalArgumentException("UPLOAD_REJECTED: signature_verification_failed");
     }
   }

@@ -19,12 +19,16 @@ public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, 
   }
 
   boolean
-      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
           String tenantId,
           String gameInstanceId,
           String regionId,
           Long regionEpoch,
           String entityId,
+          String playableStateScope,
+          String worldSlug,
+          String realmSlug,
+          String pointerVersion,
           String scriptId,
           String eventType,
           String eventSchemaVersion,
@@ -44,6 +48,9 @@ public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, 
 
   List<ScriptWorkItem> findByTenantIdAndScriptPatchVersion(
       String tenantId, String scriptPatchVersion);
+
+  List<ScriptWorkItem> findByTenantIdAndEventTypeAndStatusInOrderByCreatedAtAscIdAsc(
+      String tenantId, String eventType, Collection<String> statuses);
 
   List<ScriptWorkItem> findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
       String tenantId, String gameInstanceId, String scriptPatchVersion);

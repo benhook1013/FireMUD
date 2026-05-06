@@ -1,5 +1,6 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -28,6 +29,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected repositories and helpers are managed dependencies kept internal.")
 public class InventoryServiceImpl implements InventoryService {
   private final ItemInstanceRepository itemInstanceRepository;
   private final ContainerInstanceRepository containerInstanceRepository;

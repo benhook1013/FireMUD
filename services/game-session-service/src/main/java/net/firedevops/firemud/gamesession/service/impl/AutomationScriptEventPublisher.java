@@ -4,6 +4,7 @@ import java.util.concurrent.Executor;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -58,6 +59,10 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                   .setScriptPatchVersion(scope.scriptPatchVersion())
                   .setScriptEventId(command.getCommandId())
                   .setTriggerMode(TriggerMode.TRIGGER_MODE_NORMAL)
+                  .setPlayableStateScope(scope.playableStateScope())
+                  .setWorldSlug(scope.worldSlug())
+                  .setRealmSlug(scope.realmSlug())
+                  .setPointerVersion(scope.pointerVersion())
                   .setReadSnapshotToken(
                       "game-session:onCommand:"
                           + scope.gameInstanceId()
@@ -72,6 +77,31 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
               "onCommand",
               scope.gameInstanceId(),
               command.getCommandId());
+        });
+  }
+
+  @Override
+  public void publishSpawnEvent(SessionContext context, String spawnReason, String scriptEventId) {
+    submitBestEffort(
+        () -> {
+          if (!StringUtils.hasText(scriptEventId)) {
+            return;
+          }
+          PublishingScope scope = resolvePublishingScope(context);
+          if (scope == null) {
+            return;
+          }
+          publishLifecycleEvent(
+              scope,
+              "onSpawn",
+              scriptEventId,
+              "game-session:onSpawn:"
+                  + scope.gameInstanceId()
+                  + ":"
+                  + scope.regionEpoch()
+                  + ":"
+                  + scriptEventId,
+              spawnPayload(spawnReason));
         });
   }
 
@@ -119,6 +149,35 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         });
   }
 
+  @Override
+  public void publishRegionExitEvent(SessionContext context, String scriptEventId) {
+    submitBestEffort(
+        () -> {
+          if (context == null || !StringUtils.hasText(scriptEventId)) {
+            return;
+          }
+          PublishingScope scope = resolvePublishingScope(context);
+          if (scope == null) {
+            return;
+          }
+          String previousRoomId = normalize(context.roomInstanceId());
+          if (!StringUtils.hasText(previousRoomId)) {
+            return;
+          }
+          publishLifecycleEvent(
+              scope,
+              "onLeaveRegion",
+              scriptEventId,
+              "game-session:onLeaveRegion:"
+                  + scope.gameInstanceId()
+                  + ":"
+                  + scope.regionEpoch()
+                  + ":"
+                  + scriptEventId,
+              regionTransitionPayload(previousRoomId, ""));
+        });
+  }
+
   private static String commandPayload(GameplayCommand command) {
     return "{\"commandId\":\""
         + escape(command.getCommandId())
@@ -149,6 +208,10 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
             .setScriptPatchVersion(scope.scriptPatchVersion())
             .setScriptEventId(scriptEventId)
             .setTriggerMode(TriggerMode.TRIGGER_MODE_NORMAL)
+            .setPlayableStateScope(scope.playableStateScope())
+            .setWorldSlug(scope.worldSlug())
+            .setRealmSlug(scope.realmSlug())
+            .setPointerVersion(scope.pointerVersion())
             .setReadSnapshotToken(readSnapshotToken)
             .setPayloadJson(payloadJson)
             .build();
@@ -221,10 +284,16 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     return new PublishingScope(
         Long.toString(context.tenantId()),
         Long.toString(context.gameInstanceId()),
-        Long.toString(context.gameInstanceId()),
+        StringUtils.hasText(ownership.getRegionId())
+            ? ownership.getRegionId()
+            : Long.toString(context.gameInstanceId()),
         ownership.getRegionEpoch(),
         Long.toString(context.characterId()),
-        scriptPatchVersion);
+        resolvePlayableStateScope(context),
+        scriptPatchVersion,
+        normalize(context.worldSlug()),
+        normalize(context.realmSlug()),
+        context.pointerVersion() > 0 ? Long.toString(context.pointerVersion()) : "");
   }
 
   private static String regionTransitionPayload(String fromRegionId, String toRegionId) {
@@ -233,6 +302,10 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         + "\",\"toRegionId\":\""
         + escape(toRegionId)
         + "\"}";
+  }
+
+  private static String spawnPayload(String spawnReason) {
+    return "{\"spawnReason\":\"" + escape(normalize(spawnReason)) + "\"}";
   }
 
   private static String normalize(String value) {
@@ -245,5 +318,22 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       String regionId,
       long regionEpoch,
       String entityId,
-      String scriptPatchVersion) {}
+      PlayableStateScope playableStateScope,
+      String scriptPatchVersion,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion) {}
+
+  private static PlayableStateScope resolvePlayableStateScope(SessionContext context) {
+    if (!StringUtils.hasText(context.playableStateScope())) {
+      return PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+    }
+    return switch (context.playableStateScope()) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default ->
+          throw new IllegalArgumentException(
+              "Unsupported playableStateScope=" + context.playableStateScope());
+    };
+  }
 }

@@ -19,6 +19,9 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
   static final String GAME_INSTANCE_HEADER = "X-Game-Instance-Id";
   static final String PROXY_CONNECTION_HEADER = "X-Proxy-Connection-Id";
   static final String TENANT_HEADER = "X-Tenant-Id";
+  static final String WORLD_SLUG_HEADER = "X-World-Slug";
+  static final String REALM_SLUG_HEADER = "X-Realm-Slug";
+  static final String POINTER_VERSION_HEADER = "X-Pointer-Version";
   static final String SOLO_TICK_HEADER = "X-Requires-Solo-Tick";
   static final String CONNECTION_MODE_HEADER = "X-Firemud-Connection-Mode";
   static final String CONNECT_CONTEXT_HEADER = "X-Firemud-Connect-Context";
@@ -28,6 +31,9 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
   static final String SESSION_ID_ATTR = "firemud.websocket.sessionId";
   static final String BOOTSTRAP_GAME_INSTANCE_ATTR = "firemud.websocket.bootstrapGameInstanceId";
   static final String TENANT_ID_ATTR = "firemud.websocket.tenantId";
+  static final String WORLD_SLUG_ATTR = "firemud.websocket.worldSlug";
+  static final String REALM_SLUG_ATTR = "firemud.websocket.realmSlug";
+  static final String POINTER_VERSION_ATTR = "firemud.websocket.pointerVersion";
   static final String SOLO_TICK_ATTR = "firemud.websocket.requiresSoloTick";
   static final String CONNECTION_MODE_ATTR = "firemud.websocket.connectionMode";
   static final String CONNECT_CONTEXT_ATTR = "firemud.websocket.connectContext";
@@ -49,6 +55,9 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
     attributes.put(SESSION_ID_ATTR, sessionId);
     attributes.put(BOOTSTRAP_GAME_INSTANCE_ATTR, bootstrapGameInstanceId);
     attributes.put(TENANT_ID_ATTR, request.getHeaders().getFirst(TENANT_HEADER));
+    attributes.put(WORLD_SLUG_ATTR, request.getHeaders().getFirst(WORLD_SLUG_HEADER));
+    attributes.put(REALM_SLUG_ATTR, request.getHeaders().getFirst(REALM_SLUG_HEADER));
+    attributes.put(POINTER_VERSION_ATTR, request.getHeaders().getFirst(POINTER_VERSION_HEADER));
     attributes.put(SOLO_TICK_ATTR, request.getHeaders().getFirst(SOLO_TICK_HEADER));
     attributes.put(CONNECTION_MODE_ATTR, request.getHeaders().getFirst(CONNECTION_MODE_HEADER));
     attributes.put(CONNECT_CONTEXT_ATTR, request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));

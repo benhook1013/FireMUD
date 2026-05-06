@@ -1,6 +1,5 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import java.util.List;
@@ -17,9 +16,6 @@ import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 
 @Service
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected clients and repositories remain internal")
 public class ModerationServiceImpl implements ModerationService {
   private static final Logger logger = LoggingUtil.getLogger(ModerationServiceImpl.class);
   private static final String SCOPE_GAMEPLAY_ADMISSION = "GAMEPLAY_ADMISSION";

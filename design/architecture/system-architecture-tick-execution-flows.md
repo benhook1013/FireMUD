@@ -406,6 +406,7 @@ Remote follow-ups (work created in one region but owned by entities in another) 
     - `remote_followups_due_total`
     - `remote_followups_drain_lag_ms`
     - `remote_followups_backlog_over_budget_total`
+  - Those Prometheus metrics are aggregate process signals only. Region-specific diagnosis comes from the durable runtime ownership/control-plane reads, not raw `tenantId` / `regionId` metric labels.
   - The executor may temporarily bias part of the per-tick budget toward draining remote follow-ups (within the configured caps) to reduce cross-region lag.
   - Admission control applies at the origin: when the target region is degraded or backlog is high, new cross-region actions may be delayed, rate-limited, or rejected with a clear error so the system sheds load instead of accumulating an unbounded remote backlog.
     - The canonical signal for “target region degraded / unhealthy” comes from Game Session’s durable/control-plane region status (for example `GetRegionTickStatus` / `RegionStatus`), not from best-effort Redis hint keys such as `remote:*`.

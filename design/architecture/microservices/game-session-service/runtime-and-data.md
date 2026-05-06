@@ -115,6 +115,8 @@ Game Session restores player sessions after disconnects and enforces single-sess
 
 Game Session persists the latest processed `disconnectSequence` per `<proxyConnectionId>` and ignores older or duplicate events so retry behavior at the proxy can remain simple while consumption stays idempotent. Any `{tenantId, gameInstanceId}` values coming from proxy-owned bootstrap metadata or future hidden MCP-carried smart-client hints remain advisory context that may be used for logging and audit, but they are not trusted as authorization claims or binding directives. Game Session still validates any game-instance ownership claims against Redis and its authenticated session state before rebinding the transport.
 
+Recent/offline account-presence state should preserve the last admitted routing bundle too. When live presence drops to recent presence after transport loss, takeover, or logout, the bounded recent-presence record keeps the last admitted `gameInstanceId`, `worldSlug`, `realmSlug`, and `pointerVersion` so account-presence and friend-presence reads can continue to describe the last resolved realm target directly instead of collapsing immediately to a routing-less timestamp.
+
 ## Runtime Feature Flags
 
 Feature flags are stored in the `feature_flag` table and can be toggled through the Logging & Admin Service. Game Session exposes a gRPC `ToggleFeatureFlag` method so administrators can enable or disable experimental behavior without restarting a session. See [Game Design Service Feature Flags](../game-design-service/feature-flags.md) for how definitions are created and published.

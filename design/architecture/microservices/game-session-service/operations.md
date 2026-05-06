@@ -30,7 +30,7 @@
 
 ## Local Development Path
 
-- Use the normal `dev` profile with the real local Postgres, Redis, Gateway, Account, and downstream gameplay-service topology.
+- Use the normal runtime configuration with the real local Postgres, Redis, Gateway, Account, and downstream gameplay-service topology.
 - The maintained integration and ingress coverage now targets the real login/session flow described in [`02.1-task-list-login-session-hardening-vertical-slice.md`](../../../project-management/vertical-slices/02.1-task-list-login-session-hardening-vertical-slice.md), and the canonical operator proof remains the repo smoke scripts under `dev-tools/`.
 
 ## Cross-Service Integration Tests

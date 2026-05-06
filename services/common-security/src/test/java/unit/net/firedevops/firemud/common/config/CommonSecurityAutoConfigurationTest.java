@@ -8,6 +8,7 @@ import io.grpc.MethodDescriptor;
 import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.Status;
+import io.grpc.stub.AbstractStub;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
 import java.nio.file.Files;
@@ -15,6 +16,8 @@ import java.nio.file.Path;
 import java.util.List;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.GrpcAuthProperties;
 import net.firedevops.firemud.common.security.HttpAuthProperties;
@@ -186,6 +189,32 @@ class CommonSecurityAutoConfigurationTest {
             });
   }
 
+  @Test
+  void outboundStubCustomizerCanForceInternalServiceIdentity() {
+    contextRunner
+        .withBean(
+            RuntimeIdentity.class,
+            () ->
+                new RuntimeIdentity(
+                    "game-logic-service",
+                    "gl-1",
+                    "localhost",
+                    java.time.Instant.now(),
+                    "1.0.0",
+                    "abc123",
+                    "local"))
+        .withPropertyValues(
+            "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
+            "firemud.auth.grpc.force-internal-service-outbound=true")
+        .run(
+            ctx -> {
+              BlockingGrpcStubCustomizer customizer = ctx.getBean(BlockingGrpcStubCustomizer.class);
+              CapturingStub stub = new CapturingStub();
+
+              assertThat(customizer.customize(stub)).isNotSameAs(stub);
+            });
+  }
+
   private MethodDescriptor<Empty, Empty> unaryMethod(String fullMethodName) {
     return MethodDescriptor.<Empty, Empty>newBuilder()
         .setFullMethodName(fullMethodName)
@@ -193,5 +222,20 @@ class CommonSecurityAutoConfigurationTest {
         .setRequestMarshaller(io.grpc.protobuf.ProtoUtils.marshaller(Empty.getDefaultInstance()))
         .setResponseMarshaller(io.grpc.protobuf.ProtoUtils.marshaller(Empty.getDefaultInstance()))
         .build();
+  }
+
+  private static final class CapturingStub extends AbstractStub<CapturingStub> {
+    private CapturingStub() {
+      super(Mockito.mock(io.grpc.Channel.class), io.grpc.CallOptions.DEFAULT);
+    }
+
+    private CapturingStub(io.grpc.Channel channel, io.grpc.CallOptions callOptions) {
+      super(channel, callOptions);
+    }
+
+    @Override
+    protected CapturingStub build(io.grpc.Channel channel, io.grpc.CallOptions callOptions) {
+      return new CapturingStub(channel, callOptions);
+    }
   }
 }

@@ -23,44 +23,43 @@ public final class GrpcClientAuth {
     return stub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
   }
 
+  public static <T extends AbstractStub<T>> T attachInternal(
+      T stub, JwtUtil jwtUtil, RuntimeIdentity runtimeIdentity) {
+    Metadata metadata = new Metadata();
+    metadata.put(AUTH_HEADER, "Bearer " + createInternalBearerToken(jwtUtil, runtimeIdentity));
+    return stub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
+  }
+
   static String createBearerToken(JwtUtil jwtUtil, RuntimeIdentity runtimeIdentity) {
     String accountId = SessionContext.getAccountId();
     List<String> globalRoles = SessionContext.getGlobalRoles();
     Map<String, List<String>> scopedRoles = SessionContext.getScopedRolesMap();
-    boolean internalService = false;
-    String serviceName = null;
-    String serviceInstanceId = null;
-
     if (accountId == null || accountId.isBlank()) {
-      internalService = true;
-      serviceName =
-          runtimeIdentity != null && runtimeIdentity.service() != null
-              ? runtimeIdentity.service()
-              : "unknown-service";
-      serviceInstanceId = runtimeIdentity != null ? runtimeIdentity.serviceInstanceId() : null;
-      accountId = null;
-    }
-    if (globalRoles == null) {
-      globalRoles = List.of();
-    }
-    if (scopedRoles == null) {
-      scopedRoles = Map.of();
+      return createInternalBearerToken(jwtUtil, runtimeIdentity);
     }
 
     Map<String, Object> claims = new HashMap<>();
-    if (accountId != null && !accountId.isBlank()) {
-      claims.put("accountId", accountId);
-    }
-    claims.put("globalRoles", globalRoles);
-    claims.put("scopedRoles", scopedRoles);
-    if (internalService) {
-      claims.put("internalService", true);
-      claims.put("serviceName", serviceName);
-      if (serviceInstanceId != null && !serviceInstanceId.isBlank()) {
-        claims.put("serviceInstanceId", serviceInstanceId);
-      }
-      return jwtUtil.generateToken(INTERNAL_SUBJECT_PREFIX + serviceName, claims);
-    }
+    claims.put("accountId", accountId);
+    claims.put("globalRoles", globalRoles == null ? List.of() : globalRoles);
+    claims.put("scopedRoles", scopedRoles == null ? Map.of() : scopedRoles);
     return jwtUtil.generateToken(accountId, claims);
+  }
+
+  static String createInternalBearerToken(JwtUtil jwtUtil, RuntimeIdentity runtimeIdentity) {
+    String serviceName =
+        runtimeIdentity != null && runtimeIdentity.service() != null
+            ? runtimeIdentity.service()
+            : "unknown-service";
+    String serviceInstanceId = runtimeIdentity != null ? runtimeIdentity.serviceInstanceId() : null;
+
+    Map<String, Object> claims = new HashMap<>();
+    claims.put("globalRoles", List.of());
+    claims.put("scopedRoles", Map.of());
+    claims.put("internalService", true);
+    claims.put("serviceName", serviceName);
+    if (serviceInstanceId != null && !serviceInstanceId.isBlank()) {
+      claims.put("serviceInstanceId", serviceInstanceId);
+    }
+    return jwtUtil.generateToken(INTERNAL_SUBJECT_PREFIX + serviceName, claims);
   }
 }

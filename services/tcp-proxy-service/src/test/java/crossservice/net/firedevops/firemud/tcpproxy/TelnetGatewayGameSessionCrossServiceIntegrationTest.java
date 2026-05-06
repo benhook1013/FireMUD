@@ -2,51 +2,36 @@ package net.firedevops.firemud.tcpproxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
-import java.net.Socket;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.WebSocket;
-import java.net.http.WebSocket.Listener;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
+import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetDriver;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
+import net.firedevops.firemud.test.ReactiveTestApplicationSupport;
+import net.firedevops.firemud.test.TestAsyncAssertions;
+import net.firedevops.firemud.test.WebSocketTestProbe;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.boot.web.server.context.WebServerApplicationContext;
-import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.util.TestSocketUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
@@ -55,6 +40,7 @@ import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
+import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -68,7 +54,7 @@ import reactor.core.publisher.Mono;
 class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
   private static GameSessionStubHolder GAME_SESSION_STUB;
-  private static GatewayHolder GATEWAY;
+  private static ReactiveTestApplicationSupport.ReactiveAppHolder GATEWAY;
   // This suite runs alongside many other service checks in the full repo build, so use a wider
   // per-command timeout than the lighter isolated telnet tests.
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(30);
@@ -78,6 +64,9 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     ensureTestServicesStarted();
     registry.add("GATEWAY_WS_URL", GATEWAY::websocketUrl);
     registry.add("TCP_PROXY_PORT", () -> 0);
+    registry.add("TCP_PROXY_DEFAULT_WORLD_SLUG", () -> "demo");
+    registry.add("TCP_PROXY_DEFAULT_REALM_SLUG", () -> "production");
+    registry.add("TCP_PROXY_DEFAULT_POINTER_VERSION", () -> "1");
     registry.add("TCP_PROXY_DEFAULT_GAME_INSTANCE_ID", () -> "1");
     registry.add("TCP_PROXY_DEFAULT_TENANT_ID", () -> "1");
   }
@@ -88,7 +77,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
   @AfterAll
   static synchronized void stopTestServices() {
-    GatewayHolder gateway = GATEWAY;
+    ReactiveTestApplicationSupport.ReactiveAppHolder gateway = GATEWAY;
     GATEWAY = null;
     if (gateway != null) {
       gateway.close();
@@ -106,33 +95,22 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     String body = HttpTestSupport.getBody("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
 
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      String worldsResponse = sendAndExpectExactLine(writer, reader, "WORLDS", "processed:WORLDS");
+    try (GameplayTelnetDriver client =
+        GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT)) {
+      client.awaitInitialGuidance();
+      String worldsResponse = client.sendAndExpectExactLine("WORLDS", "processed:WORLDS");
       assertThat(worldsResponse).isEqualTo("processed:WORLDS");
 
       String loginResponse =
-          sendAndExpectExactLine(
-              writer,
-              reader,
-              "LOGIN demo@example.com swordfish",
-              "processed:LOGIN demo@example.com swordfish");
+          client.sendAndExpectExactLine(
+              "LOGIN demo@example.com swordfish", "processed:LOGIN demo@example.com swordfish");
       assertThat(loginResponse).isEqualTo("processed:LOGIN demo@example.com swordfish");
 
-      String playResponse =
-          sendAndExpectExactLine(writer, reader, "PLAY demo", "processed:PLAY demo");
+      String playResponse = client.sendAndExpectExactLine("PLAY demo", "processed:PLAY demo");
       assertThat(playResponse).isEqualTo("processed:PLAY demo");
 
-      writer.println("look");
-      String response = readMultiLineResponse(reader);
+      client.sendLine("look");
+      String response = client.readMultiLineResponse();
       assertThat(response.trim()).isEqualTo(LookTestFixtures.canonicalLookText().trim());
     }
 
@@ -152,30 +130,19 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     String telnetLoginResponse;
     String telnetPlayResponse;
     String telnetLookResponse;
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      telnetWorldsResponse = sendAndExpectExactLine(writer, reader, "WORLDS", "processed:WORLDS");
+    try (GameplayTelnetDriver client =
+        GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT)) {
+      client.awaitInitialGuidance();
+      telnetWorldsResponse = client.sendAndExpectExactLine("WORLDS", "processed:WORLDS");
       assertThat(telnetWorldsResponse).isNotNull();
       telnetLoginResponse =
-          sendAndExpectExactLine(
-              writer,
-              reader,
-              "LOGIN demo@example.com swordfish",
-              "processed:LOGIN demo@example.com swordfish");
+          client.sendAndExpectExactLine(
+              "LOGIN demo@example.com swordfish", "processed:LOGIN demo@example.com swordfish");
       assertThat(telnetLoginResponse).isNotNull();
-      telnetPlayResponse =
-          sendAndExpectExactLine(writer, reader, "PLAY demo", "processed:PLAY demo");
+      telnetPlayResponse = client.sendAndExpectExactLine("PLAY demo", "processed:PLAY demo");
       assertThat(telnetPlayResponse).isNotNull();
-      writer.println("LOOK");
-      telnetLookResponse = readMultiLineResponse(reader);
+      client.sendLine("LOOK");
+      telnetLookResponse = client.readMultiLineResponse();
     }
 
     assertThat(websocketResponses).hasSizeGreaterThanOrEqualTo(4);
@@ -189,33 +156,20 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   @Test
   void telnetPreservesGatewayRestartLogoutOnCleanBridgeClose() throws Exception {
     ensureTestServicesStarted();
-    assertThat(runGatewayWebSocketCommands("WORLDS")).containsExactly("processed:WORLDS");
 
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      assertInitialGuidance(reader);
-      assertThat(sendAndExpectExactLine(writer, reader, "WORLDS", "processed:WORLDS"))
+    try (GameplayTelnetDriver client =
+        GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT)) {
+      client.awaitInitialGuidance();
+      assertThat(client.sendAndExpectExactLine("WORLDS", "processed:WORLDS"))
           .isEqualTo("processed:WORLDS");
       assertThat(
-              sendAndExpectExactLine(
-                  writer,
-                  reader,
-                  "LOGIN demo@example.com swordfish",
-                  "processed:LOGIN demo@example.com swordfish"))
+              client.sendAndExpectExactLine(
+                  "LOGIN demo@example.com swordfish", "processed:LOGIN demo@example.com swordfish"))
           .isEqualTo("processed:LOGIN demo@example.com swordfish");
-      assertThat(sendAndExpectExactLine(writer, reader, "PLAY demo", "processed:PLAY demo"))
+      assertThat(client.sendAndExpectExactLine("PLAY demo", "processed:PLAY demo"))
           .isEqualTo("processed:PLAY demo");
       assertThat(
-              sendAndExpectExactLine(
-                  writer,
-                  reader,
+              client.sendAndExpectExactLine(
                   "FORCE_CLOSE_GATEWAY_RESTART",
                   "DISCONNECT logout;subreason=gateway_restart Gameplay session ended; please reconnect"))
           .isEqualTo(
@@ -225,66 +179,16 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
   private static void awaitCommand(String expected) {
     ensureTestServicesStarted();
-    long deadline = System.nanoTime() + COMMAND_WAIT.toNanos();
-    while (System.nanoTime() < deadline) {
-      if (GAME_SESSION_STUB.stub().receivedCommands().contains(expected)) {
-        return;
-      }
-      try {
-        TimeUnit.MILLISECONDS.sleep(50);
-      } catch (InterruptedException ex) {
-        Thread.currentThread().interrupt();
-        throw new RuntimeException(ex);
-      }
+    try {
+      TestAsyncAssertions.assertQueueContains(
+          GAME_SESSION_STUB.stub().receivedCommands(),
+          expected,
+          COMMAND_WAIT,
+          "gateway stub command " + expected);
+    } catch (InterruptedException ex) {
+      Thread.currentThread().interrupt();
+      throw new RuntimeException(ex);
     }
-    assertThat(GAME_SESSION_STUB.stub().receivedCommands()).contains(expected);
-  }
-
-  private static void assertInitialGuidance(BufferedReader reader) throws IOException {
-    assertThat(reader.readLine()).isEqualTo("OK CONNECTED");
-    assertThat(reader.readLine()).isEqualTo("Type WORLDS to list available worlds.");
-    assertThat(reader.readLine()).isEqualTo("Type LOGIN <email> <password> to authenticate.");
-    assertThat(reader.readLine()).isEqualTo("Type PLAY <world> after LOGIN to enter a world.");
-    assertThat(reader.readLine()).isEqualTo("Type HELP for commands.");
-  }
-
-  private static String sendAndExpectExactLine(
-      PrintWriter writer, BufferedReader reader, String command, String expectedLine)
-      throws IOException {
-    for (int attempt = 1; attempt <= 2; attempt++) {
-      writer.println(command);
-      StringBuilder received = new StringBuilder();
-      while (true) {
-        final String line;
-        try {
-          line = reader.readLine();
-        } catch (java.net.SocketTimeoutException ex) {
-          if (attempt == 1 && received.isEmpty()) {
-            break;
-          }
-          throw ex;
-        }
-        if (line == null) {
-          throw new AssertionError(
-              "Expected line '"
-                  + expectedLine
-                  + "' for command '"
-                  + command
-                  + "' but stream closed after receiving:\n"
-                  + received);
-        }
-        received.append(line).append("\n");
-        if (expectedLine.equals(line)) {
-          return line;
-        }
-      }
-    }
-    throw new AssertionError(
-        "Expected line '"
-            + expectedLine
-            + "' for command '"
-            + command
-            + "' but no response was received");
   }
 
   private static synchronized void ensureTestServicesStarted() {
@@ -292,43 +196,40 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
       GAME_SESSION_STUB = startGameSessionStub();
     }
     if (GATEWAY == null) {
-      GATEWAY = startGateway(GAME_SESSION_STUB.port);
+      GATEWAY = startGateway(GAME_SESSION_STUB.port());
     }
   }
 
   private static GameSessionStubHolder startGameSessionStub() {
-    int grpcPort = TestSocketUtils.findAvailableTcpPort();
     try {
-      ConfigurableApplicationContext context =
-          new SpringApplicationBuilder(GameSessionStubApplication.class)
-              .properties(
-                  "server.port=0",
-                  "spring.main.web-application-type=reactive",
-                  "spring.grpc.server.port=0",
-                  "management.endpoint.health.group.liveness.include=livenessState",
-                  "management.endpoint.health.group.readiness.include=readinessState,gameplayPathReadiness")
-              .run();
-      int port = ((WebServerApplicationContext) context).getWebServer().getPort();
-      return new GameSessionStubHolder(context, port, context.getBean(GameSessionStub.class));
+      ReactiveTestApplicationSupport.ReactiveAppHolder app =
+          ReactiveTestApplicationSupport.startReactiveApp(
+              Map.of(
+                  "spring.grpc.server.port",
+                  "0",
+                  "management.endpoint.health.group.liveness.include",
+                  "livenessState",
+                  "management.endpoint.health.group.readiness.include",
+                  "readinessState,gameplayPathReadiness"),
+              GameSessionStubApplication.class);
+      return new GameSessionStubHolder(app, app.context().getBean(GameSessionStub.class));
     } catch (RuntimeException ex) {
-      throw new IllegalStateException(
-          "Failed to start game session stub (grpcPort=" + grpcPort + ")", ex);
+      throw new IllegalStateException("Failed to start game session stub", ex);
     }
   }
 
-  private static GatewayHolder startGateway(int gameSessionPort) {
+  private static ReactiveTestApplicationSupport.ReactiveAppHolder startGateway(
+      int gameSessionPort) {
     try {
-      ConfigurableApplicationContext context =
-          new SpringApplicationBuilder(GatewayStubApplication.class)
-              .properties(
-                  "server.port=0",
-                  "spring.main.web-application-type=reactive",
-                  "gateway.stub.target-uri=ws://localhost:" + gameSessionPort + "/ws/game",
-                  "management.endpoint.health.group.liveness.include=livenessState",
-                  "management.endpoint.health.group.readiness.include=readinessState,gameplayRouteReadiness")
-              .run();
-      int port = ((WebServerApplicationContext) context).getWebServer().getPort();
-      return new GatewayHolder(context, port);
+      return ReactiveTestApplicationSupport.startReactiveApp(
+          Map.of(
+              "gateway.stub.target-uri",
+              "ws://localhost:" + gameSessionPort + "/ws/game",
+              "management.endpoint.health.group.liveness.include",
+              "livenessState",
+              "management.endpoint.health.group.readiness.include",
+              "readinessState,gameplayRouteReadiness"),
+          GatewayStubApplication.class);
     } catch (RuntimeException ex) {
       throw new IllegalStateException(
           "Failed to start gateway (gameSessionPort=" + gameSessionPort + ")", ex);
@@ -336,14 +237,12 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   }
 
   private static final class GameSessionStubHolder {
-    private final ConfigurableApplicationContext context;
-    private final int port;
+    private final ReactiveTestApplicationSupport.ReactiveAppHolder app;
     private final GameSessionStub stub;
 
     private GameSessionStubHolder(
-        ConfigurableApplicationContext context, int port, GameSessionStub stub) {
-      this.context = context;
-      this.port = port;
+        ReactiveTestApplicationSupport.ReactiveAppHolder app, GameSessionStub stub) {
+      this.app = app;
       this.stub = stub;
     }
 
@@ -351,26 +250,16 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
       return stub;
     }
 
-    void close() {
-      context.close();
-    }
-  }
-
-  private static final class GatewayHolder {
-    private final ConfigurableApplicationContext context;
-    private final int port;
-
-    private GatewayHolder(ConfigurableApplicationContext context, int port) {
-      this.context = context;
-      this.port = port;
+    int port() {
+      return app.port();
     }
 
     String websocketUrl() {
-      return "ws://localhost:" + port + "/ws/game";
+      return app.websocketUrl();
     }
 
     void close() {
-      context.close();
+      app.close();
     }
   }
 
@@ -439,54 +328,22 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     }
   }
 
-  private static String readMultiLineResponse(BufferedReader reader) throws IOException {
-    StringBuilder builder = new StringBuilder();
-    String line;
-    while ((line = reader.readLine()) != null) {
-      builder.append(line).append("\n");
-      if (line.isEmpty()) {
-        break;
-      }
-    }
-    return builder.toString();
-  }
-
   private List<String> runGatewayWebSocketCommands(String... commands) throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    List<String> responses = new CopyOnWriteArrayList<>();
-    CompletableFuture<Void> responsesReady = new CompletableFuture<>();
-    WebSocket webSocket =
-        client
-            .newWebSocketBuilder()
-            .buildAsync(
-                URI.create(GATEWAY.websocketUrl()),
-                new Listener() {
-                  private int received;
-
-                  @Override
-                  public void onOpen(WebSocket webSocket) {
-                    webSocket.request(1);
-                  }
-
-                  @Override
-                  public CompletionStage<?> onText(
-                      WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
-                    received++;
-                    webSocket.request(1);
-                    if (received >= commands.length && !responsesReady.isDone()) {
-                      responsesReady.complete(null);
-                    }
-                    return Listener.super.onText(webSocket, data, last);
-                  }
-                })
-            .join();
-    for (String command : commands) {
-      webSocket.sendText(command, true).join();
+    try (WebSocketTestProbe probe =
+        WebSocketTestProbe.connect(GATEWAY.websocketUrl(), new WebSocketHttpHeaders())) {
+      for (String command : commands) {
+        probe.send(command);
+      }
+      for (String command : commands) {
+        if ("LOOK".equalsIgnoreCase(command)) {
+          probe.awaitMessage(
+              LookTestFixtures.canonicalLookText()::equals, "LOOK response", COMMAND_WAIT);
+          continue;
+        }
+        probe.awaitStartsWith("processed:" + command, COMMAND_WAIT);
+      }
+      return probe.responses();
     }
-    responsesReady.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
-    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-    return responses;
   }
 
   private static final class GameSessionWebSocketHandler implements WebSocketHandler {

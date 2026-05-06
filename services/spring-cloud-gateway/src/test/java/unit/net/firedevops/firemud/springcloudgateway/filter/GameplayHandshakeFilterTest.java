@@ -131,6 +131,24 @@ class GameplayHandshakeFilterTest {
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isEqualTo("1");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id"))
         .isEqualTo("42");
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.WORLD_SLUG_HEADER))
+        .isEqualTo("demo");
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.REALM_SLUG_HEADER))
+        .isEqualTo("production");
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.POINTER_VERSION_HEADER))
+        .isEqualTo("18");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context"))
         .isNotBlank();
     Claims connectContextClaims =

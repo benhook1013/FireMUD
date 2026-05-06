@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import java.util.List;
@@ -28,6 +29,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Spring-managed gRPC client dependency is stored and not exposed")
 public class AdmissionPointerServiceImpl implements AdmissionPointerService {
   private static final Logger logger = LoggingUtil.getLogger(AdmissionPointerServiceImpl.class);
 

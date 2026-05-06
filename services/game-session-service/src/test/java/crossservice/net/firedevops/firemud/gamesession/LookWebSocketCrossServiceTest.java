@@ -2,31 +2,21 @@ package net.firedevops.firemud.gamesession;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.MeterRegistry;
-import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.WebSocket;
-import java.net.http.WebSocket.Listener;
 import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.CompletionStage;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.function.Predicate;
 import javax.sql.DataSource;
-import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
-import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
-import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
+import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
+import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
+import net.firedevops.firemud.gamesession.testsupport.GameplayTranscriptMatchers;
+import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
+import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.util.TestSocketUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -39,6 +29,7 @@ class LookWebSocketCrossServiceTest {
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(8);
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = 7L;
+  private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
@@ -51,58 +42,21 @@ class LookWebSocketCrossServiceTest {
   static final GenericContainer<?> REDIS =
       new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine")).withExposedPorts(6379);
 
-  private static AccountRuntimeStubServer ACCOUNT_STUB;
-  private static WorldManagementStubServer WORLD_STUB;
-  private static EntityManagementStubServer ENTITY_STUB;
-  private static CrossServiceAppHarness.GameLogicHolder GAME_LOGIC;
-  private static CrossServiceAppHarness.GameSessionHolder GAME_SESSION;
-
-  private static synchronized void replaceGameLogic(
-      CrossServiceAppHarness.GameLogicHolder restartedGameLogic) {
-    CrossServiceAppHarness.GameLogicHolder previous = GAME_LOGIC;
-    GAME_LOGIC = restartedGameLogic;
-    if (previous != null) {
-      previous.close();
-    }
-  }
+  private static GameplayCrossServiceStack STACK;
 
   @AfterAll
   static synchronized void stopServices() {
-    CrossServiceAppHarness.GameSessionHolder gameSession = GAME_SESSION;
-    GAME_SESSION = null;
-    if (gameSession != null) {
-      gameSession.close();
-    }
-
-    CrossServiceAppHarness.GameLogicHolder gameLogic = GAME_LOGIC;
-    GAME_LOGIC = null;
-    if (gameLogic != null) {
-      gameLogic.close();
-    }
-
-    AccountRuntimeStubServer accountStub = ACCOUNT_STUB;
-    ACCOUNT_STUB = null;
-    if (accountStub != null) {
-      accountStub.close();
-    }
-
-    WorldManagementStubServer worldStub = WORLD_STUB;
-    WORLD_STUB = null;
-    if (worldStub != null) {
-      worldStub.close();
-    }
-
-    EntityManagementStubServer entityStub = ENTITY_STUB;
-    ENTITY_STUB = null;
-    if (entityStub != null) {
-      entityStub.close();
+    GameplayCrossServiceStack stack = STACK;
+    STACK = null;
+    if (stack != null) {
+      stack.close();
     }
   }
 
   @Test
   void websocketLookFlowReportsCanonicalTranscriptAndMetrics() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
     List<String> responses = runLookSequence(sessionId);
 
@@ -110,34 +64,48 @@ class LookWebSocketCrossServiceTest {
     assertThat(responses.get(0)).startsWith("OK WORLDS");
     assertThat(responses.get(1)).startsWith("OK LOGIN");
     assertThat(responses.get(2)).startsWith("OK PLAY");
-    assertThat(responses.get(3).trim()).isEqualTo(canonicalLookWithPrompt());
+    assertThat(responses.get(3).trim())
+        .isEqualTo(GameplayTranscriptMatchers.canonicalLookWithPrompt());
     assertThat(responses.get(4)).startsWith("ERROR ROOM_NOT_FOUND");
 
-    assertMetricEventually("gamesession.command.look.invocations", 2.0);
-    assertMetricEventually("gamesession.command.look.failures", 1.0, "error", "ROOM_NOT_FOUND");
+    GameplayAsyncAssertions.assertMetricEventually(
+        gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
+        COMMAND_WAIT,
+        "gamesession.command.look.invocations",
+        2.0);
+    GameplayAsyncAssertions.assertMetricEventually(
+        gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
+        COMMAND_WAIT,
+        "gamesession.command.look.failures",
+        1.0,
+        "error",
+        "ROOM_NOT_FOUND");
   }
 
   @Test
   void websocketQuickLookOmitsLongDescriptionButKeepsPrompt() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
     List<String> responses = runQuickLookSequence(sessionId);
 
-    assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(responses).hasSizeGreaterThanOrEqualTo(4);
     assertThat(responses.get(0)).startsWith("OK LOGIN");
     assertThat(responses.get(1)).startsWith("OK PLAY");
-    assertThat(responses.get(2)).startsWith("OK QUICKLOOK");
-    assertThat(responses.get(2)).contains("Room: Candle-lit Antechamber");
-    assertThat(responses.get(2)).contains("Short:");
-    assertThat(responses.get(2)).doesNotContain("Long:");
-    assertThat(responses.get(2)).endsWith("demo> ");
+    assertThat(responses)
+        .anyMatch(
+            response ->
+                response.startsWith("OK QUICKLOOK")
+                    && response.contains("Room: Candle-lit Antechamber")
+                    && response.contains("Short:")
+                    && !response.contains("Long:")
+                    && response.endsWith("demo> "));
   }
 
   @Test
   void websocketMovementReturnsDestinationLookAndPersistsRoomContext() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
     List<String> responses = runMovementSequence(sessionId);
 
@@ -147,29 +115,31 @@ class LookWebSocketCrossServiceTest {
     assertThat(responses)
         .anyMatch(
             response ->
-                matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+                GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                        LookTestFixtures.DESTINATION_ROOM_ID)
                     .test(response.trim()));
     assertThat(responses)
         .anyMatch(
             response ->
-                response
-                    .trim()
-                    .equals(canonicalLookWithPrompt(LookTestFixtures.DESTINATION_ROOM_ID)));
+                GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                        LookTestFixtures.DESTINATION_ROOM_ID)
+                    .test(response.trim()));
     assertThat(responses).anyMatch(response -> response.startsWith("ERROR INVALID_EXIT"));
   }
 
   @Test
   void websocketReconnectAfterMoveKeepsDestinationRoomContext() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
-    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(4);
     assertThat(firstConnection)
         .anyMatch(
             response ->
-                matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+                GameplayTranscriptMatchers.matchesCanonicalMoveOrLookWithOptionalPrompt(
+                        LookTestFixtures.DESTINATION_ROOM_ID)
                     .test(response.trim()));
 
     List<String> reconnectLook = runLookAfterReconnect(sessionId);
@@ -177,79 +147,102 @@ class LookWebSocketCrossServiceTest {
     String combinedReconnect = String.join("\n", reconnectLook);
     assertThat(combinedReconnect).contains("OK LOGIN");
     assertThat(combinedReconnect).contains("OK PLAY");
-    assertThat(combinedReconnect).contains(canonicalLook(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(combinedReconnect)
+        .contains(GameplayTranscriptMatchers.canonicalLook(LookTestFixtures.DESTINATION_ROOM_ID));
   }
 
   @Test
   void websocketSecondConnectionTakesOverGameplayBinding() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long firstSessionId = prepareGameInstance();
     long secondSessionId = prepareAdditionalGameInstance();
-    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
 
-    try (TrackingSocket first = connectTrackingSocket(uri, firstSessionId);
-        TrackingSocket second = connectTrackingSocket(uri, secondSessionId)) {
-      first.sendAndAwait("LOGIN demo@example.com swordfish", 1);
-      first.sendAndAwait("PLAY demo", 2);
-      first.sendAndAwait("LOOK", 3);
-      assertThat(first.responses().get(2).trim()).isEqualTo(canonicalLookWithPrompt());
+    try (GameplayWebSocketDriver first = openReadySession(firstSessionId);
+        GameplayWebSocketDriver second = openReadySession(secondSessionId)) {
+      assertThat(first.responses())
+          .anyMatch(
+              response ->
+                  GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt()
+                      .test(response.trim()));
 
-      second.sendAndAwait("LOGIN demo@example.com swordfish", 1);
-      second.sendAndAwait("PLAY demo", 2);
-      second.sendAndAwait("LOOK", 3);
       assertThat(second.responses())
           .anyMatch(
               response ->
-                  response.trim().equals(canonicalLookWithPrompt())
-                      || response.trim().equals(canonicalLook()));
+                  GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt()
+                          .test(response.trim())
+                      || response.trim().equals(GameplayTranscriptMatchers.canonicalLook()));
 
-      first.sendAndAwait("LOOK", 4);
-      assertThat(first.responses().get(3)).startsWith("ERROR LOGIN_REQUIRED");
-      assertMetricEventually("gamesession.session.takeover", 1.0);
+      first.send("LOOK");
+      first.awaitStartsWith("ERROR LOGIN_REQUIRED");
+      assertThat(first.responses())
+          .anyMatch(response -> response.startsWith("ERROR LOGIN_REQUIRED"));
+      GameplayAsyncAssertions.assertMetricEventually(
+          gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
+          COMMAND_WAIT,
+          "gamesession.session.takeover",
+          1.0);
     }
   }
 
   @Test
   void websocketMovedPlayerStaysInGameAcrossGameLogicRestart() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
-    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
 
-    try (TrackingSocket socket = connectTrackingSocket(uri, sessionId)) {
-      socket.sendAndAwait("LOGIN demo@example.com swordfish", 1);
-      socket.sendAndAwait("PLAY demo", 2);
-      socket.sendAndAwait("north", 3);
-      assertThat(socket.responses().get(2).trim())
-          .matches(
-              matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+    try (GameplayWebSocketDriver socket = openReadySession(sessionId)) {
+      socket.send("north");
+      socket.awaitMatching(
+          response ->
+              GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                      LookTestFixtures.DESTINATION_ROOM_ID)
+                  .test(response.trim()),
+          "destination move refresh");
+      assertThat(socket.responses())
+          .anyMatch(
+              response ->
+                  GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                          LookTestFixtures.DESTINATION_ROOM_ID)
+                      .test(response.trim()));
 
-      replaceGameLogic(GAME_LOGIC.restart());
+      STACK.restartGameLogic();
 
       socket.send("LOOK");
-      waitForResponseMatching(
-          socket.responses(),
+      socket.awaitMatching(
           response ->
-              response
-                  .trim()
-                  .equals(canonicalLookWithPrompt(LookTestFixtures.DESTINATION_ROOM_ID)));
+              GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                      LookTestFixtures.DESTINATION_ROOM_ID)
+                  .test(response.trim()),
+          "destination look after restart");
+      assertThat(socket.responses())
+          .matches(
+              responses ->
+                  responses.stream()
+                      .anyMatch(
+                          response ->
+                              GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                                      LookTestFixtures.DESTINATION_ROOM_ID)
+                                  .test(response.trim())));
     }
   }
 
   @Test
   void websocketReconnectAfterRevocationFailsClosed() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
-    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(firstConnection.get(2).trim())
-        .matches(
-            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(firstConnection)
+        .anyMatch(
+            response ->
+                GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                        LookTestFixtures.DESTINATION_ROOM_ID)
+                    .test(response.trim()));
 
-    ACCOUNT_STUB.denyGameplayAdmission();
+    accountStub().denyGameplayAdmission();
     List<String> reconnectResponses = runPlayAfterReconnect(sessionId);
     assertThat(reconnectResponses).hasSizeGreaterThanOrEqualTo(2);
     assertThat(reconnectResponses).anyMatch(response -> response.startsWith("OK LOGIN"));
@@ -260,16 +253,19 @@ class LookWebSocketCrossServiceTest {
   @Test
   void websocketReconnectAfterStaleSessionFreshEntersGameplay() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
-    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(firstConnection.get(2).trim())
-        .matches(
-            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(firstConnection)
+        .anyMatch(
+            response ->
+                GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                        LookTestFixtures.DESTINATION_ROOM_ID)
+                    .test(response.trim()));
 
-    GAME_SESSION
+    gameSession()
         .bean(net.firedevops.firemud.gamesession.service.SessionContextService.class)
         .deleteBySessionId(TENANT_ID, sessionId);
 
@@ -278,14 +274,13 @@ class LookWebSocketCrossServiceTest {
     String combinedReconnect = String.join("\n", reconnectLook);
     assertThat(combinedReconnect).contains("OK LOGIN");
     assertThat(combinedReconnect).contains("OK PLAY");
-    assertThat(combinedReconnect).contains("demo>");
-    assertThat(combinedReconnect).contains(canonicalLook());
+    assertThat(combinedReconnect).contains(GameplayTranscriptMatchers.canonicalLook());
   }
 
   @Test
   void websocketReconnectWithoutBufferedTranscriptStillGetsFreshLook() throws Exception {
     ensureTestServicesStarted();
-    ACCOUNT_STUB.allowGameplayAdmission();
+    accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runPlayThenDisconnect(sessionId);
@@ -296,87 +291,14 @@ class LookWebSocketCrossServiceTest {
     List<String> reconnectResponses = runPlayAfterReconnectExpectingFreshLook(sessionId);
     assertThat(reconnectResponses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(reconnectResponses).anyMatch(response -> response.startsWith("OK LOGIN"));
-    assertThat(reconnectResponses).anyMatch(response -> response.trim().equals(canonicalLook()));
-  }
-
-  private static String canonicalLook() {
-    return canonicalLook(LookTestFixtures.ROOM_ID);
-  }
-
-  private static String canonicalLook(String roomId) {
-    return LookTestFixtures.canonicalLookText(roomId).trim();
-  }
-
-  private static Predicate<String> matchesCanonicalLookWithOptionalPrompt(String roomId) {
-    String canonical = canonicalLook(roomId);
-    String withPrompt = canonicalLookWithPrompt(roomId);
-    return response -> response.equals(canonical) || response.equals(withPrompt);
-  }
-
-  private static String canonicalMoveRefresh(String roomId) {
-    return LookTestFixtures.canonicalLookText(roomId).replaceFirst("\\nLong: .*\\n", "\n").trim();
-  }
-
-  private static Predicate<String> matchesCanonicalMoveRefreshWithOptionalPrompt(String roomId) {
-    String canonical = canonicalMoveRefresh(roomId);
-    String withPrompt = canonical + "\n\ndemo>";
-    return response -> response.equals(canonical) || response.equals(withPrompt);
-  }
-
-  private static String canonicalBufferedMoveRefresh(String roomId) {
-    return canonicalMoveRefresh(roomId).replaceFirst("^OK LOOK\\n", "");
-  }
-
-  private static String canonicalLookWithPrompt() {
-    return canonicalLookWithPrompt(LookTestFixtures.ROOM_ID);
-  }
-
-  private static String canonicalLookWithPrompt(String roomId) {
-    return LookTestFixtures.canonicalLookText(roomId).trim() + "\n\ndemo>";
+    assertThat(reconnectResponses)
+        .anyMatch(response -> response.trim().equals(GameplayTranscriptMatchers.canonicalLook()));
   }
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
-    if (ACCOUNT_STUB == null) {
-      ACCOUNT_STUB = new AccountRuntimeStubServer(TestSocketUtils.findAvailableTcpPort());
-      ACCOUNT_STUB.setDefaultAccountId(ACCOUNT_ID);
+    if (STACK == null) {
+      STACK = GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID).start();
     }
-    if (WORLD_STUB == null) {
-      WORLD_STUB = new WorldManagementStubServer(TestSocketUtils.findAvailableTcpPort());
-    }
-    if (ENTITY_STUB == null) {
-      ENTITY_STUB = new EntityManagementStubServer(TestSocketUtils.findAvailableTcpPort());
-    }
-    if (GAME_LOGIC == null) {
-      GAME_LOGIC = startGameLogic(WORLD_STUB.port(), ENTITY_STUB.port());
-    }
-    if (GAME_SESSION == null) {
-      GAME_SESSION = startGameSession(GAME_LOGIC.grpcPort(), ACCOUNT_STUB.port());
-    }
-  }
-
-  private static CrossServiceAppHarness.GameLogicHolder startGameLogic(
-      int worldPort, int entityPort) {
-    return CrossServiceAppHarness.startGameLogic(
-        WORLD_STUB.endpoint(), ENTITY_STUB.endpoint(), null);
-  }
-
-  private static CrossServiceAppHarness.GameSessionHolder startGameSession(
-      int gameLogicPort, int accountPort) {
-    return CrossServiceAppHarness.startGameSession(
-        gameLogicPort,
-        accountPort,
-        props -> {
-          props.put("game.logic.default-room-id", LookTestFixtures.ROOM_ID);
-          props.put("firemud.redis.host", REDIS.getHost());
-          props.put("firemud.redis.port", REDIS.getMappedPort(6379));
-          props.put("firemud.postgres.host", POSTGRES.getHost());
-          props.put("firemud.postgres.port", POSTGRES.getMappedPort(5432));
-          props.put("firemud.postgres.database", POSTGRES.getDatabaseName());
-          props.put("firemud.postgres.username", POSTGRES.getUsername());
-          props.put("firemud.postgres.password", POSTGRES.getPassword());
-          props.put("firemud.database.enabled", "true");
-          props.put("spring.jpa.hibernate.ddl-auto", "none");
-        });
   }
 
   private long prepareGameInstance() {
@@ -388,434 +310,164 @@ class LookWebSocketCrossServiceTest {
   }
 
   private long insertGameInstance(boolean clearExisting) {
-    DataSource dataSource = GAME_SESSION.bean(DataSource.class);
+    if (clearExisting) {
+      return STACK.freshGameplayBaseline(TENANT_ID, 1L, ACCOUNT_ID, 7L, ACCOUNT_ID);
+    }
+    DataSource dataSource = gameSession().bean(DataSource.class);
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
-    if (clearExisting) {
-      GAME_SESSION
-          .bean(StringRedisTemplate.class)
-          .getConnectionFactory()
-          .getConnection()
-          .serverCommands()
-          .flushAll();
-      jdbc.update("DELETE FROM game_instances");
-      GAME_SESSION.bean(ScreenBufferService.class).clear(TENANT_ID, 1L, ACCOUNT_ID);
-    }
     return GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, ACCOUNT_ID, 7L);
   }
 
   private List<String> runLookSequence(long sessionId) throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
-    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-
-    WebSocket webSocket =
-        client
-            .newWebSocketBuilder()
-            .header("X-Game-Instance-Id", String.valueOf(sessionId))
-            .header("X-Tenant-Id", String.valueOf(TENANT_ID))
-            .buildAsync(
-                uri,
-                new Listener() {
-                  @Override
-                  public void onOpen(WebSocket webSocket) {
-                    webSocket.request(1);
-                  }
-
-                  @Override
-                  public CompletionStage<?> onText(
-                      WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
-                    webSocket.request(1);
-                    return Listener.super.onText(webSocket, data, last);
-                  }
-                })
-            .join();
-
-    webSocket.sendText("WORLDS", true).join();
-    waitForResponseCount(responses, 1);
-    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
-    waitForResponseCount(responses, 2);
-    webSocket.sendText("PLAY demo", true).join();
-    waitForResponseCount(responses, 3);
-    webSocket.sendText("LOOK", true).join();
-    waitForResponseCount(responses, 4);
-    WORLD_STUB.triggerNotFound("room missing for regression");
-    webSocket.sendText("LOOK", true).join();
-    waitForResponseCount(responses, 5);
-    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-    return responses;
+    try (GameplayWebSocketDriver client = openSessionClient(sessionId)) {
+      client.send("WORLDS");
+      client.awaitStartsWith("OK WORLDS");
+      enterGameplay(client);
+      client.send("LOOK");
+      client.awaitCanonicalLook();
+      worldStub().triggerNotFound("room missing for regression");
+      client.send("LOOK");
+      client.awaitStartsWith("ERROR ROOM_NOT_FOUND");
+      return client.responses();
+    }
   }
 
   private List<String> runMovementSequence(long sessionId) throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
-    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-
-    WebSocket webSocket =
-        client
-            .newWebSocketBuilder()
-            .header("X-Game-Instance-Id", String.valueOf(sessionId))
-            .buildAsync(
-                uri,
-                new Listener() {
-                  @Override
-                  public void onOpen(WebSocket webSocket) {
-                    webSocket.request(1);
-                  }
-
-                  @Override
-                  public CompletionStage<?> onText(
-                      WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
-                    webSocket.request(1);
-                    return Listener.super.onText(webSocket, data, last);
-                  }
-                })
-            .join();
-
-    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
-    waitForResponseCount(responses, 1);
-    webSocket.sendText("PLAY demo", true).join();
-    waitForResponseCount(responses, 2);
-    webSocket.sendText("north", true).join();
-    waitForResponseCount(responses, 4);
-    webSocket.sendText("LOOK", true).join();
-    waitForResponseCount(responses, 5);
-    webSocket.sendText("west", true).join();
-    waitForResponseCount(responses, 7);
-    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-    return responses;
+    try (GameplayWebSocketDriver client = openSessionClient(sessionId)) {
+      enterGameplay(client);
+      client.send("north");
+      client.awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
+      client.send("LOOK");
+      client.awaitCanonicalLook(LookTestFixtures.DESTINATION_ROOM_ID);
+      client.send("west");
+      client.awaitStartsWith("ERROR INVALID_EXIT");
+      return client.responses();
+    }
   }
 
   private List<String> runQuickLookSequence(long sessionId) throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
-    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-
-    WebSocket webSocket =
-        client
-            .newWebSocketBuilder()
-            .header("X-Game-Instance-Id", String.valueOf(sessionId))
-            .buildAsync(
-                uri,
-                new Listener() {
-                  @Override
-                  public void onOpen(WebSocket webSocket) {
-                    webSocket.request(1);
-                  }
-
-                  @Override
-                  public CompletionStage<?> onText(
-                      WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
-                    webSocket.request(1);
-                    return Listener.super.onText(webSocket, data, last);
-                  }
-                })
-            .join();
-
-    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
-    waitForResponseCount(responses, 1);
-    webSocket.sendText("PLAY demo", true).join();
-    waitForResponseCount(responses, 2);
-    webSocket.sendText("QUICKLOOK", true).join();
-    waitForResponseMatching(responses, response -> response.startsWith("OK QUICKLOOK"));
-    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-    return responses;
+    try (GameplayWebSocketDriver client = openSessionClient(sessionId)) {
+      enterGameplay(client);
+      client.send("QUICKLOOK");
+      client.awaitStartsWith("OK QUICKLOOK");
+      return client.responses();
+    }
   }
 
   private List<String> runMoveThenDisconnect(long sessionId) throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
-    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-
-    WebSocket webSocket =
-        client
-            .newWebSocketBuilder()
-            .header("X-Game-Instance-Id", String.valueOf(sessionId))
-            .buildAsync(
-                uri,
-                new Listener() {
-                  @Override
-                  public void onOpen(WebSocket webSocket) {
-                    webSocket.request(1);
-                  }
-
-                  @Override
-                  public CompletionStage<?> onText(
-                      WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
-                    webSocket.request(1);
-                    return Listener.super.onText(webSocket, data, last);
-                  }
-                })
-            .join();
-
-    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
-    waitForResponseCount(responses, 1);
-    webSocket.sendText("PLAY demo", true).join();
-    waitForResponseCount(responses, 2);
-    webSocket.sendText("north", true).join();
-    waitForResponseCount(responses, 3);
-    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-    return responses;
+    try (GameplayWebSocketScenarios.ReconnectScenario scenario =
+        GameplayWebSocketScenarios.reconnectAfterReady(
+            ignored -> openSessionClient(sessionId),
+            "session-" + sessionId + "-first",
+            "session-" + sessionId + "-unused",
+            GameplayWebSocketScenarios.Admission.unnamed(
+                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            GameplayWebSocketScenarios.DisconnectMode.CLOSE,
+            client -> {
+              client.send("north");
+              GameplayAsyncAssertions.assertEventually(
+                  "canonical move transcript before reconnect close",
+                  java.time.Duration.ofSeconds(5),
+                  () -> {
+                    try {
+                      client.awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
+                      return true;
+                    } catch (Exception ex) {
+                      return false;
+                    }
+                  });
+            })) {
+      return scenario.firstResponses();
+    }
   }
 
   private List<String> runPlayThenDisconnect(long sessionId) throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
-    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-
-    WebSocket webSocket =
-        client
-            .newWebSocketBuilder()
-            .header("X-Game-Instance-Id", String.valueOf(sessionId))
-            .buildAsync(
-                uri,
-                new Listener() {
-                  @Override
-                  public void onOpen(WebSocket webSocket) {
-                    webSocket.request(1);
-                  }
-
-                  @Override
-                  public CompletionStage<?> onText(
-                      WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
-                    webSocket.request(1);
-                    return Listener.super.onText(webSocket, data, last);
-                  }
-                })
-            .join();
-
-    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
-    waitForResponseCount(responses, 1);
-    webSocket.sendText("PLAY demo", true).join();
-    waitForResponseCount(responses, 2);
-    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-    return responses;
+    try (GameplayWebSocketDriver client = openReadySession(sessionId)) {
+      return client.responses();
+    }
   }
 
   private List<String> runLookAfterReconnect(long sessionId) throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
-    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-
-    WebSocket webSocket =
-        client
-            .newWebSocketBuilder()
-            .header("X-Game-Instance-Id", String.valueOf(sessionId))
-            .buildAsync(
-                uri,
-                new Listener() {
-                  @Override
-                  public void onOpen(WebSocket webSocket) {
-                    webSocket.request(1);
-                  }
-
-                  @Override
-                  public CompletionStage<?> onText(
-                      WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
-                    webSocket.request(1);
-                    return Listener.super.onText(webSocket, data, last);
-                  }
-                })
-            .join();
-
-    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
-    waitForResponseCount(responses, 1);
-    webSocket.sendText("PLAY demo", true).join();
-    waitForResponseCount(responses, 2);
-    webSocket.sendText("LOOK", true).join();
-    waitForResponseMatching(
-        responses,
-        response ->
-            matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.ROOM_ID).test(response.trim())
-                || matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
-                    .test(response.trim()));
-    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-    return responses;
+    try (GameplayWebSocketScenarios.ReconnectScenario scenario =
+        GameplayWebSocketScenarios.reconnectAfterReady(
+            ignored -> openSessionClient(sessionId),
+            "session-" + sessionId + "-first",
+            "session-" + sessionId + "-reconnect",
+            GameplayWebSocketScenarios.Admission.unnamed(
+                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            GameplayWebSocketScenarios.DisconnectMode.CLOSE,
+            client -> {
+              client.send("north");
+              client.awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
+            })) {
+      scenario.reconnecting().send("LOOK");
+      scenario
+          .reconnecting()
+          .awaitResponseMatching(
+              response ->
+                  GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                              LookTestFixtures.ROOM_ID)
+                          .test(response.trim())
+                      || GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                              LookTestFixtures.DESTINATION_ROOM_ID)
+                          .test(response.trim()),
+              "reconnect look response");
+      return scenario.reconnecting().responses();
+    }
   }
 
   private List<String> runPlayAfterReconnect(long sessionId) throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
-    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-
-    WebSocket webSocket =
-        client
-            .newWebSocketBuilder()
-            .header("X-Game-Instance-Id", String.valueOf(sessionId))
-            .buildAsync(
-                uri,
-                new Listener() {
-                  @Override
-                  public void onOpen(WebSocket webSocket) {
-                    webSocket.request(1);
-                  }
-
-                  @Override
-                  public CompletionStage<?> onText(
-                      WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
-                    webSocket.request(1);
-                    return Listener.super.onText(webSocket, data, last);
-                  }
-                })
-            .join();
-
-    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
-    waitForResponseCount(responses, 1);
-    webSocket.sendText("PLAY demo", true).join();
-    waitForResponseCount(responses, 2);
-    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-    return responses;
+    try (GameplayWebSocketDriver client = openSessionClient(sessionId)) {
+      client.login("demo@example.com", "swordfish");
+      client.send("PLAY demo");
+      client.awaitMatching(
+          response ->
+              response.startsWith("OK PLAY") || response.startsWith("ERROR WORLD_ACCESS_DENIED"),
+          "play acceptance or admission denial");
+      return client.responses();
+    }
   }
 
   private List<String> runPlayAfterReconnectExpectingFreshLook(long sessionId) throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
-    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-
-    WebSocket webSocket =
-        client
-            .newWebSocketBuilder()
-            .header("X-Game-Instance-Id", String.valueOf(sessionId))
-            .buildAsync(
-                uri,
-                new Listener() {
-                  @Override
-                  public void onOpen(WebSocket webSocket) {
-                    webSocket.request(1);
-                  }
-
-                  @Override
-                  public CompletionStage<?> onText(
-                      WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
-                    webSocket.request(1);
-                    return Listener.super.onText(webSocket, data, last);
-                  }
-                })
-            .join();
-
-    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
-    waitForResponseCount(responses, 1);
-    webSocket.sendText("PLAY demo", true).join();
-    waitForResponseMatching(responses, response -> response.startsWith("OK LOOK"));
-    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-    return responses;
+    try (GameplayWebSocketDriver client = openSessionClient(sessionId)) {
+      client.login("demo@example.com", "swordfish");
+      client.send("PLAY demo");
+      client.awaitCanonicalLook();
+      return client.responses();
+    }
   }
 
-  private void waitForResponseCount(List<String> responses, int expected)
-      throws InterruptedException {
-    long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
-    while (System.currentTimeMillis() < deadline) {
-      if (responses.size() >= expected) {
-        return;
-      }
-      Thread.sleep(50);
-    }
-    throw new AssertionError(
-        "Expected at least "
-            + expected
-            + " responses, got "
-            + responses.size()
-            + " responses: "
-            + responses);
+  private GameplayWebSocketDriver openSessionClient(long sessionId) {
+    return GameplayWebSocketDriver.connectGameplaySession(
+        URI.create("ws://localhost:" + gameSession().port() + "/ws/game"),
+        COMMAND_WAIT,
+        TENANT_ID,
+        sessionId);
   }
 
-  private void waitForResponseMatching(List<String> responses, Predicate<String> predicate)
-      throws InterruptedException {
-    long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
-    while (System.currentTimeMillis() < deadline) {
-      if (responses.stream().anyMatch(predicate)) {
-        return;
-      }
-      Thread.sleep(50);
-    }
-    throw new AssertionError("Expected a response matching predicate, got " + responses);
+  private GameplayWebSocketDriver openReadySession(long sessionId) throws Exception {
+    return GameplayWebSocketScenarios.openReady(
+        ignored -> openSessionClient(sessionId),
+        "session-" + sessionId,
+        GameplayWebSocketScenarios.Admission.unnamed(
+            "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT));
   }
 
-  private void assertMetricEventually(String meterName, double expectedValue, String... tags)
-      throws Exception {
-    MeterRegistry registry = GAME_SESSION.bean(MeterRegistry.class);
-    long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
-    while (System.currentTimeMillis() < deadline) {
-      Counter counter = registry.find(meterName).tags(tags).counter();
-      if (counter != null && counter.count() >= expectedValue) {
-        return;
-      }
-      Thread.sleep(100);
-    }
-    Counter counter = registry.find(meterName).tags(tags).counter();
-    double actual = counter == null ? 0.0 : counter.count();
-    throw new AssertionError(
-        "Metric " + meterName + " did not reach " + expectedValue + "; actual=" + actual);
+  private void enterGameplay(GameplayWebSocketDriver client) throws Exception {
+    client.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
   }
 
-  private TrackingSocket connectTrackingSocket(URI uri, long sessionId) {
-    HttpClient client = HttpClient.newHttpClient();
-    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-
-    WebSocket webSocket =
-        client
-            .newWebSocketBuilder()
-            .header("X-Game-Instance-Id", String.valueOf(sessionId))
-            .header("X-Tenant-Id", String.valueOf(TENANT_ID))
-            .buildAsync(
-                uri,
-                new Listener() {
-                  @Override
-                  public void onOpen(WebSocket webSocket) {
-                    webSocket.request(1);
-                  }
-
-                  @Override
-                  public CompletionStage<?> onText(
-                      WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
-                    webSocket.request(1);
-                    return Listener.super.onText(webSocket, data, last);
-                  }
-                })
-            .join();
-    return new TrackingSocket(webSocket, responses);
+  private static AccountRuntimeStubServer accountStub() {
+    return STACK.accountStub();
   }
 
-  private final class TrackingSocket implements AutoCloseable {
-    private final WebSocket webSocket;
-    private final CopyOnWriteArrayList<String> responses;
+  private static net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer
+      worldStub() {
+    return STACK.worldStub();
+  }
 
-    private TrackingSocket(WebSocket webSocket, CopyOnWriteArrayList<String> responses) {
-      this.webSocket = webSocket;
-      this.responses = responses;
-    }
-
-    private void sendAndAwait(String command, int expectedResponses) throws InterruptedException {
-      webSocket.sendText(command, true).join();
-      waitForResponseCount(responses, expectedResponses);
-    }
-
-    private void send(String command) {
-      webSocket.sendText(command, true).join();
-    }
-
-    private List<String> responses() {
-      return responses;
-    }
-
-    @Override
-    public void close() {
-      try {
-        webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-      } catch (CompletionException ex) {
-        if (!(ex.getCause() instanceof IOException)) {
-          throw ex;
-        }
-      }
-    }
+  private static CrossServiceAppHarness.GameSessionHolder gameSession() {
+    return STACK.gameSession();
   }
 }

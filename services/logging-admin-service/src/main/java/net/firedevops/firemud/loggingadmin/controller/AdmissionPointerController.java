@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -21,6 +22,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/admission-pointers")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Spring-managed service dependency is stored and not exposed")
 public class AdmissionPointerController {
   private final AdmissionPointerService admissionPointerService;
 

@@ -7,4 +7,8 @@ public record GameplaySessionAttestationClaims(
     String accountId,
     String characterId,
     String gameInstanceId,
-    String roomInstanceId) {}
+    String roomInstanceId,
+    String worldSlug,
+    String realmSlug,
+    String pointerVersion,
+    String playableStateScope) {}

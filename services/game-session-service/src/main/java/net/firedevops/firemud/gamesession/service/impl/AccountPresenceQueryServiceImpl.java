@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
-import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
@@ -70,10 +69,10 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       results.put(accountId, offline(tenantId, accountId, recentStates.get(accountId)));
     }
 
-    List<GameInstance> runningInstances =
+    var runningInstances =
         gameInstanceRepository.findByTenantIdAndOwnerAccountIdInAndStatus(
             tenantId, requestedIds, "RUNNING");
-    for (GameInstance instance : runningInstances) {
+    for (var instance : runningInstances) {
       GameplayPresence presence =
           gameplayPresenceService.findConnectedBySessionId(instance.getId()).orElse(null);
       if (presence == null) {
@@ -83,26 +82,28 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
           gameplayPresenceActivityResolver.resolve(presence);
       GameplayWorldCatalog.RuntimeRealmTarget runtimeTarget =
           gameplayWorldCatalog
-              .resolveRuntimeTarget(tenantId, presence.gameInstanceId())
+              .resolveRealmTarget(presence.worldSlug(), presence.realmSlug())
+              .or(
+                  () ->
+                      gameplayWorldCatalog.resolveRuntimeTarget(
+                          tenantId, presence.gameInstanceId()))
               .orElse(null);
-      String worldSlug =
-          presence.worldSlug() != null
-              ? presence.worldSlug()
-              : runtimeTarget == null ? null : runtimeTarget.worldSlug();
-      String realmSlug =
-          presence.realmSlug() != null
-              ? presence.realmSlug()
-              : runtimeTarget == null ? null : runtimeTarget.realmSlug();
       results.put(
           instance.getOwnerAccountId(),
           new AccountPresenceSnapshot(
               instance.getOwnerAccountId(),
               true,
               presence.gameInstanceId(),
-              worldSlug,
+              presence.playableStateScope(),
+              presence.worldSlug() != null
+                  ? presence.worldSlug()
+                  : runtimeTarget == null ? null : runtimeTarget.worldSlug(),
               runtimeTarget == null ? null : runtimeTarget.worldDisplayName(),
-              realmSlug,
+              presence.realmSlug() != null
+                  ? presence.realmSlug()
+                  : runtimeTarget == null ? null : runtimeTarget.realmSlug(),
               runtimeTarget == null ? null : runtimeTarget.realmDisplayName(),
+              presence.pointerVersion() > 0 ? presence.pointerVersion() : null,
               presence.characterId(),
               presence.characterName(),
               activityState,
@@ -123,14 +124,22 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
 
   private AccountPresenceSnapshot offline(
       long tenantId, long accountId, AccountRecentPresenceState recentState) {
+    GameplayWorldCatalog.RuntimeRealmTarget runtimeTarget =
+        recentState == null
+            ? null
+            : gameplayWorldCatalog
+                .resolveRealmTarget(recentState.worldSlug(), recentState.realmSlug())
+                .orElse(null);
     return new AccountPresenceSnapshot(
         accountId,
         false,
-        null,
-        null,
-        null,
-        null,
-        null,
+        recentState == null ? null : recentState.gameInstanceId(),
+        recentState == null ? null : recentState.playableStateScope(),
+        recentState == null ? null : recentState.worldSlug(),
+        runtimeTarget == null ? null : runtimeTarget.worldDisplayName(),
+        recentState == null ? null : recentState.realmSlug(),
+        runtimeTarget == null ? null : runtimeTarget.realmDisplayName(),
+        recentState == null ? null : recentState.pointerVersion(),
         null,
         null,
         null,

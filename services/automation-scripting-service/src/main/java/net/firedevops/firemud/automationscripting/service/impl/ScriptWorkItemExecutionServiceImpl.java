@@ -19,6 +19,7 @@ import net.firedevops.firemud.automationscripting.service.AutomationQueueService
 import net.firedevops.firemud.automationscripting.service.AutomationQueueWorkItemPointer;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunCapacityService;
@@ -46,6 +47,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String PRIORITY_HIGH = "high";
   private static final String PRIORITY_NORMAL = "normal";
   private static final String PRIORITY_BACKGROUND = "background";
+  private static final String EVENT_ON_LOAD = "onLoad";
 
   private final ScriptWorkItemService workItemService;
   private final ScriptDefinitionRepository scriptDefinitionRepository;
@@ -53,6 +55,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository auditRepository;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
+  private final ScriptPatchReadinessProjectionService readinessProjectionService;
   private final ScriptOutputProperties outputProperties;
   private final ScriptTenantBudgetService tenantBudgetService;
   private final ScriptDryRunCapacityService dryRunCapacityService;
@@ -83,6 +86,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         dryRunCapacityService,
         objectMapper,
         new SimpleMeterRegistry(),
+        null,
         null);
   }
 
@@ -98,6 +102,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptOutputProperties outputProperties,
       ScriptTenantBudgetService tenantBudgetService,
       ScriptDryRunCapacityService dryRunCapacityService,
+      ScriptPatchReadinessProjectionService readinessProjectionService,
       ObjectMapper objectMapper,
       MeterRegistry meterRegistry) {
     this(
@@ -112,7 +117,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         dryRunCapacityService,
         objectMapper,
         meterRegistry,
-        automationQueueService);
+        automationQueueService,
+        readinessProjectionService);
   }
 
   public ScriptWorkItemExecutionServiceImpl(
@@ -139,6 +145,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         dryRunCapacityService,
         objectMapper,
         meterRegistry,
+        null,
         null);
   }
 
@@ -155,6 +162,36 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ObjectMapper objectMapper,
       MeterRegistry meterRegistry,
       AutomationQueueService automationQueueService) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        meterRegistry,
+        automationQueueService,
+        null);
+  }
+
+  public ScriptWorkItemExecutionServiceImpl(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry,
+      AutomationQueueService automationQueueService,
+      ScriptPatchReadinessProjectionService readinessProjectionService) {
     this.workItemService = workItemService;
     this.scriptDefinitionRepository = scriptDefinitionRepository;
     this.handoffService = handoffService;
@@ -167,6 +204,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.objectMapper = objectMapper;
     this.meterRegistry = meterRegistry;
     this.automationQueueService = automationQueueService;
+    this.readinessProjectionService = readinessProjectionService;
   }
 
   @Override
@@ -219,6 +257,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
     Instant now = Instant.now();
     if (!workItem.isDryRun()
+        && !isOnLoad(workItem)
         && !tenantBudgetService.tryReserve(
             workItem.getTenantId(), normalizePriorityTag(workItem.getPriorityTag()))) {
       cancel(workItem, STAGE_ADMISSION, "tenant_budget_exceeded", "tenant_budget_exceeded", now);
@@ -262,6 +301,11 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       deadLetter(workItem, STAGE_DSL_EVAL, "command_count_exceeded", "command_count_exceeded", now);
       return false;
     }
+    if (isOnLoad(workItem) && !commands.isEmpty()) {
+      deadLetter(
+          workItem, STAGE_DSL_EVAL, "definition_invalid", "onload_commands_not_allowed", now);
+      return false;
+    }
     if (exceedsPerEntityCommandLimit(commands)) {
       deadLetter(
           workItem,
@@ -276,8 +320,12 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       markTerminalSuccess(
           workItem,
           STAGE_DSL_EVAL,
-          workItem.isDryRun() ? "dry_run_completed" : "no_commands_emitted",
-          workItem.isDryRun() ? "dry_run_no_handoff" : "script_emitted_no_commands",
+          workItem.isDryRun()
+              ? "dry_run_completed"
+              : isOnLoad(workItem) ? "readiness_success" : "no_commands_emitted",
+          workItem.isDryRun()
+              ? "dry_run_no_handoff"
+              : isOnLoad(workItem) ? "ready_for_tenant" : "script_emitted_no_commands",
           now);
       return true;
     }
@@ -388,6 +436,10 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     variables.put("regionId", workItem.getRegionId());
     variables.put("regionEpoch", Long.toString(workItem.getRegionEpoch()));
     variables.put("entityId", workItem.getEntityId());
+    variables.put("worldSlug", workItem.getWorldSlug() == null ? "" : workItem.getWorldSlug());
+    variables.put("realmSlug", workItem.getRealmSlug() == null ? "" : workItem.getRealmSlug());
+    variables.put(
+        "pointerVersion", workItem.getPointerVersion() == null ? "" : workItem.getPointerVersion());
     variables.put("scriptId", workItem.getScriptId());
     variables.put("eventType", workItem.getEventType());
     variables.put("scriptPatchVersion", workItem.getScriptPatchVersion());
@@ -529,6 +581,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
     updateAudit(workItem.getId(), stage, outcome, reason, now);
+    refreshPatchReadiness(workItem);
     recordOutcome(workItem, stage, outcome);
   }
 
@@ -540,6 +593,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
     updateAudit(workItem.getId(), stage, outcome, reason, now);
+    refreshPatchReadiness(workItem);
     recordOutcome(workItem, stage, outcome);
   }
 
@@ -551,6 +605,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
     updateAudit(workItem.getId(), stage, outcome, reason, now);
+    refreshPatchReadiness(workItem);
     recordOutcome(workItem, stage, outcome);
   }
 
@@ -573,6 +628,17 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return Long.parseLong(workItem.getTenantId());
     } catch (NumberFormatException ex) {
       throw new IllegalArgumentException("tenant_id must be numeric for script definition lookup");
+    }
+  }
+
+  private static boolean isOnLoad(ScriptWorkItem workItem) {
+    return EVENT_ON_LOAD.equals(workItem.getEventType());
+  }
+
+  private void refreshPatchReadiness(ScriptWorkItem workItem) {
+    if (readinessProjectionService != null && isOnLoad(workItem)) {
+      readinessProjectionService.refreshFromOnLoadWorkItems(
+          workItem.getTenantId(), workItem.getScriptPatchVersion());
     }
   }
 

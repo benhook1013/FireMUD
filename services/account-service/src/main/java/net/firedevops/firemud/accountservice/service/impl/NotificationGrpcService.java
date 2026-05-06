@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -26,6 +27,9 @@ public class NotificationGrpcService extends NotificationServiceGrpc.Notificatio
   }
 
   @Autowired
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected service and registry remain internal collaborators.")
   public NotificationGrpcService(
       NotificationService notificationService, MeterRegistry meterRegistry) {
     this.notificationService = notificationService;

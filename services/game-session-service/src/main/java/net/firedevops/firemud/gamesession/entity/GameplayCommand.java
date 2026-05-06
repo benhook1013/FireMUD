@@ -105,8 +105,56 @@ public class GameplayCommand {
   @Column(name = "plugin_version_id", length = 128)
   private String pluginVersionId;
 
+  @Column(name = "playable_state_scope", length = 32)
+  private String playableStateScope;
+
+  @Column(name = "world_slug", length = 64)
+  private String worldSlug;
+
+  @Column(name = "realm_slug", length = 64)
+  private String realmSlug;
+
+  @Column(name = "pointer_version")
+  private Long pointerVersion;
+
+  @Column(name = "origin_source_kind", length = 64)
+  private String originSourceKind;
+
+  @Column(name = "origin_source_state", length = 64)
+  private String originSourceState;
+
+  @Column(name = "origin_source_ordinal")
+  private Long originSourceOrdinal;
+
+  @Column(name = "origin_source_due_tick_id")
+  private Long originSourceDueTickId;
+
+  @Column(name = "origin_source_due_at_ms")
+  private Long originSourceDueAtMs;
+
+  @Column(name = "queue_source_kind", length = 64)
+  private String queueSourceKind;
+
+  @Column(name = "queue_source_state", length = 64)
+  private String queueSourceState;
+
+  @Column(name = "queue_source_ordinal")
+  private Long queueSourceOrdinal;
+
+  @Column(name = "queue_source_due_tick_id")
+  private Long queueSourceDueTickId;
+
+  @Column(name = "queue_source_due_at_ms")
+  private Long queueSourceDueAtMs;
+
   @Column(name = "target_entity_id", length = 64)
   private String targetEntityId;
+
+  @Column(name = "remote_coordinator_id", length = 128)
+  private String remoteCoordinatorId;
+
+  @Column(name = "remote_followup_id", length = 128)
+  private String remoteFollowupId;
 
   @Column(name = "region_id", length = 64)
   private String regionId;

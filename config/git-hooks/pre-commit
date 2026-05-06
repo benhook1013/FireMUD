@@ -1,2 +1,8 @@
 #!/bin/sh
-./gradlew spotlessApply lintMarkdownFix checkstyleMain spotbugsMain
+
+if command -v pre-commit >/dev/null 2>&1; then
+  exec pre-commit run --hook-stage pre-commit
+fi
+
+echo "pre-commit is not installed; skipping hooks. Install with: pip install pre-commit && pre-commit install" >&2
+exit 0

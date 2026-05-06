@@ -53,7 +53,6 @@ root
 ├── codex-maintenance.sh
 ├── codex-setup.sh
 ├── CONTRIBUTING.md
-├── copilot-instructions.md
 ├── DEVELOPER_SETUP.md
 ├── FAQ.md
 ├── gradle.properties
@@ -74,7 +73,7 @@ root
 - `charts/` – Umbrella Helm chart for deploying all services together.
 - `config/` – Checkstyle, ESLint, git hooks, Hadolint, lychee link checker, Markdownlint, OpenAPI generator, protobuf (Buf), Redis, release automation, security scans, SpotBugs, and TypeScript configs.
 - `design/` – Architecture, operations, and user guide documentation; under `design/architecture/`, overview tables, responsibility matrices, glossary terms, and explicitly labeled canonical sections define target-state contracts for implementation unless a document says otherwise.
-- `dev-tools/` – Bash and Python utilities for CI helpers, deployment preflight and rollout tooling, database backups and restores, release asset generation, development certificates, API client configs (Insomnia and Kreya), preview helpers, observability scripts, data seeding, smoke-test entrypoints, and a Gatling load-testing module.
+- `dev-tools/` – Repo-owned tooling with a small set of canonical root entrypoints plus categorized subfolders for validation checks, deployment preflight and overlay/rollout tooling, database backups and restores, release asset generation, development certificates, API client configs (Kreya), preview helpers, observability scripts, data seeding, smoke-test entrypoints, and a Gatling load-testing module.
 - `docker/` – Base Dockerfiles and Docker Compose stack for local development.
 - `gradle/` – Gradle version catalog, build conventions, and wrapper binaries.
 - `k8s/` – Kubernetes base manifests, Helm charts, overlays, monitoring configs, network policies, preview/prod support assets, storage/database helpers, Velero backup assets, and Terraform modules for local and production-like clusters.
@@ -86,14 +85,13 @@ root
 - `.gitattributes` – Source control line-ending defaults and attribute rules.
 - `.gitignore` – Git ignore rules for build outputs, IDE files, and dependencies.
 - `.lycheeignore` – Ignore rules for the lychee link checker.
-- `.pre-commit-config.yaml` – Configuration for automated formatting and lint checks.
+- `.pre-commit-config.yaml` – Configuration for lightweight pre-commit formatting and file-scoped lint checks.
 - `.windsurfrules` – Compatibility link to the local AI rules.
 - `AGENTS.md` – Contribution guide pointing to project AI rules.
 - `build.gradle.kts` – Root Gradle build file that aggregates all modules.
 - `CODE_OF_CONDUCT.md` – Community conduct expectations.
 - `codex-maintenance.sh` and `codex-setup.sh` – Setup and maintenance helpers for Codex CLI workflows and AI tooling.
 - `CONTRIBUTING.md` – Developer onboarding and contribution workflow.
-- `copilot-instructions.md` – Usage notes and conventions for GitHub Copilot in this project.
 - `DEVELOPER_SETUP.md` – Step-by-step project setup instructions.
 - `FAQ.md` – Frequently asked questions for contributors.
 - `gradle.properties` – Shared Gradle settings.

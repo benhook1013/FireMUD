@@ -13,8 +13,10 @@ import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepos
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,6 +30,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
   private static final String STATUS_HANDED_OFF = "HANDED_OFF";
   private static final String STATUS_CANCELED = "CANCELED";
   private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
+  private static final String REASON_RUNTIME_REGION_SCOPE_ADVANCED =
+      "runtime_region_scope_advanced";
 
   private final GameSessionControlPlaneClient gameSessionClient;
   private final ScriptWorkItemRepository workItemRepository;
@@ -61,6 +65,11 @@ public class ScriptGameplayCommandHandoffServiceImpl
       Instant now = Instant.now();
       cancelForRollbackEpochAdvance(workItem, command, dispatchId, now);
       return new HandoffResult(false, "rollback_epoch_advanced", "", "");
+    }
+    if (isRuntimeRegionScopeAdvanced(workItem)) {
+      Instant now = Instant.now();
+      cancelForRuntimeRegionScopeAdvance(workItem, command, dispatchId, now);
+      return new HandoffResult(false, REASON_RUNTIME_REGION_SCOPE_ADVANCED, "", "");
     }
     Instant now = Instant.now();
     workItem.setStatus(STATUS_HANDOFF_IN_FLIGHT);
@@ -109,6 +118,45 @@ public class ScriptGameplayCommandHandoffServiceImpl
     updateAudit(workItem, "HANDOFF", "canceled", "rollback_epoch_advanced", now);
   }
 
+  private boolean isRuntimeRegionScopeAdvanced(ScriptWorkItem workItem) {
+    if (workItem.getTenantId() == null
+        || workItem.getTenantId().isBlank()
+        || workItem.getGameInstanceId() == null
+        || workItem.getGameInstanceId().isBlank()) {
+      return false;
+    }
+    GetGameInstanceRuntimeStateResponse runtimeState =
+        gameSessionClient.getGameInstanceRuntimeState(
+            workItem.getTenantId(), workItem.getGameInstanceId());
+    if (runtimeState == null
+        || runtimeState.hasError()
+        || !runtimeState.hasRuntimeState()
+        || runtimeState.getRuntimeState().getRegionId().isBlank()
+        || runtimeState.getRuntimeState().getRegionEpoch() <= 0) {
+      return false;
+    }
+    return !runtimeState.getRuntimeState().getRegionId().equals(normalize(workItem.getRegionId()))
+        || runtimeState.getRuntimeState().getRegionEpoch() != workItem.getRegionEpoch();
+  }
+
+  private void cancelForRuntimeRegionScopeAdvance(
+      ScriptWorkItem workItem, EmittedCommand command, String dispatchId, Instant now) {
+    workItem.setStatus(STATUS_CANCELED);
+    workItem.setCancelReason(REASON_RUNTIME_REGION_SCOPE_ADVANCED);
+    workItem.setUpdatedAt(now);
+    workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(workItem);
+    appendHandoffEvent(
+        workItem,
+        command,
+        dispatchId,
+        "",
+        REASON_RUNTIME_REGION_SCOPE_ADVANCED,
+        REASON_RUNTIME_REGION_SCOPE_ADVANCED,
+        now);
+    updateAudit(workItem, "HANDOFF", "canceled", REASON_RUNTIME_REGION_SCOPE_ADVANCED, now);
+  }
+
   private EnqueueAutomationCommandIfAbsentRequest toRequest(
       ScriptWorkItem workItem, EmittedCommand command, String dispatchId) {
     return EnqueueAutomationCommandIfAbsentRequest.newBuilder()
@@ -123,6 +171,15 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
+        .setPlayableStateScope(toPlayableStateScope(workItem.getPlayableStateScope()))
+        .setWorldSlug(normalize(workItem.getWorldSlug()))
+        .setRealmSlug(normalize(workItem.getRealmSlug()))
+        .setPointerVersion(normalize(workItem.getPointerVersion()))
+        .setOriginSourceKind(normalize(workItem.getSourceKind()))
+        .setOriginSourceState(normalize(workItem.getSourceState()))
+        .setOriginSourceOrdinal(zeroIfNull(workItem.getSourceOrdinal()))
+        .setOriginSourceDueTickId(zeroIfNull(workItem.getSourceDueTickId()))
+        .setOriginSourceDueAtMs(zeroIfNull(workItem.getSourceDueAtMs()))
         .setTargetEntityId(command.targetEntityId())
         .setCommand(command.commandText())
         .setRequiresSoloTick(command.requiresSoloTick())
@@ -196,6 +253,15 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setAutomationDispatchId(dispatchId);
     event.setGameSessionCommandId(normalize(gameSessionCommandId));
     event.setTargetEntityId(command.targetEntityId());
+    event.setPlayableStateScope(normalize(workItem.getPlayableStateScope()));
+    event.setWorldSlug(normalize(workItem.getWorldSlug()));
+    event.setRealmSlug(normalize(workItem.getRealmSlug()));
+    event.setPointerVersion(normalize(workItem.getPointerVersion()));
+    event.setSourceKind(normalize(workItem.getSourceKind()));
+    event.setSourceState(normalize(workItem.getSourceState()));
+    event.setSourceOrdinal(workItem.getSourceOrdinal());
+    event.setSourceDueTickId(workItem.getSourceDueTickId());
+    event.setSourceDueAtMs(workItem.getSourceDueAtMs());
     event.setEmittedCommandText(command.commandText());
     event.setHandoffOutcome(outcome);
     event.setHandoffReason(reason);
@@ -205,6 +271,18 @@ public class ScriptGameplayCommandHandoffServiceImpl
 
   private static String normalize(String value) {
     return value == null ? "" : value;
+  }
+
+  private static long zeroIfNull(Long value) {
+    return value == null ? 0L : value;
+  }
+
+  private static PlayableStateScope toPlayableStateScope(String playableStateScope) {
+    return switch (normalize(playableStateScope)) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+    };
   }
 
   private static void requireWorkItem(ScriptWorkItem workItem) {

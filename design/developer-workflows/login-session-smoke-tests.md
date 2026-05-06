@@ -1,6 +1,6 @@
 # Smoke Tests for Login + PLAY + LOOK
 
-These steps exercise the same `WORLDS` (optional) + `LOGIN` + `PLAY` + `LOOK` flow that users take over both WebSocket (direct Game Session) and Telnet (via TCP Proxy + Gateway) transports. The optional item/container/equipment extension then proves the first player-visible inventory loop over the same command surface. These examples deliberately use the `demo@example.com` / `swordfish` credentials that exist in the lightweight Account Service stub.
+These steps exercise the same `WORLDS` (optional) + `LOGIN` + `PLAY` + `LOOK` flow that users take over both WebSocket (direct Game Session) and Telnet (via TCP Proxy + Gateway) transports. The optional item/container/equipment extension then proves the first player-visible inventory loop over the same command surface. These examples deliberately use the `demo@example.com` / `swordfish` credentials that the Compose-backed smoke stack seeds explicitly for local verification.
 
 ## Requirements
 

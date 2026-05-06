@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.CurrencyBalance;
@@ -16,6 +17,9 @@ public class VirtualCurrencyServiceImpl implements VirtualCurrencyService {
   private final AccountTenantMembershipRepository accountTenantMembershipRepository;
   private final CurrencyBalanceRepository balanceRepository;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected repositories remain internal service collaborators.")
   public VirtualCurrencyServiceImpl(
       AccountRepository accountRepository,
       AccountTenantMembershipRepository accountTenantMembershipRepository,

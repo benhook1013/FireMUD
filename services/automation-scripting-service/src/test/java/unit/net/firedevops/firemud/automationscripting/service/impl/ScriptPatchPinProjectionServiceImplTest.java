@@ -36,8 +36,13 @@ class ScriptPatchPinProjectionServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-7")
+                        .setRegionId("region-7")
+                        .setRegionEpoch(22L)
                         .setScriptPatchPinnedControlPlaneRequestId("req-7")
                         .setScriptPatchPinnedAtMs(700L)
+                        .setWorldSlug("demo")
+                        .setRealmSlug("production")
+                        .setPointerVersion(17L)
                         .build())
                 .build());
 
@@ -59,6 +64,11 @@ class ScriptPatchPinProjectionServiceImplTest {
     assertThat(lookup.summary().get().observedAtMs()).isEqualTo(700L);
     assertThat(lookup.summary().get().projectionLagMs()).isZero();
     assertThat(lookup.summary().get().projectionStale()).isFalse();
+    assertThat(lookup.summary().get().runtimeRegionId()).isEqualTo("region-7");
+    assertThat(lookup.summary().get().runtimeRegionEpoch()).isEqualTo(22L);
+    assertThat(lookup.summary().get().worldSlug()).isEqualTo("demo");
+    assertThat(lookup.summary().get().realmSlug()).isEqualTo("production");
+    assertThat(lookup.summary().get().pointerVersion()).isEqualTo("17");
   }
 
   @Test
@@ -70,6 +80,11 @@ class ScriptPatchPinProjectionServiceImplTest {
     existing.setLastObservedControlPlaneRequestId("req-4");
     existing.setObservedAt(Instant.ofEpochMilli(400L));
     existing.setProjectionRefreshedAt(Instant.now().minusSeconds(30));
+    existing.setRuntimeRegionId("region-4");
+    existing.setRuntimeRegionEpoch(44L);
+    existing.setWorldSlug("demo");
+    existing.setRealmSlug("production");
+    existing.setPointerVersion("11");
 
     ScriptPatchPinProjectionRepository repository =
         Mockito.mock(ScriptPatchPinProjectionRepository.class);
@@ -103,6 +118,11 @@ class ScriptPatchPinProjectionServiceImplTest {
     assertThat(lookup.summary().get().observedPinnedScriptPatchVersion()).isEqualTo("patch-4");
     assertThat(lookup.summary().get().lastObservedControlPlaneRequestId()).isEqualTo("req-4");
     assertThat(lookup.summary().get().projectionStale()).isTrue();
+    assertThat(lookup.summary().get().runtimeRegionId()).isEqualTo("region-4");
+    assertThat(lookup.summary().get().runtimeRegionEpoch()).isEqualTo(44L);
+    assertThat(lookup.summary().get().worldSlug()).isEqualTo("demo");
+    assertThat(lookup.summary().get().realmSlug()).isEqualTo("production");
+    assertThat(lookup.summary().get().pointerVersion()).isEqualTo("11");
   }
 
   private static ScriptRuntimeProperties runtimeProperties() {

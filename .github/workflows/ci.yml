@@ -251,7 +251,7 @@ jobs:
         run: python3 -m pip install --disable-pip-version-check yamllint
 
       - name: 🧪 Lint tracked YAML
-        run: bash ./dev-tools/lint-yaml.sh
+        run: bash ./dev-tools/validation/lint-yaml.sh
 
   metrics-cardinality-check:
     name: Metrics Cardinality Policy Check
@@ -352,7 +352,7 @@ jobs:
           helm version
 
       - name: 🧪 Lint tracked Helm charts
-        run: bash ./dev-tools/validate-helm.sh lint
+        run: bash ./dev-tools/validation/validate-helm.sh lint
 
   helm-render-validation:
     name: Helm Render Validation
@@ -380,7 +380,7 @@ jobs:
           kubeconform -v
 
       - name: 🧪 Validate rendered Helm manifests
-        run: bash ./dev-tools/validate-helm.sh render
+        run: bash ./dev-tools/validation/validate-helm.sh render
 
   # Docs and frontend validation
   docs-check:
@@ -546,8 +546,8 @@ jobs:
       - name: 🧪 Run Gradle Checks
         id: checks
         run: |
-          echo "::group::Run Tests"
-          ./gradlew :${{ matrix.service }}:check -PfullCheck
+          echo "::group::Run Service Validation"
+          ./gradlew :${{ matrix.service }}:check :${{ matrix.service }}:bootJar -PfullCheck
           echo "::endgroup::"
 
       - name: 📈 Parse Coverage %

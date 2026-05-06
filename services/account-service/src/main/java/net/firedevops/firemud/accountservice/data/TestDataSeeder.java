@@ -12,15 +12,13 @@ import net.firedevops.firemud.accountservice.repository.ProfileRepository;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Seeds a deterministic demo account for local gameplay smoke in the {@code dev} profile. */
+/** Seeds a deterministic demo account when local smoke explicitly enables it. */
 @Component
-@Profile("dev")
 @ConditionalOnProperty(
-    prefix = "firemud.database",
+    prefix = "firemud.smoke.seed-demo-account",
     name = "enabled",
     havingValue = "true",
     matchIfMissing = false)

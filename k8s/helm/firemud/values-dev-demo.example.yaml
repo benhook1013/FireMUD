@@ -9,6 +9,8 @@ preview:
 
 previewStack:
   enabled: true
+  networkPolicies:
+    enabled: true
   defaultImageTag: develop-deadbeef
   imagePullSecrets:
     - ghcr-preview-pull
@@ -389,6 +391,9 @@ previewStack:
       extraEnv:
         GATEWAY_WS_URL: ws://spring-cloud-gateway/ws/game
         TCP_PROXY_GATEWAY_BASE_URL: http://spring-cloud-gateway
+        TCP_PROXY_DEFAULT_WORLD_SLUG: "demo"
+        TCP_PROXY_DEFAULT_REALM_SLUG: "production"
+        TCP_PROXY_DEFAULT_POINTER_VERSION: "1"
         TCP_PROXY_DEFAULT_GAME_INSTANCE_ID: "1"
         TCP_PROXY_DEFAULT_TENANT_ID: "1"
       ports:

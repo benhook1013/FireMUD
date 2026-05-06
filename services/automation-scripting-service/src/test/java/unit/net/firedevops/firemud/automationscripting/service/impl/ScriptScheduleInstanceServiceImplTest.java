@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -10,6 +11,7 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
+import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptSchedulerProperties;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
@@ -29,6 +31,9 @@ import net.firedevops.firemud.automationscripting.service.AutomationAdmissionSta
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,6 +49,7 @@ class ScriptScheduleInstanceServiceImplTest {
   private ScriptEventAuditRepository eventAuditRepository;
   private AutomationQueueService automationQueueService;
   private AutomationAdmissionStateService automationAdmissionStateService;
+  private GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private ScriptScheduleInstanceService service;
   private SimpleMeterRegistry meterRegistry;
 
@@ -58,6 +64,7 @@ class ScriptScheduleInstanceServiceImplTest {
     eventAuditRepository = mock(ScriptEventAuditRepository.class);
     automationQueueService = mock(AutomationQueueService.class);
     automationAdmissionStateService = mock(AutomationAdmissionStateService.class);
+    gameDesignControlPlaneClient = mock(GameDesignControlPlaneClient.class);
     meterRegistry = new SimpleMeterRegistry();
     when(automationAdmissionStateService.getState("1", "game-1", "region-1"))
         .thenReturn(
@@ -65,6 +72,20 @@ class ScriptScheduleInstanceServiceImplTest {
                 "1", "game-1", "region-1", "NORMAL", 4L, "", "", "", 0L));
     when(workItemRepository.saveAndFlush(org.mockito.Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(gameDesignControlPlaneClient.getPublishedScriptPatchVersion(any(), any()))
+        .thenReturn(
+            GetPublishedScriptPatchVersionResponse.newBuilder()
+                .setScriptPatch(
+                    PublishedScriptPatchVersion.newBuilder()
+                        .setScriptPatchVersion("patch-1")
+                        .setVersionId(17L)
+                        .setBaseVersionId(7L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setLastChangedAtMs(150L)
+                        .build())
+                .build());
     service =
         new ScriptScheduleInstanceServiceImpl(
             scheduleDefinitionRepository,
@@ -76,6 +97,7 @@ class ScriptScheduleInstanceServiceImplTest {
             eventAuditRepository,
             automationQueueService,
             automationAdmissionStateService,
+            gameDesignControlPlaneClient,
             new ScriptSchedulerProperties(),
             meterRegistry);
   }
@@ -110,6 +132,10 @@ class ScriptScheduleInstanceServiceImplTest {
             .setRuntimeVersionId("runtime-v2")
             .setScriptPatchPinnedControlPlaneRequestId("req-1")
             .setScriptPatchPinnedAtMs(1_000L)
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setPointerVersion(17L)
             .build());
 
     @SuppressWarnings("unchecked")
@@ -126,6 +152,10 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(6_000L));
               assertThat(instance.getObservedRuntimeVersionId()).isEqualTo("runtime-v2");
               assertThat(instance.getLastObservedControlPlaneRequestId()).isEqualTo("req-1");
+              assertThat(instance.getPlayableStateScope()).isEqualTo("SHARED");
+              assertThat(instance.getWorldSlug()).isEqualTo("demo");
+              assertThat(instance.getRealmSlug()).isEqualTo("production");
+              assertThat(instance.getPointerVersion()).isEqualTo("17");
               assertThat(instance.getTargetScopeType()).isEqualTo("ENTITY");
               assertThat(instance.getTargetScopeId()).isEqualTo("guard-1");
               assertThat(instance.getBindingPriority()).isEqualTo(10);
@@ -150,6 +180,9 @@ class ScriptScheduleInstanceServiceImplTest {
     projection.setObservedPinnedScriptPatchVersion("patch-1");
     projection.setLastObservedControlPlaneRequestId("req-3");
     projection.setObservedAt(Instant.ofEpochMilli(3_000L));
+    projection.setWorldSlug("demo");
+    projection.setRealmSlug("production");
+    projection.setPointerVersion("17");
     when(pinProjectionRepository.findByTenantIdAndObservedPinnedScriptPatchVersion("1", "patch-1"))
         .thenReturn(List.of(projection));
     when(scheduleDefinitionRepository
@@ -175,8 +208,12 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(captor.getValue())
         .singleElement()
         .satisfies(
-            instance ->
-                assertThat(instance.getPinObservedAt()).isEqualTo(Instant.ofEpochMilli(3_000L)));
+            instance -> {
+              assertThat(instance.getPinObservedAt()).isEqualTo(Instant.ofEpochMilli(3_000L));
+              assertThat(instance.getWorldSlug()).isEqualTo("demo");
+              assertThat(instance.getRealmSlug()).isEqualTo("production");
+              assertThat(instance.getPointerVersion()).isEqualTo("17");
+            });
   }
 
   @Test
@@ -215,6 +252,10 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setPointerVersion(17L)
             .build());
 
     @SuppressWarnings("unchecked")
@@ -288,6 +329,10 @@ class ScriptScheduleInstanceServiceImplTest {
     tickInstance.setPriorityTag("high");
     tickInstance.setTargetScopeType("ENTITY");
     tickInstance.setTargetScopeId("guard-1");
+    tickInstance.setPlayableStateScope("SHARED");
+    tickInstance.setWorldSlug("demo");
+    tickInstance.setRealmSlug("production");
+    tickInstance.setPointerVersion("17");
     tickInstance.setMaterializationStatus("READY");
     tickInstance.setRuntimeRegionId("region-1");
     tickInstance.setRuntimeRegionEpoch(12L);
@@ -318,6 +363,10 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getRegionId()).isEqualTo("region-1");
     assertThat(workItem.getRegionEpoch()).isEqualTo(12L);
     assertThat(workItem.getEntityId()).isEqualTo("guard-1");
+    assertThat(workItem.getPlayableStateScope()).isEqualTo("SHARED");
+    assertThat(workItem.getWorldSlug()).isEqualTo("demo");
+    assertThat(workItem.getRealmSlug()).isEqualTo("production");
+    assertThat(workItem.getPointerVersion()).isEqualTo("17");
     assertThat(workItem.getTriggerMode()).isEqualTo("TRIGGER_MODE_CATCH_UP");
     assertThat(workItem.getPriorityTag()).isEqualTo("high");
     assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
@@ -351,6 +400,10 @@ class ScriptScheduleInstanceServiceImplTest {
     timerInstance.setPriorityTag("normal");
     timerInstance.setTargetScopeType("ENTITY");
     timerInstance.setTargetScopeId("guard-1");
+    timerInstance.setPlayableStateScope("SHARED");
+    timerInstance.setWorldSlug("demo");
+    timerInstance.setRealmSlug("production");
+    timerInstance.setPointerVersion("17");
     timerInstance.setMaterializationStatus("READY");
     timerInstance.setNextDueAt(Instant.ofEpochMilli(5_000L));
     timerInstance.setScheduleMetadataJson("{}");
@@ -375,6 +428,14 @@ class ScriptScheduleInstanceServiceImplTest {
     ScriptWorkItem workItem = workItemCaptor.getValue();
     assertThat(workItem.getRegionId()).isEqualTo("region-1");
     assertThat(workItem.getRegionEpoch()).isEqualTo(12L);
+    assertThat(workItem.getWorldSlug()).isEqualTo("demo");
+    assertThat(workItem.getRealmSlug()).isEqualTo("production");
+    assertThat(workItem.getPointerVersion()).isEqualTo("17");
+    assertThat(workItem.getSourceKind()).isEqualTo("SCHEDULE_TIMER");
+    assertThat(workItem.getSourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
+    assertThat(workItem.getSourceOrdinal()).isEqualTo(5_000L);
+    assertThat(workItem.getSourceDueAtMs()).isEqualTo(5_000L);
+    assertThat(workItem.getSourceDueTickId()).isNull();
     assertThat(workItem.getPayloadJson())
         .contains("\"scheduleId\":\"guard.alert.expire.v1\"")
         .contains("\"dueAt\":5000");
@@ -410,6 +471,10 @@ class ScriptScheduleInstanceServiceImplTest {
     timerInstance.setPriorityTag("normal");
     timerInstance.setTargetScopeType("ENTITY");
     timerInstance.setTargetScopeId("guard-1");
+    timerInstance.setPlayableStateScope("SHARED");
+    timerInstance.setWorldSlug("demo");
+    timerInstance.setRealmSlug("production");
+    timerInstance.setPointerVersion("17");
     timerInstance.setMaterializationStatus("READY");
     timerInstance.setRuntimeRegionId("region-old");
     timerInstance.setRuntimeRegionEpoch(11L);
@@ -440,6 +505,9 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(auditCaptor.getValue().getFinalReason()).isEqualTo("runtime_scope_changed");
     assertThat(auditCaptor.getValue().getRegionId()).isEqualTo("region-old");
     assertThat(auditCaptor.getValue().getRegionEpoch()).isEqualTo(11L);
+    assertThat(auditCaptor.getValue().getWorldSlug()).isEqualTo("demo");
+    assertThat(auditCaptor.getValue().getRealmSlug()).isEqualTo("production");
+    assertThat(auditCaptor.getValue().getPointerVersion()).isEqualTo("17");
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<ScriptScheduleInstance>> scheduleCaptor =
         ArgumentCaptor.forClass(List.class);
@@ -477,12 +545,17 @@ class ScriptScheduleInstanceServiceImplTest {
             eventAuditRepository,
             automationQueueService,
             automationAdmissionStateService,
+            gameDesignControlPlaneClient,
             schedulerProperties,
             meterRegistry);
     ScriptScheduleInstance first =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 20L, 120L);
+    first.setPluginId("plugin-1");
+    first.setPluginVersionId("plugin-v1");
     ScriptScheduleInstance second =
         tickSchedule("guard-2", "npc-scout", "guard.scout.v1", 20L, 120L);
+    second.setPluginId("plugin-1");
+    second.setPluginVersionId("plugin-v1");
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "TICKS"))
         .thenReturn(List.of(first, second));
@@ -496,7 +569,15 @@ class ScriptScheduleInstanceServiceImplTest {
 
     assertThat(result.firedScheduleCount()).isEqualTo(1);
     assertThat(result.truncatedFiringCount()).isEqualTo(1);
-    verify(eventAuditRepository, org.mockito.Mockito.times(2)).save(any(ScriptEventAudit.class));
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository, org.mockito.Mockito.times(2)).save(auditCaptor.capture());
+    assertThat(auditCaptor.getAllValues())
+        .anySatisfy(
+            audit -> {
+              assertThat(audit.getFinalReason()).isEqualTo("catch_up_truncated");
+              assertThat(audit.getPluginId()).isEqualTo("plugin-1");
+              assertThat(audit.getPluginVersionId()).isEqualTo("plugin-v1");
+            });
     assertThat(
             meterRegistry
                 .get("automation_script_timer_catchup_truncated_total")
@@ -505,6 +586,123 @@ class ScriptScheduleInstanceServiceImplTest {
                 .counter()
                 .count())
         .isEqualTo(1.0);
+  }
+
+  @Test
+  void listTimerAuditEventsReturnsBoundedSummariesFromAuditRows() {
+    ScriptEventAudit audit = new ScriptEventAudit();
+    audit.setTenantId("1");
+    audit.setGameInstanceId("game-1");
+    audit.setRegionId("region-1");
+    audit.setRegionEpoch(12L);
+    audit.setEntityId("guard-1");
+    audit.setPlayableStateScope("SHARED");
+    audit.setWorldSlug("demo");
+    audit.setRealmSlug("production");
+    audit.setPointerVersion("17");
+    audit.setScriptId("npc-guard");
+    audit.setPluginId("plugin-1");
+    audit.setPluginVersionId("plugin-v1");
+    audit.setEventType("onInterval");
+    audit.setScriptPatchVersion("patch-1");
+    audit.setScriptEventId("timer-1");
+    audit.setTriggerMode("TRIGGER_MODE_CATCH_UP");
+    audit.setSourceKind("SCHEDULE_TIMER");
+    audit.setSourceState("SCHEDULE_DROPPED");
+    audit.setSourceOrdinal(130L);
+    audit.setSourceDueTickId(130L);
+    audit.setFinalStage("ADMISSION");
+    audit.setFinalOutcome("canceled");
+    audit.setFinalReason("catch_up_truncated");
+    audit.setCreatedAt(Instant.ofEpochMilli(1234L));
+    audit.setUpdatedAt(Instant.ofEpochMilli(1235L));
+    when(eventAuditRepository.findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq("catch_up_truncated"),
+            any(),
+            any(),
+            any()))
+        .thenReturn(List.of(audit));
+
+    List<ScriptScheduleInstanceService.TimerAuditEventSummary> result =
+        service.listTimerAuditEvents(
+            "1",
+            "game-1",
+            "patch-1",
+            "npc-guard",
+            "onInterval",
+            "catch_up_truncated",
+            100L,
+            200L,
+            25);
+
+    assertThat(result)
+        .singleElement()
+        .satisfies(
+            summary -> {
+              assertThat(summary.pluginId()).isEqualTo("plugin-1");
+              assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
+              assertThat(summary.finalReason()).isEqualTo("catch_up_truncated");
+              assertThat(summary.sourceDueTickId()).isEqualTo(130L);
+              assertThat(summary.publication().versionId()).isEqualTo(17L);
+            });
+  }
+
+  @Test
+  void listInstancesAddsScriptPatchPublicationMetadata() {
+    ScriptScheduleInstance instance = new ScriptScheduleInstance();
+    instance.setTenantId("1");
+    instance.setGameInstanceId("game-1");
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptId("npc-guard");
+    instance.setPlayableStateScope("SHARED");
+    instance.setWorldSlug("demo");
+    instance.setRealmSlug("production");
+    instance.setPointerVersion("17");
+    instance.setPluginId("plugin-1");
+    instance.setPluginVersionId("plugin-v1");
+    instance.setEventType("onTimerExpire");
+    instance.setScheduleDefinitionId("guard.alert.expire.v1");
+    instance.setScheduleKind("TIMER");
+    instance.setCadenceValue(5000L);
+    instance.setCadenceUnit("MILLISECONDS");
+    instance.setPriorityTag("normal");
+    instance.setTargetScopeType("ENTITY");
+    instance.setTargetScopeId("guard-1");
+    instance.setBindingPriority(10);
+    instance.setRequiresExclusiveEvent(false);
+    instance.setMaterializationStatus("READY");
+    instance.setNextDueAt(Instant.ofEpochMilli(5555L));
+    instance.setObservedRuntimeVersionId("runtime-v2");
+    instance.setLastObservedControlPlaneRequestId("req-9");
+    instance.setPinObservedAt(Instant.ofEpochMilli(1234L));
+    instance.setMaterializedAt(Instant.ofEpochMilli(1235L));
+    instance.setUpdatedAt(Instant.ofEpochMilli(1236L));
+    instance.setRuntimeRegionId("region-1");
+    instance.setRuntimeRegionEpoch(12L);
+    instance.setLastObservedTickId(100L);
+    instance.setLastRuntimeProgressObservedAt(Instant.ofEpochMilli(1237L));
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdAndScriptPatchVersionOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1", "patch-1"))
+        .thenReturn(List.of(instance));
+
+    List<ScriptScheduleInstanceService.ScheduleInstanceSummary> result =
+        service.listInstances("1", "game-1", "patch-1", 25);
+
+    assertThat(result)
+        .singleElement()
+        .satisfies(
+            summary -> {
+              assertThat(summary.scheduleDefinitionId()).isEqualTo("guard.alert.expire.v1");
+              assertThat(summary.pluginId()).isEqualTo("plugin-1");
+              assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
+              assertThat(summary.publication().versionId()).isEqualTo(17L);
+            });
   }
 
   @Test
@@ -522,6 +720,10 @@ class ScriptScheduleInstanceServiceImplTest {
     tickInstance.setPriorityTag("high");
     tickInstance.setTargetScopeType("ENTITY");
     tickInstance.setTargetScopeId("guard-1");
+    tickInstance.setPlayableStateScope("SHARED");
+    tickInstance.setWorldSlug("demo");
+    tickInstance.setRealmSlug("production");
+    tickInstance.setPointerVersion("17");
     tickInstance.setMaterializationStatus("READY");
     tickInstance.setRuntimeRegionId("region-1");
     tickInstance.setRuntimeRegionEpoch(12L);
@@ -543,6 +745,10 @@ class ScriptScheduleInstanceServiceImplTest {
     timerInstance.setPriorityTag("normal");
     timerInstance.setTargetScopeType("ENTITY");
     timerInstance.setTargetScopeId("guard-1");
+    timerInstance.setPlayableStateScope("SHARED");
+    timerInstance.setWorldSlug("demo");
+    timerInstance.setRealmSlug("production");
+    timerInstance.setPointerVersion("17");
     timerInstance.setMaterializationStatus("READY");
     timerInstance.setNextDueAt(Instant.ofEpochMilli(5_000L));
     timerInstance.setScheduleMetadataJson("{}");
@@ -663,6 +869,10 @@ class ScriptScheduleInstanceServiceImplTest {
     instance.setPriorityTag("normal");
     instance.setTargetScopeType("ENTITY");
     instance.setTargetScopeId(targetScopeId);
+    instance.setPlayableStateScope("SHARED");
+    instance.setWorldSlug("demo");
+    instance.setRealmSlug("production");
+    instance.setPointerVersion("17");
     instance.setMaterializationStatus("READY");
     instance.setRuntimeRegionId("region-1");
     instance.setRuntimeRegionEpoch(12L);

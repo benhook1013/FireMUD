@@ -98,6 +98,24 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
   }
 
   @Test
+  void getScopedSettingsOverridesAllowsInternalServiceIdentity() {
+    SessionContext.clear();
+    SessionContext.setContext(null, List.of(), Map.of(), true, "game-session-service", "gs-1");
+    when(settingsAuthorityService.getScopedOverrides("42", null))
+        .thenReturn(
+            new ScopedSettingsSnapshot(
+                ScopedSettingsOverrides.empty(), ScopedSettingsOverrides.empty()));
+    CapturingObserver<GetScopedSettingsOverridesResponse> observer = new CapturingObserver<>();
+
+    grpcService.getScopedSettingsOverrides(
+        GetScopedSettingsOverridesRequest.newBuilder().setTenantId("42").build(), observer);
+
+    assertThat(observer.value).isNotNull();
+    assertThat(observer.value.hasError()).isFalse();
+    verify(settingsAuthorityService).getScopedOverrides("42", null);
+  }
+
+  @Test
   void putAndDeleteSettingsDomainOverrideDelegateToAuthorityService() {
     CapturingObserver<PutSettingsDomainOverrideResponse> putObserver = new CapturingObserver<>();
     SettingsOverrides overrides =

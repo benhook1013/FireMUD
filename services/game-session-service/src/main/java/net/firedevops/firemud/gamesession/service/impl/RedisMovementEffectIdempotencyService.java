@@ -105,7 +105,11 @@ public final class RedisMovementEffectIdempotencyService
         destinationRoomInstanceId,
         current.jwt(),
         current.localeTag(),
-        current.bootstrapGameInstanceId());
+        current.bootstrapGameInstanceId(),
+        current.worldSlug(),
+        current.realmSlug(),
+        current.pointerVersion(),
+        current.playableStateScope());
   }
 
   private boolean sameGameplaySession(SessionContext current, SessionContext expected) {

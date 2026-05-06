@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Contract checks for dev-tools/validate-secret-compliance.py.
+# Contract checks for dev-tools/validation/validate-secret-compliance.py.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VALIDATOR="$ROOT_DIR/dev-tools/validate-secret-compliance.py"
+VALIDATOR="$ROOT_DIR/dev-tools/validation/validate-secret-compliance.py"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 

@@ -193,6 +193,32 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     return cached instanceof String text ? text : null;
   }
 
+  private String resolveWorldSlug(WebSocketSession session) {
+    Object cached =
+        session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.WORLD_SLUG_ATTR);
+    return cached instanceof String text ? text : null;
+  }
+
+  private String resolveRealmSlug(WebSocketSession session) {
+    Object cached =
+        session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.REALM_SLUG_ATTR);
+    return cached instanceof String text ? text : null;
+  }
+
+  private long resolvePointerVersion(WebSocketSession session) {
+    Object cached =
+        session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.POINTER_VERSION_ATTR);
+    if (!(cached instanceof String text) || !StringUtils.hasText(text)) {
+      return 0L;
+    }
+    try {
+      return Long.parseLong(text);
+    } catch (NumberFormatException ex) {
+      logger.debug("Ignoring non-numeric pointerVersion header {}", text, ex);
+      return 0L;
+    }
+  }
+
   private String resolveConnectionMode(WebSocketSession session) {
     Object cached =
         session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR);
@@ -550,7 +576,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               null,
               null,
               resolveLocaleTag(session),
-              bootstrapGameInstance));
+              bootstrapGameInstance,
+              resolveWorldSlug(session),
+              resolveRealmSlug(session),
+              resolvePointerVersion(session),
+              null));
     } catch (NumberFormatException ex) {
       logger.debug(
           "Skipping generic bootstrap session context for transportSessionId={} tenantId={} bootstrapGameInstanceId={}",
@@ -587,7 +617,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             null,
             null,
             resolveLocaleTag(session),
-            connectContext.gameInstanceId()));
+            connectContext.gameInstanceId(),
+            connectContext.worldSlug(),
+            connectContext.realmSlug(),
+            connectContext.pointerVersion(),
+            null));
   }
 
   private void closeInvalidFirstPartyContext(WebSocketSession session) {

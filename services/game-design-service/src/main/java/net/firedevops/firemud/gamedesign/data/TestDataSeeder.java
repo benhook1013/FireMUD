@@ -11,12 +11,16 @@ import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.context.annotation.Profile;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 @Component
-@Profile("dev")
+@ConditionalOnProperty(
+    prefix = "firemud.smoke.seed-demo-runtime",
+    name = "enabled",
+    havingValue = "true",
+    matchIfMissing = false)
 @RequiredArgsConstructor
 public class TestDataSeeder implements ApplicationRunner {
   private final GameRepository gameRepository;

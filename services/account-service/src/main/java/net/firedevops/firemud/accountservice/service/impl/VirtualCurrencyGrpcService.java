@@ -35,6 +35,9 @@ public class VirtualCurrencyGrpcService
   }
 
   @Autowired
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected service and registry remain internal collaborators.")
   public VirtualCurrencyGrpcService(
       VirtualCurrencyService currencyService, MeterRegistry meterRegistry) {
     this.currencyService = currencyService;

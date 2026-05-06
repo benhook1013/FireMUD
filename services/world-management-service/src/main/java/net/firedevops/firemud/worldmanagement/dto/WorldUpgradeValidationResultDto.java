@@ -9,4 +9,10 @@ public record WorldUpgradeValidationResultDto(
     String result,
     boolean remapSetRequired,
     List<String> reasons,
-    String remapSetId) {}
+    String remapSetId) {
+  public WorldUpgradeValidationResultDto {
+    stateClassesChecked = List.copyOf(stateClassesChecked);
+    checkedFamilies = List.copyOf(checkedFamilies);
+    reasons = List.copyOf(reasons);
+  }
+}

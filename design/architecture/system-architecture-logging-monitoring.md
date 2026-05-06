@@ -375,7 +375,7 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
 - **Maintenance mode visibility**
   - Recording rules or gauges exposing `coordination_maintenance_active{scope_type,tenantId,regionId,operation}` (or the equivalent health/readiness field) so operators can tell when reset, cleanup, or migration workflows intentionally hold a scope in maintenance-active state.
 - **Cross-region follow-ups**
-  - Recording rules for `remote_followups_due_total{tenantId,regionId}`, `remote_followups_drain_lag_ms{tenantId,regionId}`, and `remote_followups_backlog_over_budget_total{tenantId,regionId}` so scaling and recovery views can show drain pressure explicitly.
+  - Aggregate recording rules for `remote_followups_due_total`, `remote_followups_drain_lag_ms`, and `remote_followups_backlog_over_budget_total` so scaling and recovery views can show drain pressure explicitly without violating the metrics-cardinality policy. Per-region drilldown belongs on durable control-plane reads such as runtime ownership status, not raw Prometheus labels.
 
 Logging & Admin should:
 

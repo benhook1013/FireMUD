@@ -413,13 +413,14 @@ Illustrative transport example:
 message TriggerScriptEventRequest {
   string tenant_id = 1;
   string game_instance_id = 2;
-  string region_id = 3;
-  int64 region_epoch = 4;
-  string entity_id = 5;
-  string script_patch_version = 6;
-  string script_event_id = 7;
-  string event_type = 8;
-  bytes read_snapshot_token = 9;
+  string playable_state_scope = 3;
+  string region_id = 4;
+  int64 region_epoch = 5;
+  string entity_id = 6;
+  string script_patch_version = 7;
+  string script_event_id = 8;
+  string event_type = 9;
+  bytes read_snapshot_token = 10;
 }
 
 message GetNearbyEntitiesRequest {
@@ -431,7 +432,7 @@ message GetNearbyEntitiesRequest {
 }
 ```
 
-In this shape, Automation captures `read_snapshot_token` once from ingress and forwards the same byte-for-byte token on every authoritative read made during that handler-scoped run. A downstream service may decode it internally into fields such as `regionEpoch=14` and `tickId=981223`, but the calling contract remains "one run, one committed snapshot."
+In this shape, Automation captures `read_snapshot_token` once from ingress and forwards the same byte-for-byte token on every authoritative read made during that handler-scoped run. The resolved `playable_state_scope` also travels as first-class trigger identity for gameplay-originated events so shared-state and isolated-state realms do not collide in durable work, timer follow-up rows, or operator read models. A downstream service may decode the snapshot token internally into fields such as `regionEpoch=14` and `tickId=981223`, but the calling contract remains "one run, one committed snapshot."
 
 Crucially, **script handlers are not re-executed during tick replay or recovery**. The Automation & Scripting Service evaluates each trigger at most once, produces a set of commands annotated with `scriptEventId`, and hands those commands to the tick system. Tick-level crash recovery and retries reapply those commands idempotently in the Game Session and domain services without re-entering the DSL graph for the same trigger. Determinism for scripting therefore depends on this **“no re-execution per trigger”** guarantee plus the seeded RNG and time constraints.
 

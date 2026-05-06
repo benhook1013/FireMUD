@@ -17,10 +17,10 @@ spring:
       pem:
         firemud-grpc:
           keystore:
-            certificate: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/dev-cert.pem}
-            private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/dev-key.pem}
+            certificate: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
+            private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
           truststore:
-            certificate: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/dev-ca.pem}
+            certificate: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
   grpc:
     server:
       port: 6565
@@ -62,6 +62,6 @@ server:
 
 firemud:
   grpc:
-    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/dev-cert.pem}
-    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/dev-key.pem}
-    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/dev-ca.pem}
+    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
+    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
+    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}

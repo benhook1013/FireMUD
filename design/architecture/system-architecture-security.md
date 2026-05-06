@@ -104,6 +104,21 @@ Compromise response must not rely on wildcard key scans/deletes in hot paths; re
 
 ### SessionAttestation Key Lifecycle
 
+Gameplay `SessionAttestation` is now also the canonical internal carry-through for the admitted gameplay bundle, not only for raw session identity. When Game Session delegates gameplay-owned gRPC work, the attestation can preserve:
+
+- `tenantId`
+- `sessionId`
+- `accountId`
+- `characterId`
+- resolved `gameInstanceId`
+- optional `roomInstanceId`
+- optional admitted `worldSlug`
+- optional admitted `realmSlug`
+- optional `pointerVersion`
+- optional resolved `playableStateScope`
+
+Downstream gameplay services should validate any of those dimensions they depend on instead of reintroducing narrower local trust shortcuts from standalone request fields.
+
 Gameplay `SessionAttestation` signing keys are managed independently from JWT signing keys:
 
 - **Issuer and publication**

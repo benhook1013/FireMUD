@@ -5,15 +5,21 @@ import static org.mockito.Mockito.*;
 import java.util.List;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
+import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleDefinitionService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
+import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class ScriptVersionServiceImplTest {
   private ScriptDefinitionRepository repository;
   private ScriptScheduleDefinitionService scheduleDefinitionService;
   private ScriptScheduleInstanceService scheduleInstanceService;
+  private ScriptEventIngressService scriptEventIngressService;
+  private ScriptPatchReadinessProjectionService readinessProjectionService;
   private ScriptVersionServiceImpl service;
 
   @BeforeEach
@@ -21,9 +27,15 @@ class ScriptVersionServiceImplTest {
     repository = mock(ScriptDefinitionRepository.class);
     scheduleDefinitionService = mock(ScriptScheduleDefinitionService.class);
     scheduleInstanceService = mock(ScriptScheduleInstanceService.class);
+    scriptEventIngressService = mock(ScriptEventIngressService.class);
+    readinessProjectionService = mock(ScriptPatchReadinessProjectionService.class);
     service =
         new ScriptVersionServiceImpl(
-            repository, scheduleDefinitionService, scheduleInstanceService);
+            repository,
+            scheduleDefinitionService,
+            scheduleInstanceService,
+            scriptEventIngressService,
+            readinessProjectionService);
   }
 
   @Test
@@ -43,5 +55,17 @@ class ScriptVersionServiceImplTest {
     verify(scheduleDefinitionService)
         .refreshPatchSchedules("1", "v1-script.1", List.of(def), List.of("npc-barkeep"));
     verify(scheduleInstanceService).reconcilePinnedPatchInstances("1", "v1-script.1");
+    verify(readinessProjectionService).beginPatchReadiness("1", "v1-script.1", 1);
+    ArgumentCaptor<TriggerScriptEventRequest> requestCaptor =
+        ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
+    verify(scriptEventIngressService)
+        .admit(requestCaptor.capture(), eq("automation-scripting-service"));
+    TriggerScriptEventRequest request = requestCaptor.getValue();
+    org.assertj.core.api.Assertions.assertThat(request.getEventType()).isEqualTo("onLoad");
+    org.assertj.core.api.Assertions.assertThat(request.getScriptPatchVersion())
+        .isEqualTo("v1-script.1");
+    org.assertj.core.api.Assertions.assertThat(request.getScriptId()).isEqualTo("npc-barkeep");
+    org.assertj.core.api.Assertions.assertThat(request.getScriptEventId())
+        .isEqualTo("onload:1:v1-script.1:npc-barkeep");
   }
 }

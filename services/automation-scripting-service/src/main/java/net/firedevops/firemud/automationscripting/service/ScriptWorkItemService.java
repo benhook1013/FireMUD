@@ -3,8 +3,11 @@ package net.firedevops.firemud.automationscripting.service;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService.PluginPublicationLink;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService.ReadinessStatusSummary;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 
 public interface ScriptWorkItemService {
   long cancelPendingForPatch(CancelPendingForPatchCommand command);
@@ -90,9 +93,36 @@ public interface ScriptWorkItemService {
       String scriptPatchVersion,
       ScriptPatchStatus status,
       String statusReason,
+      String supersededByScriptPatchVersion,
       long lastChangedAtMs,
       long baseVersionId,
-      String abilitySchemaDigest) {}
+      String abilitySchemaDigest,
+      ScriptPatchPublicationLink publication) {
+    public static PatchStatusSummary fromProjection(
+        ReadinessStatusSummary readiness,
+        long baseVersionId,
+        String abilitySchemaDigest,
+        ScriptPatchPublicationLink publication) {
+      return new PatchStatusSummary(
+          readiness.scriptPatchVersion(),
+          readiness.status(),
+          readiness.statusReason(),
+          readiness.supersededByScriptPatchVersion(),
+          readiness.lastChangedAtMs(),
+          baseVersionId,
+          abilitySchemaDigest,
+          publication);
+    }
+  }
+
+  record ScriptPatchPublicationLink(
+      String scriptPatchVersion,
+      long versionId,
+      long baseVersionId,
+      VersionLifecycleState publicationState,
+      long lastChangedAtMs,
+      String lookupErrorCode,
+      String lookupErrorMessage) {}
 
   record AutomationDrainStatusSummary(
       String tenantId,
@@ -114,7 +144,8 @@ public interface ScriptWorkItemService {
       long lastChangedAtMs,
       long projectionAsOfMs,
       long projectionLagMs,
-      boolean projectionStale) {}
+      boolean projectionStale,
+      ScriptPatchPublicationLink publication) {}
 
   record PatchInstanceRolloutEventSummary(
       String eventId,
@@ -124,7 +155,8 @@ public interface ScriptWorkItemService {
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       String statusReason,
       long observedAtMs,
-      long projectionAsOfMs) {}
+      long projectionAsOfMs,
+      ScriptPatchPublicationLink publication) {}
 
   record HandoffEventSummary(
       String eventId,
@@ -139,10 +171,21 @@ public interface ScriptWorkItemService {
       String automationDispatchId,
       String gameSessionCommandId,
       String targetEntityId,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
+      String sourceKind,
+      String sourceState,
+      long sourceOrdinal,
+      long sourceDueTickId,
+      long sourceDueAtMs,
       String emittedCommandText,
       String handoffOutcome,
       String handoffReason,
-      long observedAtMs) {}
+      long observedAtMs,
+      ScriptPatchPublicationLink publication,
+      PluginPublicationLink pluginPublication) {}
 
   record DeadLetterSummary(
       String workItemId,
@@ -151,14 +194,27 @@ public interface ScriptWorkItemService {
       String regionId,
       long regionEpoch,
       String entityId,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
+      String sourceKind,
+      String sourceState,
+      long sourceOrdinal,
+      long sourceDueTickId,
+      long sourceDueAtMs,
       String scriptId,
+      String pluginId,
+      String pluginVersionId,
       String eventType,
       String scriptPatchVersion,
       String scriptEventId,
       String status,
       String reason,
       long createdAtMs,
-      long updatedAtMs) {}
+      long updatedAtMs,
+      ScriptPatchPublicationLink publication,
+      PluginPublicationLink pluginPublication) {}
 
   record ReplayDeadLettersCommand(
       String tenantId,

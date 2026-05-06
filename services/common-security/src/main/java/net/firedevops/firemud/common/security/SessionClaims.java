@@ -14,6 +14,17 @@ public record SessionClaims(
     String serviceName,
     String serviceInstanceId) {
 
+  public SessionClaims {
+    globalRoles = globalRoles == null ? List.of() : List.copyOf(globalRoles);
+    scopedRoles =
+        scopedRoles == null
+            ? Map.of()
+            : scopedRoles.entrySet().stream()
+                .collect(
+                    java.util.stream.Collectors.toUnmodifiableMap(
+                        Map.Entry::getKey, entry -> List.copyOf(entry.getValue())));
+  }
+
   public static SessionClaims fromJwt(Jws<Claims> jwt) {
     Claims payload = jwt.getPayload();
     return new SessionClaims(
@@ -28,6 +39,16 @@ public record SessionClaims(
   public void applyToSession() {
     SessionContext.setContext(
         accountId, globalRoles, scopedRoles, internalService, serviceName, serviceInstanceId);
+  }
+
+  @Override
+  public List<String> globalRoles() {
+    return List.copyOf(globalRoles);
+  }
+
+  @Override
+  public Map<String, List<String>> scopedRoles() {
+    return Map.copyOf(scopedRoles);
   }
 
   public boolean hasPrivilegedRole() {

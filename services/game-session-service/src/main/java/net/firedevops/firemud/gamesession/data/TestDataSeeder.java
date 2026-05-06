@@ -9,13 +9,17 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameManifestRepository;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.context.annotation.Profile;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Seeds minimal records for local development when running with the {@code dev} Spring profile. */
+/** Seeds deterministic smoke/runtime records when local compose explicitly enables them. */
 @Component
-@Profile("dev")
+@ConditionalOnProperty(
+    prefix = "firemud.smoke.seed-demo-runtime",
+    name = "enabled",
+    havingValue = "true",
+    matchIfMissing = false)
 @RequiredArgsConstructor
 public class TestDataSeeder implements ApplicationRunner {
   private final GameManifestRepository gameManifestRepository;

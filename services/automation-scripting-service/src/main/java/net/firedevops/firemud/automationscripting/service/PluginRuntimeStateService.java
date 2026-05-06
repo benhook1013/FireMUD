@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.service;
 
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 
 public interface PluginRuntimeStateService {
   Optional<PluginRuntimeStatus> getStatus(String tenantId, String gameInstanceId, String pluginId);
@@ -65,7 +66,8 @@ public interface PluginRuntimeStateService {
       String pluginId,
       String activePluginVersionId,
       String reason,
-      long lastChangedAtMs) {}
+      long lastChangedAtMs,
+      PluginPublicationLink activePublication) {}
 
   record PluginRuntimeEventSummary(
       String eventId,
@@ -78,7 +80,9 @@ public interface PluginRuntimeStateService {
       String statusReason,
       String controlPlaneRequestId,
       String actorPrincipal,
-      long observedAtMs) {}
+      long observedAtMs,
+      PluginPublicationLink previousPublication,
+      PluginPublicationLink activePublication) {}
 
   record PluginRuntimeStatus(
       String activePluginVersionId,
@@ -88,5 +92,16 @@ public interface PluginRuntimeStateService {
       long lastChangedAtMs,
       String controlPlaneRequestId,
       String actorPrincipal,
-      long lastPolicyCheckedAtMs) {}
+      long lastPolicyCheckedAtMs,
+      PluginPublicationLink activePublication,
+      PluginPublicationLink pendingPublication) {}
+
+  record PluginPublicationLink(
+      String pluginVersionId,
+      long publicationId,
+      VersionLifecycleState publicationState,
+      String statusReason,
+      long lastChangedAtMs,
+      String lookupErrorCode,
+      String lookupErrorMessage) {}
 }

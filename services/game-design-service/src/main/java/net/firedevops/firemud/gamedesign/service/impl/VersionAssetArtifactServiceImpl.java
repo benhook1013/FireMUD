@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
@@ -29,6 +30,9 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected collaborators remain internal service dependencies")
 public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactService {
   private final VersionAssetArtifactRepository repository;
   private final VersionAssetPurgeWorkflowRepository purgeWorkflowRepository;

@@ -502,6 +502,12 @@ public final class GameSessionGrpcService
         if (snapshot.realmDisplayName() != null && !snapshot.realmDisplayName().isBlank()) {
           entry.setRealmDisplayName(snapshot.realmDisplayName());
         }
+        if (snapshot.pointerVersion() != null && snapshot.pointerVersion() > 0L) {
+          entry.setPointerVersion(snapshot.pointerVersion());
+        }
+        if (snapshot.playableStateScope() != null && !snapshot.playableStateScope().isBlank()) {
+          entry.setPlayableStateScope(mapPlayableStateScope(snapshot.playableStateScope()));
+        }
         if (snapshot.characterId() != null) {
           entry.setCharacterId(Long.toString(snapshot.characterId()));
         }
@@ -850,6 +856,20 @@ public final class GameSessionGrpcService
       case "TAKEOVER" ->
           AccountRecentPresenceDisposition.ACCOUNT_RECENT_PRESENCE_DISPOSITION_TAKEOVER;
       default -> AccountRecentPresenceDisposition.ACCOUNT_RECENT_PRESENCE_DISPOSITION_UNSPECIFIED;
+    };
+  }
+
+  private net.firedevops.firemud.entitymanagement.v1.PlayableStateScope mapPlayableStateScope(
+      String playableStateScope) {
+    return switch (playableStateScope) {
+      case "SHARED" ->
+          net.firedevops.firemud.entitymanagement.v1.PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" ->
+          net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+              .PLAYABLE_STATE_SCOPE_ISOLATED;
+      default ->
+          net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+              .PLAYABLE_STATE_SCOPE_UNSPECIFIED;
     };
   }
 }

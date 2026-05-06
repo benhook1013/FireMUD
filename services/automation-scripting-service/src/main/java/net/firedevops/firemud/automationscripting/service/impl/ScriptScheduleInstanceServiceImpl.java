@@ -13,6 +13,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptSchedulerProperties;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
@@ -30,9 +31,14 @@ import net.firedevops.firemud.automationscripting.repository.ScriptScheduleInsta
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
+import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
+import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -63,6 +69,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private final ScriptEventAuditRepository eventAuditRepository;
   private final AutomationQueueService automationQueueService;
   private final AutomationAdmissionStateService automationAdmissionStateService;
+  private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private final ScriptSchedulerProperties schedulerProperties;
   private final MeterRegistry meterRegistry;
 
@@ -76,6 +83,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       ScriptEventAuditRepository eventAuditRepository,
       AutomationQueueService automationQueueService,
       AutomationAdmissionStateService automationAdmissionStateService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
       ScriptSchedulerProperties schedulerProperties,
       MeterRegistry meterRegistry) {
     this.scheduleDefinitionRepository = scheduleDefinitionRepository;
@@ -87,6 +95,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     this.eventAuditRepository = eventAuditRepository;
     this.automationQueueService = automationQueueService;
     this.automationAdmissionStateService = automationAdmissionStateService;
+    this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
     this.schedulerProperties = schedulerProperties;
     this.meterRegistry = meterRegistry;
   }
@@ -118,6 +127,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     for (ScriptScheduleInstance instance : existing) {
       existingByKey.put(
           scopeKey(
+              instance.getPlayableStateScope(),
               instance.getPluginId(),
               instance.getPluginVersionId(),
               instance.getScheduleDefinitionId(),
@@ -140,6 +150,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       for (ScriptEventBinding binding : matchingBindings(bindingsByScriptEvent, definition)) {
         String key =
             scopeKey(
+                normalizePlayableStateScope(runtimeState.getPlayableStateScope()),
                 definition.getPluginId(),
                 definition.getPluginVersionId(),
                 definition.getScheduleDefinitionId(),
@@ -167,6 +178,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 instance ->
                     !desiredKeys.contains(
                         scopeKey(
+                            instance.getPlayableStateScope(),
                             instance.getPluginId(),
                             instance.getPluginVersionId(),
                             instance.getScheduleDefinitionId(),
@@ -194,6 +206,12 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               .setTenantId(projection.getTenantId())
               .setGameInstanceId(projection.getGameInstanceId())
               .setPinnedScriptPatchVersion(projection.getObservedPinnedScriptPatchVersion())
+              .setRegionId(blankToEmpty(projection.getRuntimeRegionId()))
+              .setRegionEpoch(projection.getRuntimeRegionEpoch())
+              .setPlayableStateScope(toPlayableStateScope(projection.getPlayableStateScope()))
+              .setWorldSlug(blankToEmpty(projection.getWorldSlug()))
+              .setRealmSlug(blankToEmpty(projection.getRealmSlug()))
+              .setPointerVersion(parsePointerVersion(projection.getPointerVersion()))
               .setScriptPatchPinnedControlPlaneRequestId(
                   projection.getLastObservedControlPlaneRequestId())
               .setScriptPatchPinnedAtMs(projection.getObservedAt().toEpochMilli())
@@ -308,6 +326,38 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 .thenComparing(ScriptScheduleInstance::getScheduleDefinitionId))
         .limit(boundedLimit)
         .map(this::toSummary)
+        .map(summary -> withPublication(tenantId, summary))
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<TimerAuditEventSummary> listTimerAuditEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String scriptId,
+      String eventType,
+      String finalReason,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit) {
+    requireText(tenantId, "tenant_id");
+    int boundedLimit = Math.min(Math.max(limit <= 0 ? 50 : limit, 1), 500);
+    return eventAuditRepository
+        .findTimerAuditEvents(
+            tenantId,
+            blankToEmpty(gameInstanceId),
+            blankToEmpty(scriptPatchVersion),
+            blankToEmpty(scriptId),
+            blankToEmpty(eventType),
+            blankToEmpty(finalReason),
+            changedAfterMs <= 0 ? null : Instant.ofEpochMilli(changedAfterMs),
+            changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs),
+            org.springframework.data.domain.PageRequest.of(0, boundedLimit))
+        .stream()
+        .map(ScriptScheduleInstanceServiceImpl::toTimerAuditSummary)
+        .map(summary -> withPublication(tenantId, summary))
         .toList();
   }
 
@@ -374,6 +424,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setGameInstanceId(gameInstanceId);
     instance.setScriptPatchVersion(definition.getScriptPatchVersion());
     instance.setScriptId(definition.getScriptId());
+    instance.setPlayableStateScope(
+        normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
+    instance.setWorldSlug(blankToEmpty(runtimeState.getWorldSlug()));
+    instance.setRealmSlug(blankToEmpty(runtimeState.getRealmSlug()));
+    instance.setPointerVersion(normalizePointerVersion(runtimeState.getPointerVersion()));
     instance.setPluginId(blankToEmpty(definition.getPluginId()));
     instance.setPluginVersionId(blankToEmpty(definition.getPluginVersionId()));
     instance.setEventType(definition.getEventType());
@@ -565,12 +620,16 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     String entityId = targetEntityId(instance);
     String scriptEventId = timerScriptEventId(candidate);
     if (eventAuditRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             instance.getTenantId(),
             instance.getGameInstanceId(),
             candidate.regionId(),
             candidate.regionEpoch(),
             entityId,
+            blankToEmpty(instance.getPlayableStateScope()),
+            blankToEmpty(instance.getWorldSlug()),
+            blankToEmpty(instance.getRealmSlug()),
+            blankToEmpty(instance.getPointerVersion()),
             instance.getScriptId(),
             instance.getEventType(),
             DEFAULT_SCHEMA_VERSION,
@@ -585,7 +644,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setRegionId(candidate.regionId());
     audit.setRegionEpoch(candidate.regionEpoch());
     audit.setEntityId(entityId);
+    audit.setPlayableStateScope(blankToEmpty(instance.getPlayableStateScope()));
+    audit.setWorldSlug(blankToEmpty(instance.getWorldSlug()));
+    audit.setRealmSlug(blankToEmpty(instance.getRealmSlug()));
+    audit.setPointerVersion(blankToEmpty(instance.getPointerVersion()));
     audit.setScriptId(instance.getScriptId());
+    audit.setPluginId(blankToEmpty(instance.getPluginId()));
+    audit.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
@@ -593,6 +658,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setDryRun(false);
     audit.setSourceService(SOURCE_SERVICE);
     audit.setTriggerMode(TriggerMode.TRIGGER_MODE_CATCH_UP.name());
+    audit.setSourceKind("SCHEDULE_TIMER");
+    audit.setSourceState("SCHEDULE_DROPPED");
+    audit.setSourceOrdinal(candidate.dueOrderValue());
+    audit.setSourceDueTickId(candidate.wallClock() ? null : candidate.dueTickId());
+    audit.setSourceDueAtMs(candidate.wallClock() ? candidate.dueAt().toEpochMilli() : null);
     audit.setFinalStage(FINAL_STAGE_ADMISSION);
     audit.setFinalOutcome(FINAL_OUTCOME_CANCELED);
     audit.setFinalReason(finalReason);
@@ -669,12 +739,16 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     String entityId = targetEntityId(instance);
     String scriptEventId = timerScriptEventId(candidate);
     if (workItemRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             instance.getTenantId(),
             instance.getGameInstanceId(),
             candidate.regionId(),
             candidate.regionEpoch(),
             entityId,
+            blankToEmpty(instance.getPlayableStateScope()),
+            blankToEmpty(instance.getWorldSlug()),
+            blankToEmpty(instance.getRealmSlug()),
+            blankToEmpty(instance.getPointerVersion()),
             instance.getScriptId(),
             instance.getEventType(),
             DEFAULT_SCHEMA_VERSION,
@@ -692,6 +766,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setRegionId(candidate.regionId());
     item.setRegionEpoch(candidate.regionEpoch());
     item.setEntityId(entityId);
+    item.setPlayableStateScope(blankToEmpty(instance.getPlayableStateScope()));
+    item.setWorldSlug(blankToEmpty(instance.getWorldSlug()));
+    item.setRealmSlug(blankToEmpty(instance.getRealmSlug()));
+    item.setPointerVersion(blankToEmpty(instance.getPointerVersion()));
     item.setScriptId(instance.getScriptId());
     item.setPluginId(blankToEmpty(instance.getPluginId()));
     item.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
@@ -702,6 +780,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setDryRun(false);
     item.setSourceService(SOURCE_SERVICE);
     item.setTriggerMode(TriggerMode.TRIGGER_MODE_CATCH_UP.name());
+    item.setSourceKind("SCHEDULE_TIMER");
+    item.setSourceState("SCHEDULE_DUE_CLAIMED");
+    item.setSourceOrdinal(candidate.dueOrderValue());
+    item.setSourceDueTickId(candidate.wallClock() ? null : candidate.dueTickId());
+    item.setSourceDueAtMs(candidate.wallClock() ? candidate.dueAt().toEpochMilli() : null);
     item.setPriorityTag(instance.getPriorityTag());
     item.setReadSnapshotToken(timerReadSnapshotToken(candidate));
     item.setPayloadJson(timerPayload(candidate));
@@ -731,7 +814,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setRegionId(candidate.regionId());
     audit.setRegionEpoch(candidate.regionEpoch());
     audit.setEntityId(workItem.getEntityId());
+    audit.setPlayableStateScope(blankToEmpty(workItem.getPlayableStateScope()));
+    audit.setWorldSlug(blankToEmpty(workItem.getWorldSlug()));
+    audit.setRealmSlug(blankToEmpty(workItem.getRealmSlug()));
+    audit.setPointerVersion(blankToEmpty(workItem.getPointerVersion()));
     audit.setScriptId(instance.getScriptId());
+    audit.setPluginId(blankToEmpty(workItem.getPluginId()));
+    audit.setPluginVersionId(blankToEmpty(workItem.getPluginVersionId()));
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
@@ -739,6 +828,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setDryRun(false);
     audit.setSourceService(SOURCE_SERVICE);
     audit.setTriggerMode(TriggerMode.TRIGGER_MODE_CATCH_UP.name());
+    audit.setSourceKind("SCHEDULE_TIMER");
+    audit.setSourceState("WORK_ITEM_PERSISTED");
+    audit.setSourceOrdinal(workItem.getSourceOrdinal());
+    audit.setSourceDueTickId(workItem.getSourceDueTickId());
+    audit.setSourceDueAtMs(workItem.getSourceDueAtMs());
     audit.setWorkItemId(workItem.getId());
     audit.setFinalStage("ADMISSION");
     audit.setFinalOutcome("work_item_persisted");
@@ -768,6 +862,174 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private static String timerScriptEventId(TimerFiringCandidate candidate) {
     return "timer-" + shortHash(candidate.identity());
+  }
+
+  private TimerAuditEventSummary withPublication(String tenantId, TimerAuditEventSummary summary) {
+    PluginRuntimeStateService.PluginPublicationLink pluginPublication =
+        pluginPublicationLink(tenantId, summary.pluginId(), summary.pluginVersionId());
+    return new TimerAuditEventSummary(
+        summary.tenantId(),
+        summary.gameInstanceId(),
+        summary.regionId(),
+        summary.regionEpoch(),
+        summary.entityId(),
+        summary.playableStateScope(),
+        summary.worldSlug(),
+        summary.realmSlug(),
+        summary.pointerVersion(),
+        summary.scriptId(),
+        summary.pluginId(),
+        summary.pluginVersionId(),
+        summary.eventType(),
+        summary.scriptPatchVersion(),
+        summary.scriptEventId(),
+        summary.triggerMode(),
+        summary.sourceState(),
+        summary.sourceOrdinal(),
+        summary.sourceDueTickId(),
+        summary.sourceDueAtMs(),
+        summary.workItemId(),
+        summary.finalStage(),
+        summary.finalOutcome(),
+        summary.finalReason(),
+        summary.createdAtMs(),
+        summary.updatedAtMs(),
+        publicationLink(tenantId, summary.scriptPatchVersion()),
+        pluginPublication);
+  }
+
+  private ScheduleInstanceSummary withPublication(
+      String tenantId, ScheduleInstanceSummary summary) {
+    PluginRuntimeStateService.PluginPublicationLink pluginPublication =
+        pluginPublicationLink(tenantId, summary.pluginId(), summary.pluginVersionId());
+    return new ScheduleInstanceSummary(
+        summary.tenantId(),
+        summary.gameInstanceId(),
+        summary.scriptPatchVersion(),
+        summary.scriptId(),
+        summary.playableStateScope(),
+        summary.worldSlug(),
+        summary.realmSlug(),
+        summary.pointerVersion(),
+        summary.pluginId(),
+        summary.pluginVersionId(),
+        summary.eventType(),
+        summary.scheduleDefinitionId(),
+        summary.scheduleKind(),
+        summary.cadenceValue(),
+        summary.cadenceUnit(),
+        summary.priorityTag(),
+        summary.targetScopeType(),
+        summary.targetScopeId(),
+        summary.bindingPriority(),
+        summary.requiresExclusiveEvent(),
+        summary.materializationStatus(),
+        summary.nextDueAtMs(),
+        summary.nextDueTickId(),
+        summary.observedRuntimeVersionId(),
+        summary.lastObservedControlPlaneRequestId(),
+        summary.pinObservedAtMs(),
+        summary.materializedAtMs(),
+        summary.updatedAtMs(),
+        summary.runtimeRegionId(),
+        summary.runtimeRegionEpoch(),
+        summary.lastObservedTickId(),
+        summary.lastRuntimeProgressObservedAtMs(),
+        publicationLink(tenantId, summary.scriptPatchVersion()),
+        pluginPublication);
+  }
+
+  private ScriptWorkItemService.ScriptPatchPublicationLink publicationLink(
+      String tenantId, String scriptPatchVersion) {
+    GetPublishedScriptPatchVersionResponse response =
+        gameDesignControlPlaneClient.getPublishedScriptPatchVersion(tenantId, scriptPatchVersion);
+    if (response.hasError() && !response.getError().getCode().isBlank()) {
+      return new ScriptWorkItemService.ScriptPatchPublicationLink(
+          blankToEmpty(scriptPatchVersion),
+          0L,
+          0L,
+          VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+          0L,
+          blankToEmpty(response.getError().getCode()),
+          blankToEmpty(response.getError().getMessage()));
+    }
+    return new ScriptWorkItemService.ScriptPatchPublicationLink(
+        blankToEmpty(response.getScriptPatch().getScriptPatchVersion()),
+        response.getScriptPatch().getVersionId(),
+        response.getScriptPatch().getBaseVersionId(),
+        response.getScriptPatch().getPublicationState(),
+        response.getScriptPatch().getLastChangedAtMs(),
+        "",
+        "");
+  }
+
+  private PluginRuntimeStateService.PluginPublicationLink pluginPublicationLink(
+      String tenantId, String pluginId, String pluginVersionId) {
+    if (blankToEmpty(pluginId).isBlank() || blankToEmpty(pluginVersionId).isBlank()) {
+      return null;
+    }
+    var response =
+        gameDesignControlPlaneClient.getPublishedPluginVersion(tenantId, pluginId, pluginVersionId);
+    if (response == null) {
+      return new PluginRuntimeStateService.PluginPublicationLink(
+          pluginVersionId,
+          0L,
+          VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+          "",
+          0L,
+          "GAME_DESIGN_UNAVAILABLE",
+          "Game Design service unavailable");
+    }
+    if (response.hasError() && !response.getError().getCode().isBlank()) {
+      return new PluginRuntimeStateService.PluginPublicationLink(
+          pluginVersionId,
+          0L,
+          VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+          "",
+          0L,
+          blankToEmpty(response.getError().getCode()),
+          blankToEmpty(response.getError().getMessage()));
+    }
+    return new PluginRuntimeStateService.PluginPublicationLink(
+        blankToEmpty(response.getPluginVersion().getPluginVersionId()),
+        response.getPluginVersion().getPublicationId(),
+        response.getPluginVersion().getPublicationState(),
+        blankToEmpty(response.getPluginVersion().getStatusReason()),
+        response.getPluginVersion().getLastChangedAtMs(),
+        "",
+        "");
+  }
+
+  private static TimerAuditEventSummary toTimerAuditSummary(ScriptEventAudit audit) {
+    return new TimerAuditEventSummary(
+        audit.getTenantId(),
+        audit.getGameInstanceId(),
+        audit.getRegionId(),
+        audit.getRegionEpoch() == null ? 0L : audit.getRegionEpoch(),
+        audit.getEntityId(),
+        blankToEmpty(audit.getPlayableStateScope()),
+        blankToEmpty(audit.getWorldSlug()),
+        blankToEmpty(audit.getRealmSlug()),
+        blankToEmpty(audit.getPointerVersion()),
+        audit.getScriptId(),
+        blankToEmpty(audit.getPluginId()),
+        blankToEmpty(audit.getPluginVersionId()),
+        audit.getEventType(),
+        audit.getScriptPatchVersion(),
+        audit.getScriptEventId(),
+        audit.getTriggerMode(),
+        blankToEmpty(audit.getSourceState()),
+        audit.getSourceOrdinal() == null ? 0L : audit.getSourceOrdinal(),
+        audit.getSourceDueTickId() == null ? 0L : audit.getSourceDueTickId(),
+        audit.getSourceDueAtMs() == null ? 0L : audit.getSourceDueAtMs(),
+        audit.getWorkItemId() == null ? 0L : audit.getWorkItemId(),
+        audit.getFinalStage(),
+        audit.getFinalOutcome(),
+        audit.getFinalReason(),
+        audit.getCreatedAt() == null ? 0L : audit.getCreatedAt().toEpochMilli(),
+        audit.getUpdatedAt() == null ? 0L : audit.getUpdatedAt().toEpochMilli(),
+        null,
+        null);
   }
 
   private static String timerReadSnapshotToken(TimerFiringCandidate candidate) {
@@ -802,7 +1064,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   private static String scheduleKey(ScriptScheduleInstance instance) {
-    return blankToEmpty(instance.getPluginId())
+    return blankToEmpty(instance.getPlayableStateScope())
+        + "|"
+        + blankToEmpty(instance.getPluginId())
         + "|"
         + blankToEmpty(instance.getPluginVersionId())
         + "|"
@@ -837,6 +1101,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         instance.getGameInstanceId(),
         instance.getScriptPatchVersion(),
         instance.getScriptId(),
+        blankToEmpty(instance.getPlayableStateScope()),
+        blankToEmpty(instance.getWorldSlug()),
+        blankToEmpty(instance.getRealmSlug()),
+        blankToEmpty(instance.getPointerVersion()),
         instance.getPluginId(),
         instance.getPluginVersionId(),
         instance.getEventType(),
@@ -864,16 +1132,21 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         instance.getLastObservedTickId() == null ? 0L : instance.getLastObservedTickId(),
         instance.getLastRuntimeProgressObservedAt() == null
             ? 0L
-            : instance.getLastRuntimeProgressObservedAt().toEpochMilli());
+            : instance.getLastRuntimeProgressObservedAt().toEpochMilli(),
+        null,
+        null);
   }
 
   private static String scopeKey(
+      String playableStateScope,
       String pluginId,
       String pluginVersionId,
       String scheduleDefinitionId,
       String targetScopeType,
       String targetScopeId) {
-    return blankToEmpty(pluginId)
+    return blankToEmpty(playableStateScope)
+        + "\u0000"
+        + blankToEmpty(pluginId)
         + "\u0000"
         + blankToEmpty(pluginVersionId)
         + "\u0000"
@@ -886,6 +1159,36 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private static String bindingKey(String scriptId, String eventType) {
     return blankToEmpty(scriptId) + "\u0000" + blankToEmpty(eventType);
+  }
+
+  private static String normalizePlayableStateScope(PlayableStateScope playableStateScope) {
+    if (playableStateScope == null) {
+      return "";
+    }
+    return switch (playableStateScope) {
+      case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
+      case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
+      case PLAYABLE_STATE_SCOPE_UNSPECIFIED, UNRECOGNIZED -> "";
+    };
+  }
+
+  private static PlayableStateScope toPlayableStateScope(String playableStateScope) {
+    return switch (blankToEmpty(playableStateScope)) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+    };
+  }
+
+  private static String normalizePointerVersion(long pointerVersion) {
+    return pointerVersion > 0 ? Long.toString(pointerVersion) : "";
+  }
+
+  private static long parsePointerVersion(String pointerVersion) {
+    if (pointerVersion == null || pointerVersion.isBlank()) {
+      return 0L;
+    }
+    return Long.parseLong(pointerVersion);
   }
 
   private record TickAdvanceResult(

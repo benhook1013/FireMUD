@@ -24,6 +24,8 @@ The first implementation cut is now real:
 
 The remaining work is to finish the deeper runtime/control-plane follow-through instead of leaving the new family as design-only.
 
+Within this family, the docs are now good enough to use as the primary review surface for `02.1.6` and the current-boundary routing model in `09.1`, but the broader `09.x` family still has enough active follow-through that later consumers should not be treated as code-free review territory yet.
+
 ## Why This Slice Exists
 
 Without a dedicated family here:

@@ -1,15 +1,12 @@
 # Helm Charts
 
 This directory contains Helm charts for deploying FireMUD services.
-Charts are provided for the **Account Service** and **Game Session Service** as focused examples.
-The umbrella chart under `firemud/` is the evolving deployment surface for the hosted `pr-preview` environment.
-The same chart is also used for the fixed `dev-demo-cluster` hosted `develop` environment, currently via a separate values example and workflow.
 
-The files `values-local.yaml` and `values-dev.yaml` demonstrate how runtime
-settings such as Redis connection info, tick interval, and feature flags can be
-overridden per environment.
-Replica counts and resource limits are also defined in the chart `values.yaml`
-so they can be tuned without modifying the templates.
+- `firemud/` is the real full-stack chart path used for the hosted `pr-preview` and fixed `dev-demo-cluster` environments.
+- `account-service/` and `game-session-service/` are narrower service-specific example charts.
+- The top-level `charts/firemud` chart elsewhere in the repository is a separate support chart, not the main full-stack Helm surface described here.
+
+The top-level `values-local.yaml` and `values-dev.yaml` files in this directory are for the narrower example service charts in this folder, not for the hosted full-stack `firemud/` chart. Replica counts and resource limits are also defined in each chart's own `values.yaml` so they can be tuned without modifying templates.
 
 Install the example chart with:
 
@@ -27,14 +24,14 @@ helm install account-service ./account-service \
   -f values-local.yaml
 ```
 
-To deploy all services at once you can use the umbrella chart:
+To deploy all services at once through the full-stack chart path, start from the environment-specific example values shipped with that chart:
 
 ```bash
-helm install firemud ./firemud \
-  -f values-local.yaml
+helm upgrade --install firemud ./firemud \
+  -f firemud/values-preview.example.yaml
 ```
 
-For the future hosted PR preview environment, start from:
+For hosted PR preview environments, start from:
 
 ```bash
 helm upgrade --install pr-123 ./firemud \
@@ -61,5 +58,6 @@ helm upgrade --install pr-123 ./firemud \
 
 Current limitation:
 
-- The umbrella chart now renders the core backend/stateful preview topology and passes server-side validation against the preview cluster API.
-- Final preview deployment is still intentionally gated in `preview.yml` while the frontend/runtime delivery path and first-create data bootstrap remain under implementation.
+- The umbrella chart is now the real hosted deploy path for preview and dev-demo, including Helm apply and hosted smoke.
+- Hosted environments still intentionally clean-redeploy today rather than preserving mutable state across updates.
+- The broader frontend/runtime delivery path remains under implementation even though the TCP-first hosted proof path is live.

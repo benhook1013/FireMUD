@@ -1,0 +1,179 @@
+{{- if and .Values.previewStack.enabled (.Values.previewStack.networkPolicies.enabled) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: internal-services
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - account-service
+          - automation-scripting-service
+          - entity-management-service
+          - game-design-service
+          - game-logic-service
+          - game-session-service
+          - logging-admin-service
+          - social-groups-service
+          - world-management-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 6565
+        - protocol: TCP
+          port: 4317
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - account-service
+                  - automation-scripting-service
+                  - entity-management-service
+                  - game-design-service
+                  - game-logic-service
+                  - game-session-service
+                  - logging-admin-service
+                  - social-groups-service
+                  - world-management-service
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 6565
+        - protocol: TCP
+          port: 4317
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis-coord
+        - podSelector:
+            matchLabels:
+              app: redis-cache
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - podSelector:
+            matchLabels:
+              app: minio
+      ports:
+        - protocol: TCP
+          port: 9000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: internal-services-egress
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - account-service
+          - automation-scripting-service
+          - entity-management-service
+          - game-design-service
+          - game-logic-service
+          - game-session-service
+          - logging-admin-service
+          - social-groups-service
+          - world-management-service
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - account-service
+                  - automation-scripting-service
+                  - entity-management-service
+                  - game-design-service
+                  - game-logic-service
+                  - game-session-service
+                  - logging-admin-service
+                  - social-groups-service
+                  - world-management-service
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 6565
+        - protocol: TCP
+          port: 4317
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis-coord
+        - podSelector:
+            matchLabels:
+              app: redis-cache
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - podSelector:
+            matchLabels:
+              app: minio
+      ports:
+        - protocol: TCP
+          port: 9000
+{{- end }}

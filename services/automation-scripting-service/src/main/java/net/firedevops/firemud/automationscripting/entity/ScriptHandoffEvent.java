@@ -54,6 +54,30 @@ public class ScriptHandoffEvent {
   @Column(nullable = false, length = 64)
   private String targetEntityId;
 
+  @Column(nullable = false, length = 32)
+  private String playableStateScope = "";
+
+  @Column(nullable = false, length = 64)
+  private String worldSlug = "";
+
+  @Column(nullable = false, length = 64)
+  private String realmSlug = "";
+
+  @Column(nullable = false, length = 64)
+  private String pointerVersion = "";
+
+  @Column(nullable = false, length = 64)
+  private String sourceKind = "";
+
+  @Column(nullable = false, length = 64)
+  private String sourceState = "";
+
+  @Column private Long sourceOrdinal;
+
+  @Column private Long sourceDueTickId;
+
+  @Column private Long sourceDueAtMs;
+
   @Column(nullable = false, length = 1024)
   private String emittedCommandText;
 

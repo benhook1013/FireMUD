@@ -7,10 +7,10 @@ This guide explains how to configure a local development environment for the Fir
 Install the following tools before building the services:
 
 - **Java 21+** – required for all Spring Boot microservices.
-- **Gradle** – used to build and test each service.
 - **Node.js** (latest LTS) – needed if you plan to build the React frontend.
 - **Docker** and **Docker Compose** – run the full stack locally.
 - **Git** – version control for cloning and contributing.
+- **Gradle** – optional; only needed if you must regenerate the wrapper.
 
 ## Optional Developer Tooling
 
@@ -18,7 +18,6 @@ The following tools are not strictly required to build or run the stack, but the
 
 - **GitHub CLI (`gh`)** – recommended for managing pull requests from the command line and enabling AI tooling (such as Codex) to inspect or update PR metadata. See [GitHub CLI Integration for PRs](#github-cli-integration-for-prs) for setup details.
 - **Python 3**, **`pip`**, and **`pre-commit`** – used to run the repository’s pre-commit hooks (`pip install pre-commit && pre-commit install`) as described in `CONTRIBUTING.md`.
-- **Insomnia** – a desktop client for REST and WebSocket testing. An Insomnia project is provided in `dev-tools/insomnia/` to exercise login, registration, and gateway admin routes.
 - **Kreya** – a gRPC client configured via `dev-tools/kreya/.kreya-project.yaml` for calling services like `AccountService`, `EntityService`, and `PlayerService` on `localhost:6565`.
 - **Redis CLI (`redis-cli`)** and **RedisInsight** – useful for inspecting transient gameplay/session state in the local Redis instance and browsing keys like `session:*`, `tick:*`, and `timer:*`.
 - **Kubernetes CLI (`kubectl`)** and optionally **Helm** – install `kubectl` if you work on `k8s/`, Kustomize overlays, or overlay validation CI. Local validation uses `kubectl kustomize`, so this is effectively required for Kubernetes-related changes.
@@ -49,7 +48,9 @@ Expected result:
 
 ## Building Services
 
-Each microservice includes a `Dockerfile` and a Gradle build script. After cloning the repository, generate the Gradle wrapper scripts if they are not already present:
+The repository ships with a root Gradle wrapper. In normal use, run tasks with `./gradlew`.
+
+If the wrapper JAR is missing and you need to regenerate it, run:
 
 ```bash
 gradle wrapper --gradle-version 8.14.3 --distribution-type bin
@@ -58,24 +59,15 @@ gradle wrapper --gradle-version 8.14.3 --distribution-type bin
 Run this command any time the wrapper JAR is missing. It downloads the
 required `gradle-wrapper.jar` into `gradle/wrapper/`.
 
-This creates `gradlew`, `gradlew.bat`, and the wrapper JAR under `gradle/wrapper/`. You only need to run it once after cloning.
-
-If you're on Windows, a PowerShell script is available to generate wrappers for every service:
-
-```powershell
-./dev-tools/init-gradle-wrappers.ps1
-```
-
-Run this script after cloning if the wrapper files are missing from the individual service folders.
+This recreates `gradlew`, `gradlew.bat`, and the wrapper JAR under `gradle/wrapper/`.
 
 Build all modules with:
 
 ```bash
-# Build all images
 ./gradlew build
 ```
 
-Gradle compiles the services and prepares Docker images using the included Dockerfiles.
+This compiles the repository modules and runs the build lifecycle. It does not build the service container images.
 
 ### Running Tests for a Single Service
 
@@ -90,7 +82,7 @@ Using a `services:` prefix (for example `:services:tcp-proxy-service:test`) will
 
 ### Spring Profiles for Testing
 
-Local development and CI default to relaxed Spring profiles so you can run `./gradlew bootRun` or `./gradlew test` without provisioning PostgreSQL. The build script sets `spring.profiles.active` to `dev` for `bootRun` and `test` for `Test` tasks when no profile is provided, and those profiles disable Flyway while pointing to an in-memory H2 datasource. Set `SPRING_PROFILES_ACTIVE=prod` (or `--args=--spring.profiles.active=prod` for `bootRun`) when you specifically want to use PostgreSQL, such as when running the Docker Compose stack or validating migration scripts.
+The only maintained alternate Spring profile is `test`, and Gradle test tasks default to it when no profile is provided. `bootRun` no longer forces a local runtime profile automatically; if you want an in-memory test-style run, set `SPRING_PROFILES_ACTIVE=test` explicitly. If you want the real runtime topology, use the canonical Docker Compose stack or provide the real Postgres/Redis/downstream endpoints directly.
 
 ### Telnet Proxy Limits in Local Dev
 
@@ -190,6 +182,24 @@ To manually fix correctable issues, run:
 
 Linting rules are defined in `config/markdownlint/.markdownlint-cli2.jsonc`. Auto-fixing is not part of the `check` phase so that CI runs remain non-destructive.
 
+## Pre-commit Hooks
+
+If you want lightweight commit-time hygiene, install the pre-commit hooks:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+The configured hooks intentionally stay lightweight:
+
+- `spotlessApply` always runs.
+- `lintMarkdownFix` runs when staged Markdown files are present.
+- `shellcheck` runs on staged shell scripts in repo-owned script paths.
+- `hadolint` runs on staged Dockerfiles.
+
+Heavier checks such as full Gradle `check`, SpotBugs, Checkstyle, broad link validation, and smoke proofs remain explicit local validation steps rather than commit hooks.
+
 ### Frontend Lint & Accessibility
 
 The React client in `web-client` provides npm scripts for linting, formatting, and running an accessibility audit. Install dependencies with Linux-native npm from the `web-client` directory:
@@ -236,23 +246,9 @@ Run this command from the project root after installing dependencies with
 
 ## Lombok and MapStruct
 
-The microservices use **Lombok** to cut down on boilerplate and **MapStruct** for DTO mapping. Each service's `build.gradle.kts` already declares these dependencies:
+The microservices use **Lombok** to reduce boilerplate and **MapStruct** for DTO mapping. Versions are managed centrally through the Gradle version catalog and each service's `build.gradle.kts`.
 
-```kotlin
-dependencies {
-    implementation("org.mapstruct:mapstruct:1.5.5.Final")
-    annotationProcessor("org.mapstruct:mapstruct-processor:1.5.5.Final")
-
-    compileOnly("org.projectlombok:lombok:1.18.30")
-    annotationProcessor("org.projectlombok:lombok:1.18.30")
-}
-```
-
-Make sure annotation processing is enabled in your IDE (e.g., IntelliJ IDEA) so Lombok and MapStruct can generate code during compilation.
-
-## Spring Profiles and Databases
-
-Local dev and CI tasks default to the `dev` or `test` Spring profiles. These profiles disable Flyway and point the services at an in-memory H2 datasource so `bootRun` and unit tests start without a running PostgreSQL instance. Use the `prod` profile (for example, `SPRING_PROFILES_ACTIVE=prod ./gradlew :service:bootRun` or via Docker Compose) when you need Flyway migrations against PostgreSQL.
+Make sure annotation processing is enabled in your IDE (for example, IntelliJ IDEA) so Lombok and MapStruct can generate code during compilation.
 
 ## Running with Docker Compose
 
@@ -304,7 +300,7 @@ Use `dev-tools/backups/backup-db.sh` to create a snapshot and
 `dev-tools/restores/restore-db.sh` to restore one:
 
 ```bash
-./dev-tools/backups/backup-db.sh             # writes to ./backups
+./dev-tools/backups/backup-db.sh             # writes to docker/backups
 ./dev-tools/restores/restore-db.sh backups/<file>
 ```
 
@@ -320,7 +316,7 @@ runbooks. Velero schedules back up only Kubernetes manifests.
 
 The Docker Compose stack includes a `pg-dump-cron` service that runs
 `dev-tools/backups/pg-dump-rotate.sh` every 15 minutes. Dumps are written to the
-`./backups` directory and follow the same 15min/daily/weekly/monthly rotation policy as
+`docker/backups/` directory and follow the same 15min/daily/weekly/monthly rotation policy as
 production. Set `PG_DUMP_BUCKET` and `PG_DUMP_ENDPOINT` to automatically upload
 the files to your object store.
 
@@ -340,24 +336,6 @@ rely on their own durability/failover behavior and scoped coordination resets
 as described in the Redis architecture and runbooks.
 
 ## Manual Testing Tools
-
-### Insomnia for REST and WebSocket
-
-An Insomnia project is included under `dev-tools/insomnia/`. From the
-**Import/Export** menu choose **Import From File** and select
-`firemud-insomnia.json` to quickly test login, registration, and gateway admin routes. The project defines a **Base Environment** with `base_url` and an optional `jwt` variable for admin endpoints. If you populate the variable, Insomnia injects `Authorization: Bearer {{ jwt }}` on calls that need authorization.
-
-WebSocket testing is also configured. Use the `WebSocket Login` request to send
-raw commands like:
-
-```text
-LOGIN user pass
-LOOK
-SAY Hello travelers
-```
-
-Add or modify requests directly in Insomnia and re-export the workspace if you
-need to share updates.
 
 ### Kreya for gRPC APIs
 
@@ -403,7 +381,7 @@ Typical key patterns include `session:*`, `tick:*`, `timer:*`, and `ratelimit:*`
 
 Environment‑specific settings live in each service's `src/main/resources` directory.
 
-- `application.yml` – base configuration containing both `dev` and `prod` profile sections.
+- `application.yml` – base configuration for the canonical runtime contract.
 - `SPRING_PROFILES_ACTIVE` – environment variable used to select the active profile at runtime.
 
 More details on deployment environments and gateway routing can be found in the following design documents:
@@ -416,7 +394,7 @@ These documents explain how the compose setup differs from production and provid
 
 ### Local development model
 
-- The canonical local path now uses the normal `dev` profile with the real Postgres, Redis, Gateway, Account, and gameplay-service topology.
+- The canonical local path now uses the normal runtime configuration with the real Postgres, Redis, Gateway, Account, and gameplay-service topology.
 - For end-to-end validation, prefer the repo-owned smoke scripts under `dev-tools/` instead of ad hoc single-service shortcuts:
   - `dev-tools/verify-fresh-bootstrap.sh`
   - `dev-tools/verify-restart-state.sh`

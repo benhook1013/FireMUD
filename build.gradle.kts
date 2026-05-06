@@ -7,17 +7,6 @@ import org.gradle.api.tasks.compile.JavaCompile
 import java.io.File
 import org.springframework.boot.gradle.tasks.run.BootRun
 
-buildscript {
-    repositories {
-        mavenCentral()
-    }
-    dependencies {
-        classpath("com.fasterxml.jackson.core:jackson-databind:2.21.3")
-        classpath("org.flywaydb:flyway-database-postgresql:12.5.0")
-        classpath("org.postgresql:postgresql:42.7.11")
-    }
-}
-
 plugins {
     java
     id("com.github.node-gradle.node") version "7.1.0"
@@ -195,11 +184,12 @@ subprojects {
         }
 
         tasks.named<BootRun>("bootRun") {
-            val activeProfile = System.getProperty("spring.profiles.active")
-                ?: System.getenv("SPRING_PROFILES_ACTIVE")
-                ?: "dev"
-
-            systemProperty("spring.profiles.active", activeProfile)
+            val activeProfile =
+                System.getProperty("spring.profiles.active")
+                    ?: System.getenv("SPRING_PROFILES_ACTIVE")
+            if (!activeProfile.isNullOrBlank()) {
+                systemProperty("spring.profiles.active", activeProfile)
+            }
         }
 
         tasks.withType<Test>().configureEach {
@@ -222,7 +212,7 @@ subprojects {
         testImplementation(libs.findLibrary("spring-boot-starter-restclient-test").get())
         testImplementation(libs.findLibrary("spring-boot-resttestclient").get())
         testImplementation(libs.findLibrary("spring-boot-starter-webmvc-test").get())
-        testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.0.3")
+        testRuntimeOnly(libs.findLibrary("junit-platform-launcher").get())
         if (projectDir.parentFile.name == "services" && !name.startsWith("common-")) {
             testImplementation(testFixtures(project(":common-test-support")))
         }
@@ -252,7 +242,6 @@ subprojects {
     tasks.withType<SpotBugsTask>().configureEach {
         enabled = fullCheck
         excludeFilter.set(rootProject.file("config/spotbugs/spotbugs-exclude.xml"))
-        setIgnoreFailures(true)
         when (name) {
             "spotbugsMain" -> dependsOn("compileJava", "processResources")
             "spotbugsTest" -> dependsOn("compileTestJava", "processTestResources")
@@ -323,25 +312,25 @@ tasks.register<Exec>("linkCheck") {
 tasks.register<Exec>("checkFlywayVersions") {
     group = "verification"
     description = "Checks service Flyway migrations for duplicate or out-of-order versions."
-    commandLine("bash", "dev-tools/check-flyway-versions.sh")
+    commandLine("bash", "dev-tools/validation/check-flyway-versions.sh")
 }
 
 tasks.register<Exec>("checkGrpcTransportConfig") {
     group = "verification"
     description = "Checks gRPC transport configuration for stale server TLS property usage."
-    commandLine("bash", "dev-tools/check-grpc-transport-config.sh")
+    commandLine("bash", "dev-tools/validation/check-grpc-transport-config.sh")
 }
 
 tasks.register<Exec>("checkGrpcPublicMethods") {
     group = "verification"
     description = "Checks gRPC public-method allowlists against proto declarations."
-    commandLine("bash", "dev-tools/check-grpc-public-methods.sh")
+    commandLine("bash", "dev-tools/validation/check-grpc-public-methods.sh")
 }
 
 tasks.register<Exec>("checkProtoTimeFields") {
     group = "verification"
     description = "Checks proto time-related field names for explicit time domains or units."
-    commandLine("python3", "dev-tools/check-proto-time-fields.py")
+    commandLine("python3", "dev-tools/validation/check-proto-time-fields.py")
 }
 
 tasks.register<Exec>("validateObservabilityContract") {
@@ -480,8 +469,7 @@ tasks.register("buildDockerImagesSmoke") {
 }
 
 tasks.register<Exec>("generateDevCerts") {
-    workingDir("dev-tools")
-    commandLine("bash", "generate-dev-certs.sh", "certs")
+    commandLine("bash", "dev-tools/certs/generate-dev-certs.sh")
 }
 
 tasks.register<Exec>("devUp") {

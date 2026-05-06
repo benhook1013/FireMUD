@@ -1,5 +1,6 @@
 package net.firedevops.firemud.springcloudgateway.health;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
@@ -36,6 +37,10 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
   private final JwtUtil jwtUtil;
   private final HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Dependency lookup is framework-owned; construction failure should fail startup loudly.")
   public GameplayRouteReadinessHealthIndicator(
       @Value("${local.server.port:${server.port:8080}}") int serverPort,
       ReadinessTransitionTracker readinessTransitionTracker,

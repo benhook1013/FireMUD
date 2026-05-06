@@ -32,4 +32,5 @@ if [[ "${CHECK_EXTERNAL_LINKS:-}" == 1 ]]; then
   OPTIONS+=(--scheme https --scheme http)
 fi
 
+# Lychee automatically reads repository-root .lycheeignore entries for link exclusions.
 "$BIN" --no-progress "${OPTIONS[@]}" "${FILES[@]}"

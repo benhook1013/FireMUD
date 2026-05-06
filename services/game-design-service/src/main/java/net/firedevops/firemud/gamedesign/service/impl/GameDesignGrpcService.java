@@ -1418,7 +1418,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     GetScopedSettingsOverridesResponse.Builder builder =
         GetScopedSettingsOverridesResponse.newBuilder();
     try {
-      AdminRoleGuard.requireAdminRole();
+      requireSettingsAuthorityReadAccess();
       var snapshot =
           settingsAuthorityService.getScopedOverrides(
               request.getTenantId(),
@@ -1806,6 +1806,13 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   }
 
   private void requireLaunchAttestationReadAccess() {
+    if (SessionContext.isInternalService()) {
+      return;
+    }
+    AdminRoleGuard.requireAdminRole();
+  }
+
+  private void requireSettingsAuthorityReadAccess() {
     if (SessionContext.isInternalService()) {
       return;
     }

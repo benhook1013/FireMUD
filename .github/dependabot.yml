@@ -15,6 +15,10 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      gradle-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
 
   - package-ecosystem: "npm"
     directory: "/config/openapi"
@@ -31,6 +35,10 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      openapi-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
 
   - package-ecosystem: "npm"
     directory: "/web-client"
@@ -47,6 +55,10 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      web-client-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
     ignore:
       - dependency-name: "eslint"
         update-types:
@@ -67,3 +79,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      github-actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"

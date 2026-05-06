@@ -125,7 +125,11 @@ public class GameLogicClient
                     Long.toString(context.accountId()),
                     characterId,
                     gameInstanceId,
-                    roomId))
+                    roomId,
+                    context.worldSlug(),
+                    context.realmSlug(),
+                    pointerVersionClaim(context),
+                    context.playableStateScope()))
             .build();
     return callStub().resolveLook(request);
   }
@@ -185,7 +189,16 @@ public class GameLogicClient
             .setEffectId(effectId == null ? "" : effectId)
             .setSessionAttestation(
                 gameplaySessionAttestationService.issueGameplaySessionAttestation(
-                    tenantId, sessionId, accountId, characterId, gameInstanceId, roomId))
+                    tenantId,
+                    sessionId,
+                    accountId,
+                    characterId,
+                    gameInstanceId,
+                    roomId,
+                    context.worldSlug(),
+                    context.realmSlug(),
+                    pointerVersionClaim(context),
+                    context.playableStateScope()))
             .build();
     return callStub().sendCommunication(request);
   }
@@ -216,7 +229,11 @@ public class GameLogicClient
                     Long.toString(context.accountId()),
                     characterId,
                     gameInstanceId,
-                    roomId))
+                    roomId,
+                    context.worldSlug(),
+                    context.realmSlug(),
+                    pointerVersionClaim(context),
+                    context.playableStateScope()))
             .build();
     return callStub().resolveMove(request);
   }
@@ -701,7 +718,15 @@ public class GameLogicClient
         Long.toString(context.accountId()),
         Long.toString(context.characterId()),
         Long.toString(context.gameInstanceId()),
-        roomId);
+        roomId,
+        context.worldSlug(),
+        context.realmSlug(),
+        pointerVersionClaim(context),
+        context.playableStateScope());
+  }
+
+  private String pointerVersionClaim(SessionContext context) {
+    return context.pointerVersion() > 0 ? Long.toString(context.pointerVersion()) : null;
   }
 
   private ErrorDetail error(String code, String message) {
@@ -709,30 +734,17 @@ public class GameLogicClient
   }
 
   private PlayableStateScope resolvePlayableStateScope(SessionContext context) {
-    if (StringUtils.hasText(context.playableStateScope())) {
-      return switch (context.playableStateScope()) {
-        case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-        case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-        default ->
-            throw new IllegalStateException(
-                "Unsupported playableStateScope=" + context.playableStateScope());
-      };
+    if (!StringUtils.hasText(context.playableStateScope())) {
+      throw new IllegalStateException(
+          "Missing admitted playableStateScope on session context for Game Logic request");
     }
-    return gameplayWorldCatalog
-        .resolveRealmByRuntimeTarget(context.tenantId(), context.gameInstanceId())
-        .map(
-            realm ->
-                switch (realm.getStateScope()) {
-                  case SHARED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-                  case ISOLATED -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-                })
-        .orElseThrow(
-            () ->
-                new IllegalStateException(
-                    "No gameplay realm found for tenantId="
-                        + context.tenantId()
-                        + " gameInstanceId="
-                        + context.gameInstanceId()));
+    return switch (context.playableStateScope()) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default ->
+          throw new IllegalStateException(
+              "Unsupported playableStateScope=" + context.playableStateScope());
+    };
   }
 
   private GameLogicServiceGrpc.GameLogicServiceBlockingStub callStub() {

@@ -1,6 +1,5 @@
 package net.firedevops.firemud.common.grpc;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.ManagedChannel;
 import io.grpc.stub.AbstractStub;
 import java.io.IOException;
@@ -11,9 +10,6 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import org.slf4j.Logger;
 
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Configuration and channel references remain internal to the client")
 public abstract class AbstractReloadingBlockingGrpcClient<TStub extends AbstractStub<TStub>>
     implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;

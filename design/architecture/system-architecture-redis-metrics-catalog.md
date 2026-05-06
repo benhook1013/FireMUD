@@ -47,9 +47,9 @@ This document summarizes the canonical Redis-related metrics, alerting surfaces,
 
 ### Remote Follow-Up Drainage
 
-- `remote_followups_due_total{tenantId,regionId}`
-- `remote_followups_drain_lag_ms{tenantId,regionId}`
-- `remote_followups_backlog_over_budget_total{tenantId,regionId}`
+- `remote_followups_due_total`
+- `remote_followups_drain_lag_ms`
+- `remote_followups_backlog_over_budget_total`
 
 ### Tick Effect Ledger
 

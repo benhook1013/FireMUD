@@ -1,6 +1,3 @@
 # Add URLs or regex patterns to skip during link checking
 http://localhost
 http://127.0.0.1
-http://design
-https://patreon.com/firemud
-https://docs.github.com/en/code-security/security-advisories/repository-security-advisories/about-private-vulnerability-reporting

@@ -47,8 +47,8 @@ jobs:
           PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
-          bash ./dev-tools/preview/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
+          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify preview cluster access
@@ -60,4 +60,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          bash ./dev-tools/preview/prune-stale-preview-namespaces.sh --apply
+          bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply

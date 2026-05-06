@@ -16,6 +16,8 @@ SMOKE_PLAY_EXPECT=${SMOKE_PLAY_EXPECT:-"OK PLAY"}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
 SMOKE_LOOK_TIMEOUT_SECONDS=${SMOKE_LOOK_TIMEOUT_SECONDS:-60}
+FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
+export FIREMUD_REPO_ROOT
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON=python3
@@ -33,11 +35,21 @@ echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 "$PYTHON" - <<'PYTHON'
 import json
 import os
-import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
+from pathlib import Path
+
+repo_root = Path(os.environ["FIREMUD_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
+
+from smoke_common import (
+    gameplay_item_container_equipment_steps,
+    run_command_plan,
+    wait_for_incremental_response,
+    verify_smoke_account,
+    wait_for_account_schema,
+    wait_for_http_readiness,
+)
 
 try:
     import websocket
@@ -62,98 +74,6 @@ look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
 look_timeout_seconds = int(os.environ.get("SMOKE_LOOK_TIMEOUT_SECONDS", "60"))
 startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
-compose_project_name = os.environ.get("COMPOSE_PROJECT_NAME", "docker")
-postgres_container = f"{compose_project_name}-postgres-1"
-
-
-def verify_smoke_account():
-    payload = json.dumps(
-        {
-            "tenantId": int(tenant_id),
-            "username": username,
-            "password": password,
-            "otp": "",
-        }
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        f"{account_api_base}/auth/login",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    for attempt in range(1, 4):
-        try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                body = response.read().decode("utf-8", errors="ignore").strip()
-                print("=== Account validation response ===")
-                print(body or "<empty>")
-                if response.status >= 500:
-                    raise RuntimeError(
-                        f"Smoke account validation returned unexpected status {response.status}"
-                    )
-                return body
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="ignore").strip()
-            print("=== Account validation response ===")
-            print(body or "<empty>")
-            raise RuntimeError(
-                f"Smoke account validation failed with status {exc.code}: {body or '<empty>'}"
-            ) from exc
-        except OSError as exc:
-            if attempt < 3:
-                time.sleep(1)
-                continue
-            raise RuntimeError(f"Smoke account validation failed: {exc}") from exc
-
-
-def wait_for_account_schema():
-    deadline = time.time() + startup_wait_seconds
-    query = "select to_regclass('account_service.accounts');"
-    while time.time() < deadline:
-        try:
-            table_name = subprocess.check_output(
-                [
-                    "docker",
-                    "exec",
-                    postgres_container,
-                    "psql",
-                    "-U",
-                    "firemud",
-                    "-d",
-                    "firemud",
-                    "-tAc",
-                    query,
-                ],
-                text=True,
-                timeout=timeout_seconds,
-            ).strip()
-            if table_name == "account_service.accounts":
-                print("Confirmed account schema is ready.")
-                return
-        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            pass
-        time.sleep(2)
-    raise RuntimeError("Account schema readiness did not converge before smoke execution")
-
-
-def http_readiness_up(readiness_url):
-    try:
-        with urllib.request.urlopen(readiness_url, timeout=timeout_seconds) as response:
-            body = response.read().decode("utf-8", errors="ignore")
-            return response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", "")
-    except (urllib.error.URLError, OSError):
-        return False
-
-
-def wait_for_http_readiness(name, base_url):
-    deadline = time.time() + startup_wait_seconds
-    readiness_url = f"{base_url}/actuator/health/readiness"
-    while time.time() < deadline:
-        if http_readiness_up(readiness_url):
-            print(f"Confirmed {name} readiness via {readiness_url}.")
-            return
-        time.sleep(2)
-    raise RuntimeError(f"{name} readiness did not report UP at {readiness_url}")
 
 
 def recv_text(ws, label, timeout):
@@ -173,45 +93,39 @@ def recv_text(ws, label, timeout):
     raise RuntimeError(f"Timed out waiting for {label} after {timeout}s") from last_error
 
 
+def recv_optional_chunk(ws, label, timeout):
+    try:
+        return recv_text(ws, label, timeout).strip()
+    except RuntimeError:
+        return ""
+
+
 def drain_available(ws, responses, quiet_timeout=0.25):
     deadline = time.time() + quiet_timeout
     while time.time() < deadline:
         remaining = max(0.05, deadline - time.time())
-        try:
-            responses.append(recv_text(ws, "drain chunk", remaining).strip())
-        except RuntimeError:
+        chunk = recv_optional_chunk(ws, "drain chunk", remaining)
+        if not chunk:
             return
-
-
-def wait_for_incremental_text(ws, responses, start_index, label, expected_substrings, timeout):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        remaining = max(0.1, deadline - time.time())
-        responses.append(
-            recv_text(ws, f"{label} response chunk", min(remaining, timeout_seconds)).strip()
-        )
-        response = "\n".join(chunk for chunk in responses[start_index:] if chunk)
-        if all(substring in response for substring in expected_substrings):
-            drain_available(ws, responses)
-            return response
-    raise RuntimeError(
-        f"Expected {label} response containing {expected_substrings}, got '{response}'"
-    )
-
+        responses.append(chunk)
 
 def send_and_expect(ws, line, expected_substrings, label, timeout=timeout_seconds):
     if not hasattr(ws, "_smoke_responses"):
         ws._smoke_responses = []
     start_index = len(ws._smoke_responses)
     ws.send(line)
-    response = wait_for_incremental_text(
-        ws, ws._smoke_responses, start_index, label, expected_substrings, timeout
+    response = wait_for_incremental_response(
+        lambda: recv_optional_chunk(ws, f"{label} response chunk", min(0.5, timeout)),
+        ws._smoke_responses,
+        start_index,
+        expected_substrings,
+        timeout,
+        lambda parts: "\n".join(chunk for chunk in parts if chunk),
+        lambda: drain_available(ws, ws._smoke_responses),
     )
     print(f"=== {label} response ===")
     print(response.strip() or "<empty>")
     return response
-
-
 
 def websocket_smoke():
     ws = websocket.create_connection(
@@ -224,52 +138,33 @@ def websocket_smoke():
     )
     ws._smoke_responses = []
     try:
-        send_and_expect(ws, "WORLDS", [worlds_expect], "WORLDS")
-        send_and_expect(ws, f"LOGIN {username} {password}", [login_expect], "LOGIN")
-        send_and_expect(ws, "PLAY demo", [play_expect], "PLAY")
-        send_and_expect(ws, "LOOK", [look_expect], "LOOK", timeout=look_timeout_seconds)
-        send_and_expect(ws, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE")
-        send_and_expect(ws, "GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET")
-        send_and_expect(
-            ws,
-            "CONTAINER Backpack",
-            ["Container: Backpack [backpack#1]", "Ration"],
-            "CONTAINER",
+        steps = gameplay_item_container_equipment_steps(
+            username,
+            password,
+            worlds_expect,
+            login_expect,
+            play_expect,
+            look_expect,
+            look_timeout_seconds,
         )
-        send_and_expect(
-            ws,
-            "PUT Torch INTO Backpack",
-            ["You put Torch into Backpack.", "Container: Backpack [backpack#1]", "Torch"],
-            "PUT",
-        )
-        send_and_expect(
-            ws,
-            "TAKE Torch FROM Backpack",
-            ["You take Torch from Backpack.", "Container: Backpack [backpack#1]", "Ration"],
-            "TAKE",
-        )
-        send_and_expect(ws, "DROP Torch", ["You drop Torch."], "DROP")
-        send_and_expect(ws, "INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE after DROP")
-        send_and_expect(ws, "EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty")
-        send_and_expect(ws, "WEAR Leather Cap", ["You wear Leather Cap."], "WEAR")
-        send_and_expect(ws, "EQUIPMENT", ["Equipment:", "HEAD", "Leather Cap"], "EQUIPMENT worn")
-        send_and_expect(ws, "REMOVE HEAD", ["You remove Leather Cap."], "REMOVE", timeout=look_timeout_seconds)
-        send_and_expect(ws, "EQUIPMENT", ["You have nothing equipped."], "EQUIPMENT empty again")
-        send_and_expect(
-            ws,
-            "WEAR Iron Boots",
-            ["ERROR SLOT_INCOMPATIBLE", "Iron Boots cannot be worn by this body layout"],
-            "WEAR incompatible",
-            timeout=look_timeout_seconds,
+        run_command_plan(
+            steps,
+            lambda line, expected_substrings, label, timeout: send_and_expect(
+                ws,
+                line,
+                expected_substrings,
+                label,
+                timeout=timeout_seconds if timeout is None else timeout,
+            ),
         )
     finally:
         ws.close()
 
 
-wait_for_account_schema()
-wait_for_http_readiness("account-service", account_api_base)
-wait_for_http_readiness("game-logic-service", game_logic_api_base)
-wait_for_http_readiness("game-session-service", game_session_api_base)
-verify_smoke_account()
+wait_for_account_schema(startup_wait_seconds, timeout_seconds)
+wait_for_http_readiness("account-service", account_api_base, startup_wait_seconds, timeout_seconds)
+wait_for_http_readiness("game-logic-service", game_logic_api_base, startup_wait_seconds, timeout_seconds)
+wait_for_http_readiness("game-session-service", game_session_api_base, startup_wait_seconds, timeout_seconds)
+verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds)
 websocket_smoke()
 PYTHON

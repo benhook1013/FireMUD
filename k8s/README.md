@@ -1,9 +1,13 @@
 # Kubernetes Manifests
 
-This directory contains Kubernetes manifests and Helm chart placeholders for deploying the FireMUD services.
+This directory contains the repository's Kubernetes-side deployment assets. The current deployment surfaces are not all equal:
 
-The `base/` folder provides minimal deployment files that can be applied to a development cluster:
-These manifests set `metadata.namespace: firemud` directly in YAML, so `firemud` is the default shared namespace unless you apply namespace transforms via overlays.
+- `k8s/helm/firemud/` is the exercised hosted deployment path for `pr-preview` and `dev-demo-cluster`.
+- `overlays/` is the Git-tracked Kustomize path for staging and production, with digest-pinned workload images and externally managed bootstrap bindings enforced by preflight.
+- `base/` contains a baseline manifest set that is useful for reference and ad hoc cluster bring-up, but it is not the main player-facing deployment contract.
+- `network-policies/`, `monitoring/`, `preview/`, `postgres/`, `velero/`, and the Terraform directories provide supporting infrastructure assets.
+
+The `base/` manifests set `metadata.namespace: firemud` directly in YAML, so `firemud` is the default shared namespace unless you apply namespace transforms via overlays.
 
 ```bash
 kubectl apply -n firemud -f base/account-service.yaml
@@ -31,19 +35,26 @@ kubectl apply -k k8s/overlays/prod
 The staging overlay is intentionally treated as disposable by default and does not include production backup schedules.
 PRs that modify `k8s/` run `.github/workflows/validate-kustomize-overlays.yml`, which blocks staging backup schedules unless `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 
-The file `base/firemud-db-env.yaml` defines the shared `firemud-config`
-`ConfigMap` and `firemud-secret` `Secret` used by these deployments.
+Player-facing bootstrap bindings are intentionally environment-owned rather than rendered inline in the overlays. The canonical Kustomize path expects:
 
-After the services are running, apply the default network policies found in
-`network-policies/` to restrict traffic to internal pods only:
+- `base/firemud-db-env.yaml` for the shared `firemud-config` `ConfigMap`
+- externally managed `postgres-credentials`, `jwt-signing-keys`, and `jwt-jwks` Secrets
+- externally managed workload mTLS material such as `firemud-grpc-tls`
+- expected-binding manifests under `design/operations/environments/*` plus `dev-tools/deploy/preflight.py` to validate that those bindings match the target environment contract
+
+The base manifests and overlays expect those names unless you intentionally customize them together with the matching expected-binding and operator bootstrap evidence.
+
+The canonical internal-service network policies are part of `base/`. The `network-policies/` directory is documentation-only now; apply the policy manifests from `base/` if you are selectively applying files outside Kustomize:
 
 ```bash
-kubectl apply -n firemud -f network-policies/internal-services.yaml
-kubectl apply -n firemud -f base/firemud-grpc-certificate.yaml
+kubectl apply -n firemud -f base/internal-services-network-policy.yaml
+kubectl apply -n firemud -f base/internal-services-egress-network-policy.yaml
 ```
 
 The policy allows gRPC (8080, 6565) and OpenTelemetry traffic on port `4317` in
 addition to database access.
+
+Hosted preview/dev-demo now also render their own checked-in baseline internal-service network policies from `k8s/helm/firemud`, so the hosted path no longer silently diverges from the player-facing policy posture.
 
 ## Monitoring Components
 
@@ -80,21 +91,23 @@ The production Terraform modules provision persistent volumes for PostgreSQL plu
 
 ## Helm Charts
 
-The [`helm/`](./helm) folder contains example charts. Use `values-local.yaml` or `values-dev.yaml` to override connection details and feature flags when deploying locally. `values-local.yaml` also reduces replica counts to 1 so a Kind or minikube cluster doesn't run out of resources:
+The main Helm deployment path in this repository is [`k8s/helm/firemud`](./helm/firemud), which is used for the hosted preview and dev-demo environments. The top-level `k8s/helm/values-local.yaml` and `values-dev.yaml` files belong to the narrower example service charts under `k8s/helm/`; they are not the full-stack hosted chart contract.
 
 ```bash
 helm install game-session ./helm/game-session-service -f helm/values-local.yaml
 ```
 
-For production deployments, use the umbrella chart:
+For the hosted full-stack chart path, start from the environment-specific example values under `k8s/helm/firemud`:
 
 ```bash
-helm upgrade --install firemud ./charts/firemud -n firemud --create-namespace
+helm upgrade --install firemud ./helm/firemud -f helm/firemud/values-preview.example.yaml -n firemud --create-namespace
 ```
+
+The top-level `charts/firemud` chart is a narrower support chart rather than the main full-stack deployment surface.
 
 ## Preview Cluster Prerequisites
 
-The [`preview/`](./preview) directory captures the one-time cluster prerequisites for the hosted `pr-preview` environment, including:
+The [`hosted/preview/`](./preview) directory captures the one-time cluster prerequisites for the hosted `pr-preview` environment, including:
 
 - Let's Encrypt `ClusterIssuer` resources for Traefik-hosted preview URLs
 - the dedicated `preview-deployer` ServiceAccount and RBAC for GitHub Actions

@@ -31,27 +31,42 @@ Entry format:
   - Observation: a checklist can drift from implementation when a broad slice lands adjacent auth/model work but leaves one claimed seam only partially changed.
   - Expected pattern: before marking a slice task complete, verify the public API schema, proto contracts, service implementation, and focused tests for that exact seam, not only the related architecture direction.
 
-- `2026-04-27`: WSL helpers should avoid broad recursive scans on `/mnt/c` when exact-name `find` is enough
-  - Context: building a Codex account-switching helper that needed to discover `auth.json`, session indexes, and Codex Switch metadata across WSL and Windows-mounted user folders.
-  - Observation: Python `Path.rglob()` over broad Windows-mounted trees like `AppData` is noticeably slower and less predictable than shelling out to `find` with a tight filename set and bounded roots.
-  - Expected pattern: for WSL automation that inspects Windows-mounted developer state, prefer exact-name `find` scans over broad recursive language-runtime walkers, especially under `AppData`-style trees.
-
 - `2026-04-27`: Broad local proof catches repo-wide migration drift that service-local checks will miss
   - Context: after landing `game-design-service` and `game-session-service` work, `./gradlew :game-design-service:check -PfullCheck :game-session-service:check -PfullCheck` passed but the broader `./gradlew check` failed immediately on duplicate Flyway versioning in `entity-management-service`.
   - Observation: slice-local validation can look clean while unrelated migration numbering drift elsewhere on the branch still guarantees CI failure.
   - Expected pattern: when multiple branch lanes have been moving, run the repo-wide `./gradlew check` before or alongside push, and treat Flyway version sanity as shared branch hygiene rather than service-local ownership.
 
-- `2026-04-27`: T3 checkpoint cleanup should inspect local Codex/T3 metadata before treating checkpoint thread IDs as active or archived
-  - Context: extending the repo maintenance script for `refs/t3/checkpoints/<thread-id>/turn/<turn>` cleanup and comparing those checkpoint IDs with local Codex state under `~/.codex`.
-  - Observation: checkpoint thread IDs are base64-encoded UUIDs, but they do not necessarily line up with Codex `threads.id` values in `state_5.sqlite`, so deleting "inactive" checkpoints from Git refs alone risks false assumptions about session state.
-  - Expected pattern: classification-based checkpoint cleanup should start with a reporting mode that inspects the actual local metadata layout, reports active/archived/orphaned candidates, and only enables destructive cleanup after the mapping is confirmed.
+- `2026-04-28`: WebSocket cross-service transcript assertions can still be flaky even after the underlying behavior is correct
+  - Context: validating the `09.1` account-presence and friend-presence routing bundle carry-through changes with `:game-session-service:check -PfullCheck`.
+  - Observation: `CommunicationWebSocketCrossServiceTest` failed on two different transcript assertions in separate full-suite runs, but each individual failing test reran clean immediately with no code changes, pointing to timing-sensitive live-response capture rather than the presence-routing change itself.
+  - Expected pattern: cross-service websocket transcript tests should either wait on the specific canonical message they are asserting or be treated as retryable/flaky until the harness stops relying on exact live ordering under suite load.
 
-- `2026-04-27`: Docker Desktop compose teardown is safer from Codex without a PTY, and smoke proofs should not parallelize shared-session clients
-  - Context: running `dev-tools/verify-fresh-bootstrap.sh` from WSL against the source-built Docker stack while validating `account-service`, `spring-cloud-gateway`, and `tcp-proxy-service` follow-up fixes.
-  - Observation: the canonical smoke script hung in `docker compose ... down` when launched through a PTY-backed Codex exec session, while the same compose commands completed immediately in plain-output mode. Separately, running the WebSocket and Telnet smoke scripts in parallel against the same demo account/session produced a false failure on the Telnet path even though the underlying gameplay commands succeeded.
-  - Expected pattern: AI-driven Docker smoke proofs should invoke compose in noninteractive/plain mode, and the gameplay smoke clients should be treated as sequential shared-state checks unless they use isolated accounts or session ids.
+- `2026-04-29`: Shared gameplay harnesses must preserve full prompt-and-block transcript semantics, not just command markers
+  - Context: migrating the large Telnet chained gameplay/account suite onto a shared `GameplayTelnetDriver` initially caused several false regressions because the first driver version returned as soon as it saw `OK LOOK`, truncating the rest of the multiline room/inventory transcript and breaking reconnect prompt-only paths.
+  - Observation: transport helpers that optimize for marker detection can silently change the behavior under test when the real contract is a whole transcript block including prompt placement, blank-line boundaries, and timeout-returned partial output.
+  - Expected pattern: FireMUD gameplay transport drivers should model canonical transcript boundaries deliberately, and any `...OrTimeout` helpers should preserve the old behavior of returning partial or prompt-only transcript truth when that is the thing the test is proving.
 
-- `2026-04-27`: The repository root README should stay an entrypoint, not a docs junk drawer
-  - Context: reviewing recent root `README.md` growth after contributor-tooling content and deeper documentation navigation were added directly to the repo landing page.
-  - Observation: once the root README starts carrying setup commands, workflow rules, subsystem-specific design links, and long reading lists, it duplicates narrower docs and becomes harder to use as a stable orientation surface.
-  - Expected pattern: keep the root README focused on project identity, a compact architecture/docs map, and top-level entry links; move setup, contribution workflow, and deep design navigation into focused docs such as `DEVELOPER_SETUP.md`, `CONTRIBUTING.md`, and `design/README.md`.
+- `2026-04-29`: Full Gradle service checks can appear hung after green TCP proxy test result files are already written
+  - Context: validating the `09.1` TCP proxy routing-bundle carry-through with `./gradlew :tcp-proxy-service:check -PfullCheck` completed compile, test, integration, and cross-service execution with fresh green XML result files, but the wrapper process remained alive quietly afterward.
+  - Observation: for some larger service checks, the actionable proof may already be present in `build/test-results/**/TEST-*.xml` even while the wrapper is stuck in a quiet long-tail teardown or reporting phase, which can waste time if treated as an immediate source bug signal.
+  - Expected pattern: when a service-wide Gradle run goes quiet after executing the meaningful suites, inspect the fresh result files and task progress before assuming a new product failure; if this remains common, add a repo-owned helper or guidance for distinguishing green-result long-tail hangs from real failing validation.
+
+- `2026-04-29`: Shared cross-service test stacks must reset back to each suite's configured baseline fixtures, not a single global default
+  - Context: the second-pass gameplay proof convergence work introduced a shared `GameplayCrossServiceStack`, and the first generic reset path silently reset the Entity Management stub back to the default room/entity fixture even for suites that intentionally booted chat-specific entities.
+  - Observation: once mutable stub ownership moves into a shared stack, a generic `reset()` that restores only one global default can break unrelated suites by erasing their configured baseline room state, character identities, or names while still looking like a harmless cleanup helper.
+  - Expected pattern: shared gameplay stack reset helpers should preserve or reapply the suite-specific baseline fixtures captured at stack construction time, and mutable stub reset should be treated as part of scenario isolation rather than a hardcoded global default.
+
+- `2026-04-29`: Shared gameplay cross-service stacks also need a canonical clean-baseline helper, not just startup helpers
+  - Context: re-auditing the converged gameplay proof showed `GameplayCrossServiceStack` now owns the expensive nested app bootstrap, but large websocket and telnet suites still hand-roll per-suite cleanup around it, including Redis flushes, `game_instances` deletion, screen-buffer clears, and first/default session seeding.
+  - Observation: once startup is shared but reset-to-known-state remains local, new suites still copy slightly different isolation steps and the harness convergence stalls one layer short of the real repeated pattern.
+  - Expected pattern: shared gameplay stack fixtures should expose one canonical “fresh gameplay baseline” helper that resets mutable stubs, clears Redis and replay buffers, wipes seeded runtime rows, and optionally seeds the default running game instance so cross-service suites do not keep rebuilding that cleanup choreography inline.
+
+- `2026-05-03`: Source-built Docker smoke should split `compose build` from `compose up`
+  - Context: running `dev-tools/verify-fresh-bootstrap.sh` locally on WSL/Docker Desktop repeatedly rebuilt all service images successfully but then left `docker compose up -d --build --remove-orphans` hung with no containers created and no further output.
+  - Observation: the combined `up --build` path can wedge after successful image export, while the underlying compose/build steps still succeed; this makes the canonical smoke proof look like a product failure when the problem is the Docker Desktop compose workflow.
+  - Expected pattern: canonical source-built smoke scripts should run `docker compose build` and `docker compose up -d` as separate steps so local Docker hangs are easier to distinguish from actual runtime/bootstrap regressions.
+
+- `2026-05-03`: Canonical WSL Docker smoke should default compose builds to sequential mode
+  - Context: after splitting `compose build` from `compose up`, the same `dev-tools/verify-fresh-bootstrap.sh` proof still stalled inside `docker compose build` on WSL/Docker Desktop while multiple service contexts were building in parallel.
+  - Observation: the local failure mode is not limited to `up --build`; parallel compose builds themselves can wedge after partial progress even when the service Dockerfiles and jars are valid.
+  - Expected pattern: canonical source-built smoke scripts should build compose services one-by-one instead of relying on a single multi-service `docker compose build` invocation.

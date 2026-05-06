@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Contract checks for dev-tools/deploy/preflight.sh report shape and policy IDs.
+# Contract checks for dev-tools/deploy/preflight.py report shape and policy IDs.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SCRIPT="$ROOT_DIR/dev-tools/deploy/preflight.sh"
+SCRIPT="$ROOT_DIR/dev-tools/deploy/preflight.py"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -108,6 +108,8 @@ spec:
             - name: GATEWAY_WS_URL
               value: wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local/ws/game
           envFrom:
+            - secretRef:
+                name: postgres-credentials
             - configMapRef:
                 name: firemud-config
           volumeMounts:
@@ -130,6 +132,8 @@ spec:
         - name: account-service
           image: ghcr.io/benhook1013/account-service:latest
           envFrom:
+            - secretRef:
+                name: postgres-credentials
             - configMapRef:
                 name: firemud-config
           volumeMounts:
@@ -152,7 +156,7 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF=contract-hobby \
   FIREMUD_PREFLIGHT_RENDER_PATH="$RENDERED_MANIFEST" \
   FIREMUD_PREFLIGHT_OUTPUT="$REPORT_PATH" \
-  bash "$SCRIPT" hobby-self-hosted >/tmp/firemud-preflight-contract.out
+  python3 "$SCRIPT" hobby-self-hosted >/tmp/firemud-preflight-contract.out
 
 python3 - <<'PY' "$REPORT_PATH"
 import json
@@ -214,7 +218,7 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_PREFLIGHT_OUTPUT="$REPORT_PATH" \
   FIREMUD_TRAFFIC_OPEN_EVENT=first-live \
   FIREMUD_TRAFFIC_OPEN_EVIDENCE="$TRAFFIC_EVIDENCE" \
-  bash "$SCRIPT" hobby-self-hosted >/tmp/firemud-preflight-contract-traffic.out
+  python3 "$SCRIPT" hobby-self-hosted >/tmp/firemud-preflight-contract-traffic.out
 
 python3 - <<'PY' "$REPORT_PATH"
 import json

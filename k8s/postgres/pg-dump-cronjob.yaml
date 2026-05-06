@@ -29,7 +29,7 @@ spec:
                 - configMapRef:
                     name: firemud-config
                 - secretRef:
-                    name: firemud-secret
+                    name: postgres-credentials
               command: ["/bin/bash", "/scripts/pg-dump.sh"]
               volumeMounts:
                 - name: backups

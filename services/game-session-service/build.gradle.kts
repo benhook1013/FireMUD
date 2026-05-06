@@ -55,21 +55,33 @@ dependencies {
     testFixturesApi(project(":game-logic-service"))
     testFixturesApi(project(":social-groups-service"))
     testFixturesApi(project(":world-management-service"))
+    testFixturesImplementation(testFixtures(project(":common-test-support")))
+    testFixturesImplementation(project(":common-security"))
+    testFixturesImplementation(project(":common-data-runtime"))
+    testFixturesImplementation(libs.spring.boot.starter.actuator)
+    testFixturesImplementation(libs.spring.boot.starter.data.redis)
+    testFixturesImplementation(libs.spring.boot.starter.test)
+    testFixturesImplementation(libs.spring.boot.starter.web)
+    testFixturesImplementation(libs.grpc.spring.boot.starter)
+    testFixturesCompileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
     testFixturesImplementation("io.grpc:grpc-netty-shaded:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-protobuf:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")
     testFixturesImplementation("com.google.protobuf:protobuf-java:${libs.versions.protobuf.get()}")
     testFixturesImplementation(libs.spring.boot.starter.jdbc)
+    testFixturesCompileOnly(libs.testcontainers.postgresql)
+    testFixturesCompileOnly("org.testcontainers:testcontainers:${libs.versions.testcontainers.get()}")
     testImplementation(libs.grpc.inprocess)
+    testImplementation(testFixtures(project(":game-session-service")))
     testImplementation(project(":game-logic-service"))
 }
 
 tasks.named<BootRun>("bootRun") {
-    val activeProfile = System.getProperty("spring.profiles.active")
-        ?: System.getenv("SPRING_PROFILES_ACTIVE")
-        ?: "dev"
-
-    systemProperty("spring.profiles.active", activeProfile)
+    val activeProfile =
+        System.getProperty("spring.profiles.active") ?: System.getenv("SPRING_PROFILES_ACTIVE")
+    if (!activeProfile.isNullOrBlank()) {
+        systemProperty("spring.profiles.active", activeProfile)
+    }
 }
 
 val isWindows = System.getProperty("os.name").lowercase().contains("windows")

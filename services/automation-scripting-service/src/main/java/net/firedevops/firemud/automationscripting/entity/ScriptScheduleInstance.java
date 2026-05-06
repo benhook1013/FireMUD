@@ -21,6 +21,7 @@ import lombok.Data;
           columnNames = {
             "tenant_id",
             "game_instance_id",
+            "playable_state_scope",
             "plugin_id",
             "plugin_version_id",
             "target_scope_type",
@@ -44,6 +45,18 @@ public class ScriptScheduleInstance {
 
   @Column(nullable = false, length = 100)
   private String scriptId;
+
+  @Column(nullable = false, length = 32)
+  private String playableStateScope = "";
+
+  @Column(nullable = false, length = 64)
+  private String worldSlug = "";
+
+  @Column(nullable = false, length = 64)
+  private String realmSlug = "";
+
+  @Column(nullable = false, length = 64)
+  private String pointerVersion = "";
 
   @Column(nullable = false, length = 128)
   private String pluginId = "";

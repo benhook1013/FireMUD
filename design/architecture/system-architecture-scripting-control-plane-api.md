@@ -339,7 +339,7 @@ Inputs:
 
 Outputs:
 
-- ordered event rows containing `eventId`, `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `scriptId`, optional plugin identity, `workItemId`, `commandOrdinal`, `automationDispatchId`, optional `gameSessionCommandId`, `targetEntityId`, rendered `emittedCommandText`, `handoffOutcome`, `handoffReason`, and `observedAt`
+- ordered event rows containing `eventId`, `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `scriptId`, optional plugin identity, `workItemId`, `commandOrdinal`, `automationDispatchId`, optional `gameSessionCommandId`, `targetEntityId`, resolved `playableStateScope`, rendered `emittedCommandText`, `handoffOutcome`, `handoffReason`, and `observedAt`
 
 Contract rules:
 
@@ -409,13 +409,34 @@ Inputs:
 
 Outputs:
 
-- Instance-scoped schedule entries containing `scriptPatchVersion`, `scriptId`, plugin owner metadata, `scheduleDefinitionId`, event type, cadence, scheduler priority tag, target-scope identity (`targetScopeType`, `targetScopeId`), binding priority/exclusivity flags, materialization status, due-point fields, observed runtime version id, observed pin request id, pin observation time, and row timestamps.
+- Instance-scoped schedule entries containing `scriptPatchVersion`, `scriptId`, plugin owner metadata, resolved `playableStateScope`, `scheduleDefinitionId`, event type, cadence, scheduler priority tag, target-scope identity (`targetScopeType`, `targetScopeId`), binding priority/exclusivity flags, materialization status, due-point fields, observed runtime version id, observed pin request id, pin observation time, and row timestamps.
 
 Contract rules:
 
 - This is a read-only operator/debugging surface for the first durable scheduler substrate below Redis timer indexes.
 - The live implementation must report tick-aligned schedules honestly as not-yet-advanced when no heartbeat-derived due point exists; it must not invent synthetic tick coordinates.
 - Reconciliation across repins is keyed by stable `scheduleDefinitionId` plus plugin owner metadata and binding target identity, not by inferred semantic similarity.
+
+#### `ListScriptTimerAuditEvents`
+
+Implementation note: the current Automation & Scripting implementation now exposes the scheduler-owned subset of `script_event_audit` directly for timer troubleshooting. This read is bounded to `sourceKind=SCHEDULE_TIMER` and includes both due-point admissions that persisted work items and scheduler-owned dropped candidates such as `catch_up_truncated` and `runtime_scope_changed`, so operators no longer have to infer timer truncation/fence behavior from aggregate metrics alone.
+
+Inputs:
+
+- `tenantId`
+- Optional filters: `gameInstanceId`, `scriptPatchVersion`, `scriptId`, `eventType`, `finalReason`
+- Optional `changedAfter` / `changedBefore`
+- `limit` (bounded by the service)
+
+Outputs:
+
+- newest-first timer audit rows containing Trigger Identity fields, resolved `playableStateScope`, admitted routing bundle, plugin owner metadata, trigger mode, scheduler source state/ordinal/due-point fields, optional `workItemId`, final stage/outcome/reason, and row timestamps
+
+Contract rules:
+
+- This is a read-only operator/debugging surface for scheduler-owned timer decisions; it must not mutate work-item or schedule state.
+- The live implementation is sourced from durable `script_event_audit` rows, not reconstructed from metrics or volatile queue indexes.
+- Timer-fired work that reached durable work-item persistence and timer-fired work intentionally dropped by scheduler fences/truncation share this history surface so operators can correlate a due point without joining multiple ad hoc tables first.
 
 #### `ListScriptDeadLetters`
 
@@ -429,7 +450,7 @@ Inputs:
 
 Outputs:
 
-- Newest-first dead-letter entries containing `workItemId`, Trigger Identity fields, script/event identity, `status`, bounded failure/cancel reason, `createdAt`, and `updatedAt`.
+- Newest-first dead-letter entries containing `workItemId`, Trigger Identity fields, resolved `playableStateScope`, script/event identity, `status`, bounded failure/cancel reason, `createdAt`, and `updatedAt`.
 
 Boundary rule:
 
@@ -507,7 +528,7 @@ Plugins are controlled by operators via Logging & Admin, but the runtime registr
 
 #### `GetPluginStatus`
 
-Implementation note: the current Automation & Scripting implementation persists and serves the runtime registry for `(tenantId, gameInstanceId, pluginId)`, and `SetPluginActiveVersion` now consults the live Game Design `GetPublishedPluginVersion` read surface plus the shared Game Session runtime-state read for runtime version, launch descriptor, version/release identifiers, and script-patch pin metadata before mutating that registry. That means design-time publication eligibility, signer revocation, component-policy decisions, `baseVersionId` compatibility, and `abilitySchemaDigest` compatibility are now enforced in the live control-plane path. Enabled plugin runtime states are also rechecked on a bounded scheduled cadence so already-active plugins are disabled if their publication state, signer metadata, or component-policy decision becomes fail-closed after activation. Plugin-trigger ingress uses the persisted `lastPolicyCheckedAt` evidence and fails closed with `signer_policy_unavailable` when that check is older than `SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS`, and `GetPluginStatus` now exposes both `lastPolicyCheckedAtMs` and `policyCheckStale` so operators can see that freshness directly.
+Implementation note: the current Automation & Scripting implementation persists and serves the runtime registry for `(tenantId, gameInstanceId, pluginId)`, and `SetPluginActiveVersion` now consults the live Game Design `GetPublishedPluginVersion` read surface plus the shared Game Session runtime-state read for runtime version, launch descriptor, version/release identifiers, and script-patch pin metadata before mutating that registry. That means design-time publication eligibility, signer revocation, component-policy decisions, `baseVersionId` compatibility, and `abilitySchemaDigest` compatibility are now enforced in the live control-plane path. The activation path also now re-checks the currently pinned script-patch binding surface for the target instance, validates `COMMAND_ALIAS` bindings against Game Session's authoritative built-in command registry, and rejects instance-scoped binding conflicts before runtime state changes. Enabled plugin runtime states are also rechecked on a bounded scheduled cadence so already-active plugins are disabled if their publication state, signer metadata, or component-policy decision becomes fail-closed after activation; `REPORT_ONLY` policy decisions remain activatable and do not trigger fail-closed reconciliation. Plugin-trigger ingress uses the persisted `lastPolicyCheckedAt` evidence and fails closed with `signer_policy_unavailable` when that check is older than `SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS`, and `GetPluginStatus` now exposes both `lastPolicyCheckedAtMs` and `policyCheckStale` so operators can see that freshness directly.
 
 Inputs:
 
@@ -599,7 +620,7 @@ Semantics:
   - `plugin.baseVersionId` must equal the instance `runtimeVersionId`.
   - `plugin.abilitySchemaDigest` must match the immutable digest recorded for the same base version used by the running instance.
   - Any mismatch fails deterministically with an application error (for example `PLUGIN_BASE_VERSION_MISMATCH` or `PLUGIN_ABILITY_SCHEMA_MISMATCH`) and must not mutate active plugin state.
-- Current implementation note: the live control-plane path now enforces `PUBLISHED` design-time state, non-revoked signer metadata, non-blocking component-policy decisions, `plugin.baseVersionId == runtimeVersionId`, and `plugin.abilitySchemaDigest` matching the Automation participant digest in the running published release bundle before updating the runtime registry.
+- Current implementation note: the live control-plane path now enforces `PUBLISHED` design-time state, non-revoked signer metadata, non-blocking component-policy decisions, `plugin.baseVersionId == runtimeVersionId`, `plugin.abilitySchemaDigest` matching the Automation participant digest in the running published release bundle, supported built-in `COMMAND_ALIAS` bindings, and no instance-scoped binding conflicts against the currently pinned script patch plus already-enabled plugins before updating the runtime registry.
 - On success, updates the registry for `(tenantId, gameInstanceId, pluginId)`, reconciles any durable plugin-owned schedules/timers so the displaced `pluginVersionId` cannot keep minting new triggers, and emits `PluginVersionActivated` (or `PluginVersionDisabled` as appropriate if this operation also transitions state).
 
 Outputs:

@@ -120,6 +120,29 @@ public final class GameplayWorldCatalog {
         .findFirst();
   }
 
+  public Optional<RuntimeRealmTarget> resolveRealmTarget(String worldSlug, String realmSlug) {
+    if (worldSlug == null || worldSlug.isBlank() || realmSlug == null || realmSlug.isBlank()) {
+      return Optional.empty();
+    }
+    String normalizedWorld = worldSlug.trim().toLowerCase(Locale.ROOT);
+    String normalizedRealm = realmSlug.trim().toLowerCase(Locale.ROOT);
+    return visibleWorlds().stream()
+        .filter(world -> normalizedWorld.equals(world.getSlug().toLowerCase(Locale.ROOT)))
+        .flatMap(
+            world ->
+                visibleRealms(world).stream()
+                    .filter(
+                        realm -> normalizedRealm.equals(realm.getSlug().toLowerCase(Locale.ROOT)))
+                    .map(
+                        realm ->
+                            new RuntimeRealmTarget(
+                                world.getSlug(),
+                                world.getDisplayName(),
+                                realm.getSlug(),
+                                realm.getDisplayName())))
+        .findFirst();
+  }
+
   public List<GameplayCatalogProperties.Realm> visibleRealms(
       GameplayCatalogProperties.World world) {
     if (world == null || world.getRealms() == null) {

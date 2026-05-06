@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
+import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
@@ -51,7 +52,10 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequ
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
 import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesResponse;
+import net.firedevops.firemud.automationscripting.v1.ListScriptTimerAuditEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptTimerAuditEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.PluginPolicyViolation;
+import net.firedevops.firemud.automationscripting.v1.PluginPublicationLink;
 import net.firedevops.firemud.automationscripting.v1.PluginRuntimeEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsRequest;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsResponse;
@@ -60,14 +64,20 @@ import net.firedevops.firemud.automationscripting.v1.ScriptEventDefinition;
 import net.firedevops.firemud.automationscripting.v1.ScriptHandoffEventEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutEventEntry;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchPublicationLink;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatusEntry;
 import net.firedevops.firemud.automationscripting.v1.ScriptScheduleInstanceEntry;
+import net.firedevops.firemud.automationscripting.v1.ScriptTimerAuditEventEntry;
 import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeRequest;
 import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeResponse;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionRequest;
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
+import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
@@ -85,6 +95,7 @@ public final class AutomationScriptingControlPlaneGrpcService
   private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
   private final ScriptScheduleInstanceService scriptScheduleInstanceService;
+  private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private final ScriptRuntimeProperties runtimeProperties;
 
   public AutomationScriptingControlPlaneGrpcService(
@@ -93,7 +104,8 @@ public final class AutomationScriptingControlPlaneGrpcService
       PluginRuntimeStateService pluginRuntimeStateService,
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
-      ScriptScheduleInstanceService scriptScheduleInstanceService) {
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient) {
     this(
         eventRegistryService,
         workItemService,
@@ -101,6 +113,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         automationAdmissionStateService,
         scriptPatchPinProjectionService,
         scriptScheduleInstanceService,
+        gameDesignControlPlaneClient,
         new ScriptRuntimeProperties());
   }
 
@@ -112,6 +125,7 @@ public final class AutomationScriptingControlPlaneGrpcService
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptScheduleInstanceService scriptScheduleInstanceService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
       ScriptRuntimeProperties runtimeProperties) {
     this.eventRegistryService = eventRegistryService;
     this.workItemService = workItemService;
@@ -119,6 +133,7 @@ public final class AutomationScriptingControlPlaneGrpcService
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
     this.scriptScheduleInstanceService = scriptScheduleInstanceService;
+    this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
     this.runtimeProperties = runtimeProperties;
   }
 
@@ -183,9 +198,11 @@ public final class AutomationScriptingControlPlaneGrpcService
                   response
                       .setStatus(summary.status())
                       .setStatusReason(summary.statusReason())
+                      .setSupersededByScriptPatchVersion(summary.supersededByScriptPatchVersion())
                       .setLastChangedAtMs(summary.lastChangedAtMs())
                       .setBaseVersionId(summary.baseVersionId())
-                      .setAbilitySchemaDigest(summary.abilitySchemaDigest()),
+                      .setAbilitySchemaDigest(summary.abilitySchemaDigest())
+                      .setPublication(toProto(summary.publication())),
               () -> response.setError(notFound("GetScriptPatchStatus", "script_patch_not_found")));
     } catch (IllegalArgumentException ex) {
       response.setError(
@@ -281,7 +298,8 @@ public final class AutomationScriptingControlPlaneGrpcService
           .setActiveExecutionCount(summary.activeExecutionCount())
           .setOldestActiveExecutionStartedAtMs(summary.oldestActiveExecutionStartedAtMs())
           .setPendingCancelableWorkItemCount(summary.pendingCancelableWorkItemCount())
-          .setObservedAtMs(summary.observedAtMs());
+          .setObservedAtMs(summary.observedAtMs())
+          .setIsStale(isDrainStatusStale(summary.observedAtMs()));
     } catch (IllegalArgumentException ex) {
       response.setError(
           ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
@@ -314,7 +332,15 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setObservedAtMs(summary.observedAtMs())
             .setProjectionAsOfMs(summary.projectionAsOfMs())
             .setProjectionLagMs(summary.projectionLagMs())
-            .setIsProjectionStale(summary.projectionStale());
+            .setIsProjectionStale(summary.projectionStale())
+            .setRegionId(summary.runtimeRegionId())
+            .setRegionEpoch(summary.runtimeRegionEpoch())
+            .setWorldSlug(summary.worldSlug())
+            .setRealmSlug(summary.realmSlug())
+            .setPointerVersion(summary.pointerVersion())
+            .setPublication(
+                scriptPatchPublicationLink(
+                    request.getTenantId(), summary.observedPinnedScriptPatchVersion()));
       } else if (!lookup.errorCode().isBlank()) {
         response.setError(
             ErrorDetail.newBuilder().setCode(lookup.errorCode()).setMessage(lookup.errorMessage()));
@@ -354,7 +380,8 @@ public final class AutomationScriptingControlPlaneGrpcService
                       .setLastChangedAtMs(summary.lastChangedAtMs())
                       .setProjectionAsOfMs(summary.projectionAsOfMs())
                       .setProjectionLagMs(summary.projectionLagMs())
-                      .setIsProjectionStale(summary.projectionStale()),
+                      .setIsProjectionStale(summary.projectionStale())
+                      .setPublication(toProto(summary.publication())),
               () ->
                   response.setError(
                       notFound(
@@ -386,8 +413,41 @@ public final class AutomationScriptingControlPlaneGrpcService
               request.getScriptPatchVersion(),
               request.getLimit())
           .stream()
-          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .map(this::toProto)
           .forEach(response::addSchedules);
+    } catch (IllegalArgumentException ex) {
+      response.setError(
+          ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
+    } catch (AdminAuthorizationException ex) {
+      response.setError(authorizationError(ex));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.controlPlane.listScriptTimerAuditEvents")
+  public void listScriptTimerAuditEvents(
+      ListScriptTimerAuditEventsRequest request,
+      StreamObserver<ListScriptTimerAuditEventsResponse> responseObserver) {
+    ListScriptTimerAuditEventsResponse.Builder response =
+        ListScriptTimerAuditEventsResponse.newBuilder();
+    try {
+      requireAdminRole();
+      scriptScheduleInstanceService
+          .listTimerAuditEvents(
+              request.getTenantId(),
+              request.getGameInstanceId(),
+              request.getScriptPatchVersion(),
+              request.getScriptId(),
+              request.getEventType(),
+              request.getFinalReason(),
+              request.getChangedAfterMs(),
+              request.getChangedBeforeMs(),
+              request.getLimit())
+          .stream()
+          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+          .forEach(response::addEvents);
     } catch (IllegalArgumentException ex) {
       response.setError(
           ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(ex.getMessage()));
@@ -622,17 +682,24 @@ public final class AutomationScriptingControlPlaneGrpcService
       pluginRuntimeStateService
           .getStatus(request.getTenantId(), request.getGameInstanceId(), request.getPluginId())
           .ifPresentOrElse(
-              status ->
-                  response
-                      .setActivePluginVersionId(status.activePluginVersionId())
-                      .setPendingPluginVersionId(status.pendingPluginVersionId())
-                      .setPluginState(status.pluginState())
-                      .setStatusReason(status.statusReason())
-                      .setLastChangedAtMs(status.lastChangedAtMs())
-                      .setControlPlaneRequestId(status.controlPlaneRequestId())
-                      .setActorPrincipal(status.actorPrincipal())
-                      .setLastPolicyCheckedAtMs(status.lastPolicyCheckedAtMs())
-                      .setPolicyCheckStale(isPolicyCheckStale(status.lastPolicyCheckedAtMs())),
+              status -> {
+                response
+                    .setActivePluginVersionId(status.activePluginVersionId())
+                    .setPendingPluginVersionId(status.pendingPluginVersionId())
+                    .setPluginState(status.pluginState())
+                    .setStatusReason(status.statusReason())
+                    .setLastChangedAtMs(status.lastChangedAtMs())
+                    .setControlPlaneRequestId(status.controlPlaneRequestId())
+                    .setActorPrincipal(status.actorPrincipal())
+                    .setLastPolicyCheckedAtMs(status.lastPolicyCheckedAtMs())
+                    .setPolicyCheckStale(isPolicyCheckStale(status.lastPolicyCheckedAtMs()));
+                if (status.activePublication() != null) {
+                  response.setActivePublication(toProto(status.activePublication()));
+                }
+                if (status.pendingPublication() != null) {
+                  response.setPendingPublication(toProto(status.pendingPublication()));
+                }
+              },
               () ->
                   response.setError(notFound("GetPluginStatus", "plugin_runtime_state_not_found")));
     } catch (IllegalArgumentException ex) {
@@ -692,7 +759,8 @@ public final class AutomationScriptingControlPlaneGrpcService
           .setInspectedCount(convergence.inspectedCount())
           .setFailClosedCount(convergence.failClosedCount())
           .setConverged(convergence.converged())
-          .setEvaluatedAtMs(convergence.evaluatedAtMs());
+          .setEvaluatedAtMs(convergence.evaluatedAtMs())
+          .setIsStale(isPolicyCheckStale(convergence.evaluatedAtMs()));
       convergence.violations().stream()
           .map(AutomationScriptingControlPlaneGrpcService::toProto)
           .forEach(response::addViolations);
@@ -798,35 +866,43 @@ public final class AutomationScriptingControlPlaneGrpcService
 
   private static PluginPolicyViolation toProto(
       PluginRuntimeStateService.PluginPolicyViolation violation) {
-    return PluginPolicyViolation.newBuilder()
-        .setGameInstanceId(violation.gameInstanceId())
-        .setPluginId(violation.pluginId())
-        .setActivePluginVersionId(violation.activePluginVersionId())
-        .setReason(violation.reason())
-        .setLastChangedAtMs(violation.lastChangedAtMs())
-        .build();
-  }
-
-  private static PluginRuntimeEventEntry toProto(
-      PluginRuntimeStateService.PluginRuntimeEventSummary summary) {
-    return PluginRuntimeEventEntry.newBuilder()
-        .setEventId(summary.eventId())
-        .setTenantId(summary.tenantId())
-        .setGameInstanceId(summary.gameInstanceId())
-        .setPluginId(summary.pluginId())
-        .setPreviousPluginVersionId(summary.previousPluginVersionId())
-        .setActivePluginVersionId(summary.activePluginVersionId())
-        .setPluginState(summary.pluginState())
-        .setStatusReason(summary.statusReason())
-        .setControlPlaneRequestId(summary.controlPlaneRequestId())
-        .setActorPrincipal(summary.actorPrincipal())
-        .setObservedAtMs(summary.observedAtMs())
-        .build();
+    PluginPolicyViolation.Builder builder =
+        PluginPolicyViolation.newBuilder()
+            .setGameInstanceId(violation.gameInstanceId())
+            .setPluginId(violation.pluginId())
+            .setActivePluginVersionId(violation.activePluginVersionId())
+            .setReason(violation.reason())
+            .setLastChangedAtMs(violation.lastChangedAtMs());
+    if (violation.activePublication() != null) {
+      builder.setActivePublication(toProto(violation.activePublication()));
+    }
+    return builder.build();
   }
 
   private boolean isPolicyCheckStale(long lastPolicyCheckedAtMs) {
     long ageMs = Instant.now().toEpochMilli() - lastPolicyCheckedAtMs;
     return ageMs > runtimeProperties.getPluginPolicyStaleThresholdSeconds() * 1_000L;
+  }
+
+  private boolean isDrainStatusStale(long observedAtMs) {
+    long ageMs = Instant.now().toEpochMilli() - observedAtMs;
+    return ageMs > runtimeProperties.getDrainStatusStaleThresholdMs();
+  }
+
+  private boolean isSchedulePinStale(long pinObservedAtMs) {
+    if (pinObservedAtMs <= 0) {
+      return true;
+    }
+    long ageMs = Instant.now().toEpochMilli() - pinObservedAtMs;
+    return ageMs > runtimeProperties.getPinProjectionStaleThresholdMs();
+  }
+
+  private boolean isScheduleRuntimeProgressStale(long lastRuntimeProgressObservedAtMs) {
+    if (lastRuntimeProgressObservedAtMs <= 0) {
+      return true;
+    }
+    long ageMs = Instant.now().toEpochMilli() - lastRuntimeProgressObservedAtMs;
+    return ageMs > runtimeProperties.getScheduleRuntimeProgressStaleThresholdMs();
   }
 
   private static ErrorDetail authorizationError(AdminAuthorizationException ex) {
@@ -867,10 +943,86 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setScriptPatchVersion(summary.scriptPatchVersion())
         .setStatus(summary.status())
         .setStatusReason(summary.statusReason())
+        .setSupersededByScriptPatchVersion(summary.supersededByScriptPatchVersion())
         .setLastChangedAtMs(summary.lastChangedAtMs())
         .setBaseVersionId(summary.baseVersionId())
         .setAbilitySchemaDigest(summary.abilitySchemaDigest())
+        .setPublication(toProto(summary.publication()))
         .build();
+  }
+
+  private static ScriptPatchPublicationLink toProto(
+      ScriptWorkItemService.ScriptPatchPublicationLink link) {
+    return ScriptPatchPublicationLink.newBuilder()
+        .setScriptPatchVersion(link.scriptPatchVersion())
+        .setVersionId(link.versionId())
+        .setBaseVersionId(link.baseVersionId())
+        .setPublicationState(link.publicationState())
+        .setLastChangedAtMs(link.lastChangedAtMs())
+        .setLookupErrorCode(link.lookupErrorCode())
+        .setLookupErrorMessage(link.lookupErrorMessage())
+        .build();
+  }
+
+  private ScriptPatchPublicationLink scriptPatchPublicationLink(
+      String tenantId, String scriptPatchVersion) {
+    GetPublishedScriptPatchVersionResponse response =
+        gameDesignControlPlaneClient.getPublishedScriptPatchVersion(tenantId, scriptPatchVersion);
+    if (response.hasError() && !response.getError().getCode().isBlank()) {
+      return ScriptPatchPublicationLink.newBuilder()
+          .setScriptPatchVersion(normalize(scriptPatchVersion))
+          .setVersionId(0L)
+          .setBaseVersionId(0L)
+          .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED)
+          .setLastChangedAtMs(0L)
+          .setLookupErrorCode(response.getError().getCode())
+          .setLookupErrorMessage(response.getError().getMessage())
+          .build();
+    }
+    return ScriptPatchPublicationLink.newBuilder()
+        .setScriptPatchVersion(response.getScriptPatch().getScriptPatchVersion())
+        .setVersionId(response.getScriptPatch().getVersionId())
+        .setBaseVersionId(response.getScriptPatch().getBaseVersionId())
+        .setPublicationState(response.getScriptPatch().getPublicationState())
+        .setLastChangedAtMs(response.getScriptPatch().getLastChangedAtMs())
+        .build();
+  }
+
+  private static PluginPublicationLink toProto(
+      PluginRuntimeStateService.PluginPublicationLink link) {
+    return PluginPublicationLink.newBuilder()
+        .setPluginVersionId(link.pluginVersionId())
+        .setPublicationId(link.publicationId())
+        .setPublicationState(link.publicationState())
+        .setStatusReason(link.statusReason())
+        .setLastChangedAtMs(link.lastChangedAtMs())
+        .setLookupErrorCode(link.lookupErrorCode())
+        .setLookupErrorMessage(link.lookupErrorMessage())
+        .build();
+  }
+
+  private static PluginRuntimeEventEntry toProto(
+      PluginRuntimeStateService.PluginRuntimeEventSummary summary) {
+    PluginRuntimeEventEntry.Builder builder =
+        PluginRuntimeEventEntry.newBuilder()
+            .setEventId(summary.eventId())
+            .setTenantId(summary.tenantId())
+            .setGameInstanceId(summary.gameInstanceId())
+            .setPluginId(summary.pluginId())
+            .setPreviousPluginVersionId(summary.previousPluginVersionId())
+            .setActivePluginVersionId(summary.activePluginVersionId())
+            .setPluginState(summary.pluginState())
+            .setStatusReason(summary.statusReason())
+            .setControlPlaneRequestId(summary.controlPlaneRequestId())
+            .setActorPrincipal(summary.actorPrincipal())
+            .setObservedAtMs(summary.observedAtMs());
+    if (summary.previousPublication() != null) {
+      builder.setPreviousPublication(toProto(summary.previousPublication()));
+    }
+    if (summary.activePublication() != null) {
+      builder.setActivePublication(toProto(summary.activePublication()));
+    }
+    return builder.build();
   }
 
   private static AutomationAdmissionMode toProtoMode(String mode) {
@@ -879,6 +1031,14 @@ public final class AutomationScriptingControlPlaneGrpcService
       case "PAUSED_FOR_ROLLBACK" ->
           AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK;
       default -> AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_UNSPECIFIED;
+    };
+  }
+
+  private static TriggerMode toTriggerMode(String triggerMode) {
+    return switch (triggerMode) {
+      case "TRIGGER_MODE_CATCH_UP" -> TriggerMode.TRIGGER_MODE_CATCH_UP;
+      case "TRIGGER_MODE_NORMAL" -> TriggerMode.TRIGGER_MODE_NORMAL;
+      default -> TriggerMode.TRIGGER_MODE_UNSPECIFIED;
     };
   }
 
@@ -892,22 +1052,38 @@ public final class AutomationScriptingControlPlaneGrpcService
   }
 
   private static ScriptDeadLetterEntry toProto(ScriptWorkItemService.DeadLetterSummary summary) {
-    return ScriptDeadLetterEntry.newBuilder()
-        .setWorkItemId(summary.workItemId())
-        .setTenantId(summary.tenantId())
-        .setGameInstanceId(summary.gameInstanceId())
-        .setRegionId(summary.regionId())
-        .setRegionEpoch(summary.regionEpoch())
-        .setEntityId(summary.entityId())
-        .setScriptId(summary.scriptId())
-        .setEventType(summary.eventType())
-        .setScriptPatchVersion(summary.scriptPatchVersion())
-        .setScriptEventId(summary.scriptEventId())
-        .setStatus(summary.status())
-        .setReason(summary.reason())
-        .setCreatedAtMs(summary.createdAtMs())
-        .setUpdatedAtMs(summary.updatedAtMs())
-        .build();
+    ScriptDeadLetterEntry.Builder builder =
+        ScriptDeadLetterEntry.newBuilder()
+            .setWorkItemId(summary.workItemId())
+            .setTenantId(summary.tenantId())
+            .setGameInstanceId(summary.gameInstanceId())
+            .setRegionId(summary.regionId())
+            .setRegionEpoch(summary.regionEpoch())
+            .setEntityId(summary.entityId())
+            .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
+            .setWorldSlug(summary.worldSlug())
+            .setRealmSlug(summary.realmSlug())
+            .setPointerVersion(summary.pointerVersion())
+            .setSourceKind(summary.sourceKind())
+            .setSourceState(summary.sourceState())
+            .setSourceOrdinal(summary.sourceOrdinal())
+            .setSourceDueTickId(summary.sourceDueTickId())
+            .setSourceDueAtMs(summary.sourceDueAtMs())
+            .setScriptId(summary.scriptId())
+            .setPluginId(summary.pluginId())
+            .setPluginVersionId(summary.pluginVersionId())
+            .setEventType(summary.eventType())
+            .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptEventId(summary.scriptEventId())
+            .setStatus(summary.status())
+            .setReason(summary.reason())
+            .setCreatedAtMs(summary.createdAtMs())
+            .setUpdatedAtMs(summary.updatedAtMs())
+            .setPublication(toProto(summary.publication()));
+    if (summary.pluginPublication() != null) {
+      builder.setPluginPublication(toProto(summary.pluginPublication()));
+    }
+    return builder.build();
   }
 
   private static ScriptPatchInstanceRolloutEntry toProto(
@@ -922,6 +1098,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setProjectionAsOfMs(summary.projectionAsOfMs())
         .setProjectionLagMs(summary.projectionLagMs())
         .setIsProjectionStale(summary.projectionStale())
+        .setPublication(toProto(summary.publication()))
         .build();
   }
 
@@ -936,62 +1113,140 @@ public final class AutomationScriptingControlPlaneGrpcService
         .setStatusReason(summary.statusReason())
         .setObservedAtMs(summary.observedAtMs())
         .setProjectionAsOfMs(summary.projectionAsOfMs())
+        .setPublication(toProto(summary.publication()))
         .build();
   }
 
-  private static ScriptScheduleInstanceEntry toProto(
+  private ScriptScheduleInstanceEntry toProto(
       ScriptScheduleInstanceService.ScheduleInstanceSummary summary) {
-    return ScriptScheduleInstanceEntry.newBuilder()
-        .setTenantId(summary.tenantId())
-        .setGameInstanceId(summary.gameInstanceId())
-        .setScriptPatchVersion(summary.scriptPatchVersion())
-        .setScriptId(summary.scriptId())
-        .setPluginId(summary.pluginId())
-        .setPluginVersionId(summary.pluginVersionId())
-        .setEventType(summary.eventType())
-        .setScheduleDefinitionId(summary.scheduleDefinitionId())
-        .setScheduleKind(summary.scheduleKind())
-        .setCadenceValue(summary.cadenceValue())
-        .setCadenceUnit(summary.cadenceUnit())
-        .setPriorityTag(summary.priorityTag())
-        .setTargetScopeType(summary.targetScopeType())
-        .setTargetScopeId(summary.targetScopeId())
-        .setBindingPriority(summary.bindingPriority())
-        .setRequiresExclusiveEvent(summary.requiresExclusiveEvent())
-        .setMaterializationStatus(summary.materializationStatus())
-        .setNextDueAtMs(summary.nextDueAtMs())
-        .setNextDueTickId(summary.nextDueTickId())
-        .setObservedRuntimeVersionId(summary.observedRuntimeVersionId())
-        .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
-        .setPinObservedAtMs(summary.pinObservedAtMs())
-        .setMaterializedAtMs(summary.materializedAtMs())
-        .setUpdatedAtMs(summary.updatedAtMs())
-        .setRuntimeRegionId(summary.runtimeRegionId())
-        .setRuntimeRegionEpoch(summary.runtimeRegionEpoch())
-        .setLastObservedTickId(summary.lastObservedTickId())
-        .setLastRuntimeProgressObservedAtMs(summary.lastRuntimeProgressObservedAtMs())
-        .build();
+    ScriptScheduleInstanceEntry.Builder builder =
+        ScriptScheduleInstanceEntry.newBuilder()
+            .setTenantId(summary.tenantId())
+            .setGameInstanceId(summary.gameInstanceId())
+            .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptId(summary.scriptId())
+            .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
+            .setWorldSlug(summary.worldSlug())
+            .setRealmSlug(summary.realmSlug())
+            .setPointerVersion(summary.pointerVersion())
+            .setPluginId(summary.pluginId())
+            .setPluginVersionId(summary.pluginVersionId())
+            .setEventType(summary.eventType())
+            .setScheduleDefinitionId(summary.scheduleDefinitionId())
+            .setScheduleKind(summary.scheduleKind())
+            .setCadenceValue(summary.cadenceValue())
+            .setCadenceUnit(summary.cadenceUnit())
+            .setPriorityTag(summary.priorityTag())
+            .setTargetScopeType(summary.targetScopeType())
+            .setTargetScopeId(summary.targetScopeId())
+            .setBindingPriority(summary.bindingPriority())
+            .setRequiresExclusiveEvent(summary.requiresExclusiveEvent())
+            .setMaterializationStatus(summary.materializationStatus())
+            .setNextDueAtMs(summary.nextDueAtMs())
+            .setNextDueTickId(summary.nextDueTickId())
+            .setObservedRuntimeVersionId(summary.observedRuntimeVersionId())
+            .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
+            .setPinObservedAtMs(summary.pinObservedAtMs())
+            .setMaterializedAtMs(summary.materializedAtMs())
+            .setUpdatedAtMs(summary.updatedAtMs())
+            .setRuntimeRegionId(summary.runtimeRegionId())
+            .setRuntimeRegionEpoch(summary.runtimeRegionEpoch())
+            .setLastObservedTickId(summary.lastObservedTickId())
+            .setLastRuntimeProgressObservedAtMs(summary.lastRuntimeProgressObservedAtMs())
+            .setIsPinStale(isSchedulePinStale(summary.pinObservedAtMs()))
+            .setIsRuntimeProgressStale(
+                isScheduleRuntimeProgressStale(summary.lastRuntimeProgressObservedAtMs()))
+            .setPublication(toProto(summary.publication()));
+    if (summary.pluginPublication() != null) {
+      builder.setPluginPublication(toProto(summary.pluginPublication()));
+    }
+    return builder.build();
+  }
+
+  private static ScriptTimerAuditEventEntry toProto(
+      ScriptScheduleInstanceService.TimerAuditEventSummary summary) {
+    ScriptTimerAuditEventEntry.Builder builder =
+        ScriptTimerAuditEventEntry.newBuilder()
+            .setTenantId(summary.tenantId())
+            .setGameInstanceId(summary.gameInstanceId())
+            .setRegionId(summary.regionId())
+            .setRegionEpoch(summary.regionEpoch())
+            .setEntityId(summary.entityId())
+            .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
+            .setWorldSlug(summary.worldSlug())
+            .setRealmSlug(summary.realmSlug())
+            .setPointerVersion(summary.pointerVersion())
+            .setScriptId(summary.scriptId())
+            .setPluginId(summary.pluginId())
+            .setPluginVersionId(summary.pluginVersionId())
+            .setEventType(summary.eventType())
+            .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptEventId(summary.scriptEventId())
+            .setTriggerMode(toTriggerMode(summary.triggerMode()))
+            .setSourceState(summary.sourceState())
+            .setSourceOrdinal(summary.sourceOrdinal())
+            .setSourceDueTickId(summary.sourceDueTickId())
+            .setSourceDueAtMs(summary.sourceDueAtMs())
+            .setFinalStage(summary.finalStage())
+            .setFinalOutcome(summary.finalOutcome())
+            .setFinalReason(summary.finalReason())
+            .setCreatedAtMs(summary.createdAtMs())
+            .setUpdatedAtMs(summary.updatedAtMs())
+            .setPublication(toProto(summary.publication()));
+    if (summary.pluginPublication() != null) {
+      builder.setPluginPublication(toProto(summary.pluginPublication()));
+    }
+    if (summary.workItemId() > 0) {
+      builder.setWorkItemId(Long.toString(summary.workItemId()));
+    }
+    return builder.build();
   }
 
   private static ScriptHandoffEventEntry toProto(
       ScriptWorkItemService.HandoffEventSummary summary) {
-    return ScriptHandoffEventEntry.newBuilder()
-        .setEventId(summary.eventId())
-        .setTenantId(summary.tenantId())
-        .setGameInstanceId(summary.gameInstanceId())
-        .setScriptPatchVersion(summary.scriptPatchVersion())
-        .setScriptId(summary.scriptId())
-        .setPluginId(summary.pluginId())
-        .setPluginVersionId(summary.pluginVersionId())
-        .setWorkItemId(summary.workItemId())
-        .setCommandOrdinal(summary.commandOrdinal())
-        .setAutomationDispatchId(summary.automationDispatchId())
-        .setGameSessionCommandId(summary.gameSessionCommandId())
-        .setTargetEntityId(summary.targetEntityId())
-        .setEmittedCommandText(summary.emittedCommandText())
-        .setHandoffOutcome(summary.handoffOutcome())
-        .setHandoffReason(summary.handoffReason())
-        .setObservedAtMs(summary.observedAtMs())
-        .build();
+    ScriptHandoffEventEntry.Builder builder =
+        ScriptHandoffEventEntry.newBuilder()
+            .setEventId(summary.eventId())
+            .setTenantId(summary.tenantId())
+            .setGameInstanceId(summary.gameInstanceId())
+            .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptId(summary.scriptId())
+            .setPluginId(summary.pluginId())
+            .setPluginVersionId(summary.pluginVersionId())
+            .setWorkItemId(summary.workItemId())
+            .setCommandOrdinal(summary.commandOrdinal())
+            .setAutomationDispatchId(summary.automationDispatchId())
+            .setGameSessionCommandId(summary.gameSessionCommandId())
+            .setTargetEntityId(summary.targetEntityId())
+            .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
+            .setWorldSlug(summary.worldSlug())
+            .setRealmSlug(summary.realmSlug())
+            .setPointerVersion(summary.pointerVersion())
+            .setSourceKind(summary.sourceKind())
+            .setSourceState(summary.sourceState())
+            .setSourceOrdinal(summary.sourceOrdinal())
+            .setSourceDueTickId(summary.sourceDueTickId())
+            .setSourceDueAtMs(summary.sourceDueAtMs())
+            .setEmittedCommandText(summary.emittedCommandText())
+            .setHandoffOutcome(summary.handoffOutcome())
+            .setHandoffReason(summary.handoffReason())
+            .setObservedAtMs(summary.observedAtMs())
+            .setPublication(toProto(summary.publication()));
+    if (summary.pluginPublication() != null) {
+      builder.setPluginPublication(toProto(summary.pluginPublication()));
+    }
+    return builder.build();
+  }
+
+  private static PlayableStateScope toPlayableStateScope(String playableStateScope) {
+    return switch (normalize(playableStateScope)) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+    };
+  }
+
+  private static String normalize(String value) {
+    return value == null ? "" : value.trim().toUpperCase(java.util.Locale.ROOT);
   }
 }

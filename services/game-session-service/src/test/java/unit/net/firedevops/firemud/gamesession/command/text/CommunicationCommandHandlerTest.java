@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -18,6 +19,7 @@ import net.firedevops.firemud.gamesession.presentation.CommunicationOutputMapper
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -36,11 +38,27 @@ class CommunicationCommandHandlerTest {
       Mockito.mock(SessionContextService.class);
   private final CommunicationRecipientDeliveryService recipientDeliveryService =
       Mockito.mock(CommunicationRecipientDeliveryService.class);
+  private final ScriptEventPublisher scriptEventPublisher =
+      Mockito.mock(ScriptEventPublisher.class);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private CommunicationCommandHandler handler;
   private final SessionContext sessionContext =
       new SessionContext(
-          1L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 1L, "room-7", "jwt-token");
+          1L,
+          22L,
+          123L,
+          "emberline@example.com",
+          911L,
+          "Emberline",
+          1L,
+          "room-7",
+          "jwt-token",
+          null,
+          1L,
+          "demo",
+          "production",
+          17L,
+          "SHARED");
 
   @BeforeEach
   void setUp() {
@@ -64,7 +82,8 @@ class CommunicationCommandHandlerTest {
             sessionContextService,
             recipientDeliveryService,
             new CommunicationOutputMapper(),
-            meterRegistry);
+            meterRegistry,
+            scriptEventPublisher);
   }
 
   @Test
@@ -109,6 +128,14 @@ class CommunicationCommandHandlerTest {
             "",
             "",
             null);
+    Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            Mockito.eq(sessionContext),
+            Mockito.argThat(
+                gameplayCommand ->
+                    "SAY".equals(gameplayCommand.getCommandName())
+                        && gameplayCommand.getCommandId() != null
+                        && gameplayCommand.getCommandId().startsWith("comm-")));
   }
 
   @Test
@@ -173,6 +200,80 @@ class CommunicationCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("COMMUNICATION_NOT_DELIVERED");
     assertThat(result.commandResult().errorMessage()).isEqualTo("silenced");
+    Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            Mockito.eq(sessionContext),
+            Mockito.argThat(
+                gameplayCommand ->
+                    "SAY".equals(gameplayCommand.getCommandName())
+                        && gameplayCommand.getCommandId() != null
+                        && gameplayCommand.getCommandId().startsWith("comm-")));
+  }
+
+  @Test
+  void communicationEffectUsesDeterministicScriptEventId() {
+    SendCommunicationResponse response =
+        SendCommunicationResponse.newBuilder()
+            .setSuccess(true)
+            .setMessage(" hello travelers ")
+            .setSpeakerName("Emberline")
+            .addDeliveredTo("Emberline")
+            .build();
+    when(gameLogicClient.sendCommunication(
+            Mockito.eq(sessionContext),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.eq("effect-1")))
+        .thenReturn(response);
+
+    CommunicationCommandHandlingResult result =
+        handler.handle(
+            sessionContext,
+            new TextCommand(TextCommandType.SAY, List.of("hello travelers"), "SAY hello travelers"),
+            "effect-1");
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            Mockito.eq(sessionContext),
+            Mockito.argThat(
+                gameplayCommand ->
+                    "SAY".equals(gameplayCommand.getCommandName())
+                        && "effect-1:communication:say".equals(gameplayCommand.getCommandId())));
+  }
+
+  @Test
+  void tellFailsClosedWhenSessionContextDropsAdmittedPlayableStateScope() {
+    SessionContext missingScope =
+        new SessionContext(
+            sessionContext.sessionId(),
+            sessionContext.tenantId(),
+            sessionContext.accountId(),
+            sessionContext.loginName(),
+            sessionContext.characterId(),
+            sessionContext.characterName(),
+            sessionContext.gameInstanceId(),
+            sessionContext.roomInstanceId(),
+            sessionContext.jwt(),
+            sessionContext.localeTag(),
+            sessionContext.bootstrapGameInstanceId(),
+            sessionContext.worldSlug(),
+            sessionContext.realmSlug(),
+            sessionContext.pointerVersion(),
+            null);
+
+    assertThatThrownBy(
+            () ->
+                handler.handle(
+                    missingScope,
+                    new TextCommand(
+                        TextCommandType.TELL, List.of("Sora", "hello"), "TELL Sora hello")))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Missing admitted playableStateScope");
   }
 
   private static String joinedOutputText(List<PlayerOutput> outputs) {

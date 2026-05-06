@@ -1,6 +1,4 @@
 spring:
-  config:
-    import: "optional:classpath:routes-test.yml"
   datasource:
     url: jdbc:h2:mem:${spring.application.name:firemud}-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
     driver-class-name: org.h2.Driver
@@ -18,15 +16,11 @@ spring:
 
 firemud:
   gateway:
-    gameplay:
-      bridge:
-        upstream-url: ws://game-session-service:8080/ws/game
-        reconnect-attempts: 40
-        reconnect-delay-ms: 250
     header-trust:
       forwarded-client-ip:
         trusted-proxy-cidrs:
           - 127.0.0.1/32
+          - ::1/128
           - 10.0.0.0/8
           - 172.16.0.0/12
           - 192.168.0.0/16
@@ -34,6 +28,7 @@ firemud:
         allow-insecure-headers-from-trusted-cidrs: true
         insecure-trusted-cidrs:
           - 127.0.0.1/32
+          - ::1/128
           - 10.0.0.0/8
           - 172.16.0.0/12
           - 192.168.0.0/16

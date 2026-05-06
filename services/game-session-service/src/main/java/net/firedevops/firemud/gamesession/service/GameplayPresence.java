@@ -7,8 +7,10 @@ public record GameplayPresence(
     long sessionId,
     long tenantId,
     long gameInstanceId,
+    String playableStateScope,
     String worldSlug,
     String realmSlug,
+    long pointerVersion,
     long accountId,
     long characterId,
     String characterName,
@@ -19,4 +21,68 @@ public record GameplayPresence(
     Long lastMeaningfulActivityAtEpochMs)
     implements Serializable {
   private static final long serialVersionUID = 1L;
+
+  public GameplayPresence(
+      long sessionId,
+      long tenantId,
+      long gameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      long accountId,
+      long characterId,
+      String characterName,
+      GameplayPresenceRole role,
+      long connectedAtEpochMs,
+      Long explicitAfkSinceEpochMs,
+      Long lastAcceptedCommandAtEpochMs,
+      Long lastMeaningfulActivityAtEpochMs) {
+    this(
+        sessionId,
+        tenantId,
+        gameInstanceId,
+        null,
+        worldSlug,
+        realmSlug,
+        accountId,
+        characterId,
+        characterName,
+        role,
+        connectedAtEpochMs,
+        explicitAfkSinceEpochMs,
+        lastAcceptedCommandAtEpochMs,
+        lastMeaningfulActivityAtEpochMs);
+  }
+
+  public GameplayPresence(
+      long sessionId,
+      long tenantId,
+      long gameInstanceId,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      long accountId,
+      long characterId,
+      String characterName,
+      GameplayPresenceRole role,
+      long connectedAtEpochMs,
+      Long explicitAfkSinceEpochMs,
+      Long lastAcceptedCommandAtEpochMs,
+      Long lastMeaningfulActivityAtEpochMs) {
+    this(
+        sessionId,
+        tenantId,
+        gameInstanceId,
+        playableStateScope,
+        worldSlug,
+        realmSlug,
+        0L,
+        accountId,
+        characterId,
+        characterName,
+        role,
+        connectedAtEpochMs,
+        explicitAfkSinceEpochMs,
+        lastAcceptedCommandAtEpochMs,
+        lastMeaningfulActivityAtEpochMs);
+  }
 }

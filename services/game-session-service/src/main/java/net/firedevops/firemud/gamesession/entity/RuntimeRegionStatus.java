@@ -18,6 +18,10 @@ import lombok.Data;
       @Index(
           name = "idx_runtime_region_status_tenant_instance",
           columnList = "tenant_id, game_instance_id",
+          unique = true),
+      @Index(
+          name = "idx_runtime_region_status_tenant_region",
+          columnList = "tenant_id, region_id",
           unique = true)
     })
 public class RuntimeRegionStatus {
@@ -30,6 +34,9 @@ public class RuntimeRegionStatus {
 
   @Column(name = "game_instance_id", nullable = false)
   private Long gameInstanceId;
+
+  @Column(name = "region_id", nullable = false, length = 64)
+  private String regionId;
 
   @Column(name = "region_epoch", nullable = false)
   private long regionEpoch;

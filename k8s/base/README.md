@@ -1,6 +1,6 @@
 # Baseline Kubernetes Manifests
 
-This directory contains minimal deployment files for running the core FireMUD services in a Kubernetes cluster. The manifests are intended as starting points and should be customized with image repositories, resource limits, and environment variables.
+This directory contains baseline deployment files for running the core FireMUD services in a Kubernetes cluster. They are intended as reference manifests and starting points for ad hoc cluster bring-up, not as the main player-facing deployment contract.
 
 Apply all manifests with:
 
@@ -20,7 +20,7 @@ kubectl apply -n firemud -f spring-cloud-gateway.yaml
 
 These manifests assume a `firemud` namespace.
 
-These files expose the services internally using `ClusterIP` (except the gateway and TCP proxy which are `LoadBalancer`). See the [Deployment Environments](../../design/architecture/infrastructure/deployment-environments.md) document for production considerations.
+These files expose the services internally using `ClusterIP` (except the gateway and TCP proxy which are `LoadBalancer`). They also carry more baked-in assumptions than a purely minimal example set, including explicit `prod` profile usage, JWT/JWKS mounts, gRPC TLS mounts, and Fluent Bit sidecars in some services. `base/` is still a baseline scaffold rather than the player-facing deployment contract, but the checked-in player-facing overlays no longer inherit placeholder bootstrap Secrets or TLS material from it.
 
 Ports align with the design documents:
 
@@ -32,7 +32,7 @@ All deployments include readiness probes against `/actuator/health/readiness`, l
 
 ## Database Settings
 
-All Spring Boot services expect PostgreSQL and Redis connection details via environment variables. A `firemud-config` `ConfigMap` and `postgres-credentials` `Secret` are provided to supply these values:
+All Spring Boot services expect PostgreSQL and Redis connection details via environment variables. The baseline set also expects additional auth-related Secrets such as `jwt-signing-keys` and `jwt-jwks` where applicable. `firemud-db-env.yaml` supplies the shared non-secret `firemud-config` `ConfigMap`; example bootstrap Secret/TLS manifests now live in `bootstrap-secrets.example.yaml` and `grpc-bootstrap.example.yaml` for ad hoc bring-up only. Player-facing environments should supply those bindings through environment-owned resources instead of applying the example files verbatim:
 
 ```bash
 FIREMUD_POSTGRES_HOST=postgres
@@ -47,6 +47,6 @@ FLUENT_ELASTICSEARCH_HOST=elasticsearch
 FLUENT_ELASTICSEARCH_PORT=9200
 ```
 
-Each deployment loads these variables using `envFrom`. Replace the sample credentials or mount your own Secrets for production environments.
+Each deployment loads these variables using `envFrom`. Use the example bootstrap manifests only as reference input when bringing up a non-player-facing ad hoc cluster.
 
 An example `HorizontalPodAutoscaler` manifest is provided in `hpa-example.yaml`. It is commented out by default and can be customized with CPU or other metrics when deploying to production clusters.

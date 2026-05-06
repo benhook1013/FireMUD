@@ -1,3 +1,0 @@
-spring:
-  config:
-    import: "optional:classpath:routes-prod.yml"

@@ -2,12 +2,10 @@ package integration.net.firedevops.firemud.springcloudgateway;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.IOException;
-import java.net.URI;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -18,13 +16,13 @@ import net.firedevops.firemud.springcloudgateway.config.GameplayWebSocketBridgeP
 import net.firedevops.firemud.springcloudgateway.health.GameplayRouteReadinessHealthIndicator;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
+import net.firedevops.firemud.test.ReactiveTestApplicationSupport;
+import net.firedevops.firemud.test.WebSocketTestProbe;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -38,16 +36,12 @@ import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
-import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketHttpHeaders;
-import org.springframework.web.socket.WebSocketSession;
-import org.springframework.web.socket.client.standard.StandardWebSocketClient;
-import org.springframework.web.socket.handler.TextWebSocketHandler;
 import reactor.core.publisher.Mono;
 
 class GatewayGameplayBridgeIntegrationTest {
-  private static UpstreamHolder UPSTREAM;
-  private static GatewayHolder GATEWAY;
+  private static volatile UpstreamHolder UPSTREAM;
+  private static volatile ReactiveTestApplicationSupport.ReactiveAppHolder GATEWAY;
   private static final AtomicReference<String> TEST_UPSTREAM_URL = new AtomicReference<>();
   private static final AtomicReference<UpstreamRuntimeState> TEST_UPSTREAM_STATE =
       new AtomicReference<>();
@@ -74,65 +68,23 @@ class GatewayGameplayBridgeIntegrationTest {
   void gatewayRebindsUpstreamAfterAbruptDropWithoutDroppingClientSocket() throws Exception {
     ensureStarted();
 
-    StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "42");
-    headers.add("X-Tenant-Id", "22");
+    headers.add("X-Proxy-Client-IP", "203.0.113.10");
+    headers.add("X-Proxy-Game-Instance-Id", "42");
+    headers.add("X-Proxy-Tenant-Id", "22");
     headers.add("X-Proxy-Connection-Id", "bridge-test-conn");
 
-    List<String> responses = new CopyOnWriteArrayList<>();
-    AtomicBoolean downstreamClosed = new AtomicBoolean(false);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-    CountDownLatch firstReady = new CountDownLatch(1);
-    CountDownLatch firstLook = new CountDownLatch(1);
-    CountDownLatch secondLook = new CountDownLatch(1);
-
-    WebSocketSession session =
-        client
-            .execute(
-                new TextWebSocketHandler() {
-                  @Override
-                  public void afterConnectionEstablished(WebSocketSession session)
-                      throws IOException {
-                    sessionRef.set(session);
-                  }
-
-                  @Override
-                  protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                    responses.add(message.getPayload());
-                    if (message.getPayload().startsWith("UPSTREAM_READY")) {
-                      if (firstReady.getCount() > 0) {
-                        firstReady.countDown();
-                      }
-                    }
-                    if (message.getPayload().startsWith("OK LOOK")) {
-                      firstLook.countDown();
-                      secondLook.countDown();
-                    }
-                  }
-
-                  @Override
-                  public void afterConnectionClosed(
-                      WebSocketSession session,
-                      org.springframework.web.socket.CloseStatus closeStatus) {
-                    downstreamClosed.set(true);
-                  }
-                },
-                headers,
-                URI.create(GATEWAY.websocketUrl()))
-            .get(5, TimeUnit.SECONDS);
-
-    assertThat(firstReady.await(5, TimeUnit.SECONDS)).isTrue();
-    sessionRef.get().sendMessage(new TextMessage("LOOK"));
-    assertThat(firstLook.await(5, TimeUnit.SECONDS)).isTrue();
-    sessionRef.get().sendMessage(new TextMessage("FORCE_DROP"));
-    assertThat(UPSTREAM.awaitConnections(2, 5, TimeUnit.SECONDS)).isTrue();
-    assertThat(downstreamClosed.get()).isFalse();
-    session.sendMessage(new TextMessage("LOOK"));
-    assertThat(secondLook.await(5, TimeUnit.SECONDS)).isTrue();
-    session.close();
-
-    assertThat(responses).contains(LookCommandConstants.LOOK_RESPONSE);
+    try (WebSocketTestProbe probe = WebSocketTestProbe.connect(GATEWAY.websocketUrl(), headers)) {
+      probe.awaitStartsWith("UPSTREAM_READY", Duration.ofSeconds(5));
+      probe.send("LOOK");
+      probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(5));
+      probe.send("FORCE_DROP");
+      assertThat(UPSTREAM.awaitConnections(2, 5, TimeUnit.SECONDS)).isTrue();
+      assertThat(probe.downstreamClosed()).isFalse();
+      probe.send("LOOK");
+      probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(5));
+      assertThat(probe.responses()).contains(LookCommandConstants.LOOK_RESPONSE);
+    }
     assertThat(UPSTREAM.seenTransportSessionIds()).hasSize(2);
     assertThat(UPSTREAM.seenTransportSessionIds().get(0))
         .isEqualTo(UPSTREAM.seenTransportSessionIds().get(1));
@@ -143,63 +95,24 @@ class GatewayGameplayBridgeIntegrationTest {
   void gatewayRebindsAfterRealUpstreamRestartWithoutDroppingClientSocket() throws Exception {
     ensureStarted();
 
-    StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "42");
-    headers.add("X-Tenant-Id", "22");
+    headers.add("X-Proxy-Client-IP", "203.0.113.10");
+    headers.add("X-Proxy-Game-Instance-Id", "42");
+    headers.add("X-Proxy-Tenant-Id", "22");
     headers.add("X-Proxy-Connection-Id", "bridge-test-conn");
 
-    AtomicBoolean downstreamClosed = new AtomicBoolean(false);
-    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-    CountDownLatch firstReady = new CountDownLatch(1);
-    CountDownLatch firstLook = new CountDownLatch(1);
-    CountDownLatch secondLook = new CountDownLatch(1);
+    try (WebSocketTestProbe probe = WebSocketTestProbe.connect(GATEWAY.websocketUrl(), headers)) {
+      probe.awaitStartsWith("UPSTREAM_READY", Duration.ofSeconds(5));
+      probe.send("LOOK");
+      probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(5));
 
-    WebSocketSession session =
-        client
-            .execute(
-                new TextWebSocketHandler() {
-                  @Override
-                  public void afterConnectionEstablished(WebSocketSession session)
-                      throws IOException {
-                    sessionRef.set(session);
-                  }
+      UPSTREAM.restart();
+      assertThat(UPSTREAM.awaitConnections(2, 30, TimeUnit.SECONDS)).isTrue();
+      assertThat(probe.downstreamClosed()).isFalse();
 
-                  @Override
-                  protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                    if (message.getPayload().startsWith("UPSTREAM_READY")) {
-                      if (firstReady.getCount() > 0) {
-                        firstReady.countDown();
-                      }
-                    }
-                    if (message.getPayload().startsWith("OK LOOK")) {
-                      firstLook.countDown();
-                      secondLook.countDown();
-                    }
-                  }
-
-                  @Override
-                  public void afterConnectionClosed(
-                      WebSocketSession session,
-                      org.springframework.web.socket.CloseStatus closeStatus) {
-                    downstreamClosed.set(true);
-                  }
-                },
-                headers,
-                URI.create(GATEWAY.websocketUrl()))
-            .get(5, TimeUnit.SECONDS);
-
-    assertThat(firstReady.await(5, TimeUnit.SECONDS)).isTrue();
-    sessionRef.get().sendMessage(new TextMessage("LOOK"));
-    assertThat(firstLook.await(5, TimeUnit.SECONDS)).isTrue();
-
-    UPSTREAM.restart();
-    assertThat(UPSTREAM.awaitConnections(2, 30, TimeUnit.SECONDS)).isTrue();
-    assertThat(downstreamClosed.get()).isFalse();
-
-    session.sendMessage(new TextMessage("LOOK"));
-    assertThat(secondLook.await(30, TimeUnit.SECONDS)).isTrue();
-    session.close();
+      probe.send("LOOK");
+      probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(30));
+    }
 
     assertThat(UPSTREAM.seenTransportSessionIds()).hasSize(2);
     assertThat(UPSTREAM.seenTransportSessionIds().get(0))
@@ -211,7 +124,7 @@ class GatewayGameplayBridgeIntegrationTest {
       UPSTREAM = startUpstream();
     }
     if (GATEWAY == null) {
-      GATEWAY = startGateway(UPSTREAM.websocketUrl());
+      GATEWAY = startGateway(UPSTREAM.websocketUrl()).app();
     }
   }
 
@@ -223,29 +136,30 @@ class GatewayGameplayBridgeIntegrationTest {
 
   private static GatewayHolder startGateway(String upstreamUrl) {
     TEST_UPSTREAM_URL.set(upstreamUrl);
-    ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(
-                SpringCloudGatewayApplication.class, GatewayBridgeTestOverrideConfiguration.class)
-            .profiles("test")
-            .properties(
-                "server.port=0",
-                "spring.main.web-application-type=reactive",
-                "spring.flyway.enabled=false",
-                "firemud.database.enabled=false",
+    return new GatewayHolder(
+        ReactiveTestApplicationSupport.startReactiveApp(
+            Map.of(
+                "spring.profiles.active",
+                "test",
+                "spring.flyway.enabled",
+                "false",
+                "firemud.database.enabled",
+                "false",
                 GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT,
-                GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER)
-            .run();
-    int port = ((WebServerApplicationContext) context).getWebServer().getPort();
-    return new GatewayHolder(context, port);
+                "",
+                GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER,
+                ""),
+            SpringCloudGatewayApplication.class,
+            GatewayBridgeTestOverrideConfiguration.class));
   }
 
-  private record GatewayHolder(ConfigurableApplicationContext context, int port) {
+  private record GatewayHolder(ReactiveTestApplicationSupport.ReactiveAppHolder app) {
     String websocketUrl() {
-      return "ws://localhost:" + port + "/ws/game";
+      return app.websocketUrl();
     }
 
     void close() {
-      context.close();
+      app.close();
     }
   }
 
@@ -259,24 +173,23 @@ class GatewayGameplayBridgeIntegrationTest {
     }
 
     static UpstreamHolder start(int port) {
-      ConfigurableApplicationContext context =
-          new SpringApplicationBuilder(UpstreamStubApplication.class)
-              .properties(
-                  "server.port=" + port,
-                  "server.shutdown=immediate",
-                  "spring.main.web-application-type=reactive",
-                  "spring.main.allow-bean-definition-overriding=true",
-                  "spring.flyway.enabled=false",
-                  "firemud.database.enabled=false",
-                  GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT,
-                  GatewayTestProperties.SPRING_GRPC_SERVER_SSL_DISABLED,
-                  GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH,
-                  GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH,
-                  GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH,
-                  "firemud.grpc.plaintext=true",
-                  GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER)
-              .run();
-      return new UpstreamHolder(context, port);
+      ReactiveTestApplicationSupport.ReactiveAppHolder app =
+          ReactiveTestApplicationSupport.startReactiveApp(
+              Map.ofEntries(
+                  Map.entry("server.port", Integer.toString(port)),
+                  Map.entry("server.shutdown", "immediate"),
+                  Map.entry("spring.main.allow-bean-definition-overriding", "true"),
+                  Map.entry("spring.flyway.enabled", "false"),
+                  Map.entry("firemud.database.enabled", "false"),
+                  Map.entry(GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT, ""),
+                  Map.entry(GatewayTestProperties.SPRING_GRPC_SERVER_SSL_DISABLED, ""),
+                  Map.entry(GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH, ""),
+                  Map.entry(GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH, ""),
+                  Map.entry(GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH, ""),
+                  Map.entry("firemud.grpc.plaintext", "true"),
+                  Map.entry(GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER, "")),
+              UpstreamStubApplication.class);
+      return new UpstreamHolder(app.context(), port);
     }
 
     String websocketUrl() {
@@ -300,23 +213,7 @@ class GatewayGameplayBridgeIntegrationTest {
 
     void restart() {
       context.close();
-      context =
-          new SpringApplicationBuilder(UpstreamStubApplication.class)
-              .properties(
-                  "server.port=" + port,
-                  "server.shutdown=immediate",
-                  "spring.main.web-application-type=reactive",
-                  "spring.main.allow-bean-definition-overriding=true",
-                  "spring.flyway.enabled=false",
-                  "firemud.database.enabled=false",
-                  GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT,
-                  GatewayTestProperties.SPRING_GRPC_SERVER_SSL_DISABLED,
-                  GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH,
-                  GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH,
-                  GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH,
-                  "firemud.grpc.plaintext=true",
-                  GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER)
-              .run();
+      context = start(port).context;
     }
 
     void close() {

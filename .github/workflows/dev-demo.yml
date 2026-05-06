@@ -135,8 +135,8 @@ jobs:
           PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
-          bash ./dev-tools/preview/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
+          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify cluster access
@@ -146,13 +146,13 @@ jobs:
 
       - name: Reset dev-demo namespace for clean deploy
         run: |
-          bash ./dev-tools/preview/delete-preview-namespace.sh \
+          bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
             "${{ needs.dev-demo-plan.outputs.release_name }}"
 
       - name: Ensure dev-demo namespace exists
         run: |
-          bash ./dev-tools/dev-demo/ensure-dev-demo-namespace.sh \
+          bash ./dev-tools/hosted/dev-demo/ensure-dev-demo-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}"
 
       - name: Ensure GHCR pull secret exists
@@ -160,22 +160,22 @@ jobs:
           PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
           PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
         run: |
-          bash ./dev-tools/preview/ensure-ghcr-pull-secret.sh "${{ needs.dev-demo-plan.outputs.namespace }}"
+          bash ./dev-tools/hosted/shared/ensure-ghcr-pull-secret.sh "${{ needs.dev-demo-plan.outputs.namespace }}"
 
       - name: Wait for develop runtime images
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "DEV_DEMO_STAGE=wait-for-images" >> "$GITHUB_ENV"
-          bash ./dev-tools/preview/wait-for-preview-images.sh "${{ needs.dev-demo-plan.outputs.image_tag }}"
+          bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ needs.dev-demo-plan.outputs.image_tag }}"
 
       - name: Ensure dev-demo gRPC TLS secret exists
         run: |
-          bash ./dev-tools/preview/ensure-grpc-tls-secret.sh "${{ needs.dev-demo-plan.outputs.namespace }}"
+          bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "${{ needs.dev-demo-plan.outputs.namespace }}"
 
       - name: Render dev-demo values
         run: |
-          bash ./dev-tools/dev-demo/render-dev-demo-values.sh \
+          python3 ./dev-tools/hosted/dev-demo/render-dev-demo-values.py \
             k8s/helm/firemud/values-dev-demo.example.yaml \
             /tmp/dev-demo-values.yaml \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
@@ -203,7 +203,7 @@ jobs:
 
       - name: Record reconciled dev-demo target
         run: |
-          bash ./dev-tools/dev-demo/annotate-dev-demo-namespace.sh \
+          bash ./dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
             "${{ needs.dev-demo-plan.outputs.head_sha }}" \
             "${{ needs.dev-demo-plan.outputs.image_tag }}" \
@@ -211,7 +211,7 @@ jobs:
 
       - name: Summarize dev-demo target
         run: |
-          bash ./dev-tools/dev-demo/write-dev-demo-summary.sh \
+          bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             target \
             "${{ needs.dev-demo-plan.outputs.head_sha }}" \
             "${{ needs.dev-demo-plan.outputs.image_tag }}" \
@@ -422,7 +422,7 @@ jobs:
           echo "DEV_DEMO_STAGE=smoke" >> "$GITHUB_ENV"
           set -o pipefail
           SMOKE_TRANSCRIPT=/tmp/dev-demo-hosted-tcp-smoke.log
-          if ! bash ./dev-tools/preview/preview-login-look-smoke.sh 2>&1 | tee "${SMOKE_TRANSCRIPT}"; then
+          if ! bash ./dev-tools/hosted/shared/hosted-login-look-smoke.sh 2>&1 | tee "${SMOKE_TRANSCRIPT}"; then
             echo "=== Dev-demo TCP smoke transcript ==="
             cat "${SMOKE_TRANSCRIPT}"
             exit 1
@@ -431,7 +431,7 @@ jobs:
       - name: Summarize dev-demo access
         if: ${{ steps.deploy-release.outcome == 'success' }}
         run: |
-          bash ./dev-tools/dev-demo/write-dev-demo-summary.sh \
+          bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             success \
             "${{ needs.dev-demo-plan.outputs.head_sha }}" \
             "${{ needs.dev-demo-plan.outputs.image_tag }}" \
@@ -445,7 +445,7 @@ jobs:
       - name: Summarize dev-demo failure
         if: ${{ always() && failure() }}
         run: |
-          bash ./dev-tools/dev-demo/write-dev-demo-summary.sh \
+          bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             failure \
             "${{ needs.dev-demo-plan.outputs.head_sha }}" \
             "${{ needs.dev-demo-plan.outputs.image_tag }}" \
@@ -488,19 +488,19 @@ jobs:
           PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
-          bash ./dev-tools/preview/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
+          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Delete dev-demo namespace and release
         run: |
-          bash ./dev-tools/preview/delete-preview-namespace.sh \
+          bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
             "${{ needs.dev-demo-plan.outputs.release_name }}"
 
       - name: Summarize dev-demo destroy
         run: |
-          bash ./dev-tools/dev-demo/write-dev-demo-summary.sh \
+          bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             destroyed \
             "${{ needs.dev-demo-plan.outputs.head_sha }}" \
             "${{ needs.dev-demo-plan.outputs.image_tag }}" \

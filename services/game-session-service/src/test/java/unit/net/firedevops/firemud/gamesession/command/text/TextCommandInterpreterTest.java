@@ -66,6 +66,7 @@ import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -83,6 +84,8 @@ class TextCommandInterpreterTest {
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
   private final LookTextRenderer lookTextRenderer = Mockito.mock(LookTextRenderer.class);
+  private final ScriptEventPublisher scriptEventPublisher =
+      Mockito.mock(ScriptEventPublisher.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final GameSessionProperties gameSessionProperties = new GameSessionProperties();
   private final GameInstanceRepository gameInstanceRepository =
@@ -335,6 +338,7 @@ class TextCommandInterpreterTest {
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
             gameplayPresenceLifecycleService,
+            scriptEventPublisher,
             meterRegistry);
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
@@ -425,7 +429,8 @@ class TextCommandInterpreterTest {
                 gameInstanceService,
                 gameplayPresenceLifecycleService,
                 firstPartyConnectContextRegistry,
-                screenBufferService),
+                screenBufferService,
+                scriptEventPublisher),
             playHandler,
             moveHandler,
             afkHandler,

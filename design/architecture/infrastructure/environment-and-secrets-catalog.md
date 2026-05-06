@@ -22,15 +22,13 @@ For a conceptual overview and operator quick reference, see `environment-and-sec
 
 ## Common Application Settings
 
-Shared libraries support overriding default settings with environment variables using the `FIREMUD_` prefix (for example `FIREMUD_POSTGRES_HOST`, `FIREMUD_POSTGRES_PORT`). Each service merges these variables with its own `application.yml` profile.
-
-The following variable is used by all Spring Boot services to select the appropriate configuration profile. Typically only `dev` and `prod` are used.
+Shared libraries support overriding default settings with environment variables using the `FIREMUD_` prefix (for example `FIREMUD_POSTGRES_HOST`, `FIREMUD_POSTGRES_PORT`). Each service merges these variables with its own canonical `application.yml`, and automated tests may additionally activate the `test` profile.
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `SPRING_PROFILES_ACTIVE` | Spring profile (`dev` or `prod`) | `dev` |
+| `SPRING_PROFILES_ACTIVE` | Optional Spring profile override; reserved for cases such as `test` where a service deliberately activates test-only behavior | *(unset)* |
 
-Kubernetes manifests and any shared environment must set `SPRING_PROFILES_ACTIVE=prod` explicitly. Do not rely on the default value outside of local development.
+Shared and player-facing environments should normally leave `SPRING_PROFILES_ACTIVE` unset and run the canonical runtime defined by `application.yml`. Do not reintroduce local-vs-production contract drift by using ad hoc runtime profiles outside automated tests.
 
 ---
 
@@ -140,7 +138,7 @@ In Kubernetes deployments the certificates are mounted at `/tls`, and the enviro
 
 JWT tokens secure internal service calls. Production keys are provided via Kubernetes Secrets and mounted key files, while development instances may generate random secrets. When `FIREMUD_AUTH_JWT_SECRET_PATH` is set, the service watches the file for changes using `JwtSecretWatcher` so keys can be rotated without restarts. Certificate and secret watching is described in `../system-architecture-security.md#key-and-certificate-rotation` and `../system-architecture-security.md#jwt-key--jwks-rotation-workflow`.
 
-Implementation note: the file-mounted JWT contract below is the player-facing target state. Current shared security auto-configuration still initializes from inline `firemud.auth.jwt-secret` before loading `firemud.auth.jwt-secret-path` in non-dev profiles, and Account Service currently serves JWKS from a packaged classpath resource rather than a mounted `jwt-jwks` resource. Those are implementation gaps to close before first player-facing deployment; they do not make inline JWT secrets or packaged JWKS compliant for `hobby-self-hosted`, staging, or production.
+Implementation note: the file-mounted JWT contract below is the player-facing target state. Current shared security auto-configuration still initializes from inline `firemud.auth.jwt-secret` before loading `firemud.auth.jwt-secret-path` in non-test runtimes, and Account Service currently serves JWKS from a packaged classpath resource rather than a mounted `jwt-jwks` resource. Those are implementation gaps to close before first player-facing deployment; they do not make inline JWT secrets or packaged JWKS compliant for `hobby-self-hosted`, staging, or production.
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |

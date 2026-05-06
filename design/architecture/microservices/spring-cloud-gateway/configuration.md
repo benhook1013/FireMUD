@@ -7,7 +7,7 @@ Spring Cloud Gateway reads its configuration from a small set of sources. The fu
 | Source | Purpose | Authority |
 | --- | --- | --- |
 | `application.yml` | Base Spring profile configuration such as ports, gRPC settings, and default filters like `RequestRateLimiter` and `Retry`. | Service-local; environment variable mapping lives in Env & Secrets. |
-| `routes-dev.yml` / `routes-prod.yml` | Profile-specific route definitions for HTTP and WebSocket paths and backend URIs. | Service-local baseline route set referenced by `spring.config.import` in `application.yml`. |
+| `routes.yml` | Canonical baseline route definitions for HTTP and WebSocket paths and backend URIs, parameterized by environment variables for upstream targets. | Service-local baseline route set referenced by `spring.config.import` in `application.yml`. |
 | `FIREMUD_SERVICES_*` | Service discovery overrides for backend targets reached from the gateway. | See [Service Discovery](../../infrastructure/environment-and-secrets.md#service-discovery). |
 | `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate-Limit Redis endpoint used by the gateway `RequestRateLimiter` filter. | See [Redis Connection](../../infrastructure/environment-and-secrets.md#redis-connection). |
 | `firemud.gateway.header-trust.*` | Header-trust and canonicalization configuration enforced by `HeaderTrustFilter` for public ingress versus trusted proxy sources. | Service-local gateway trust boundary; behavior must stay aligned with [Gateway Architecture](../../system-architecture-gateway.md#header-trust-model). |
@@ -20,7 +20,7 @@ For the TCP Proxy -> Gateway WebSocket mTLS hop, the TCP Proxy client identity a
 ## Route State and Baseline Configuration
 
 - Spring Cloud Gateway is stateless and sits in the DMZ alongside the TCP Proxy Service.
-- Route configurations live in `routes-dev.yml` and `routes-prod.yml`, which are imported by `application.yml` based on the active profile and reloaded on startup.
+- Route configuration lives in `routes.yml`, which is imported by `application.yml` and reloaded on startup.
 - These files define the baseline route set for each environment.
 - Dynamic route APIs can overlay additional routes or updates at runtime, but those changes are in-memory only and the system converges back to the baseline definitions on restart unless a higher-level tool updates config.
 - The default route configuration defines the core service routes required for local Docker Compose environments.

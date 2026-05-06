@@ -26,9 +26,10 @@ This document outlines how FireMUD is deployed across environments including loc
 
 The environment matrix below is the canonical target state. Current repository implementation has partial support only for several deployment gates:
 
-- `./dev-tools/deploy/preflight.sh` is the intended entrypoint, but it does not yet enforce every player-facing policy listed in `system-architecture-deploy-preflight-policy.md`; missing enforcement remains a blocker for first player-facing deployment and traffic-open events.
+- `./dev-tools/deploy/preflight.py` is the intended entrypoint, but it does not yet enforce every player-facing policy listed in `system-architecture-deploy-preflight-policy.md`; missing enforcement remains a blocker for first player-facing deployment and traffic-open events.
 - The player-facing expected-binding manifests under `design/operations/environments/` currently describe the intended shape but are not yet complete authoritative inputs for preflight or restore validation.
-- Hosted `pr-preview` and `dev-demo-cluster` currently reuse the preview Helm values path, which still contains static inline JWT secret material by default. That does not satisfy the preview-unique JWT/JWKS target state until the workflow generates or injects per-namespace material and the JWKS resource path is wired end to end.
+- Hosted `pr-preview` and `dev-demo-cluster` currently reuse the preview Helm values path, and the live preview value renderer now injects per-render signing-key and JWKS content rather than relying on one static inline shared JWT secret. The remaining JWT/JWKS gap is lifecycle/rotation proof, not generation or resource wiring.
+- The player-facing Kustomize path (`k8s/overlays/*` over `k8s/base`) now carries digest-pinned workload images and relies on externally managed bootstrap secrets/TLS bindings enforced through expected-bindings plus preflight, rather than shipping placeholder bootstrap secrets inside the rendered player-facing manifests.
 
 When this document says an environment “must” satisfy a gate, that is a target-state requirement. If the current tooling cannot prove the gate yet, the deployment remains blocked or requires explicit manual evidence recorded outside the incomplete tool output.
 
@@ -39,7 +40,7 @@ When this document says an environment “must” satisfy a gate, that is a targ
 - `traffic-open`: the operational state in which an environment is allowed to accept external player traffic. Player-facing environments do not become traffic-open merely because workloads are healthy; they must also satisfy the applicable backup, recovery, and preflight gates for that event.
 - `promotion candidate`: a staging deployment record that is eligible to produce production promotion evidence. Detached or quarantined staging drills may be valid operational exercises without being promotion candidates.
 - `production`: the primary player-facing environment with the strictest change gates and mandatory scheduled backup posture.
-- `shared prod-profile Kubernetes environments`: Kubernetes-backed environments that run the shared Spring `prod` profile and Kubernetes Secret delivery model. This includes `dev-demo-cluster`, `hobby-self-hosted`, `staging`, and `production`, though only the player-facing subset inherits the stricter traffic-open controls.
+- `shared canonical-runtime Kubernetes environments`: Kubernetes-backed environments that run the shared canonical runtime configuration and Kubernetes Secret delivery model. This includes `dev-demo-cluster`, `hobby-self-hosted`, `staging`, and `production`, though only the player-facing subset inherits the stricter traffic-open controls.
 
 ---
 
@@ -50,8 +51,8 @@ Use these classes as the source of truth for environment roles and control expec
 | Class | Typical Topology | Secret Source | Rotation/Hardening | Backup/Restore Posture | Deploy Path |
 | --- | --- | --- | --- | --- | --- |
 | `local-dev` | Docker Compose on a developer machine | `.env` plus local files; generated certs/keys allowed | Convenience-first; manual | Local snapshots/ad hoc restore | `./gradlew devUp` / `devDown` |
-| `pr-preview` | Hosted single-node Kubernetes preview cluster with one namespace per PR | Kubernetes Secrets/ConfigMaps plus registry pull credentials | Production-like for HTTPS, auth, and session flows; simplified operator controls acceptable | Per-PR state persists for PR lifetime; no backup/restore guarantee | GitHub Actions deploys PR-tagged images via Helm |
-| `dev-demo-cluster` | Shared but non-player-facing Kubernetes cluster | Kubernetes Secrets/ConfigMaps | Basic hardening; can prioritize iteration speed | Ad hoc unless explicitly scheduled | Fixed `develop` deploy workflow plus optional manual Helm workflows |
+| `pr-preview` | Hosted single-node Kubernetes preview cluster with one namespace per PR | Kubernetes Secrets/ConfigMaps plus registry pull credentials | Production-like for HTTPS, auth, and session flows; simplified operator controls acceptable | Namespace is reset on redeploy; no backup/restore guarantee | GitHub Actions deploys PR-tagged images via Helm |
+| `dev-demo-cluster` | Shared but non-player-facing Kubernetes cluster | Kubernetes Secrets/ConfigMaps | Basic hardening; can prioritize iteration speed | Ad hoc unless explicitly scheduled | Fixed `develop` deploy workflow |
 | `hobby-self-hosted` | Small player-facing deployment with production-like roles at low scale | Kubernetes Secrets/ConfigMaps | Production-like for Tier A credentials; simplified ops acceptable | Operator-managed backups expected | Operator-applied manifests/charts |
 | `staging` | Prod-like Kubernetes cluster with smaller sizing | Kubernetes Secrets/ConfigMaps | Production-like controls; required post-restore secret hardening before playtests | Disposable by default unless explicitly enabling schedules | Git-tracked Kustomize overlays + operator `kubectl apply -k` |
 | `production` | Player-facing Kubernetes cluster | Kubernetes Secrets/ConfigMaps | Strictest controls and change gates | Scheduled backups + verification + mandatory post-restore hardening | Git-tracked Kustomize overlays + operator `kubectl apply -k` |
@@ -65,7 +66,7 @@ Cross-document rules:
 - Player-facing classes (`hobby-self-hosted`, `staging`, `production`) must keep a single expected-binding manifest at `design/operations/environments/<environment>/expected-bindings.yaml` so deployment preflight and restore validation use the same environment-isolation contract for internal state/trust bindings (PostgreSQL, Redis, JWT/JWKS, certificate issuer, registry pull credentials) and external bindings (backup, asset, outbound-communications, operator bindings). For backup and asset storage, that manifest must also capture the binding identity proving the environment owns the object-store target.
 - Classes documented without backup/SLO guarantees (`pr-preview`, default `staging`) must not be used as evidence for backup/SLO guarantees unless their controls are explicitly upgraded.
 - `pr-preview` keeps the production-like auth/session and service-isolation model, but its expected-bindings/preflight contract is intentionally preview-scoped rather than player-facing. Preview namespaces must still use preview-unique JWT/JWKS material and isolated service bindings, but they are not required to satisfy the full player-facing backup/admission binding posture before opening reviewer traffic.
-- `pr-preview` keeps the same Spring gRPC SSL-bundle mTLS contract as the rest of the Kubernetes-backed environments as the target state, but it may temporarily use plaintext internal gRPC as an explicitly documented preview-only exception while the bundle-based path is being re-proved. That exception must live in preview/operator docs and be removed once preview mTLS is verified end-to-end again.
+- `pr-preview` keeps the same Spring gRPC SSL-bundle mTLS contract as the rest of the Kubernetes-backed environments; preview does not define a separate long-term internal gRPC transport mode.
 - Staging and production deployments must run the canonical preflight policy gate defined in `system-architecture-deploy-preflight-policy.md`; production promotions must satisfy the attestation contract in `system-architecture-promotion-attestation.md`.
 - `hobby-self-hosted` deployments are also player-facing and must run equivalent checks for player-facing invariants (JWT file-path contract, JWKS resource contract, Redis role split, and `GATEWAY_WS_URL` alignment) before opening traffic, even when not using the staging/production Kustomize overlay workflow. In this class, operator preflight is mandatory while overlay PR CI checks are optional/recommended.
 - Player-facing classes (`hobby-self-hosted`, `staging`, `production`) must either use default in-environment service discovery or explicitly allowlist every `FIREMUD_SERVICES_*` override in preflight evidence; undeclared or cross-environment overrides are non-compliant.
@@ -95,13 +96,11 @@ FireMUD uses Docker Compose for local development and testing:
 - Docker Compose orchestrates container startup. `depends_on` is configured with
   `condition: service_healthy` so services wait for PostgreSQL and Redis to pass
   health checks before starting.
-- Service discovery is handled by Docker's internal DNS (e.g., `game-session-service:8080`).
-- Route URIs in Spring Cloud Gateway use static hostnames defined in the `dev`
-  profile of `application.yml`.
+- Service discovery is handled by Docker's internal DNS (for example `game-session-service:8080`), with the local stack relying on defaults in each service's `application.yml` plus the Compose override env vars rather than on a separate Spring `dev` profile lane.
 - Connection settings for PostgreSQL and Redis are loaded from a `.env` file.
   A sample `.env.sample` is provided with default credentials. Additional variables are described in [Environment & Secrets Management](./environment-and-secrets.md).
 - Start the stack with `./gradlew devUp` and shut it down with `./gradlew devDown` (see [Developer Setup](../../../DEVELOPER_SETUP.md)).
-- The stack also runs a `pg-dump-cron` container that creates and rotates PostgreSQL dumps under `./backups`.
+- The stack also runs a `pg-dump-cron` container that creates and rotates PostgreSQL dumps under `docker/backups/`.
 - For details on all configuration variables, see [Environment Variables & Secrets Management](./environment-and-secrets.md).
   Standard ports include **8080** for HTTP, **6565** for gRPC, and **2323** for
   the TCP proxy.
@@ -147,12 +146,15 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - Route URIs in Spring Cloud Gateway use service names configured in the `prod`
   profile of `application.yml`.
 - Internal microservices communicate directly over gRPC, bypassing the Spring Cloud Gateway.
-- In the canonical target state, Kubernetes-backed environments use mTLS for internal gRPC via Spring Boot SSL bundles and Spring gRPC server SSL bundle binding. Hosted preview may temporarily deviate from that target state only through the explicitly documented preview plaintext exception described above.
+- Kubernetes-backed environments use mTLS for internal gRPC via Spring Boot SSL bundles and Spring gRPC server SSL bundle binding, including the hosted preview/dev-demo Helm path.
 - The **TCP Proxy Service** and **Spring Cloud Gateway** are typically exposed using Kubernetes `LoadBalancer` Services so external clients can connect directly. See [Telnet Edge Deployment](#telnet-edge-deployment) for details on client IP preservation and PROXY protocol.
 - See [Security Architecture](../system-architecture-security.md#tls-termination-for-gateway) and [Gateway Architecture](../system-architecture-gateway.md#tls-termination-for-gateway) for the full TLS termination chain (browser/Telnet clients → load balancer → Spring Cloud Gateway → backend services) and DMZ boundary details; this document avoids duplicating those rules.
-- Sample `NetworkPolicy` manifests to restrict internal traffic are provided in
-  [`k8s/network-policies`](../../../k8s/network-policies) and can be applied after
-  deploying the base manifests.
+- Canonical baseline `NetworkPolicy` manifests for the staged player-facing Kustomize path live in
+  [`k8s/base`](../../../k8s/base) and are included by the staging and production
+  overlays. The [`k8s/network-policies`](../../../k8s/network-policies)
+  directory documents that baseline policy set. Hosted preview/dev-demo now
+  render matching checked-in baseline policies from the Helm chart using
+  chart-specific selectors for the preview stack's labels.
 - Configuration and secrets are managed through ConfigMaps and Secrets.
 - Certificates for TLS termination and mTLS are issued by **cert-manager** and mounted from Kubernetes Secrets.
 - The cluster uses **IPVS** (or a similar load-balancing mode) to route service traffic efficiently.
@@ -161,10 +163,10 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
   - A **Cache/Rate-Limit Redis** deployment runs as a separate StatefulSet or Deployment tuned for eviction-driven workloads (for example using `allkeys-lru`), with sizing independent of Coordination Redis. It may use lighter durability (RDB snapshots or even ephemeral volumes) because its keys are best-effort and recomputable.
   - Local development runs **two Redis containers** under Docker Compose with the same role split: a Coordination Redis service and a Cache/Rate-Limit Redis service, with Coordination Redis durable via AOF and Cache/Rate-Limit Redis configured for eviction-driven workloads. When operators want to **reset** coordination state (for example, to test reset-tolerant behavior or remediate mis-keyed data), they run an explicit coordination-reset Job or script that wipes the Coordination Redis AOF volume as described in the Redis Operations runbook, rather than relying on Helm to clear data automatically on every deploy.
 - PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) and the [Operational Runbooks](../system-architecture-runbooks.md#recovery).
-- **Dev/demo Kubernetes clusters** may be deployed via Helm using [manual-helm-deploy.yml](../../../.github/workflows/manual-helm-deploy.yml) (for example with `k8s/helm/values-local.yaml` or `values-dev.yaml`). These clusters are intentionally excluded from the staging → production promotion chain and must not emit attestation artifacts.
-- **Staging and production** deployments are applied from a secure operator environment using **Kustomize overlays** (for example `kubectl apply -k k8s/overlays/stage` and `kubectl apply -k k8s/overlays/prod`). Immutable image digest changes for these overlays are tracked in Git so promotion and rollback are auditable. See [Deployment Runbook](../system-architecture-deployment-runbook.md) and [CI/CD Pipeline](../system-architecture-cicd.md#promotion--rollback-model).
+- **Hosted dev/demo Kubernetes environments** use the dedicated [`dev-demo.yml`](../../../.github/workflows/dev-demo.yml) and [`preview.yml`](../../../.github/workflows/preview.yml) workflows, which render the full-stack chart under [`k8s/helm/firemud`](../../../k8s/helm/firemud) from environment-specific example values and deployment metadata. These environments are intentionally excluded from the staging → production promotion chain and must not emit attestation artifacts.
+- **Staging and production** deployments are applied from a secure operator environment using **Kustomize overlays** (for example `kubectl apply -k k8s/overlays/stage` and `kubectl apply -k k8s/overlays/prod`). Immutable image digest changes for these overlays are the promotion model, and the player-facing bootstrap contract is now intentionally expressed through environment-owned bindings plus preflight rather than through checked-in placeholder Secret content. See [Deployment Runbook](../system-architecture-deployment-runbook.md) and [CI/CD Pipeline](../system-architecture-cicd.md#promotion--rollback-model).
 
-A sample Terraform module for a local Kind cluster is provided in [k8s/terraform](../../../k8s/terraform). This demo module creates a `firemud` namespace and optional Redis Helm release for quick testing. Use `helm install` with the example charts in [k8s/helm](../../../k8s/helm) to deploy services locally.
+A sample Terraform module for a local Kind cluster is provided in [k8s/terraform](../../../k8s/terraform). This demo module creates a `firemud` namespace and optional Redis Helm release for quick testing. For local Kubernetes iteration, use direct `helm template` / `helm install` or `kubectl apply -k` commands against the manifests and charts under [k8s/](../../../k8s).
 
 - All tenants share this cluster with data separated by `tenantId` per service. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for more.
 
@@ -282,7 +284,7 @@ FireMUD's preview environment is a hosted single-node k3s cluster intended for r
 - The first reviewer-usable proof target for preview is manual `LOGIN -> PLAY -> LOOK` over the TCP/Telnet path. A browser-first preview experience is useful later, but it is not the first hosted proof milestone.
 - Long-term first-party browser hosting should live in a dedicated first-party web application service, not in Spring Cloud Gateway. If temporary preview-only browser helpers exist before that service lands, they must not redefine the long-term architecture.
 - Preview TCP exposure uses a small reserved preview-only external port range, with one TCP port per live preview namespace on the shared preview host/IP. This is a preview multiplexing concern, not the long-term player-facing Telnet architecture.
-- Preview state is seeded once when the namespace is first created. PostgreSQL, MinIO/object storage, and any other stateful preview components persist across pod restarts, Helm upgrades, and normal VM reboot for the lifetime of the PR.
+- Preview deploys currently reset the namespace before each Helm apply, then reseed the minimum bootstrap state needed for reviewer proof. Within one deployed preview instance, PostgreSQL, MinIO/object storage, and other stateful components persist across normal pod restarts and VM reboot, but preview state does not currently persist across preview redeploys.
 - Preview state is not backed up and is not durable beyond the single preview node. If the node or its attached storage is lost, preview state is lost.
 - The initial Hetzner/k3s sizing target is one reliably usable full-stack preview on an 8 GB shared-CPU x86 VM. A second concurrent preview is best-effort only and may fail to deploy if capacity is exhausted.
 - When capacity is exhausted, existing previews remain in place and the new preview deployment fails rather than evicting older namespaces.

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -16,6 +17,9 @@ import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected collaborators remain internal service dependencies")
 public class ControlPlaneDigestServiceImpl implements ControlPlaneDigestService {
   private static final int DIGEST_SCHEMA_VERSION = 1;
 

@@ -2,7 +2,6 @@ x-local-java-env: &local-java-env
   BPL_JAVA_NMT_ENABLED: "false"
   BPL_JVM_THREAD_COUNT: "20"
   FIREMUD_GRPC_PLAINTEXT: "true"
-  GRPC_SERVER_SECURITY_ENABLED: "false"
   GRPC_SERVER_TLS_ENABLED: "false"
 
 services:
@@ -88,7 +87,7 @@ services:
     mem_limit: 768m
     environment:
       <<: *local-java-env
-      TCP_PROXY_GATEWAY_WS_URL_DEV: ws://gateway:8080/ws/game
+      GATEWAY_WS_URL: ws://gateway:8080/ws/game
 
   world-management-service:
     build: null

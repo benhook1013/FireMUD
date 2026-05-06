@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.health;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -10,6 +11,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.health.contributor.Health;
 
 /** Records bounded readiness transition logs and metrics for dependency-aware health indicators. */
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "MeterRegistry is a shared framework collaborator retained internally.")
 public class ReadinessTransitionTracker {
   private static final Logger LOG = LoggerFactory.getLogger(ReadinessTransitionTracker.class);
 

@@ -33,8 +33,26 @@ public class ScriptEventAudit {
   @Column(nullable = false, length = 64)
   private String entityId;
 
+  @Column(nullable = false, length = 32)
+  private String playableStateScope = "";
+
+  @Column(nullable = false, length = 64)
+  private String worldSlug = "";
+
+  @Column(nullable = false, length = 64)
+  private String realmSlug = "";
+
+  @Column(nullable = false, length = 64)
+  private String pointerVersion = "";
+
   @Column(nullable = false, length = 128)
   private String scriptId;
+
+  @Column(length = 128)
+  private String pluginId;
+
+  @Column(length = 128)
+  private String pluginVersionId;
 
   @Column(nullable = false, length = 128)
   private String eventType;
@@ -56,6 +74,18 @@ public class ScriptEventAudit {
 
   @Column(nullable = false, length = 64)
   private String triggerMode;
+
+  @Column(nullable = false, length = 64)
+  private String sourceKind = "";
+
+  @Column(nullable = false, length = 64)
+  private String sourceState = "";
+
+  @Column private Long sourceOrdinal;
+
+  @Column private Long sourceDueTickId;
+
+  @Column private Long sourceDueAtMs;
 
   @Column(name = "work_item_id")
   private Long workItemId;

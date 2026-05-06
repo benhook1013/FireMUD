@@ -14,6 +14,37 @@ spring:
     properties:
       hibernate:
         default_schema: ${SERVICE_SCHEMA:public}
+  data:
+    redis:
+      host: ${FIREMUD_REDIS_CACHE_HOST:redis}
+      port: ${FIREMUD_REDIS_CACHE_PORT:6379}
+  cloud:
+    gateway:
+      server:
+        webflux:
+          metrics:
+            enabled: true
+          default-filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+            - name: Retry
+              args:
+                retries: 3
+                statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
+                series: SERVER_ERROR
+                methods: GET,POST
+                backoff:
+                  firstBackoff: 50ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: false
+          httpclient:
+            pool:
+              type: fixed
+              maxConnections: 500
+              acquireTimeout: 5000
   ssl:
     bundle:
       pem:
@@ -48,8 +79,25 @@ firemud:
   gateway:
     gameplay:
       bridge:
+        upstream-url: ${FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_UPSTREAM_URL:ws://game-session-service:8080/ws/game}
         reconnect-attempts: 40
         reconnect-delay-ms: 250
+    header-trust:
+      forwarded-client-ip:
+        trusted-proxy-cidrs:
+          - 127.0.0.1/32
+          - ::1/128
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+      tcp-proxy:
+        allow-insecure-headers-from-trusted-cidrs: ${FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_ALLOW_INSECURE_HEADERS_FROM_TRUSTED_CIDRS:false}
+        insecure-trusted-cidrs:
+          - 127.0.0.1/32
+          - ::1/128
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
 
 management:
   endpoints:
@@ -70,50 +118,6 @@ management:
           include: livenessState
         readiness:
           include: readinessState,gameplayRouteReadiness
-
----
-
-spring:
-  config:
-    activate:
-      on-profile: prod
-    import: "optional:classpath:routes-prod.yml"
-  data:
-    redis:
-      host: ${FIREMUD_REDIS_CACHE_HOST:redis}
-      port: ${FIREMUD_REDIS_CACHE_PORT:6379}
-  cloud:
-    gateway:
-      server:
-        webflux:
-          metrics:
-            enabled: true
-          default-filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 20
-                redis-rate-limiter.burstCapacity: 40
-            - name: Retry
-              args:
-                retries: 3
-                statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
-                series: SERVER_ERROR
-                methods: GET,POST
-                backoff:
-                  firstBackoff: 50ms
-                  maxBackoff: 500ms
-                  factor: 2
-                  basedOnPreviousValue: false
-          httpclient:
-            pool:
-              type: fixed
-              maxConnections: 500
-              acquireTimeout: 5000
-firemud:
-  grpc:
-    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
-    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
-    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
 
 ---
 

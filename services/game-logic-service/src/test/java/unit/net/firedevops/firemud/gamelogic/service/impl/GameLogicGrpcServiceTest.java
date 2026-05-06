@@ -10,11 +10,14 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.entitymanagement.v1.ActorConditionState;
 import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
 import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
+import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.gamelogic.logic.command.DefaultCommandParser;
@@ -28,6 +31,7 @@ import net.firedevops.firemud.gamelogic.service.ItemRuntimeService;
 import net.firedevops.firemud.gamelogic.service.LookAggregationService;
 import net.firedevops.firemud.gamelogic.service.MoveAggregationService;
 import net.firedevops.firemud.gamelogic.service.PingService;
+import net.firedevops.firemud.gamelogic.v1.DropCarriedItemRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
 import net.firedevops.firemud.gamelogic.v1.GetDraftDesignDigestRequest;
@@ -36,6 +40,7 @@ import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveRequest;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
+import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import org.junit.jupiter.api.Test;
@@ -397,5 +402,121 @@ class GameLogicGrpcServiceTest {
         });
 
     assertEquals("blocking", holder.get().getActiveCondition().getConditionKey());
+  }
+
+  @Test
+  void pickupVisibleRoomItemReturnsAppErrorWhenRoutingBundleAttestationIsInvalid() {
+    PingService pingService = new PingServiceImpl();
+    var dispatcher = new EventDispatcher();
+    var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
+    var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
+    ItemRuntimeService itemRuntimeService = Mockito.mock(ItemRuntimeService.class);
+    GameplaySessionAttestationService attestationService = mockAttestationService();
+    Mockito.doThrow(
+            new GameplaySessionAttestationException(
+                "SESSION_ATTESTATION_INVALID",
+                "Gameplay session attestation is missing pointerVersion"))
+        .when(attestationService)
+        .requireAdmittedRoutingBundle(Mockito.any());
+    GameLogicGrpcService service =
+        new GameLogicGrpcService(
+            pingService,
+            commandService,
+            Mockito.mock(LookAggregationService.class),
+            Mockito.mock(CommunicationAggregationService.class),
+            Mockito.mock(MoveAggregationService.class),
+            itemRuntimeService,
+            mockDigestService(),
+            attestationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<PickupItemFromRoomResponse> holder = new AtomicReference<>();
+    service.pickupVisibleRoomItem(
+        PickupVisibleRoomItemRequest.newBuilder()
+            .setTenantId("22")
+            .setSessionId("1")
+            .setAccountId("7")
+            .setCharacterId("911")
+            .setGameInstanceId("5")
+            .setRoomInstanceId("R-1")
+            .setItemReference("torch")
+            .setQuantity(1)
+            .setSessionAttestation("attestation")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(PickupItemFromRoomResponse value) {
+            holder.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("SESSION_ATTESTATION_INVALID", holder.get().getError().getCode());
+    Mockito.verify(itemRuntimeService, Mockito.never()).pickupVisibleRoomItem(Mockito.any());
+  }
+
+  @Test
+  void dropCarriedItemReturnsAppErrorWhenRoutingBundleAttestationIsInvalid() {
+    PingService pingService = new PingServiceImpl();
+    var dispatcher = new EventDispatcher();
+    var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
+    var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
+    ItemRuntimeService itemRuntimeService = Mockito.mock(ItemRuntimeService.class);
+    GameplaySessionAttestationService attestationService = mockAttestationService();
+    Mockito.doThrow(
+            new GameplaySessionAttestationException(
+                "SESSION_ATTESTATION_INVALID",
+                "Gameplay session attestation is missing pointerVersion"))
+        .when(attestationService)
+        .requireAdmittedRoutingBundle(Mockito.any());
+    GameLogicGrpcService service =
+        new GameLogicGrpcService(
+            pingService,
+            commandService,
+            Mockito.mock(LookAggregationService.class),
+            Mockito.mock(CommunicationAggregationService.class),
+            Mockito.mock(MoveAggregationService.class),
+            itemRuntimeService,
+            mockDigestService(),
+            attestationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<DropItemToRoomResponse> holder = new AtomicReference<>();
+    service.dropCarriedItem(
+        DropCarriedItemRequest.newBuilder()
+            .setTenantId("22")
+            .setSessionId("1")
+            .setAccountId("7")
+            .setCharacterId("911")
+            .setGameInstanceId("5")
+            .setRoomInstanceId("R-1")
+            .setItemReference("torch")
+            .setQuantity(1)
+            .setSessionAttestation("attestation")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(DropItemToRoomResponse value) {
+            holder.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("SESSION_ATTESTATION_INVALID", holder.get().getError().getCode());
+    Mockito.verify(itemRuntimeService, Mockito.never()).dropCarriedItem(Mockito.any());
   }
 }

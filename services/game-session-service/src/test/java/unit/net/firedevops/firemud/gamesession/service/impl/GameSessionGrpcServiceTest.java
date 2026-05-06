@@ -128,10 +128,12 @@ class GameSessionGrpcServiceTest {
                     7L,
                     true,
                     9L,
+                    "ISOLATED",
                     "demo",
                     "Demo World",
                     "production",
                     "Live Realm",
+                    17L,
                     99L,
                     "Ben",
                     net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState
@@ -178,6 +180,7 @@ class GameSessionGrpcServiceTest {
     assertEquals(true, ref.get().getPresences(0).getOnline());
     assertEquals("demo", ref.get().getPresences(0).getWorldSlug());
     assertEquals("Demo World", ref.get().getPresences(0).getWorldDisplayName());
+    assertEquals(17L, ref.get().getPresences(0).getPointerVersion());
     assertEquals("production", ref.get().getPresences(0).getRealmSlug());
     assertEquals("Live Realm", ref.get().getPresences(0).getRealmDisplayName());
     assertEquals("Ben", ref.get().getPresences(0).getCharacterName());

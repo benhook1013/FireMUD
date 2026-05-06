@@ -19,6 +19,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRol
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -278,7 +279,8 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
         projection.getLastChangedAt().toEpochMilli(),
         projectionAsOfMs,
         projectionLagMs,
-        projectionStale);
+        projectionStale,
+        emptyPublicationLink());
   }
 
   private ScriptWorkItemService.PatchInstanceRolloutEventSummary toEventSummary(
@@ -291,7 +293,8 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
         ScriptPatchInstanceRolloutStatus.valueOf(event.getRolloutStatus()),
         event.getStatusReason(),
         event.getObservedAt().toEpochMilli(),
-        event.getProjectionRefreshedAt().toEpochMilli());
+        event.getProjectionRefreshedAt().toEpochMilli(),
+        emptyPublicationLink());
   }
 
   private boolean shouldAppendEvent(
@@ -368,6 +371,11 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
 
   private static String normalize(String value) {
     return value == null ? "" : value;
+  }
+
+  private static ScriptWorkItemService.ScriptPatchPublicationLink emptyPublicationLink() {
+    return new ScriptWorkItemService.ScriptPatchPublicationLink(
+        "", 0L, 0L, VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED, 0L, "", "");
   }
 
   private record ProjectionSnapshot(

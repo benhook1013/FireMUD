@@ -51,7 +51,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", "req-2", 200L, 205L, 0L, false)),
+                        "1", "game-1", "patch-1", "req-2", 200L, 205L, 0L, false, "", 0L, "", "",
+                        "")),
                 "",
                 ""));
     when(repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion("1", "game-1", "patch-1"))

@@ -1,6 +1,8 @@
 package net.firedevops.firemud.automationscripting.service;
 
 import java.util.List;
+import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService.PluginPublicationLink;
+import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService.ScriptPatchPublicationLink;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 
 public interface ScriptScheduleInstanceService {
@@ -13,6 +15,17 @@ public interface ScriptScheduleInstanceService {
 
   List<ScheduleInstanceSummary> listInstances(
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit);
+
+  List<TimerAuditEventSummary> listTimerAuditEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String scriptId,
+      String eventType,
+      String finalReason,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit);
 
   record RuntimeTickProgressObservation(
       String tenantId,
@@ -30,6 +43,10 @@ public interface ScriptScheduleInstanceService {
       String gameInstanceId,
       String scriptPatchVersion,
       String scriptId,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
       String pluginId,
       String pluginVersionId,
       String eventType,
@@ -53,5 +70,37 @@ public interface ScriptScheduleInstanceService {
       String runtimeRegionId,
       long runtimeRegionEpoch,
       long lastObservedTickId,
-      long lastRuntimeProgressObservedAtMs) {}
+      long lastRuntimeProgressObservedAtMs,
+      ScriptPatchPublicationLink publication,
+      PluginPublicationLink pluginPublication) {}
+
+  record TimerAuditEventSummary(
+      String tenantId,
+      String gameInstanceId,
+      String regionId,
+      long regionEpoch,
+      String entityId,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
+      String scriptId,
+      String pluginId,
+      String pluginVersionId,
+      String eventType,
+      String scriptPatchVersion,
+      String scriptEventId,
+      String triggerMode,
+      String sourceState,
+      long sourceOrdinal,
+      long sourceDueTickId,
+      long sourceDueAtMs,
+      long workItemId,
+      String finalStage,
+      String finalOutcome,
+      String finalReason,
+      long createdAtMs,
+      long updatedAtMs,
+      ScriptPatchPublicationLink publication,
+      PluginPublicationLink pluginPublication) {}
 }

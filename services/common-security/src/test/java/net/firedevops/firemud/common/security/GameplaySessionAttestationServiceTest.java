@@ -18,7 +18,9 @@ class GameplaySessionAttestationServiceTest {
 
   @Test
   void requireGameplaySessionMatchAllowsOmittedOptionalDimensions() {
-    String token = service.issueGameplaySessionAttestation("22", "41", "7", "123", "1", "1021");
+    String token =
+        service.issueGameplaySessionAttestation(
+            "22", "41", "7", "123", "1", "1021", "demo", "production", "17", "SHARED");
 
     assertDoesNotThrow(
         () -> service.requireGameplaySessionMatch(token, "22", null, null, "123", "1", "1021"));
@@ -26,7 +28,9 @@ class GameplaySessionAttestationServiceTest {
 
   @Test
   void requireGameplaySessionMatchStillRejectsProvidedMismatchedDimensions() {
-    String token = service.issueGameplaySessionAttestation("22", "41", "7", "123", "1", "1021");
+    String token =
+        service.issueGameplaySessionAttestation(
+            "22", "41", "7", "123", "1", "1021", "demo", "production", "17", "SHARED");
 
     GameplaySessionAttestationException ex =
         assertThrows(
@@ -38,9 +42,62 @@ class GameplaySessionAttestationServiceTest {
   }
 
   @Test
+  void requireGameplaySessionMatchRejectsMismatchedAttestedRoutingScope() {
+    String token =
+        service.issueGameplaySessionAttestation(
+            "22", "41", "7", "123", "1", "1021", "demo", "production", "17", "SHARED");
+
+    GameplaySessionAttestationException ex =
+        assertThrows(
+            GameplaySessionAttestationException.class,
+            () ->
+                service.requireGameplaySessionMatch(
+                    token,
+                    "22",
+                    "41",
+                    "7",
+                    "123",
+                    "1",
+                    "1021",
+                    "demo",
+                    "production",
+                    "17",
+                    "ISOLATED"));
+
+    assertEquals("SESSION_ATTESTATION_MISMATCH", ex.getCode());
+    assertEquals("Gameplay session attestation does not match playableStateScope", ex.getMessage());
+  }
+
+  @Test
   void requireGameplayOrProbeMatchAcceptsProbeAttestation() {
     String token = service.issueInternalProbeAttestation("22", "1", "1021");
 
     assertDoesNotThrow(() -> service.requireGameplayOrProbeMatch(token, "22", "1", "1021"));
+  }
+
+  @Test
+  void requireAdmittedRoutingBundleAcceptsGameplayAttestationWithRoutingClaims() {
+    GameplaySessionAttestationClaims claims =
+        service.requireValid(
+            service.issueGameplaySessionAttestation(
+                "22", "41", "7", "123", "1", "1021", "demo", "production", "17", "SHARED"));
+
+    assertDoesNotThrow(() -> service.requireAdmittedRoutingBundle(claims));
+  }
+
+  @Test
+  void requireAdmittedRoutingBundleRejectsGameplayAttestationMissingPointerVersion() {
+    GameplaySessionAttestationClaims claims =
+        service.requireValid(
+            service.issueGameplaySessionAttestation(
+                "22", "41", "7", "123", "1", "1021", "demo", "production", null, "SHARED"));
+
+    GameplaySessionAttestationException ex =
+        assertThrows(
+            GameplaySessionAttestationException.class,
+            () -> service.requireAdmittedRoutingBundle(claims));
+
+    assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
+    assertEquals("Gameplay session attestation is missing pointerVersion", ex.getMessage());
   }
 }

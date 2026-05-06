@@ -234,8 +234,8 @@ jobs:
           PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
-          bash ./dev-tools/preview/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
+          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify preview cluster access
@@ -248,32 +248,32 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          bash ./dev-tools/preview/prune-stale-preview-namespaces.sh --apply
+          bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
 
       - name: Enforce preview capacity
         env:
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
         run: |
-          bash ./dev-tools/preview/check-preview-capacity.sh \
+          bash ./dev-tools/hosted/preview/check-preview-capacity.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${PREVIEW_MAX_ACTIVE:-1}"
 
       - name: Reset preview namespace for clean deploy
         run: |
-          bash ./dev-tools/preview/delete-preview-namespace.sh \
+          bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.release_name }}"
 
       - name: Ensure preview namespace exists
         run: |
-          bash ./dev-tools/preview/ensure-preview-namespace.sh \
+          bash ./dev-tools/hosted/preview/ensure-preview-namespace.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.pr_number }}"
 
       - name: Allocate preview telnet port
         id: telnet-port
         run: |
-          TELNET_PORT="$(bash ./dev-tools/preview/allocate-preview-telnet-port.sh \
+          TELNET_PORT="$(bash ./dev-tools/hosted/preview/allocate-preview-telnet-port.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.pr_number }}")"
           echo "telnet_port=${TELNET_PORT}" >> "$GITHUB_OUTPUT"
@@ -283,14 +283,14 @@ jobs:
           PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
           PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
         run: |
-          bash ./dev-tools/preview/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
+          bash ./dev-tools/hosted/shared/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
       - name: Resolve exact preview image tag
         id: effective-image-tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          EFFECTIVE_IMAGE_TAG="$(bash ./dev-tools/preview/resolve-preview-image-tag.sh \
+          EFFECTIVE_IMAGE_TAG="$(bash ./dev-tools/hosted/preview/resolve-preview-image-tag.sh \
             "${{ needs.preview-plan.outputs.image_tag }}" \
             "${{ needs.preview-plan.outputs.pr_number }}" \
             "${{ needs.preview-plan.outputs.base_sha }}")"
@@ -300,7 +300,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! bash ./dev-tools/preview/check-preview-head-current.sh \
+          if ! bash ./dev-tools/hosted/preview/check-preview-head-current.sh \
             "${{ needs.preview-plan.outputs.pr_number }}" \
             "${{ needs.preview-plan.outputs.head_sha }}"; then
             status=$?
@@ -318,11 +318,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "PREVIEW_STAGE=wait-for-images" >> "$GITHUB_ENV"
-          bash ./dev-tools/preview/wait-for-preview-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
+          bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
 
       - name: Ensure preview gRPC TLS secret exists
         run: |
-          bash ./dev-tools/preview/ensure-grpc-tls-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
+          bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
       - name: Show namespace state
         run: |
@@ -332,7 +332,7 @@ jobs:
 
       - name: Render preview values
         run: |
-          bash ./dev-tools/preview/render-preview-values.sh \
+          python3 ./dev-tools/hosted/preview/render-preview-values.py \
             k8s/helm/firemud/values-preview.example.yaml \
             /tmp/preview-values.yaml \
             "${{ needs.preview-plan.outputs.pr_number }}" \
@@ -361,7 +361,7 @@ jobs:
 
       - name: Record reconciled preview target
         run: |
-          bash ./dev-tools/preview/annotate-preview-namespace.sh \
+          bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.pr_number }}" \
             "${{ needs.preview-plan.outputs.head_sha }}" \
@@ -370,7 +370,7 @@ jobs:
 
       - name: Summarize preview target
         run: |
-          bash ./dev-tools/preview/write-preview-summary.sh \
+          bash ./dev-tools/hosted/preview/write-preview-summary.sh \
             target \
             "${{ needs.preview-plan.outputs.pr_number }}" \
             "${{ needs.preview-plan.outputs.head_sha }}" \
@@ -382,7 +382,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! bash ./dev-tools/preview/check-preview-head-current.sh \
+          if ! bash ./dev-tools/hosted/preview/check-preview-head-current.sh \
             "${{ needs.preview-plan.outputs.pr_number }}" \
             "${{ needs.preview-plan.outputs.head_sha }}"; then
             status=$?
@@ -598,7 +598,7 @@ jobs:
           echo "PREVIEW_STAGE=smoke" >> "$GITHUB_ENV"
           set -o pipefail
           SMOKE_TRANSCRIPT=/tmp/preview-hosted-tcp-smoke.log
-          if ! bash ./dev-tools/preview/preview-login-look-smoke.sh 2>&1 | tee "${SMOKE_TRANSCRIPT}"; then
+          if ! bash ./dev-tools/hosted/shared/hosted-login-look-smoke.sh 2>&1 | tee "${SMOKE_TRANSCRIPT}"; then
             echo "=== Hosted preview TCP smoke transcript ==="
             cat "${SMOKE_TRANSCRIPT}"
             exit 1
@@ -607,7 +607,7 @@ jobs:
       - name: Summarize preview access
         if: ${{ steps.deploy-release.outcome == 'success' }}
         run: |
-          bash ./dev-tools/preview/write-preview-summary.sh \
+          bash ./dev-tools/hosted/preview/write-preview-summary.sh \
             success \
             "${{ needs.preview-plan.outputs.pr_number }}" \
             "${{ needs.preview-plan.outputs.head_sha }}" \
@@ -648,7 +648,7 @@ jobs:
                 : "unknown";
 
             const args = [
-              "./dev-tools/preview/write-preview-summary.sh",
+              "./dev-tools/hosted/preview/write-preview-summary.sh",
               mode,
               String(prNumber),
               process.env.PREVIEW_HEAD_SHA || "",
@@ -703,7 +703,7 @@ jobs:
       - name: Summarize preview failure
         if: ${{ always() && failure() }}
         run: |
-          bash ./dev-tools/preview/write-preview-summary.sh \
+          bash ./dev-tools/hosted/preview/write-preview-summary.sh \
             failure \
             "${{ needs.preview-plan.outputs.pr_number }}" \
             "${{ needs.preview-plan.outputs.head_sha }}" \
@@ -747,13 +747,13 @@ jobs:
           PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
-          bash ./dev-tools/preview/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
+          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Delete preview namespace and release
         run: |
-          bash ./dev-tools/preview/delete-preview-namespace.sh \
+          bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.release_name }}"
 

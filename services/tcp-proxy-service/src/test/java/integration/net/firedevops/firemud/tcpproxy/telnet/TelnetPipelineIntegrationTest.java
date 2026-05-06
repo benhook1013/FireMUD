@@ -22,8 +22,15 @@ class TelnetPipelineIntegrationTest {
   private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
 
   private TelnetServerHandler.WebSocketConnector stubConnector(WebSocket ws) {
-    return (gatewayWsUrl, clientIp, proxyConnectionId, gameInstanceId, tenantId, listener) ->
-        CompletableFuture.completedFuture(ws);
+    return (gatewayWsUrl,
+        clientIp,
+        proxyConnectionId,
+        gameInstanceId,
+        tenantId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        listener) -> CompletableFuture.completedFuture(ws);
   }
 
   @Test
@@ -47,6 +54,9 @@ class TelnetPipelineIntegrationTest {
             new AtomicInteger(),
             "sess-1",
             "tenant-1",
+            "demo",
+            "production",
+            "1",
             lookCacheService);
 
     EmbeddedChannel channel =
@@ -98,6 +108,9 @@ class TelnetPipelineIntegrationTest {
             new AtomicInteger(),
             "sess-1",
             "tenant-1",
+            "demo",
+            "production",
+            "1",
             lookCacheService);
 
     EmbeddedChannel channel =

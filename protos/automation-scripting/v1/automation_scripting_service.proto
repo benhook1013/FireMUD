@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package automation_scripting.v1;
 
+import "entity-management/v1/entity_management_service.proto";
+import "game-design/v1/game_design_service.proto";
 import "shared/v1/errors.proto";
 
 option java_package = "net.firedevops.firemud.automationscripting.v1";
@@ -58,6 +60,8 @@ service AutomationScriptingControlPlaneService {
       returns (GetScriptPatchInstanceRolloutStatusResponse);
   rpc ListScriptScheduleInstances(ListScriptScheduleInstancesRequest)
       returns (ListScriptScheduleInstancesResponse);
+  rpc ListScriptTimerAuditEvents(ListScriptTimerAuditEventsRequest)
+      returns (ListScriptTimerAuditEventsResponse);
   rpc ListScriptPatchInstanceRollouts(ListScriptPatchInstanceRolloutsRequest)
       returns (ListScriptPatchInstanceRolloutsResponse);
   rpc ListScriptPatchInstanceRolloutEvents(ListScriptPatchInstanceRolloutEventsRequest)
@@ -266,6 +270,19 @@ message ScriptDeadLetterEntry {
   string reason = 12;
   int64 created_at_ms = 13;
   int64 updated_at_ms = 14;
+  entity_management.v1.PlayableStateScope playable_state_scope = 15;
+  string world_slug = 16;
+  string realm_slug = 17;
+  string pointer_version = 18;
+  string source_kind = 19;
+  string source_state = 20;
+  int64 source_ordinal = 21;
+  int64 source_due_tick_id = 22;
+  int64 source_due_at_ms = 23;
+  string plugin_id = 24;
+  string plugin_version_id = 25;
+  ScriptPatchPublicationLink publication = 26;
+  PluginPublicationLink plugin_publication = 27;
 }
 
 message ListScriptDeadLettersResponse {
@@ -364,6 +381,18 @@ message TriggerScriptEventRequest {
   // Required when the event registry marks the event as producer-supplied
   // authoritative snapshot. The token format is registry/event-specific.
   string read_snapshot_token = 18;
+
+  // Gameplay-originated triggers should carry the resolved playable-state namespace explicitly so
+  // downstream scripting work does not infer shared-vs-isolated roster policy from instance ids
+  // alone. Non-gameplay/global triggers may leave this unspecified.
+  entity_management.v1.PlayableStateScope playable_state_scope = 19;
+
+  // Gameplay-originated triggers should also preserve the admitted routing bundle minted during
+  // login/bootstrap/PLAY so later scripting retries, dead letters, and handoffs do not collapse
+  // back to runtime-id-only identity.
+  string world_slug = 20;
+  string realm_slug = 21;
+  string pointer_version = 22;
 }
 
 message TriggerScriptEventResponse {
@@ -385,6 +414,7 @@ enum ScriptPatchStatus {
   SCRIPT_PATCH_STATUS_ROLLED_BACK = 3;
   SCRIPT_PATCH_STATUS_PENDING_VALIDATION = 4;
   SCRIPT_PATCH_STATUS_ONLOAD_RUNNING = 5;
+  SCRIPT_PATCH_STATUS_SUPERSEDED = 6;
 }
 
 message GetScriptPatchStatusRequest {
@@ -399,6 +429,18 @@ message GetScriptPatchStatusResponse {
   int64 base_version_id = 4;
   string ability_schema_digest = 5;
   shared.v1.ErrorDetail error = 6;
+  string superseded_by_script_patch_version = 7;
+  ScriptPatchPublicationLink publication = 8;
+}
+
+message ScriptPatchPublicationLink {
+  string script_patch_version = 1;
+  int64 version_id = 2;
+  int64 base_version_id = 3;
+  gamedesign.v1.VersionLifecycleState publication_state = 4;
+  int64 last_changed_at_ms = 5;
+  string lookup_error_code = 6;
+  string lookup_error_message = 7;
 }
 
 message ListScriptPatchStatusesRequest {
@@ -415,6 +457,8 @@ message ScriptPatchStatusEntry {
   int64 last_changed_at_ms = 4;
   int64 base_version_id = 5;
   string ability_schema_digest = 6;
+  string superseded_by_script_patch_version = 7;
+  ScriptPatchPublicationLink publication = 8;
 }
 
 message ListScriptPatchStatusesResponse {
@@ -458,7 +502,8 @@ message GetAutomationDrainStatusResponse {
   int64 oldest_active_execution_started_at_ms = 7;
   int64 pending_cancelable_work_item_count = 8;
   int64 observed_at_ms = 9;
-  shared.v1.ErrorDetail error = 10;
+  bool is_stale = 10;
+  shared.v1.ErrorDetail error = 11;
 }
 
 message GetAutomationPinConvergenceRequest {
@@ -476,6 +521,12 @@ message GetAutomationPinConvergenceResponse {
   int64 projection_as_of_ms = 7;
   int64 projection_lag_ms = 8;
   bool is_projection_stale = 9;
+  string world_slug = 10;
+  string realm_slug = 11;
+  string pointer_version = 12;
+  ScriptPatchPublicationLink publication = 13;
+  string region_id = 14;
+  int64 region_epoch = 15;
 }
 
 enum ScriptPatchInstanceRolloutStatus {
@@ -502,6 +553,7 @@ message GetScriptPatchInstanceRolloutStatusResponse {
   int64 projection_lag_ms = 8;
   bool is_projection_stale = 9;
   shared.v1.ErrorDetail error = 10;
+  ScriptPatchPublicationLink publication = 11;
 }
 
 message ListScriptScheduleInstancesRequest {
@@ -540,10 +592,66 @@ message ScriptScheduleInstanceEntry {
   int64 runtime_region_epoch = 26;
   int64 last_observed_tick_id = 27;
   int64 last_runtime_progress_observed_at_ms = 28;
+  entity_management.v1.PlayableStateScope playable_state_scope = 29;
+  string world_slug = 30;
+  string realm_slug = 31;
+  string pointer_version = 32;
+  bool is_pin_stale = 33;
+  bool is_runtime_progress_stale = 34;
+  ScriptPatchPublicationLink publication = 35;
+  PluginPublicationLink plugin_publication = 36;
 }
 
 message ListScriptScheduleInstancesResponse {
   repeated ScriptScheduleInstanceEntry schedules = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListScriptTimerAuditEventsRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string script_patch_version = 3;
+  string script_id = 4;
+  string event_type = 5;
+  string final_reason = 6;
+  int64 changed_after_ms = 7;
+  int64 changed_before_ms = 8;
+  int32 limit = 9;
+}
+
+message ScriptTimerAuditEventEntry {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  int64 region_epoch = 4;
+  string entity_id = 5;
+  entity_management.v1.PlayableStateScope playable_state_scope = 6;
+  string world_slug = 7;
+  string realm_slug = 8;
+  string pointer_version = 9;
+  string script_id = 10;
+  string plugin_id = 11;
+  string plugin_version_id = 12;
+  string event_type = 13;
+  string script_patch_version = 14;
+  string script_event_id = 15;
+  TriggerMode trigger_mode = 16;
+  string source_state = 17;
+  int64 source_ordinal = 18;
+  int64 source_due_tick_id = 19;
+  int64 source_due_at_ms = 20;
+  string final_stage = 21;
+  string final_outcome = 22;
+  string final_reason = 23;
+  int64 created_at_ms = 24;
+  int64 updated_at_ms = 25;
+  string work_item_id = 26;
+  ScriptPatchPublicationLink publication = 27;
+  PluginPublicationLink plugin_publication = 28;
+}
+
+message ListScriptTimerAuditEventsResponse {
+  repeated ScriptTimerAuditEventEntry events = 1;
   shared.v1.ErrorDetail error = 2;
 }
 
@@ -566,6 +674,7 @@ message ScriptPatchInstanceRolloutEntry {
   int64 projection_as_of_ms = 7;
   int64 projection_lag_ms = 8;
   bool is_projection_stale = 9;
+  ScriptPatchPublicationLink publication = 10;
 }
 
 message ListScriptPatchInstanceRolloutsResponse {
@@ -592,6 +701,7 @@ message ScriptPatchInstanceRolloutEventEntry {
   string status_reason = 6;
   int64 observed_at_ms = 7;
   int64 projection_as_of_ms = 8;
+  ScriptPatchPublicationLink publication = 9;
 }
 
 message ListScriptPatchInstanceRolloutEventsResponse {
@@ -627,6 +737,17 @@ message ScriptHandoffEventEntry {
   string handoff_outcome = 14;
   string handoff_reason = 15;
   int64 observed_at_ms = 16;
+  entity_management.v1.PlayableStateScope playable_state_scope = 17;
+  string world_slug = 18;
+  string realm_slug = 19;
+  string pointer_version = 20;
+  string source_kind = 21;
+  string source_state = 22;
+  int64 source_ordinal = 23;
+  int64 source_due_tick_id = 24;
+  int64 source_due_at_ms = 25;
+  ScriptPatchPublicationLink publication = 26;
+  PluginPublicationLink plugin_publication = 27;
 }
 
 message ListScriptHandoffEventsResponse {
@@ -680,6 +801,16 @@ message GetPluginStatusRequest {
   string plugin_id = 3;
 }
 
+message PluginPublicationLink {
+  string plugin_version_id = 1;
+  int64 publication_id = 2;
+  gamedesign.v1.VersionLifecycleState publication_state = 3;
+  string status_reason = 4;
+  int64 last_changed_at_ms = 5;
+  string lookup_error_code = 6;
+  string lookup_error_message = 7;
+}
+
 message GetPluginStatusResponse {
   string active_plugin_version_id = 1;
   string pending_plugin_version_id = 2;
@@ -691,6 +822,8 @@ message GetPluginStatusResponse {
   int64 last_policy_checked_at_ms = 8;
   bool policy_check_stale = 9;
   shared.v1.ErrorDetail error = 10;
+  PluginPublicationLink active_publication = 11;
+  PluginPublicationLink pending_publication = 12;
 }
 
 message ListPluginRuntimeEventsRequest {
@@ -716,6 +849,8 @@ message PluginRuntimeEventEntry {
   string control_plane_request_id = 9;
   string actor_principal = 10;
   int64 observed_at_ms = 11;
+  PluginPublicationLink previous_publication = 12;
+  PluginPublicationLink active_publication = 13;
 }
 
 message ListPluginRuntimeEventsResponse {
@@ -735,6 +870,7 @@ message PluginPolicyViolation {
   string active_plugin_version_id = 3;
   string reason = 4;
   int64 last_changed_at_ms = 5;
+  PluginPublicationLink active_publication = 6;
 }
 
 message GetPluginPolicyConvergenceResponse {
@@ -743,7 +879,8 @@ message GetPluginPolicyConvergenceResponse {
   bool converged = 3;
   int64 evaluated_at_ms = 4;
   repeated PluginPolicyViolation violations = 5;
-  shared.v1.ErrorDetail error = 6;
+  bool is_stale = 6;
+  shared.v1.ErrorDetail error = 7;
 }
 
 message SetPluginActiveVersionRequest {

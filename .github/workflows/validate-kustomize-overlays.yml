@@ -6,8 +6,8 @@ on:
       - "k8s/**"
       - "design/operations/deployments/production/attestations/**"
       - "design/operations/deployments/production/backup-readiness/**"
-      - "dev-tools/ci/validate-kustomize-overlays.sh"
-      - "dev-tools/deploy/preflight.sh"
+      - "dev-tools/deploy/validate-kustomize-overlays.sh"
+      - "dev-tools/deploy/preflight.py"
       - ".github/workflows/validate-kustomize-overlays.yml"
   workflow_dispatch:
 
@@ -78,4 +78,4 @@ jobs:
           done
 
       - name: ✅ Validate overlays and image availability
-        run: bash dev-tools/ci/validate-kustomize-overlays.sh
+        run: bash dev-tools/deploy/validate-kustomize-overlays.sh

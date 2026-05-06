@@ -15,13 +15,17 @@ import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.context.annotation.Profile;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Seeds deterministic local gameplay fixtures when the {@code dev} Spring profile is active. */
+/** Seeds deterministic gameplay fixtures when local compose explicitly enables them. */
 @Component
-@Profile("dev")
+@ConditionalOnProperty(
+    prefix = "firemud.smoke.seed-demo-runtime",
+    name = "enabled",
+    havingValue = "true",
+    matchIfMissing = false)
 @RequiredArgsConstructor
 public class TestDataSeeder implements ApplicationRunner {
   private static final long DEMO_TENANT_ID = 1L;

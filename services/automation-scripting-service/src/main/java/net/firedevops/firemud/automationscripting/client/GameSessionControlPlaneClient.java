@@ -12,6 +12,8 @@ import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRes
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasRequest;
+import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -88,6 +90,21 @@ public class GameSessionControlPlaneClient
     }
   }
 
+  public ValidateBuiltInCommandAliasResponse validateBuiltInCommandAlias(String alias) {
+    if (stub() == null) {
+      return aliasUnavailable();
+    }
+    try {
+      return stub()
+          .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+          .validateBuiltInCommandAlias(
+              ValidateBuiltInCommandAliasRequest.newBuilder().setAlias(alias).build());
+    } catch (RuntimeException ex) {
+      logger.warn("Game Session validateBuiltInCommandAlias failed", ex);
+      return aliasUnavailable();
+    }
+  }
+
   private static EnqueueAutomationCommandIfAbsentResponse unavailable() {
     return EnqueueAutomationCommandIfAbsentResponse.newBuilder()
         .setAccepted(false)
@@ -101,6 +118,15 @@ public class GameSessionControlPlaneClient
 
   private static GetGameInstanceRuntimeStateResponse runtimeUnavailable() {
     return GetGameInstanceRuntimeStateResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("GAME_SESSION_UNAVAILABLE")
+                .setMessage("Game Session service unavailable"))
+        .build();
+  }
+
+  private static ValidateBuiltInCommandAliasResponse aliasUnavailable() {
+    return ValidateBuiltInCommandAliasResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
                 .setCode("GAME_SESSION_UNAVAILABLE")

@@ -22,6 +22,7 @@ import net.firedevops.firemud.automationscripting.service.AutomationAdmissionSta
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
@@ -61,7 +62,12 @@ class ScriptWorkItemServiceImplTest {
                     PublishedScriptPatchVersion.newBuilder()
                         .setTenantId("1")
                         .setScriptPatchVersion("patch-1")
+                        .setVersionId(17L)
                         .setBaseVersionId(7L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setLastChangedAtMs(150L)
                         .build())
                 .build());
     when(client.getPublishedReleaseBundle(Mockito.anyString(), Mockito.eq(7L)))
@@ -121,6 +127,47 @@ class ScriptWorkItemServiceImplTest {
     assertThat(audit.getFinalReason()).isEqualTo("rollback");
     verify(workItemRepository).saveAll(List.of(item));
     verify(auditRepository).save(audit);
+  }
+
+  @Test
+  void refreshesReadinessProjectionWhenCancelingPendingOnLoadWork() {
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setId(43L);
+    item.setTenantId("1");
+    item.setScriptPatchVersion("patch-1");
+    item.setEventType("onLoad");
+    item.setStatus("PENDING_EVALUATION");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(workItemRepository.findByTenantIdAndScriptPatchVersionAndStatusInOrderByCreatedAtAscIdAsc(
+            "1", "patch-1", List.of("PENDING_EVALUATION")))
+        .thenReturn(List.of(item));
+    when(auditRepository.findByWorkItemId(43L)).thenReturn(Optional.of(audit));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService);
+
+    long canceled =
+        service.cancelPendingForPatch(
+            new ScriptWorkItemService.CancelPendingForPatchCommand(
+                "1", "patch-1", "", "", "req-1", "admin", "rollback"));
+
+    assertThat(canceled).isEqualTo(1L);
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    verify(readinessProjectionService).refreshFromOnLoadWorkItems("1", "patch-1");
   }
 
   @Test
@@ -353,12 +400,18 @@ class ScriptWorkItemServiceImplTest {
     assertThat(status.get().lastChangedAtMs()).isEqualTo(200L);
     assertThat(status.get().baseVersionId()).isEqualTo(7L);
     assertThat(status.get().abilitySchemaDigest()).isEqualTo("ability-1");
+    assertThat(status.get().publication().versionId()).isEqualTo(17L);
+    assertThat(status.get().publication().publicationState())
+        .isEqualTo(
+            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                .VERSION_LIFECYCLE_STATE_PUBLISHED);
   }
 
   @Test
   void listsPatchStatusesWithFilters() {
     ScriptWorkItem ready = workItem("patch-ready", "HANDED_OFF", Instant.ofEpochMilli(200));
     ScriptWorkItem failed = workItem("patch-failed", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    failed.setCancelReason("runtime_region_scope_advanced");
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(workItemRepository.findDistinctScriptPatchVersionsByTenantId("1"))
@@ -386,8 +439,92 @@ class ScriptWorkItemServiceImplTest {
     assertThat(statuses).hasSize(1);
     assertThat(statuses.get(0).scriptPatchVersion()).isEqualTo("patch-failed");
     assertThat(statuses.get(0).status()).isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
+    assertThat(statuses.get(0).statusReason()).isEqualTo("runtime_region_scope_advanced");
     assertThat(statuses.get(0).baseVersionId()).isEqualTo(7L);
     assertThat(statuses.get(0).abilitySchemaDigest()).isEqualTo("ability-1");
+    assertThat(statuses.get(0).publication().versionId()).isEqualTo(17L);
+  }
+
+  @Test
+  void summarizesRolledBackLegacyPatchStatusWithSpecificCancelReason() {
+    ScriptWorkItem canceledA = workItem("patch-rollback", "CANCELED", Instant.ofEpochMilli(200));
+    canceledA.setCancelReason("rollback_epoch_advanced");
+    ScriptWorkItem canceledB = workItem("patch-rollback", "CANCELED", Instant.ofEpochMilli(300));
+    canceledB.setCancelReason("rollback_epoch_advanced");
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-rollback"))
+        .thenReturn(List.of(canceledA, canceledB));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    Optional<ScriptWorkItemService.PatchStatusSummary> status =
+        service.getPatchStatus("1", "patch-rollback");
+
+    assertThat(status).isPresent();
+    assertThat(status.get().status()).isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_ROLLED_BACK);
+    assertThat(status.get().statusReason()).isEqualTo("rollback_epoch_advanced");
+  }
+
+  @Test
+  void listsProjectedAndLegacyPatchStatusesTogetherWhenProjectionCoverageIsPartial() {
+    ScriptWorkItem legacyFailed =
+        workItem("patch-legacy", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(readinessProjectionService.listProjections("1"))
+        .thenReturn(
+            List.of(
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
+                    "1",
+                    "patch-projected",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
+                    "ready_for_tenant",
+                    "",
+                    500L)));
+    when(workItemRepository.findDistinctScriptPatchVersionsByTenantId("1"))
+        .thenReturn(List.of("patch-projected", "patch-legacy"));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-legacy"))
+        .thenReturn(List.of(legacyFailed));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService);
+
+    List<ScriptWorkItemService.PatchStatusSummary> statuses =
+        service.listPatchStatuses("1", ScriptPatchStatus.SCRIPT_PATCH_STATUS_UNSPECIFIED, 0L, 0L);
+
+    assertThat(statuses).hasSize(2);
+    assertThat(statuses)
+        .extracting(ScriptWorkItemService.PatchStatusSummary::scriptPatchVersion)
+        .containsExactly("patch-projected", "patch-legacy");
+    assertThat(statuses)
+        .extracting(ScriptWorkItemService.PatchStatusSummary::status)
+        .containsExactly(
+            ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
+            ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
+    verify(workItemRepository).findByTenantIdAndScriptPatchVersion("1", "patch-legacy");
   }
 
   @Test
@@ -486,7 +623,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", "req-1", 150L, 151L, 0L, false)),
+                        "1", "game-1", "patch-1", "req-1", 150L, 151L, 0L, false, "", 0L, "", "",
+                        "")),
                 "",
                 ""));
     when(rolloutProjectionService.getProjection("1", "game-1", "patch-1"))
@@ -501,7 +639,16 @@ class ScriptWorkItemServiceImplTest {
                     150L,
                     151L,
                     0L,
-                    false)));
+                    false,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "",
+                        0L,
+                        0L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+                        0L,
+                        "",
+                        ""))));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
@@ -524,6 +671,7 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.get().statusReason()).isEqualTo("runtime_pin_matches_patch");
     assertThat(summary.get().projectionLagMs()).isZero();
     assertThat(summary.get().projectionStale()).isFalse();
+    assertThat(summary.get().publication().versionId()).isEqualTo(17L);
   }
 
   @Test
@@ -556,7 +704,16 @@ class ScriptWorkItemServiceImplTest {
                     200L,
                     200L,
                     5_100L,
-                    true)));
+                    true,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "",
+                        0L,
+                        0L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+                        0L,
+                        "",
+                        ""))));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
@@ -579,6 +736,7 @@ class ScriptWorkItemServiceImplTest {
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK);
     assertThat(summary.get().statusReason()).isEqualTo("projection_lag_exceeded");
     assertThat(summary.get().projectionStale()).isTrue();
+    assertThat(summary.get().publication().versionId()).isEqualTo(17L);
   }
 
   @Test
@@ -613,7 +771,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-2", "req-2", 260L, 261L, 0L, false)),
+                        "1", "game-1", "patch-2", "req-2", 260L, 261L, 0L, false, "", 0L, "", "",
+                        "")),
                 "",
                 ""));
     when(rolloutProjectionService.listProjections(
@@ -635,7 +794,16 @@ class ScriptWorkItemServiceImplTest {
                     260L,
                     261L,
                     0L,
-                    false)));
+                    false,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "",
+                        0L,
+                        0L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+                        0L,
+                        "",
+                        ""))));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
@@ -664,6 +832,7 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summaries.get(0).rolloutStatus())
         .isEqualTo(
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK);
+    assertThat(summaries.get(0).publication().versionId()).isEqualTo(17L);
   }
 
   @Test
@@ -679,6 +848,10 @@ class ScriptWorkItemServiceImplTest {
     deadLetter.setEventType("onCommand");
     deadLetter.setScriptEventId("event-1");
     deadLetter.setCancelReason("STALE_TIMELINE");
+    deadLetter.setSourceKind("GAMEPLAY_EVENT");
+    deadLetter.setSourceState("WORK_ITEM_PERSISTED");
+    deadLetter.setPluginId("plugin-1");
+    deadLetter.setPluginVersionId("plugin-v1");
     deadLetter.setCreatedAt(Instant.ofEpochMilli(100));
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -703,8 +876,13 @@ class ScriptWorkItemServiceImplTest {
 
     assertThat(deadLetters).hasSize(1);
     assertThat(deadLetters.get(0).workItemId()).isEqualTo("99");
+    assertThat(deadLetters.get(0).sourceKind()).isEqualTo("GAMEPLAY_EVENT");
+    assertThat(deadLetters.get(0).sourceState()).isEqualTo("WORK_ITEM_PERSISTED");
+    assertThat(deadLetters.get(0).pluginId()).isEqualTo("plugin-1");
+    assertThat(deadLetters.get(0).pluginVersionId()).isEqualTo("plugin-v1");
     assertThat(deadLetters.get(0).reason()).isEqualTo("STALE_TIMELINE");
     assertThat(deadLetters.get(0).updatedAtMs()).isEqualTo(300L);
+    assertThat(deadLetters.get(0).publication().versionId()).isEqualTo(17L);
   }
 
   @Test
@@ -726,6 +904,10 @@ class ScriptWorkItemServiceImplTest {
     event.setAutomationDispatchId("workItem:99#0");
     event.setGameSessionCommandId("command-1");
     event.setTargetEntityId("target-1");
+    event.setSourceKind("SCHEDULE_TIMER");
+    event.setSourceState("SCHEDULE_DUE_CLAIMED");
+    event.setSourceOrdinal(5000L);
+    event.setSourceDueAtMs(5000L);
     event.setEmittedCommandText("LOOK AT old chest");
     event.setHandoffOutcome("enqueued");
     event.setHandoffReason("game_session_accepted");
@@ -759,8 +941,12 @@ class ScriptWorkItemServiceImplTest {
     assertThat(events).hasSize(1);
     assertThat(events.get(0).automationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(events.get(0).gameSessionCommandId()).isEqualTo("command-1");
+    assertThat(events.get(0).sourceKind()).isEqualTo("SCHEDULE_TIMER");
+    assertThat(events.get(0).sourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
+    assertThat(events.get(0).sourceOrdinal()).isEqualTo(5000L);
     assertThat(events.get(0).emittedCommandText()).isEqualTo("LOOK AT old chest");
     assertThat(events.get(0).handoffOutcome()).isEqualTo("enqueued");
+    assertThat(events.get(0).publication().versionId()).isEqualTo(17L);
   }
 
   @Test
@@ -791,12 +977,16 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.of(audit));
     when(ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 "1",
                 "game-1",
                 "region-1",
                 3L,
                 "entity-1",
+                "",
+                "",
+                "",
+                "",
                 "onCommand",
                 "v1",
                 "patch-1",
@@ -808,7 +998,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", "req-1", 500L, 501L, 0L, false)),
+                        "1", "game-1", "patch-1", "req-1", 500L, 501L, 0L, false, "", 0L, "", "",
+                        "")),
                 "",
                 ""));
     ScriptWorkItemService service =
@@ -868,12 +1059,16 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.findById(77L)).thenReturn(Optional.of(item));
     when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.empty());
     when(ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
                 "1",
                 "game-1",
                 "region-1",
                 3L,
                 "entity-1",
+                "",
+                "",
+                "",
+                "",
                 "onCommand",
                 "v1",
                 "patch-1",
@@ -885,7 +1080,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-2", "req-2", 600L, 601L, 0L, false)),
+                        "1", "game-1", "patch-2", "req-2", 600L, 601L, 0L, false, "", 0L, "", "",
+                        "")),
                 "",
                 ""));
     ScriptWorkItemService service =
@@ -909,6 +1105,111 @@ class ScriptWorkItemServiceImplTest {
     assertThat(result.replayedCount()).isEqualTo(0L);
     assertThat(result.rejectedCount()).isEqualTo(1L);
     assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+  }
+
+  @Test
+  void replaysFailedOnLoadDeadLetterWhenReadinessProjectionMatches() {
+    ScriptWorkItem item = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    item.setId(88L);
+    item.setTenantId("1");
+    item.setEventType("onLoad");
+    item.setScriptId("boot-script");
+    item.setScriptEventId("onload:1:patch-1:boot-script");
+    item.setCreatedAt(Instant.ofEpochMilli(100));
+    item.setCancelReason("definition_invalid");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(workItemRepository.findById(88L)).thenReturn(Optional.of(item));
+    when(workItemRepository.save(item)).thenReturn(item);
+    when(auditRepository.findByWorkItemId(88L)).thenReturn(Optional.of(audit));
+    when(readinessProjectionService.getProjection("1", "patch-1"))
+        .thenReturn(
+            Optional.of(
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
+                    "1",
+                    "patch-1",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED,
+                    "onload_failed",
+                    "",
+                    900L)));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService);
+
+    ScriptWorkItemService.ReplayResult result =
+        service.replayDeadLetters(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1", "", "", List.of("88"), "patch-1", 0L, 0L, 10, "req-1", "admin", "retry"));
+
+    assertThat(result.replayedCount()).isEqualTo(1L);
+    assertThat(result.rejectedCount()).isEqualTo(0L);
+    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(item.getCancelReason()).isEmpty();
+    verify(readinessProjectionService).refreshFromOnLoadWorkItems("1", "patch-1");
+    assertThat(audit.getFinalStage()).isEqualTo("REPLAY");
+    assertThat(audit.getFinalOutcome()).isEqualTo("requeued");
+  }
+
+  @Test
+  void rejectsReplayForSupersededOnLoadDeadLetter() {
+    ScriptWorkItem item = workItem("patch-old", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    item.setId(89L);
+    item.setTenantId("1");
+    item.setEventType("onLoad");
+    item.setScriptId("boot-script");
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(workItemRepository.findById(89L)).thenReturn(Optional.of(item));
+    when(auditRepository.findByWorkItemId(89L)).thenReturn(Optional.empty());
+    when(readinessProjectionService.getProjection("1", "patch-old"))
+        .thenReturn(
+            Optional.of(
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
+                    "1",
+                    "patch-old",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_SUPERSEDED,
+                    "superseded_by_newer_patch",
+                    "patch-new",
+                    901L)));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService);
+
+    ScriptWorkItemService.ReplayResult result =
+        service.replayDeadLetters(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1", "", "", List.of("89"), "patch-old", 0L, 0L, 10, "", "", ""));
+
+    assertThat(result.replayedCount()).isEqualTo(0L);
+    assertThat(result.rejectedCount()).isEqualTo(1L);
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    verify(readinessProjectionService, Mockito.never())
+        .refreshFromOnLoadWorkItems(Mockito.anyString(), Mockito.anyString());
   }
 
   private static ScriptWorkItem workItem(String patchVersion, String status, Instant updatedAt) {

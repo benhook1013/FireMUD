@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -17,11 +18,13 @@ import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -43,6 +46,8 @@ class PlayCommandHandlerTest {
       Mockito.mock(FirstPartyConnectContextRegistry.class);
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       Mockito.mock(GameplayPresenceLifecycleService.class);
+  private final ScriptEventPublisher scriptEventPublisher =
+      Mockito.mock(ScriptEventPublisher.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final GameplayCatalogProperties gameplayCatalogProperties =
       new GameplayCatalogProperties();
@@ -76,6 +81,7 @@ class PlayCommandHandlerTest {
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
             gameplayPresenceLifecycleService,
+            scriptEventPublisher,
             meterRegistry);
     when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong()))
         .thenReturn(
@@ -171,6 +177,45 @@ class PlayCommandHandlerTest {
                 "production",
                 1L,
                 "SHARED"));
+    Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                7001L,
+                "demo",
+                1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                null,
+                0L,
+                "demo",
+                "production",
+                1L,
+                "SHARED"),
+            command("play-command:1:1:7001:1", "PLAY"));
+    Mockito.verify(scriptEventPublisher)
+        .publishSpawnEvent(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                7001L,
+                "demo",
+                1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                null,
+                0L,
+                "demo",
+                "production",
+                1L,
+                "SHARED"),
+            "play_entry",
+            "play-spawn:1:1:7001:1");
   }
 
   @Test
@@ -245,6 +290,79 @@ class PlayCommandHandlerTest {
                 "production",
                 1L,
                 "SHARED"));
+    Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                9007L,
+                "Emberline",
+                2L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                null,
+                0L,
+                "sandbox",
+                "production",
+                1L,
+                "SHARED"),
+            command("play-command:1:2:9007:1", "PLAY"));
+    Mockito.verify(scriptEventPublisher)
+        .publishSpawnEvent(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                9007L,
+                "Emberline",
+                2L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                null,
+                0L,
+                "sandbox",
+                "production",
+                1L,
+                "SHARED"),
+            "play_entry",
+            "play-spawn:1:2:9007:1");
+  }
+
+  @Test
+  void playResumeDoesNotPublishSpawnEvent() {
+    SessionContext context =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "demo",
+            1L,
+            "room-7",
+            "jwt-token",
+            null,
+            0L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.reconnectRedrawRecommended()).isTrue();
+    Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(context, command("play-command:1:1:7001:1", "PLAY"));
+    Mockito.verify(scriptEventPublisher, never())
+        .publishSpawnEvent(Mockito.any(), Mockito.any(), Mockito.any());
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+    Mockito.verify(gameplayPresenceLifecycleService, never()).registerConnected(Mockito.any());
   }
 
   @Test
@@ -617,6 +735,45 @@ class PlayCommandHandlerTest {
                     "stale_or_missing_context")
                 .count())
         .isEqualTo(1.0);
+    Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                123L,
+                "demo",
+                1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                null,
+                1L,
+                "demo",
+                "production",
+                1L,
+                "SHARED"),
+            command("play-command:1:1:123:1", "PLAY"));
+    Mockito.verify(scriptEventPublisher)
+        .publishSpawnEvent(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                123L,
+                "demo",
+                1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                null,
+                1L,
+                "demo",
+                "production",
+                1L,
+                "SHARED"),
+            "play_entry",
+            "play-spawn:1:1:123:1");
   }
 
   private static String joinedOutputText(List<PlayerOutput> outputs) {
@@ -654,5 +811,12 @@ class PlayCommandHandlerTest {
     realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
     return realm;
+  }
+
+  private static GameplayCommand command(String commandId, String commandName) {
+    GameplayCommand gameplayCommand = new GameplayCommand();
+    gameplayCommand.setCommandId(commandId);
+    gameplayCommand.setCommandName(commandName);
+    return gameplayCommand;
   }
 }

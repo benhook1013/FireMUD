@@ -5,6 +5,7 @@ import java.util.List;
 
 public class GrpcAuthProperties {
   private boolean interceptorEnabled = true;
+  private boolean forceInternalServiceOutbound = false;
   private List<String> publicMethods = new ArrayList<>();
 
   public boolean isInterceptorEnabled() {
@@ -15,8 +16,16 @@ public class GrpcAuthProperties {
     this.interceptorEnabled = interceptorEnabled;
   }
 
+  public boolean isForceInternalServiceOutbound() {
+    return forceInternalServiceOutbound;
+  }
+
+  public void setForceInternalServiceOutbound(boolean forceInternalServiceOutbound) {
+    this.forceInternalServiceOutbound = forceInternalServiceOutbound;
+  }
+
   public List<String> getPublicMethods() {
-    return publicMethods;
+    return List.copyOf(publicMethods);
   }
 
   public void setPublicMethods(List<String> publicMethods) {
