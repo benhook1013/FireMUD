@@ -62,8 +62,30 @@ jobs:
               return "⏭️";
             };
 
-            const normalizeStatus = (checkRun) => {
-              if (!checkRun) return "pending";
+            const codeqlRuns = await github.paginate(
+              github.rest.actions.listWorkflowRunsForRepo,
+              {
+                ...context.repo,
+                event: "pull_request",
+                per_page: 100,
+              },
+              (response) => response.data.workflow_runs
+            );
+
+            const codeqlRunForHead = codeqlRuns.find((workflowRun) =>
+              workflowRun.name === "CodeQL Analysis" && workflowRun.head_sha === headSha
+            );
+
+            const normalizeStatus = (checkRun, checkName) => {
+              if (!checkRun) {
+                if (
+                  checkName.startsWith("CodeQL Analysis (") &&
+                  codeqlRunForHead?.status === "completed"
+                ) {
+                  return "skipped";
+                }
+                return "pending";
+              }
               if (checkRun.status !== "completed") return checkRun.status;
               return checkRun.conclusion ?? "pending";
             };
@@ -107,7 +129,7 @@ jobs:
                   .filter((checkRun) => checkRun.name === checkName)
                   .map((checkRun) => ({
                     checkRun,
-                    status: normalizeStatus(checkRun),
+                    status: normalizeStatus(checkRun, checkName),
                   }))
                   .sort((a, b) => {
                     const priorityDiff = statusPriority(b.status) - statusPriority(a.status);
@@ -116,7 +138,7 @@ jobs:
                     }
                     return b.checkRun.id - a.checkRun.id;
                   });
-                return [label, candidates[0]?.status ?? "pending"];
+                return [label, candidates[0]?.status ?? normalizeStatus(null, checkName)];
               });
 
             let checks = resolveStatuses(await loadChecks());
