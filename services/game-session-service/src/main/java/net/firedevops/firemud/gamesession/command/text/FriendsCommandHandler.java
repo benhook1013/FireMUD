@@ -2,23 +2,32 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import io.micrometer.core.annotation.Timed;
 import java.util.List;
+import java.util.UUID;
 import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
 import net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
 public class FriendsCommandHandler {
+  private static final Logger LOG = LoggerFactory.getLogger(FriendsCommandHandler.class);
   private final SocialGroupsClient socialGroupsClient;
+  private final ScriptEventPublisher scriptEventPublisher;
 
-  public FriendsCommandHandler(SocialGroupsClient socialGroupsClient) {
+  public FriendsCommandHandler(
+      SocialGroupsClient socialGroupsClient, ScriptEventPublisher scriptEventPublisher) {
     this.socialGroupsClient = socialGroupsClient;
+    this.scriptEventPublisher = scriptEventPublisher;
   }
 
   @Timed(value = "gamesession.command.friends")
@@ -34,9 +43,26 @@ public class FriendsCommandHandler {
           CommandEnqueueResult.failure("FRIEND_PRESENCE_UNAVAILABLE", message),
           List.of(PlayerOutput.error("FRIEND_PRESENCE_UNAVAILABLE", message)));
     }
+    publishCommandEvent(context);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
         List.of(PlayerOutput.view(toView(response.getPresencesList()))));
+  }
+
+  private void publishCommandEvent(SessionContext context) {
+    try {
+      GameplayCommand gameplayCommand = new GameplayCommand();
+      gameplayCommand.setCommandId("friends-" + UUID.randomUUID());
+      gameplayCommand.setCommandName(TextCommandType.FRIENDS.name());
+      scriptEventPublisher.publishCommandEvent(context, gameplayCommand);
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Friends script event publish failed tenantId={} gameInstanceId={} characterId={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.characterId(),
+          ex);
+    }
   }
 
   private FriendPresenceViewOutput toView(List<FriendPresenceEntry> entries) {

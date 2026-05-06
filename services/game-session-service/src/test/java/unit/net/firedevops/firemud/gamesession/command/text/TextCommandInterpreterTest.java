@@ -345,7 +345,8 @@ class TextCommandInterpreterTest {
     WhoCommandHandler whoHandler =
         new WhoCommandHandler(
             gameplayPresenceService,
-            new GameplayPresenceActivityResolver(new PresenceProperties()));
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            scriptEventPublisher);
     LookCommandHandler lookHandler =
         new LookCommandHandler(
             gameLogicClient,
@@ -436,11 +437,12 @@ class TextCommandInterpreterTest {
             afkHandler,
             helpHandler,
             whoHandler,
-            new FriendsCommandHandler(Mockito.mock(SocialGroupsClient.class)),
+            new FriendsCommandHandler(Mockito.mock(SocialGroupsClient.class), scriptEventPublisher),
             inventoryHandler,
             equipmentHandler,
             containerHandler,
             sessionAuthenticationService,
+            scriptEventPublisher,
             communicationHandler,
             worldsHandler,
             new PromptComposer(),

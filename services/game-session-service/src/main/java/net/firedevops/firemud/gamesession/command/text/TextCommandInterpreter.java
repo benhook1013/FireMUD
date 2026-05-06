@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -41,6 +42,7 @@ public class TextCommandInterpreter {
       EquipmentCommandHandler equipmentHandler,
       ContainerCommandHandler containerHandler,
       SessionAuthenticationService sessionAuthenticationService,
+      ScriptEventPublisher scriptEventPublisher,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
       PromptComposer promptComposer,
@@ -65,7 +67,11 @@ public class TextCommandInterpreter {
             friendsHandler,
             authoredActionHandler,
             new ItemCommandHandler(
-                inventoryHandler, equipmentHandler, containerHandler, meterRegistry),
+                inventoryHandler,
+                equipmentHandler,
+                containerHandler,
+                meterRegistry,
+                scriptEventPublisher),
             communicationHandler,
             worldsHandler));
   }
@@ -85,6 +91,7 @@ public class TextCommandInterpreter {
       EquipmentCommandHandler equipmentHandler,
       ContainerCommandHandler containerHandler,
       SessionAuthenticationService sessionAuthenticationService,
+      ScriptEventPublisher scriptEventPublisher,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
       PromptComposer promptComposer,
@@ -107,6 +114,7 @@ public class TextCommandInterpreter {
         equipmentHandler,
         containerHandler,
         sessionAuthenticationService,
+        scriptEventPublisher,
         communicationHandler,
         worldsHandler,
         promptComposer,
@@ -130,6 +138,7 @@ public class TextCommandInterpreter {
       EquipmentCommandHandler equipmentHandler,
       ContainerCommandHandler containerHandler,
       SessionAuthenticationService sessionAuthenticationService,
+      ScriptEventPublisher scriptEventPublisher,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
       PromptComposer promptComposer,
@@ -151,6 +160,7 @@ public class TextCommandInterpreter {
         equipmentHandler,
         containerHandler,
         sessionAuthenticationService,
+        scriptEventPublisher,
         communicationHandler,
         worldsHandler,
         promptComposer,
@@ -173,6 +183,7 @@ public class TextCommandInterpreter {
       EquipmentCommandHandler equipmentHandler,
       ContainerCommandHandler containerHandler,
       SessionAuthenticationService sessionAuthenticationService,
+      ScriptEventPublisher scriptEventPublisher,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
       PromptComposer promptComposer,
@@ -195,7 +206,11 @@ public class TextCommandInterpreter {
             friendsHandler,
             authoredActionHandler,
             new ItemCommandHandler(
-                inventoryHandler, equipmentHandler, containerHandler, new SimpleMeterRegistry()),
+                inventoryHandler,
+                equipmentHandler,
+                containerHandler,
+                new SimpleMeterRegistry(),
+                scriptEventPublisher),
             communicationHandler,
             worldsHandler));
   }

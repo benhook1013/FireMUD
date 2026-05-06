@@ -8,6 +8,7 @@ import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
@@ -21,7 +22,9 @@ class FriendsCommandHandlerTest {
   @Test
   void friendsMapsVisiblePresenceToTypedViewAndText() {
     SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
-    FriendsCommandHandler handler = new FriendsCommandHandler(socialGroupsClient);
+    ScriptEventPublisher scriptEventPublisher = Mockito.mock(ScriptEventPublisher.class);
+    FriendsCommandHandler handler =
+        new FriendsCommandHandler(socialGroupsClient, scriptEventPublisher);
     when(socialGroupsClient.listFriendPresence(1L, 41L))
         .thenReturn(
             ListFriendPresenceResponse.newBuilder()
@@ -64,12 +67,21 @@ class FriendsCommandHandlerTest {
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
                 .render(result.outputs().getFirst()))
         .contains("Sora - online in Demo World / Live Realm (idle)");
+    Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            Mockito.any(),
+            Mockito.argThat(
+                gameplayCommand ->
+                    "FRIENDS".equals(gameplayCommand.getCommandName())
+                        && gameplayCommand.getCommandId() != null
+                        && gameplayCommand.getCommandId().startsWith("friends-")));
   }
 
   @Test
   void friendsFallsBackToBoundedOfflineLabelWhenDetailsAreSuppressed() {
     SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
-    FriendsCommandHandler handler = new FriendsCommandHandler(socialGroupsClient);
+    FriendsCommandHandler handler =
+        new FriendsCommandHandler(socialGroupsClient, Mockito.mock(ScriptEventPublisher.class));
     when(socialGroupsClient.listFriendPresence(1L, 41L))
         .thenReturn(
             ListFriendPresenceResponse.newBuilder()

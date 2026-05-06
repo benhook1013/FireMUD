@@ -9,6 +9,7 @@ import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
 import org.junit.jupiter.api.Test;
@@ -20,12 +21,15 @@ class WhoCommandHandlerTest {
       new GameplayPresenceActivityResolver(new PresenceProperties());
   private final TextPlayerOutputRenderer renderer =
       new TextPlayerOutputRenderer(new PresentationProperties());
+  private final ScriptEventPublisher scriptEventPublisher =
+      Mockito.mock(ScriptEventPublisher.class);
 
   @Test
   void whoShowsBoundedEmptyStateWhenNobodyIsConnected() {
     InMemoryGameplayPresenceService gameplayPresenceService =
         new InMemoryGameplayPresenceService(jwtUtil);
-    WhoCommandHandler handler = new WhoCommandHandler(gameplayPresenceService, activityResolver);
+    WhoCommandHandler handler =
+        new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -33,13 +37,22 @@ class WhoCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(render(result)).isEqualTo("Gods [0]: \nPlayers [0]: ");
+    Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            Mockito.any(),
+            Mockito.argThat(
+                gameplayCommand ->
+                    "WHO".equals(gameplayCommand.getCommandName())
+                        && gameplayCommand.getCommandId() != null
+                        && gameplayCommand.getCommandId().startsWith("who-")));
   }
 
   @Test
   void whoGroupsGodsFirstAndPlayersAfterward() {
     InMemoryGameplayPresenceService gameplayPresenceService =
         new InMemoryGameplayPresenceService(jwtUtil);
-    WhoCommandHandler handler = new WhoCommandHandler(gameplayPresenceService, activityResolver);
+    WhoCommandHandler handler =
+        new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
     String godJwt =
         jwtUtil.generateToken(
             "1",
@@ -70,7 +83,8 @@ class WhoCommandHandlerTest {
   void whoOmitsRemovedPresenceAfterLogoutLikeCleanup() {
     InMemoryGameplayPresenceService gameplayPresenceService =
         new InMemoryGameplayPresenceService(jwtUtil);
-    WhoCommandHandler handler = new WhoCommandHandler(gameplayPresenceService, activityResolver);
+    WhoCommandHandler handler =
+        new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
 
     gameplayPresenceService.registerConnected(
         new SessionContext(1L, 22L, 1L, "first@example.com", 101L, "Aster", 7L, "R-1", null));
@@ -92,7 +106,8 @@ class WhoCommandHandlerTest {
         new InMemoryGameplayPresenceService(jwtUtil);
     GameplayPresenceActivityResolver resolver =
         Mockito.mock(GameplayPresenceActivityResolver.class);
-    WhoCommandHandler handler = new WhoCommandHandler(gameplayPresenceService, resolver);
+    WhoCommandHandler handler =
+        new WhoCommandHandler(gameplayPresenceService, resolver, scriptEventPublisher);
 
     gameplayPresenceService.registerConnected(
         new SessionContext(1L, 22L, 1L, "active@example.com", 101L, "Aster", 7L, "R-1", null));
