@@ -740,8 +740,12 @@ public final class GameSessionControlPlaneGrpcService
       remoteCommandCoordinatorRepository
           .findForControlPlane(
               tenantId,
+              parseOptionalGameInstanceId(request.getOriginGameInstanceId()),
               blankToEmpty(request.getOriginRegionId()),
+              request.getOriginRegionEpoch(),
+              parseOptionalGameInstanceId(request.getTargetGameInstanceId()),
               blankToEmpty(request.getTargetRegionId()),
+              request.getTargetRegionEpoch(),
               blankToEmpty(request.getState()),
               blankToEmpty(request.getFollowupId()),
               blankToEmpty(request.getScriptId()),

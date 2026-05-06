@@ -2354,8 +2354,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(
             repository.findForControlPlane(
                 1L,
+                7L,
                 "region-a",
+                3L,
+                9L,
                 "region-b",
+                4L,
                 "PENDING_REMOTE",
                 "rf-1",
                 "script-1",
@@ -2378,8 +2382,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     service.listRemoteCommandCoordinators(
         ListRemoteCommandCoordinatorsRequest.newBuilder()
             .setTenantId("1")
+            .setOriginGameInstanceId("7")
             .setOriginRegionId("region-a")
+            .setOriginRegionEpoch(3L)
+            .setTargetGameInstanceId("9")
             .setTargetRegionId("region-b")
+            .setTargetRegionEpoch(4L)
             .setState("PENDING_REMOTE")
             .setFollowupId("rf-1")
             .setScriptId("script-1")
@@ -2398,6 +2406,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(1, responseRef.get().getCoordinatorsCount());
     assertEquals("coord-1", responseRef.get().getCoordinators(0).getCoordinatorId());
     assertEquals("rf-1", responseRef.get().getCoordinators(0).getFollowupId());
+    assertEquals("7", responseRef.get().getCoordinators(0).getOriginGameInstanceId());
+    assertEquals(3L, responseRef.get().getCoordinators(0).getOriginRegionEpoch());
+    assertEquals("9", responseRef.get().getCoordinators(0).getTargetGameInstanceId());
+    assertEquals(4L, responseRef.get().getCoordinators(0).getTargetRegionEpoch());
     assertEquals("dispatch-1", responseRef.get().getCoordinators(0).getAutomationDispatchId());
     assertEquals("script-1", responseRef.get().getCoordinators(0).getScriptId());
     assertEquals("plugin-1", responseRef.get().getCoordinators(0).getPluginId());

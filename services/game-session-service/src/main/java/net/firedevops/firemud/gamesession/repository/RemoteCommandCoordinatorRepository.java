@@ -27,8 +27,12 @@ public interface RemoteCommandCoordinatorRepository
       """
       select coordinator from RemoteCommandCoordinator coordinator
       where coordinator.tenantId = :tenantId
+        and (:originGameInstanceId is null or coordinator.originGameInstanceId = :originGameInstanceId)
         and (:originRegionId = '' or coordinator.originRegionId = :originRegionId)
+        and (:originRegionEpoch = 0 or coordinator.originRegionEpoch = :originRegionEpoch)
+        and (:targetGameInstanceId is null or coordinator.targetGameInstanceId = :targetGameInstanceId)
         and (:targetRegionId = '' or coordinator.targetRegionId = :targetRegionId)
+        and (:targetRegionEpoch = 0 or coordinator.targetRegionEpoch = :targetRegionEpoch)
         and (:state = '' or coordinator.state = :state)
         and (:followupId = '' or coordinator.followupId = :followupId)
         and (:scriptId = '' or coordinator.scriptId = :scriptId)
@@ -39,8 +43,12 @@ public interface RemoteCommandCoordinatorRepository
       """)
   List<RemoteCommandCoordinator> findForControlPlane(
       @Param("tenantId") Long tenantId,
+      @Param("originGameInstanceId") Long originGameInstanceId,
       @Param("originRegionId") String originRegionId,
+      @Param("originRegionEpoch") long originRegionEpoch,
+      @Param("targetGameInstanceId") Long targetGameInstanceId,
       @Param("targetRegionId") String targetRegionId,
+      @Param("targetRegionEpoch") long targetRegionEpoch,
       @Param("state") String state,
       @Param("followupId") String followupId,
       @Param("scriptId") String scriptId,

@@ -17,6 +17,17 @@ import lombok.Data;
           name = "idx_remote_command_coordinator_origin_region_state",
           columnList = "tenant_id, origin_region_id, state"),
       @Index(
+          name = "idx_remote_command_coordinator_followup_id",
+          columnList = "tenant_id, followup_id"),
+      @Index(
+          name = "idx_remote_command_coordinator_target_scope_state",
+          columnList =
+              "tenant_id, target_game_instance_id, target_region_id, target_region_epoch, state, updated_at"),
+      @Index(
+          name = "idx_remote_command_coordinator_provenance_updated",
+          columnList =
+              "tenant_id, script_id, plugin_id, automation_dispatch_id, command_id, updated_at"),
+      @Index(
           name = "idx_remote_command_coordinator_command_id",
           columnList = "tenant_id, command_id",
           unique = true)
