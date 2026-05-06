@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -40,6 +41,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Spring-managed collaborators are stored internally for activation flows")
 public class WorldInstanceActivationServiceImpl implements WorldInstanceActivationService {
   private static final Logger logger =
       LoggingUtil.getLogger(WorldInstanceActivationServiceImpl.class);

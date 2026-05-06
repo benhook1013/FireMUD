@@ -260,8 +260,8 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     try {
       var decision =
           moderationService.evaluatePolicy(
-              Long.valueOf(request.getTenantId()),
-              Long.valueOf(request.getAccountId()),
+              Long.parseLong(request.getTenantId()),
+              Long.parseLong(request.getAccountId()),
               request.getScope());
       EvaluateModerationPolicyResponse.Builder response =
           EvaluateModerationPolicyResponse.newBuilder()

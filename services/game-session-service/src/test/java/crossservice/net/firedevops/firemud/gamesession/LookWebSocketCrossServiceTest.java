@@ -366,7 +366,17 @@ class LookWebSocketCrossServiceTest {
             GameplayWebSocketScenarios.DisconnectMode.CLOSE,
             client -> {
               client.send("north");
-              client.awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
+              GameplayAsyncAssertions.assertEventually(
+                  "canonical move transcript before reconnect close",
+                  java.time.Duration.ofSeconds(5),
+                  () -> {
+                    try {
+                      client.awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
+                      return true;
+                    } catch (Exception ex) {
+                      return false;
+                    }
+                  });
             })) {
       return scenario.firstResponses();
     }

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
@@ -15,6 +16,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Spring-managed client and audit service dependencies are stored internally")
 public class TickRemediationServiceImpl implements TickRemediationService {
   private static final String ACTION_PAUSE = "pause";
   private static final String ACTION_RESUME = "resume";

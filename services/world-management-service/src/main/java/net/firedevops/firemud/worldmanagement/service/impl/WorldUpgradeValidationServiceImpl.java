@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import net.firedevops.firemud.worldmanagement.dto.WorldUpgradeValidationResultDto;
 import net.firedevops.firemud.worldmanagement.repository.RegionInstanceRepository;
@@ -13,6 +14,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Spring-managed repositories are stored internally for validation queries")
 public class WorldUpgradeValidationServiceImpl implements WorldUpgradeValidationService {
   private static final List<String> STATE_CLASSES = List.of("S3");
   private static final List<String> CHECKED_FAMILIES =

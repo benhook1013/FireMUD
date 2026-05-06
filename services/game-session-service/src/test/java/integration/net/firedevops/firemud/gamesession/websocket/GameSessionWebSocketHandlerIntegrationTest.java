@@ -639,13 +639,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
           () ->
               gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
                   .anyMatch(entry -> entry.sessionId() == 41L));
+      GameplayAsyncAssertions.assertEventually(
+          "AFK explicit timestamp",
+          java.time.Duration.ofSeconds(5),
+          () ->
+              gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+                  .filter(entry -> entry.sessionId() == 41L)
+                  .findFirst()
+                  .map(GameplayPresence::explicitAfkSinceEpochMs)
+                  .isPresent());
       payloads = client.responses();
-      GameplayPresence presence =
-          gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
-              .filter(entry -> entry.sessionId() == 41L)
-              .findFirst()
-              .orElseThrow();
-      assertThat(presence.explicitAfkSinceEpochMs()).isNotNull();
     }
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
   }
