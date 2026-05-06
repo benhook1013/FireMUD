@@ -51,6 +51,8 @@ public interface RemoteCommandCoordinatorRepository
         and (:payloadKind = '' or linkedFollowup.payloadKind = :payloadKind)
         and (:originSourceKind = '' or linkedFollowup.originSourceKind = :originSourceKind)
         and (:automationWorkItemId = '' or coordinator.automationWorkItemId = :automationWorkItemId)
+        and (:eventType = '' or linkedFollowup.eventType = :eventType)
+        and (:scriptEventId = '' or linkedFollowup.scriptEventId = :scriptEventId)
         and (:automationDispatchId = '' or coordinator.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or coordinator.commandId = :commandId)
       order by coordinator.updatedAt desc, coordinator.id desc
@@ -78,6 +80,8 @@ public interface RemoteCommandCoordinatorRepository
       @Param("payloadKind") String payloadKind,
       @Param("originSourceKind") String originSourceKind,
       @Param("automationWorkItemId") String automationWorkItemId,
+      @Param("eventType") String eventType,
+      @Param("scriptEventId") String scriptEventId,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       Pageable pageable);

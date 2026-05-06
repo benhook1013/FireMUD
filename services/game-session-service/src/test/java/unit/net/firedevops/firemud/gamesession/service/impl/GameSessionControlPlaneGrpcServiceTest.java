@@ -2379,6 +2379,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setEffectKey("effect-9");
     followup.setPayloadKind("enqueue_automation_command");
     followup.setOriginSourceKind("REMOTE_FOLLOWUP");
+    followup.setEventType("onEnterRegion");
+    followup.setEventSchemaVersion("v1");
+    followup.setScriptEventId("evt-1");
+    followup.setTriggerMode("TRIGGER_MODE_NORMAL");
+    followup.setReadSnapshotToken("game-session:onEnterRegion:9:8:evt-1");
+    followup.setEventPayloadJson("{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}");
     RemoteCommandCoordinatorRepository repository =
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
     RemoteFollowupRepository remoteFollowupRepository =
@@ -2402,6 +2408,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),
@@ -2448,6 +2456,8 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setPayloadKind("enqueue_automation_command")
             .setOriginSourceKind("REMOTE_FOLLOWUP")
             .setAutomationWorkItemId("work-1")
+            .setEventType("onEnterRegion")
+            .setScriptEventId("evt-1")
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -2472,6 +2482,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("patch-1", responseRef.get().getCoordinators(0).getScriptPatchVersion());
     assertEquals("entity-9", responseRef.get().getCoordinators(0).getTargetEntityId());
     assertEquals("effect-9", responseRef.get().getCoordinators(0).getFollowupEffectKey());
+    assertEquals("onEnterRegion", responseRef.get().getCoordinators(0).getFollowupEventType());
+    assertEquals("evt-1", responseRef.get().getCoordinators(0).getFollowupScriptEventId());
     assertEquals(17L, responseRef.get().getCoordinators(0).getPublication().getVersionId());
     Mockito.verify(repository)
         .findForControlPlane(
@@ -2497,6 +2509,8 @@ class GameSessionControlPlaneGrpcServiceTest {
             "enqueue_automation_command",
             "REMOTE_FOLLOWUP",
             "work-1",
+            "onEnterRegion",
+            "evt-1",
             "dispatch-1",
             "cmd-1",
             org.springframework.data.domain.PageRequest.of(0, 25));
@@ -2537,6 +2551,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setOriginSourceDueTickId(55L);
     followup.setOriginSourceDueAtMs(1700L);
     followup.setTargetEntityId("entity-9");
+    followup.setEventType("onEnterRegion");
+    followup.setEventSchemaVersion("v1");
+    followup.setScriptEventId("evt-1");
+    followup.setTriggerMode("TRIGGER_MODE_CATCH_UP");
+    followup.setReadSnapshotToken("game-session:onEnterRegion:9:8:evt-1");
+    followup.setEventPayloadJson("{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}");
     followup.setStatus("SCHEDULED");
     followup.setCreatedAt(Instant.parse("2026-05-01T00:00:00Z"));
     followup.setUpdatedAt(Instant.parse("2026-05-01T00:00:01Z"));
@@ -2577,6 +2597,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                 "damage:1",
                 "",
                 true,
+                "onEnterRegion",
+                "evt-1",
                 "dispatch-1",
                 "cmd-1",
                 org.springframework.data.domain.PageRequest.of(0, 25)))
@@ -2625,6 +2647,8 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setTargetEntityId("entity-9")
             .setEffectKey("damage:1")
             .setRequiresSoloTick(true)
+            .setEventType("onEnterRegion")
+            .setScriptEventId("evt-1")
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -2651,6 +2675,16 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(44L, responseRef.get().getFollowups(0).getOriginSourceOrdinal());
     assertEquals(55L, responseRef.get().getFollowups(0).getOriginSourceDueTickId());
     assertEquals(1700L, responseRef.get().getFollowups(0).getOriginSourceDueAtMs());
+    assertEquals("onEnterRegion", responseRef.get().getFollowups(0).getEventType());
+    assertEquals("v1", responseRef.get().getFollowups(0).getEventSchemaVersion());
+    assertEquals("evt-1", responseRef.get().getFollowups(0).getScriptEventId());
+    assertEquals("TRIGGER_MODE_CATCH_UP", responseRef.get().getFollowups(0).getTriggerMode());
+    assertEquals(
+        "game-session:onEnterRegion:9:8:evt-1",
+        responseRef.get().getFollowups(0).getReadSnapshotToken());
+    assertEquals(
+        "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}",
+        responseRef.get().getFollowups(0).getEventPayloadJson());
     assertEquals("region-b", responseRef.get().getFollowups(0).getTargetRegionId());
     assertEquals(55L, responseRef.get().getFollowups(0).getDueTickId());
     assertEquals(2L, responseRef.get().getFollowups(0).getClaimOrdinal());

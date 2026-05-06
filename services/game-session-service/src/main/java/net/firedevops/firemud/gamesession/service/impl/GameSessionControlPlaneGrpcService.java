@@ -761,6 +761,8 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getPayloadKind()),
               blankToEmpty(request.getOriginSourceKind()),
               blankToEmpty(request.getAutomationWorkItemId()),
+              blankToEmpty(request.getEventType()),
+              blankToEmpty(request.getScriptEventId()),
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
               PageRequest.of(0, boundedRemoteListLimit(request.getLimit())))
@@ -845,7 +847,13 @@ public final class GameSessionControlPlaneGrpcService
                   request.getOriginSourceDueTickId() > 0
                       ? request.getOriginSourceDueTickId()
                       : null,
-                  request.getOriginSourceDueAtMs() > 0 ? request.getOriginSourceDueAtMs() : null));
+                  request.getOriginSourceDueAtMs() > 0 ? request.getOriginSourceDueAtMs() : null,
+                  normalizeBlank(request.getEventType()),
+                  normalizeBlank(request.getEventSchemaVersion()),
+                  normalizeBlank(request.getScriptEventId()),
+                  normalizeBlank(request.getTriggerMode()),
+                  normalizeBlank(request.getReadSnapshotToken()),
+                  normalizeBlank(request.getEventPayloadJson())));
       responseObserver.onNext(
           ScheduleRemoteFollowupResponse.newBuilder()
               .setCoordinatorId(outcome.coordinatorId())
@@ -904,6 +912,8 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getEffectKey()),
               blankToEmpty(request.getFailureCode()),
               request.getRequiresSoloTick() ? Boolean.TRUE : null,
+              blankToEmpty(request.getEventType()),
+              blankToEmpty(request.getScriptEventId()),
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
               PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
@@ -2209,6 +2219,7 @@ public final class GameSessionControlPlaneGrpcService
       if (followup.getFailureMessage() != null) {
         builder.setFollowupFailureMessage(followup.getFailureMessage());
       }
+      applyTriggerScriptEventSummary(builder, followup);
       applyPayloadSummary(
           builder,
           followup.getPayloadJson(),
@@ -2297,6 +2308,7 @@ public final class GameSessionControlPlaneGrpcService
     if (followup.getFailureMessage() != null) {
       builder.setFailureMessage(followup.getFailureMessage());
     }
+    applyTriggerScriptEventSummary(builder, followup);
     applyDirectCommandProvenance(
         builder,
         followup.getTenantId(),
@@ -2476,6 +2488,50 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (originSourceDueAtMs != null) {
       builder.setOriginSourceDueAtMs(originSourceDueAtMs);
+    }
+  }
+
+  private static void applyTriggerScriptEventSummary(
+      RemoteCommandCoordinatorEntry.Builder builder, RemoteFollowup followup) {
+    if (followup.getEventType() != null) {
+      builder.setFollowupEventType(followup.getEventType());
+    }
+    if (followup.getEventSchemaVersion() != null) {
+      builder.setFollowupEventSchemaVersion(followup.getEventSchemaVersion());
+    }
+    if (followup.getScriptEventId() != null) {
+      builder.setFollowupScriptEventId(followup.getScriptEventId());
+    }
+    if (followup.getTriggerMode() != null) {
+      builder.setFollowupTriggerMode(followup.getTriggerMode());
+    }
+    if (followup.getReadSnapshotToken() != null) {
+      builder.setFollowupReadSnapshotToken(followup.getReadSnapshotToken());
+    }
+    if (followup.getEventPayloadJson() != null) {
+      builder.setFollowupEventPayloadJson(followup.getEventPayloadJson());
+    }
+  }
+
+  private static void applyTriggerScriptEventSummary(
+      RemoteFollowupEntry.Builder builder, RemoteFollowup followup) {
+    if (followup.getEventType() != null) {
+      builder.setEventType(followup.getEventType());
+    }
+    if (followup.getEventSchemaVersion() != null) {
+      builder.setEventSchemaVersion(followup.getEventSchemaVersion());
+    }
+    if (followup.getScriptEventId() != null) {
+      builder.setScriptEventId(followup.getScriptEventId());
+    }
+    if (followup.getTriggerMode() != null) {
+      builder.setTriggerMode(followup.getTriggerMode());
+    }
+    if (followup.getReadSnapshotToken() != null) {
+      builder.setReadSnapshotToken(followup.getReadSnapshotToken());
+    }
+    if (followup.getEventPayloadJson() != null) {
+      builder.setEventPayloadJson(followup.getEventPayloadJson());
     }
   }
 

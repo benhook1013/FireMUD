@@ -597,6 +597,12 @@ message RemoteCommandCoordinatorEntry {
   string followup_effect_key = 52;
   string followup_failure_code = 53;
   string followup_failure_message = 54;
+  string followup_event_type = 55;
+  string followup_event_schema_version = 56;
+  string followup_script_event_id = 57;
+  string followup_trigger_mode = 58;
+  string followup_read_snapshot_token = 59;
+  string followup_event_payload_json = 60;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -630,6 +636,8 @@ message ListRemoteCommandCoordinatorsRequest {
   string payload_kind = 23;
   string origin_source_kind = 24;
   string automation_work_item_id = 25;
+  string event_type = 26;
+  string script_event_id = 27;
 }
 
 message ListRemoteCommandCoordinatorsResponse {
@@ -673,6 +681,12 @@ message ScheduleRemoteFollowupRequest {
   int64 origin_source_ordinal = 33;
   int64 origin_source_due_tick_id = 34;
   int64 origin_source_due_at_ms = 35;
+  string event_type = 36;
+  string event_schema_version = 37;
+  string script_event_id = 38;
+  string trigger_mode = 39;
+  string read_snapshot_token = 40;
+  string event_payload_json = 41;
 }
 
 message ScheduleRemoteFollowupResponse {
@@ -711,6 +725,8 @@ message ListRemoteFollowupsRequest {
   string effect_key = 25;
   string failure_code = 26;
   bool requires_solo_tick = 27;
+  string event_type = 28;
+  string script_event_id = 29;
 }
 
 message RemoteFollowupEntry {
@@ -760,6 +776,12 @@ message RemoteFollowupEntry {
   int64 origin_deadline_region_epoch = 44;
   int64 origin_deadline_tick_id = 45;
   string late_result_policy = 46;
+  string event_type = 47;
+  string event_schema_version = 48;
+  string script_event_id = 49;
+  string trigger_mode = 50;
+  string read_snapshot_token = 51;
+  string event_payload_json = 52;
 }
 
 message ListRemoteFollowupsResponse {

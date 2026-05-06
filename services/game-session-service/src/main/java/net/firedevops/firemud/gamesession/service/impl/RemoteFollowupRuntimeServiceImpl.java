@@ -381,33 +381,20 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
           "payload kind '%s' is not yet supported".formatted(payloadSummary.kind()));
     }
     if (PAYLOAD_KIND_TRIGGER_SCRIPT_EVENT.equals(payloadSummary.kind())) {
-      validateTriggerScriptEventPayload(request.payloadJson(), request.targetEntityId());
+      triggerScriptEventSummary(
+          request.payloadJson(),
+          request.eventType(),
+          request.eventSchemaVersion(),
+          request.scriptEventId(),
+          request.triggerMode(),
+          request.readSnapshotToken(),
+          request.eventPayloadJson(),
+          request.targetEntityId());
       return;
     }
     if (payloadSummary.command() == null) {
       throw new IllegalArgumentException(
           "payload command is required for kind '%s'".formatted(payloadSummary.kind()));
-    }
-  }
-
-  private static void validateTriggerScriptEventPayload(String payloadJson, String targetEntityId) {
-    if (payloadJson == null || payloadJson.isBlank()) {
-      throw new IllegalArgumentException(
-          "payload_json is required for kind 'trigger_script_event'");
-    }
-    JsonNode root;
-    try {
-      root = OBJECT_MAPPER.readTree(payloadJson);
-    } catch (IOException ex) {
-      throw new IllegalArgumentException("payload_json must be valid JSON");
-    }
-    requirePayloadField(root, "eventType", "payload eventType is required");
-    requirePayloadField(root, "scriptEventId", "payload scriptEventId is required");
-    requirePayloadField(root, "readSnapshotToken", "payload readSnapshotToken is required");
-    requirePayloadField(root, "eventPayload", "payload eventPayload is required");
-    if (blankToNull(targetEntityId) == null) {
-      throw new IllegalArgumentException(
-          "target_entity_id is required for kind 'trigger_script_event'");
     }
   }
 
@@ -652,6 +639,22 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         metadataLong(request.originSourceDueTickId(), payloadSummary.originSourceDueTickId()));
     followup.setOriginSourceDueAtMs(
         metadataLong(request.originSourceDueAtMs(), payloadSummary.originSourceDueAtMs()));
+    TriggerScriptEventSummary eventSummary =
+        triggerScriptEventSummary(
+            request.payloadJson(),
+            request.eventType(),
+            request.eventSchemaVersion(),
+            request.scriptEventId(),
+            request.triggerMode(),
+            request.readSnapshotToken(),
+            request.eventPayloadJson(),
+            request.targetEntityId());
+    followup.setEventType(eventSummary.eventType());
+    followup.setEventSchemaVersion(eventSummary.eventSchemaVersion());
+    followup.setScriptEventId(eventSummary.scriptEventId());
+    followup.setTriggerMode(eventSummary.triggerMode());
+    followup.setReadSnapshotToken(eventSummary.readSnapshotToken());
+    followup.setEventPayloadJson(eventSummary.eventPayloadJson());
     followup.setStatus(FOLLOWUP_SCHEDULED);
     followup.setClaimedTickBatchId(null);
     followup.setClaimOrdinal(null);
@@ -878,17 +881,108 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         positiveLong(root.path("originSourceDueAtMs")));
   }
 
-  private static void requirePayloadField(JsonNode root, String fieldName, String message) {
-    JsonNode field = root.path(fieldName);
-    if (field.isMissingNode() || field.isNull()) {
-      throw new IllegalArgumentException(message);
+  private static TriggerScriptEventSummary triggerScriptEventSummary(
+      String payloadJson,
+      String requestEventType,
+      String requestEventSchemaVersion,
+      String requestScriptEventId,
+      String requestTriggerMode,
+      String requestReadSnapshotToken,
+      String requestEventPayloadJson,
+      String targetEntityId) {
+    String payloadEventType = null;
+    String payloadEventSchemaVersion = null;
+    String payloadScriptEventId = null;
+    String payloadTriggerMode = null;
+    String payloadReadSnapshotToken = null;
+    String payloadEventPayloadJson = null;
+    if (payloadJson != null && !payloadJson.isBlank()) {
+      JsonNode root;
+      try {
+        root = OBJECT_MAPPER.readTree(payloadJson);
+      } catch (IOException ex) {
+        throw new IllegalArgumentException("payload_json must be valid JSON");
+      }
+      payloadEventType = blankToNull(root.path("eventType").asText(""));
+      payloadEventSchemaVersion = blankToNull(root.path("eventSchemaVersion").asText(""));
+      payloadScriptEventId = blankToNull(root.path("scriptEventId").asText(""));
+      payloadTriggerMode = blankToNull(root.path("triggerMode").asText(""));
+      payloadReadSnapshotToken = blankToNull(root.path("readSnapshotToken").asText(""));
+      JsonNode payloadNode = root.path("eventPayload");
+      if (!payloadNode.isMissingNode() && !payloadNode.isNull()) {
+        payloadEventPayloadJson = payloadNode.toString();
+      }
+      if (requestConflict(requestEventType, payloadEventType)) {
+        throw new IllegalArgumentException("payload_json eventType does not match event_type");
+      }
+      if (requestConflict(requestEventSchemaVersion, payloadEventSchemaVersion)) {
+        throw new IllegalArgumentException(
+            "payload_json eventSchemaVersion does not match event_schema_version");
+      }
+      if (requestConflict(requestScriptEventId, payloadScriptEventId)) {
+        throw new IllegalArgumentException(
+            "payload_json scriptEventId does not match script_event_id");
+      }
+      if (requestConflict(requestTriggerMode, payloadTriggerMode)) {
+        throw new IllegalArgumentException("payload_json triggerMode does not match trigger_mode");
+      }
+      if (requestConflict(requestReadSnapshotToken, payloadReadSnapshotToken)) {
+        throw new IllegalArgumentException(
+            "payload_json readSnapshotToken does not match read_snapshot_token");
+      }
+      if (requestConflict(
+          normalizedJson(requestEventPayloadJson), normalizedJson(payloadEventPayloadJson))) {
+        throw new IllegalArgumentException(
+            "payload_json eventPayload does not match event_payload_json");
+      }
     }
-    if (field.isTextual() && blankToNull(field.asText("")) == null) {
-      throw new IllegalArgumentException(message);
+    String eventType = metadataValue(requestEventType, payloadEventType);
+    String eventSchemaVersion = metadataValue(requestEventSchemaVersion, payloadEventSchemaVersion);
+    String scriptEventId = metadataValue(requestScriptEventId, payloadScriptEventId);
+    String triggerMode = metadataValue(requestTriggerMode, payloadTriggerMode);
+    String readSnapshotToken = metadataValue(requestReadSnapshotToken, payloadReadSnapshotToken);
+    String eventPayloadJson = metadataValue(requestEventPayloadJson, payloadEventPayloadJson);
+    if (eventType == null
+        && eventSchemaVersion == null
+        && scriptEventId == null
+        && triggerMode == null
+        && readSnapshotToken == null
+        && eventPayloadJson == null) {
+      return new TriggerScriptEventSummary(null, null, null, null, null, null);
     }
-    if (field.isContainerNode() && field.isEmpty()) {
-      throw new IllegalArgumentException(message);
+    if (blankToNull(targetEntityId) == null) {
+      throw new IllegalArgumentException(
+          "target_entity_id is required for kind 'trigger_script_event'");
     }
+    if (eventType == null) {
+      throw new IllegalArgumentException("trigger_script_event event_type is required");
+    }
+    if (scriptEventId == null) {
+      throw new IllegalArgumentException("trigger_script_event script_event_id is required");
+    }
+    if (readSnapshotToken == null) {
+      throw new IllegalArgumentException("trigger_script_event read_snapshot_token is required");
+    }
+    if (eventPayloadJson == null) {
+      throw new IllegalArgumentException("trigger_script_event event_payload_json is required");
+    }
+    try {
+      JsonNode payloadNode = OBJECT_MAPPER.readTree(eventPayloadJson);
+      if (!payloadNode.isObject() || payloadNode.isEmpty()) {
+        throw new IllegalArgumentException(
+            "trigger_script_event event_payload_json must be a non-empty JSON object");
+      }
+    } catch (IOException ex) {
+      throw new IllegalArgumentException(
+          "trigger_script_event event_payload_json must be valid JSON");
+    }
+    return new TriggerScriptEventSummary(
+        eventType,
+        eventSchemaVersion == null ? "v1" : eventSchemaVersion,
+        scriptEventId,
+        triggerMode,
+        readSnapshotToken,
+        eventPayloadJson);
   }
 
   private static boolean requestConflict(String requestValue, String jsonValue) {
@@ -897,6 +991,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     return normalizedRequest != null
         && normalizedJson != null
         && !normalizedRequest.equals(normalizedJson);
+  }
+
+  private static String normalizedJson(String value) {
+    return value == null ? "" : value.replaceAll("\\s+", "");
   }
 
   private static boolean samePayloadAuthority(
@@ -916,7 +1014,31 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             metadataLong(request.originSourceDueTickId(), payload.originSourceDueTickId()))
         && sameLong(
             existing.getOriginSourceDueAtMs(),
-            metadataLong(request.originSourceDueAtMs(), payload.originSourceDueAtMs()));
+            metadataLong(request.originSourceDueAtMs(), payload.originSourceDueAtMs()))
+        && sameTriggerScriptEventAuthority(existing, request);
+  }
+
+  private static boolean sameTriggerScriptEventAuthority(
+      RemoteFollowup existing, ScheduleRequest request) {
+    TriggerScriptEventSummary summary =
+        triggerScriptEventSummary(
+            request.payloadJson(),
+            request.eventType(),
+            request.eventSchemaVersion(),
+            request.scriptEventId(),
+            request.triggerMode(),
+            request.readSnapshotToken(),
+            request.eventPayloadJson(),
+            request.targetEntityId());
+    return normalized(summary.eventType()).equals(normalized(existing.getEventType()))
+        && normalized(summary.eventSchemaVersion())
+            .equals(normalized(existing.getEventSchemaVersion()))
+        && normalized(summary.scriptEventId()).equals(normalized(existing.getScriptEventId()))
+        && normalized(summary.triggerMode()).equals(normalized(existing.getTriggerMode()))
+        && normalized(summary.readSnapshotToken())
+            .equals(normalized(existing.getReadSnapshotToken()))
+        && normalizedJson(summary.eventPayloadJson())
+            .equals(normalizedJson(existing.getEventPayloadJson()));
   }
 
   private static boolean sameResultAuthority(RemoteFollowupResult existing, ResultRequest request) {
@@ -1180,6 +1302,14 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       Long originSourceOrdinal,
       Long originSourceDueTickId,
       Long originSourceDueAtMs) {}
+
+  private record TriggerScriptEventSummary(
+      String eventType,
+      String eventSchemaVersion,
+      String scriptEventId,
+      String triggerMode,
+      String readSnapshotToken,
+      String eventPayloadJson) {}
 
   private record ResultSummary(String commandId, String errorCode, String message) {}
 }

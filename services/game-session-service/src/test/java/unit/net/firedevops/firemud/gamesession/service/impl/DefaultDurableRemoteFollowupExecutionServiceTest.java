@@ -352,11 +352,14 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setPointerVersion(17L);
     followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
     followup.setClaimedTickBatchId("tb-1");
-    followup.setPayloadJson(
-        """
-        {"kind":"trigger_script_event","eventType":"onEnterRegion","eventSchemaVersion":"v1","scriptEventId":"remote-enter-1","readSnapshotToken":"game-session:onEnterRegion:9:8:remote-enter-1","eventPayload":{"fromRegionId":"room-a","toRegionId":"room-b"}}
-        """);
+    followup.setPayloadJson("{\"kind\":\"trigger_script_event\"}");
     followup.setPayloadKind("trigger_script_event");
+    followup.setEventType("onEnterRegion");
+    followup.setEventSchemaVersion("v1");
+    followup.setScriptEventId("remote-enter-1");
+    followup.setTriggerMode("TRIGGER_MODE_NORMAL");
+    followup.setReadSnapshotToken("game-session:onEnterRegion:9:8:remote-enter-1");
+    followup.setEventPayloadJson("{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}");
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);

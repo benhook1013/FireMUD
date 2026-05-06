@@ -481,7 +481,14 @@ class RemoteFollowupRuntimeServiceImplTest {
                 followup ->
                     "trigger_script_event".equals(followup.getPayloadKind())
                         && followup.getRequestedCommand() == null
-                        && "321".equals(followup.getTargetEntityId())));
+                        && "321".equals(followup.getTargetEntityId())
+                        && "onEnterRegion".equals(followup.getEventType())
+                        && "v1".equals(followup.getEventSchemaVersion())
+                        && "remote-enter-1".equals(followup.getScriptEventId())
+                        && "game-session:onEnterRegion:9:8:remote-enter-1"
+                            .equals(followup.getReadSnapshotToken())
+                        && "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}"
+                            .equals(followup.getEventPayloadJson())));
   }
 
   @Test
@@ -627,7 +634,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null,
                         null)));
 
-    assertEquals("payload readSnapshotToken is required", ex.getMessage());
+    assertEquals("trigger_script_event read_snapshot_token is required", ex.getMessage());
     verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
   }
 

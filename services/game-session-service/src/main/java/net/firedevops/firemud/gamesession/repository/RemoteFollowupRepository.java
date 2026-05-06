@@ -65,6 +65,8 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
         and (:effectKey = '' or followup.effectKey = :effectKey)
         and (:failureCode = '' or followup.failureCode = :failureCode)
         and (:requiresSoloTick is null or followup.requiresSoloTick = :requiresSoloTick)
+        and (:eventType = '' or followup.eventType = :eventType)
+        and (:scriptEventId = '' or followup.scriptEventId = :scriptEventId)
         and (:automationDispatchId = '' or followup.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or followup.commandId = :commandId)
       order by followup.dueTickId asc, followup.id asc
@@ -94,6 +96,8 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
       @Param("effectKey") String effectKey,
       @Param("failureCode") String failureCode,
       @Param("requiresSoloTick") Boolean requiresSoloTick,
+      @Param("eventType") String eventType,
+      @Param("scriptEventId") String scriptEventId,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       Pageable pageable);

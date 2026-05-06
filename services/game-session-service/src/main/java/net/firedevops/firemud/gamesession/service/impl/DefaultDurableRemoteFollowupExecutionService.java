@@ -365,15 +365,21 @@ public final class DefaultDurableRemoteFollowupExecutionService
               .setRegionId(followup.getTargetRegionId())
               .setRegionEpoch(followup.getTargetRegionEpoch())
               .setEntityId(requiredTextOrFallback(root, "entityId", followup.getTargetEntityId()))
-              .setEventType(requiredTextOrFallback(root, "eventType", null))
+              .setEventType(requiredTextOrFallback(root, "eventType", followup.getEventType()))
               .setScriptPatchVersion(
                   requiredTextOrFallback(
                       root, "scriptPatchVersion", coordinator.getScriptPatchVersion()))
-              .setScriptEventId(requiredTextOrFallback(root, "scriptEventId", null))
-              .setTriggerMode(triggerMode(root))
-              .setPayloadJson(eventPayloadJson(root))
-              .setEventSchemaVersion(firstNonBlank(optionalText(root, "eventSchemaVersion"), "v1"))
-              .setReadSnapshotToken(requiredTextOrFallback(root, "readSnapshotToken", null))
+              .setScriptEventId(
+                  requiredTextOrFallback(root, "scriptEventId", followup.getScriptEventId()))
+              .setTriggerMode(triggerMode(root, followup))
+              .setPayloadJson(eventPayloadJson(root, followup))
+              .setEventSchemaVersion(
+                  firstNonBlank(
+                      optionalText(root, "eventSchemaVersion"),
+                      firstNonBlank(followup.getEventSchemaVersion(), "v1")))
+              .setReadSnapshotToken(
+                  requiredTextOrFallback(
+                      root, "readSnapshotToken", followup.getReadSnapshotToken()))
               .setPlayableStateScope(playableStateScope(followup.getPlayableStateScope()));
       if (scriptId != null) {
         request.setScriptId(scriptId);
@@ -481,8 +487,8 @@ public final class DefaultDurableRemoteFollowupExecutionService
     return value == null ? defaultValue : value;
   }
 
-  private static TriggerMode triggerMode(JsonNode root) {
-    String mode = optionalText(root, "triggerMode");
+  private static TriggerMode triggerMode(JsonNode root, RemoteFollowup followup) {
+    String mode = firstNonBlank(optionalText(root, "triggerMode"), followup.getTriggerMode());
     if (mode == null) {
       return TriggerMode.TRIGGER_MODE_NORMAL;
     }
@@ -493,12 +499,15 @@ public final class DefaultDurableRemoteFollowupExecutionService
     };
   }
 
-  private String eventPayloadJson(JsonNode root) {
+  private String eventPayloadJson(JsonNode root, RemoteFollowup followup) {
     JsonNode payloadNode = root.path("eventPayload");
-    if (payloadNode.isMissingNode() || payloadNode.isNull()) {
-      throw new IllegalArgumentException("eventPayload is required");
+    if (!payloadNode.isMissingNode() && !payloadNode.isNull()) {
+      return payloadNode.toString();
     }
-    return payloadNode.toString();
+    if (followup.getEventPayloadJson() != null && !followup.getEventPayloadJson().isBlank()) {
+      return followup.getEventPayloadJson();
+    }
+    throw new IllegalArgumentException("eventPayload is required");
   }
 
   private static PlayableStateScope playableStateScope(String value) {

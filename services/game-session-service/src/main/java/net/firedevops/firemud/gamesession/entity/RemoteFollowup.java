@@ -28,7 +28,10 @@ import lombok.Data;
       @Index(
           name = "idx_remote_followup_identity_due",
           columnList =
-              "tenant_id, automation_work_item_id, target_entity_id, effect_key, failure_code, due_tick_id")
+              "tenant_id, automation_work_item_id, target_entity_id, effect_key, failure_code, due_tick_id"),
+      @Index(
+          name = "idx_remote_followup_event_due",
+          columnList = "tenant_id, event_type, script_event_id, due_tick_id")
     })
 public class RemoteFollowup {
   @Id
@@ -103,6 +106,24 @@ public class RemoteFollowup {
 
   @Column(name = "origin_source_due_at_ms")
   private Long originSourceDueAtMs;
+
+  @Column(name = "event_type", length = 128)
+  private String eventType;
+
+  @Column(name = "event_schema_version", length = 32)
+  private String eventSchemaVersion;
+
+  @Column(name = "script_event_id", length = 128)
+  private String scriptEventId;
+
+  @Column(name = "trigger_mode", length = 40)
+  private String triggerMode;
+
+  @Column(name = "read_snapshot_token", length = 255)
+  private String readSnapshotToken;
+
+  @Column(name = "event_payload_json", columnDefinition = "TEXT")
+  private String eventPayloadJson;
 
   @Column(name = "failure_code", length = 80)
   private String failureCode;
