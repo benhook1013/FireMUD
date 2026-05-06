@@ -6,7 +6,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
@@ -123,11 +122,13 @@ public class TickServiceImpl implements TickService {
   private final Map<String, Long> retryQueueDepthByTarget = new ConcurrentHashMap<>();
   private final AtomicLong retryQueueDepthTotal = new AtomicLong();
   private final AtomicInteger retryQueueTargetsWithPending = new AtomicInteger();
-  private final Map<String, AtomicLong> remoteFollowupDueGaugeByTarget = new ConcurrentHashMap<>();
-  private final Map<String, AtomicLong> remoteFollowupDrainLagGaugeByTarget =
-      new ConcurrentHashMap<>();
+  private final Map<String, Long> remoteFollowupDueByTarget = new ConcurrentHashMap<>();
+  private final Map<String, Long> remoteFollowupDrainLagByTarget = new ConcurrentHashMap<>();
   private final Map<String, Long> remoteFollowupDuePresenceByTarget = new ConcurrentHashMap<>();
   private final AtomicInteger remoteFollowupTargetsWithDue = new AtomicInteger();
+  private final AtomicLong remoteFollowupDueTotal = new AtomicLong();
+  private final AtomicLong remoteFollowupDrainLagMax = new AtomicLong();
+  private Counter remoteFollowupBacklogOverBudgetCounter;
 
   private record OwnershipSnapshot(
       String regionId,
@@ -186,9 +187,13 @@ public class TickServiceImpl implements TickService {
     this.luaTimer = meterRegistry.timer("game_session_lua_latency_ms");
     this.retryBackoffCounter = meterRegistry.counter("tick_retry_backoff_count_total");
     this.manifestMismatchCounter = meterRegistry.counter("tick_manifest_mismatch_total");
+    this.remoteFollowupBacklogOverBudgetCounter =
+        meterRegistry.counter("remote_followups_backlog_over_budget_total");
     meterRegistry.gauge("game_session_retry_queue_depth_total", retryQueueDepthTotal);
     meterRegistry.gauge(
         "game_session_retry_queue_targets_with_pending", retryQueueTargetsWithPending);
+    meterRegistry.gauge("remote_followups_due_total", remoteFollowupDueTotal);
+    meterRegistry.gauge("remote_followups_drain_lag_ms", remoteFollowupDrainLagMax);
     meterRegistry.gauge(
         "game_session_remote_followups_targets_with_due", remoteFollowupTargetsWithDue);
     ResourceScriptSource commitSrc =
@@ -594,24 +599,26 @@ public class TickServiceImpl implements TickService {
                             * tickDurationMs))
             .orElse(0L);
     String gaugeKey = tenantId + ":" + ownership.regionId();
-    remoteFollowupDueGaugeByTarget
-        .computeIfAbsent(
-            gaugeKey,
-            ignored ->
-                meterRegistry.gauge(
-                    "remote_followups_due_total",
-                    Tags.of("tenantId", tenantId.toString(), "regionId", ownership.regionId()),
-                    new AtomicLong()))
-        .set(dueCount);
-    remoteFollowupDrainLagGaugeByTarget
-        .computeIfAbsent(
-            gaugeKey,
-            ignored ->
-                meterRegistry.gauge(
-                    "remote_followups_drain_lag_ms",
-                    Tags.of("tenantId", tenantId.toString(), "regionId", ownership.regionId()),
-                    new AtomicLong()))
-        .set(drainLagMs);
+    remoteFollowupDueByTarget.compute(
+        gaugeKey,
+        (ignored, previousDepth) -> {
+          long prior = previousDepth != null ? previousDepth : 0L;
+          remoteFollowupDueTotal.addAndGet(dueCount - prior);
+          return dueCount > 0L ? dueCount : null;
+        });
+    remoteFollowupDrainLagByTarget.compute(
+        gaugeKey,
+        (ignored, previousLag) -> {
+          if (drainLagMs > 0L) {
+            return drainLagMs;
+          }
+          return null;
+        });
+    remoteFollowupDrainLagMax.set(
+        remoteFollowupDrainLagByTarget.values().stream()
+            .mapToLong(Long::longValue)
+            .max()
+            .orElse(0L));
     remoteFollowupDuePresenceByTarget.compute(
         gaugeKey,
         (ignored, previousDepth) -> {
@@ -626,14 +633,7 @@ public class TickServiceImpl implements TickService {
           return prior;
         });
     if (dueCount > maxRemoteFollowupsPerTick) {
-      meterRegistry
-          .counter(
-              "remote_followups_backlog_over_budget_total",
-              "tenantId",
-              tenantId.toString(),
-              "regionId",
-              ownership.regionId())
-          .increment();
+      remoteFollowupBacklogOverBudgetCounter.increment();
     }
   }
 

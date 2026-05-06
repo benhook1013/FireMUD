@@ -263,13 +263,7 @@ class TickServiceImplTest {
     service.processTick(1L, 2L);
 
     org.junit.jupiter.api.Assertions.assertEquals(
-        1.0,
-        meterRegistry
-            .get("remote_followups_backlog_over_budget_total")
-            .tag("tenantId", "1")
-            .tag("regionId", "2")
-            .counter()
-            .count());
+        1.0, meterRegistry.get("remote_followups_backlog_over_budget_total").counter().count());
   }
 
   @Test
@@ -291,21 +285,9 @@ class TickServiceImplTest {
     service.processTick(1L, 2L);
 
     org.junit.jupiter.api.Assertions.assertEquals(
-        2.0,
-        meterRegistry
-            .get("remote_followups_due_total")
-            .tag("tenantId", "1")
-            .tag("regionId", "2")
-            .gauge()
-            .value());
+        2.0, meterRegistry.get("remote_followups_due_total").gauge().value());
     org.junit.jupiter.api.Assertions.assertEquals(
-        1000.0,
-        meterRegistry
-            .get("remote_followups_drain_lag_ms")
-            .tag("tenantId", "1")
-            .tag("regionId", "2")
-            .gauge()
-            .value());
+        1000.0, meterRegistry.get("remote_followups_drain_lag_ms").gauge().value());
   }
 
   @Test
