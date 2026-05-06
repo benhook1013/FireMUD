@@ -16,7 +16,11 @@ import lombok.Data;
       @Index(
           name = "idx_remote_followup_target_region_epoch_effect",
           columnList = "tenant_id, target_region_id, target_region_epoch, effect_key",
-          unique = true)
+          unique = true),
+      @Index(
+          name = "idx_remote_followup_origin_scope_epoch_due",
+          columnList =
+              "tenant_id, origin_game_instance_id, origin_region_id, origin_region_epoch, due_tick_id")
     })
 public class RemoteFollowup {
   @Id
