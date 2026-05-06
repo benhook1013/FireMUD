@@ -501,6 +501,23 @@ message GameplayCommandStatus {
   string remote_late_result_policy = 64;
   string remote_target_command_execution_outcome = 65;
   string remote_target_command_gameplay_result = 66;
+  string remote_followup_status = 67;
+  string remote_followup_payload_kind = 68;
+  string remote_followup_requested_command = 69;
+  bool remote_followup_requires_solo_tick = 70;
+  string remote_followup_origin_source_kind = 71;
+  string remote_followup_origin_source_state = 72;
+  int64 remote_followup_origin_source_ordinal = 73;
+  int64 remote_followup_origin_source_due_tick_id = 74;
+  int64 remote_followup_origin_source_due_at_ms = 75;
+  string remote_target_entity_id = 76;
+  string remote_followup_effect_key = 77;
+  string remote_followup_failure_code = 78;
+  string remote_followup_failure_message = 79;
+  string remote_followup_event_type = 80;
+  string remote_followup_event_schema_version = 81;
+  string remote_followup_script_event_id = 82;
+  string remote_followup_trigger_mode = 83;
 }
 
 message GetGameplayCommandStatusResponse {

@@ -1127,6 +1127,30 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setState("PENDING_REMOTE");
     Mockito.when(remoteCommandCoordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-123"))
         .thenReturn(Optional.of(coordinator));
+    RemoteFollowupRepository remoteFollowupRepository =
+        Mockito.mock(RemoteFollowupRepository.class);
+    RemoteFollowup remoteFollowup = new RemoteFollowup();
+    remoteFollowup.setTenantId(1L);
+    remoteFollowup.setFollowupId("followup-1");
+    remoteFollowup.setStatus("SCHEDULED");
+    remoteFollowup.setPayloadKind("trigger_script_event");
+    remoteFollowup.setRequestedCommand("LOOK");
+    remoteFollowup.setRequiresSoloTick(true);
+    remoteFollowup.setOriginSourceKind("REMOTE_FOLLOWUP");
+    remoteFollowup.setOriginSourceState("TARGET_REGION_EXECUTED");
+    remoteFollowup.setOriginSourceOrdinal(144L);
+    remoteFollowup.setOriginSourceDueTickId(55L);
+    remoteFollowup.setOriginSourceDueAtMs(1700L);
+    remoteFollowup.setTargetEntityId("entity-9");
+    remoteFollowup.setEffectKey("effect-remote-1");
+    remoteFollowup.setFailureCode("REMOTE_FAILURE");
+    remoteFollowup.setFailureMessage("Remote followup failed");
+    remoteFollowup.setEventType("onEnterRegion");
+    remoteFollowup.setEventSchemaVersion("v1");
+    remoteFollowup.setScriptEventId("remote-enter-1");
+    remoteFollowup.setTriggerMode("TRIGGER_MODE_CATCH_UP");
+    Mockito.when(remoteFollowupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(remoteFollowup));
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setTenantId(1L);
     result.setCoordinatorId("coord-1");
@@ -1175,7 +1199,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(GameInstanceRepository.class),
             commandRepository,
             Mockito.mock(RuntimeRegionStatusRepository.class),
-            Mockito.mock(RemoteFollowupRepository.class),
+            remoteFollowupRepository,
             remoteCommandCoordinatorRepository,
             remoteFollowupResultRepository,
             null,
@@ -1226,6 +1250,29 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("coord-1", responseRef.get().getCommand().getRemoteCoordinatorId());
     assertEquals("followup-1", responseRef.get().getCommand().getRemoteFollowupId());
     assertEquals("PENDING_REMOTE", responseRef.get().getCommand().getRemoteState());
+    assertEquals("SCHEDULED", responseRef.get().getCommand().getRemoteFollowupStatus());
+    assertEquals(
+        "trigger_script_event", responseRef.get().getCommand().getRemoteFollowupPayloadKind());
+    assertEquals("LOOK", responseRef.get().getCommand().getRemoteFollowupRequestedCommand());
+    assertEquals(true, responseRef.get().getCommand().getRemoteFollowupRequiresSoloTick());
+    assertEquals(
+        "REMOTE_FOLLOWUP", responseRef.get().getCommand().getRemoteFollowupOriginSourceKind());
+    assertEquals(
+        "TARGET_REGION_EXECUTED",
+        responseRef.get().getCommand().getRemoteFollowupOriginSourceState());
+    assertEquals(144L, responseRef.get().getCommand().getRemoteFollowupOriginSourceOrdinal());
+    assertEquals(55L, responseRef.get().getCommand().getRemoteFollowupOriginSourceDueTickId());
+    assertEquals(1700L, responseRef.get().getCommand().getRemoteFollowupOriginSourceDueAtMs());
+    assertEquals("entity-9", responseRef.get().getCommand().getRemoteTargetEntityId());
+    assertEquals("effect-remote-1", responseRef.get().getCommand().getRemoteFollowupEffectKey());
+    assertEquals("REMOTE_FAILURE", responseRef.get().getCommand().getRemoteFollowupFailureCode());
+    assertEquals(
+        "Remote followup failed", responseRef.get().getCommand().getRemoteFollowupFailureMessage());
+    assertEquals("onEnterRegion", responseRef.get().getCommand().getRemoteFollowupEventType());
+    assertEquals("v1", responseRef.get().getCommand().getRemoteFollowupEventSchemaVersion());
+    assertEquals("remote-enter-1", responseRef.get().getCommand().getRemoteFollowupScriptEventId());
+    assertEquals(
+        "TRIGGER_MODE_CATCH_UP", responseRef.get().getCommand().getRemoteFollowupTriggerMode());
     assertEquals("7", responseRef.get().getCommand().getRemoteOriginGameInstanceId());
     assertEquals("origin-region", responseRef.get().getCommand().getRemoteOriginRegionId());
     assertEquals(4L, responseRef.get().getCommand().getRemoteOriginRegionEpoch());

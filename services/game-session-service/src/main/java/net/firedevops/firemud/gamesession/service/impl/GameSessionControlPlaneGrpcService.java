@@ -2978,6 +2978,7 @@ public final class GameSessionControlPlaneGrpcService
 
   private GameplayCommandStatus toStatus(GameplayCommand command) {
     RemoteCommandCoordinator remoteCoordinator = resolveRemoteCoordinator(command);
+    RemoteFollowup remoteFollowup = resolveRemoteFollowup(command, remoteCoordinator);
     GameplayCommand remoteTargetCommand =
         remoteCoordinator == null
             ? null
@@ -3126,6 +3127,59 @@ public final class GameSessionControlPlaneGrpcService
         builder.setRemoteLateResultPolicy(remoteCoordinator.getLateResultPolicy());
       }
     }
+    if (remoteFollowup != null) {
+      if (remoteFollowup.getStatus() != null) {
+        builder.setRemoteFollowupStatus(remoteFollowup.getStatus());
+      }
+      if (remoteFollowup.getPayloadKind() != null) {
+        builder.setRemoteFollowupPayloadKind(remoteFollowup.getPayloadKind());
+      }
+      if (remoteFollowup.getRequestedCommand() != null) {
+        builder.setRemoteFollowupRequestedCommand(remoteFollowup.getRequestedCommand());
+      }
+      if (remoteFollowup.isRequiresSoloTick()) {
+        builder.setRemoteFollowupRequiresSoloTick(true);
+      }
+      if (remoteFollowup.getOriginSourceKind() != null) {
+        builder.setRemoteFollowupOriginSourceKind(remoteFollowup.getOriginSourceKind());
+      }
+      if (remoteFollowup.getOriginSourceState() != null) {
+        builder.setRemoteFollowupOriginSourceState(remoteFollowup.getOriginSourceState());
+      }
+      if (remoteFollowup.getOriginSourceOrdinal() != null) {
+        builder.setRemoteFollowupOriginSourceOrdinal(remoteFollowup.getOriginSourceOrdinal());
+      }
+      if (remoteFollowup.getOriginSourceDueTickId() != null) {
+        builder.setRemoteFollowupOriginSourceDueTickId(remoteFollowup.getOriginSourceDueTickId());
+      }
+      if (remoteFollowup.getOriginSourceDueAtMs() != null) {
+        builder.setRemoteFollowupOriginSourceDueAtMs(remoteFollowup.getOriginSourceDueAtMs());
+      }
+      if (remoteFollowup.getTargetEntityId() != null) {
+        builder.setRemoteTargetEntityId(remoteFollowup.getTargetEntityId());
+      }
+      if (remoteFollowup.getEffectKey() != null) {
+        builder.setRemoteFollowupEffectKey(remoteFollowup.getEffectKey());
+      }
+      if (remoteFollowup.getFailureCode() != null) {
+        builder.setRemoteFollowupFailureCode(remoteFollowup.getFailureCode());
+      }
+      if (remoteFollowup.getFailureMessage() != null) {
+        builder.setRemoteFollowupFailureMessage(remoteFollowup.getFailureMessage());
+      }
+      if (remoteFollowup.getEventType() != null) {
+        builder.setRemoteFollowupEventType(remoteFollowup.getEventType());
+      }
+      if (remoteFollowup.getEventSchemaVersion() != null) {
+        builder.setRemoteFollowupEventSchemaVersion(remoteFollowup.getEventSchemaVersion());
+      }
+      if (remoteFollowup.getScriptEventId() != null) {
+        builder.setRemoteFollowupScriptEventId(remoteFollowup.getScriptEventId());
+      }
+      if (remoteFollowup.getTriggerMode() != null) {
+        builder.setRemoteFollowupTriggerMode(remoteFollowup.getTriggerMode());
+      }
+    }
     if (latestRemoteResult != null) {
       builder.setRemoteResultOutcome(latestRemoteResult.getOutcome());
       if (latestRemoteResult.getResultPayloadJson() != null) {
@@ -3176,6 +3230,23 @@ public final class GameSessionControlPlaneGrpcService
     }
     return remoteCommandCoordinatorRepository
         .findByTenantIdAndCommandId(command.getTenantId(), command.getCommandId())
+        .orElse(null);
+  }
+
+  private RemoteFollowup resolveRemoteFollowup(
+      GameplayCommand command, RemoteCommandCoordinator remoteCoordinator) {
+    if (remoteFollowupRepository == null) {
+      return null;
+    }
+    String followupId =
+        command.getRemoteFollowupId() != null && !command.getRemoteFollowupId().isBlank()
+            ? command.getRemoteFollowupId()
+            : remoteCoordinator == null ? null : remoteCoordinator.getFollowupId();
+    if (followupId == null || followupId.isBlank()) {
+      return null;
+    }
+    return remoteFollowupRepository
+        .findByTenantIdAndFollowupId(command.getTenantId(), followupId)
         .orElse(null);
   }
 
