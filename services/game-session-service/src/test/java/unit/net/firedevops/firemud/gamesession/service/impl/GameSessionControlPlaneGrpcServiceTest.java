@@ -1118,6 +1118,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setCommandId("cmd-123");
     coordinator.setCoordinatorId("coord-1");
     coordinator.setFollowupId("followup-1");
+    coordinator.setOriginGameInstanceId(7L);
+    coordinator.setOriginRegionId("origin-region");
+    coordinator.setOriginRegionEpoch(4L);
+    coordinator.setTargetGameInstanceId(9L);
+    coordinator.setTargetRegionId("target-region");
+    coordinator.setTargetRegionEpoch(8L);
     coordinator.setState("PENDING_REMOTE");
     Mockito.when(remoteCommandCoordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-123"))
         .thenReturn(Optional.of(coordinator));
@@ -1220,6 +1226,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("coord-1", responseRef.get().getCommand().getRemoteCoordinatorId());
     assertEquals("followup-1", responseRef.get().getCommand().getRemoteFollowupId());
     assertEquals("PENDING_REMOTE", responseRef.get().getCommand().getRemoteState());
+    assertEquals("7", responseRef.get().getCommand().getRemoteOriginGameInstanceId());
+    assertEquals("origin-region", responseRef.get().getCommand().getRemoteOriginRegionId());
+    assertEquals(4L, responseRef.get().getCommand().getRemoteOriginRegionEpoch());
+    assertEquals("9", responseRef.get().getCommand().getRemoteTargetGameInstanceId());
+    assertEquals("target-region", responseRef.get().getCommand().getRemoteTargetRegionId());
+    assertEquals(8L, responseRef.get().getCommand().getRemoteTargetRegionEpoch());
     assertEquals("ABANDONED", responseRef.get().getCommand().getRemoteResultOutcome());
     assertEquals(
         "{\"failureCode\":\"REMOTE_FOLLOWUP_KIND_UNSUPPORTED\",\"message\":\"Target region rejected the remote payload kind\"}",

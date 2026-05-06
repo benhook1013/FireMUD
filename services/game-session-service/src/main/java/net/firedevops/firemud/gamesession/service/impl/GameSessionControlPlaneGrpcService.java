@@ -3000,10 +3000,18 @@ public final class GameSessionControlPlaneGrpcService
       builder.setRemoteCoordinatorId(remoteCoordinator.getCoordinatorId());
       builder.setRemoteFollowupId(remoteCoordinator.getFollowupId());
       builder.setRemoteState(remoteCoordinator.getState());
+      if (remoteCoordinator.getOriginGameInstanceId() != null) {
+        builder.setRemoteOriginGameInstanceId(
+            Long.toString(remoteCoordinator.getOriginGameInstanceId()));
+      }
       if (remoteCoordinator.getOriginRegionId() != null) {
         builder.setRemoteOriginRegionId(remoteCoordinator.getOriginRegionId());
       }
       builder.setRemoteOriginRegionEpoch(remoteCoordinator.getOriginRegionEpoch());
+      if (remoteCoordinator.getTargetGameInstanceId() != null) {
+        builder.setRemoteTargetGameInstanceId(
+            Long.toString(remoteCoordinator.getTargetGameInstanceId()));
+      }
       if (remoteCoordinator.getTargetRegionId() != null) {
         builder.setRemoteTargetRegionId(remoteCoordinator.getTargetRegionId());
       }
