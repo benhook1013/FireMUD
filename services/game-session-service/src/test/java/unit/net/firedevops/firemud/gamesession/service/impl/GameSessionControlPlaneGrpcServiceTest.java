@@ -2372,8 +2372,20 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setOriginDeadlineTickId(88L);
     coordinator.setLateResultPolicy("late_result_safe_to_ignore");
     Mockito.when(
-            repository.findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAscIdAsc(
-                1L, "region-b", "SCHEDULED"))
+            repository.findForControlPlane(
+                1L,
+                "region-b",
+                "SCHEDULED",
+                7L,
+                "region-a",
+                9L,
+                4L,
+                "rf-1",
+                "script-1",
+                "plugin-1",
+                "dispatch-1",
+                "cmd-1",
+                org.springframework.data.domain.PageRequest.of(0, 25)))
         .thenReturn(List.of(followup));
     Mockito.when(coordinatorRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
         .thenReturn(Optional.of(coordinator));
@@ -2399,6 +2411,16 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setTenantId("1")
             .setTargetRegionId("region-b")
             .setStatus("SCHEDULED")
+            .setOriginGameInstanceId("7")
+            .setOriginRegionId("region-a")
+            .setTargetGameInstanceId("9")
+            .setTargetRegionEpoch(4L)
+            .setFollowupId("rf-1")
+            .setScriptId("script-1")
+            .setPluginId("plugin-1")
+            .setAutomationDispatchId("dispatch-1")
+            .setCommandId("cmd-1")
+            .setLimit(25)
             .build(),
         new NoopObserver<>() {
           @Override
@@ -2579,7 +2601,19 @@ class GameSessionControlPlaneGrpcServiceTest {
     targetCommand.setCommandId("auto-1");
     targetCommand.setExecutionOutcome("APPLIED");
     targetCommand.setGameplayResult("SUCCESS");
-    Mockito.when(repository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(1L, "coord-1"))
+    Mockito.when(
+            repository.findForControlPlane(
+                1L,
+                "coord-1",
+                "rf-1",
+                "region-a",
+                "region-b",
+                "REMOTE_APPLIED",
+                "script-1",
+                "plugin-1",
+                "dispatch-1",
+                "cmd-1",
+                org.springframework.data.domain.PageRequest.of(0, 25)))
         .thenReturn(List.of(result));
     Mockito.when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
         .thenReturn(Optional.of(coordinator));
@@ -2600,6 +2634,15 @@ class GameSessionControlPlaneGrpcServiceTest {
         ListRemoteFollowupResultsRequest.newBuilder()
             .setTenantId("1")
             .setCoordinatorId("coord-1")
+            .setFollowupId("rf-1")
+            .setOriginRegionId("region-a")
+            .setTargetRegionId("region-b")
+            .setOutcome("REMOTE_APPLIED")
+            .setScriptId("script-1")
+            .setPluginId("plugin-1")
+            .setAutomationDispatchId("dispatch-1")
+            .setCommandId("cmd-1")
+            .setLimit(25)
             .build(),
         new NoopObserver<>() {
           @Override
@@ -2673,7 +2716,19 @@ class GameSessionControlPlaneGrpcServiceTest {
     targetCommand.setRemoteFollowupId("followup-1");
     targetCommand.setExecutionOutcome("NOT_APPLIED");
     targetCommand.setGameplayResult("FAILURE");
-    Mockito.when(repository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(1L, "coord-1"))
+    Mockito.when(
+            repository.findForControlPlane(
+                1L,
+                "coord-1",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                org.springframework.data.domain.PageRequest.of(0, 100)))
         .thenReturn(List.of(result));
     Mockito.when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
         .thenReturn(Optional.of(targetCommand));

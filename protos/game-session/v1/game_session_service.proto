@@ -646,6 +646,16 @@ message ListRemoteFollowupsRequest {
   string tenant_id = 1;
   string target_region_id = 2;
   string status = 3;
+  string origin_game_instance_id = 4;
+  string origin_region_id = 5;
+  string target_game_instance_id = 6;
+  int64 target_region_epoch = 7;
+  string followup_id = 8;
+  string script_id = 9;
+  string plugin_id = 10;
+  string automation_dispatch_id = 11;
+  string command_id = 12;
+  int32 limit = 13;
 }
 
 message RemoteFollowupEntry {
@@ -705,6 +715,15 @@ message ListRemoteFollowupsResponse {
 message ListRemoteFollowupResultsRequest {
   string tenant_id = 1;
   string coordinator_id = 2;
+  string followup_id = 3;
+  string origin_region_id = 4;
+  string target_region_id = 5;
+  string outcome = 6;
+  string script_id = 7;
+  string plugin_id = 8;
+  string automation_dispatch_id = 9;
+  string command_id = 10;
+  int32 limit = 11;
 }
 
 message RemoteFollowupResultEntry {

@@ -107,6 +107,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -481,6 +482,13 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private Long parseOptionalGameInstanceId(String gameInstanceId) {
+    if (gameInstanceId == null || gameInstanceId.isBlank()) {
+      return null;
+    }
+    return parseGameInstanceId(gameInstanceId);
+  }
+
   private GameInstance getInstanceOrThrow(long gameInstanceId) {
     return gameInstanceRepository
         .findById(gameInstanceId)
@@ -798,14 +806,21 @@ public final class GameSessionControlPlaneGrpcService
     try {
       requireAdminRole();
       long tenantId = parseTenantId(request.getTenantId());
-      requireText(request.getTargetRegionId(), "target_region_id is required");
       java.util.List<RemoteFollowup> followups =
-          request.getStatus().isBlank()
-              ? remoteFollowupRepository.findByTenantIdAndTargetRegionIdOrderByDueTickIdAsc(
-                  tenantId, request.getTargetRegionId())
-              : remoteFollowupRepository
-                  .findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAscIdAsc(
-                      tenantId, request.getTargetRegionId(), request.getStatus());
+          remoteFollowupRepository.findForControlPlane(
+              tenantId,
+              blankToEmpty(request.getTargetRegionId()),
+              blankToEmpty(request.getStatus()),
+              parseOptionalGameInstanceId(request.getOriginGameInstanceId()),
+              blankToEmpty(request.getOriginRegionId()),
+              parseOptionalGameInstanceId(request.getTargetGameInstanceId()),
+              request.getTargetRegionEpoch(),
+              blankToEmpty(request.getFollowupId()),
+              blankToEmpty(request.getScriptId()),
+              blankToEmpty(request.getPluginId()),
+              blankToEmpty(request.getAutomationDispatchId()),
+              blankToEmpty(request.getCommandId()),
+              PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
       ListRemoteFollowupsResponse.Builder response = ListRemoteFollowupsResponse.newBuilder();
       followups.forEach(followup -> response.addFollowups(toRemoteFollowupEntry(followup)));
       responseObserver.onNext(response.build());
@@ -840,10 +855,19 @@ public final class GameSessionControlPlaneGrpcService
     try {
       requireAdminRole();
       long tenantId = parseTenantId(request.getTenantId());
-      requireText(request.getCoordinatorId(), "coordinator_id is required");
       java.util.List<RemoteFollowupResult> results =
-          remoteFollowupResultRepository.findByTenantIdAndCoordinatorIdOrderByObservedAtAsc(
-              tenantId, request.getCoordinatorId());
+          remoteFollowupResultRepository.findForControlPlane(
+              tenantId,
+              blankToEmpty(request.getCoordinatorId()),
+              blankToEmpty(request.getFollowupId()),
+              blankToEmpty(request.getOriginRegionId()),
+              blankToEmpty(request.getTargetRegionId()),
+              blankToEmpty(request.getOutcome()),
+              blankToEmpty(request.getScriptId()),
+              blankToEmpty(request.getPluginId()),
+              blankToEmpty(request.getAutomationDispatchId()),
+              blankToEmpty(request.getCommandId()),
+              PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
       ListRemoteFollowupResultsResponse.Builder response =
           ListRemoteFollowupResultsResponse.newBuilder();
       results.forEach(result -> response.addResults(toRemoteFollowupResultEntry(result)));
@@ -1854,6 +1878,13 @@ public final class GameSessionControlPlaneGrpcService
       String realmSlug,
       long pointerVersion) {}
 
+  private int boundedRemoteListLimit(int requestedLimit) {
+    if (requestedLimit <= 0) {
+      return 100;
+    }
+    return Math.min(requestedLimit, 500);
+  }
+
   private void requireText(String value, String message) {
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(message);
@@ -2713,6 +2744,10 @@ public final class GameSessionControlPlaneGrpcService
 
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
+  }
+
+  private static String blankToEmpty(String value) {
+    return value == null || value.isBlank() ? "" : value;
   }
 
   private CutoverParticipantResult toParticipantResult(
