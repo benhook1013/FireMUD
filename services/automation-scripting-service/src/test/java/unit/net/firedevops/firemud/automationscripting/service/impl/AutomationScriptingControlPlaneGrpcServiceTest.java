@@ -996,6 +996,14 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 "script-1",
                 "plugin-1",
                 "workItem:99#0",
+                "command-1",
+                "target-1",
+                "SHARED",
+                "demo",
+                "production",
+                "17",
+                "SCHEDULE_TIMER",
+                "SCHEDULE_DUE_CLAIMED",
                 10L,
                 20L,
                 50))
@@ -1065,6 +1073,16 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setScriptId("script-1")
             .setPluginId("plugin-1")
             .setAutomationDispatchId("workItem:99#0")
+            .setGameSessionCommandId("command-1")
+            .setTargetEntityId("target-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setPointerVersion("17")
+            .setSourceKind("SCHEDULE_TIMER")
+            .setSourceState("SCHEDULE_DUE_CLAIMED")
             .setChangedAfterMs(10L)
             .setChangedBeforeMs(20L)
             .setLimit(50)

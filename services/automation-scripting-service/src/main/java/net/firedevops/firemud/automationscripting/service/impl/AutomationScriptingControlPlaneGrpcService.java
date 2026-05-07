@@ -542,6 +542,14 @@ public final class AutomationScriptingControlPlaneGrpcService
               request.getScriptId(),
               request.getPluginId(),
               request.getAutomationDispatchId(),
+              request.getGameSessionCommandId(),
+              request.getTargetEntityId(),
+              normalizePlayableStateScope(request.getPlayableStateScope()),
+              request.getWorldSlug(),
+              request.getRealmSlug(),
+              request.getPointerVersion(),
+              request.getSourceKind(),
+              request.getSourceState(),
               request.getChangedAfterMs(),
               request.getChangedBeforeMs(),
               request.getLimit())
@@ -1256,6 +1264,14 @@ public final class AutomationScriptingControlPlaneGrpcService
       case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
       case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
       default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+    };
+  }
+
+  private static String normalizePlayableStateScope(PlayableStateScope playableStateScope) {
+    return switch (playableStateScope) {
+      case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
+      case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
+      default -> "";
     };
   }
 

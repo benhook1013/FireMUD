@@ -27,6 +27,14 @@ public interface ScriptHandoffEventRepository extends JpaRepository<ScriptHandof
         and (:scriptId = '' or event.scriptId = :scriptId)
         and (:pluginId = '' or event.pluginId = :pluginId)
         and (:automationDispatchId = '' or event.automationDispatchId = :automationDispatchId)
+        and (:gameSessionCommandId = '' or event.gameSessionCommandId = :gameSessionCommandId)
+        and (:targetEntityId = '' or event.targetEntityId = :targetEntityId)
+        and (:playableStateScope = '' or event.playableStateScope = :playableStateScope)
+        and (:worldSlug = '' or event.worldSlug = :worldSlug)
+        and (:realmSlug = '' or event.realmSlug = :realmSlug)
+        and (:pointerVersion = '' or event.pointerVersion = :pointerVersion)
+        and (:sourceKind = '' or event.sourceKind = :sourceKind)
+        and (:sourceState = '' or event.sourceState = :sourceState)
         and (:changedAfter is null or event.observedAt > :changedAfter)
         and (:changedBefore is null or event.observedAt < :changedBefore)
       order by event.observedAt desc, event.eventId desc
@@ -45,6 +53,14 @@ public interface ScriptHandoffEventRepository extends JpaRepository<ScriptHandof
       @Param("scriptId") String scriptId,
       @Param("pluginId") String pluginId,
       @Param("automationDispatchId") String automationDispatchId,
+      @Param("gameSessionCommandId") String gameSessionCommandId,
+      @Param("targetEntityId") String targetEntityId,
+      @Param("playableStateScope") String playableStateScope,
+      @Param("worldSlug") String worldSlug,
+      @Param("realmSlug") String realmSlug,
+      @Param("pointerVersion") String pointerVersion,
+      @Param("sourceKind") String sourceKind,
+      @Param("sourceState") String sourceState,
       @Param("changedAfter") Instant changedAfter,
       @Param("changedBefore") Instant changedBefore,
       Pageable pageable);

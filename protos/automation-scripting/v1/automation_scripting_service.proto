@@ -726,6 +726,14 @@ message ListScriptHandoffEventsRequest {
   string script_id = 14;
   string plugin_id = 15;
   string automation_dispatch_id = 16;
+  string game_session_command_id = 17;
+  string target_entity_id = 18;
+  entity_management.v1.PlayableStateScope playable_state_scope = 19;
+  string world_slug = 20;
+  string realm_slug = 21;
+  string pointer_version = 22;
+  string source_kind = 23;
+  string source_state = 24;
 }
 
 message ScriptHandoffEventEntry {
