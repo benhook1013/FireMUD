@@ -1160,6 +1160,7 @@ public class TickServiceImpl implements TickService {
     }
     for (GameplayCommand command : commands) {
       command.setExecutionOutcome("RETRY_QUEUED");
+      stampQueueSource(command, "RETRY_QUEUED", 0);
       command.setGameplayResult("PENDING");
       command.setCompletedAt(null);
       command.setLastAttemptAt(now);
@@ -1385,11 +1386,7 @@ public class TickServiceImpl implements TickService {
     }
     for (GameplayCommand command : commands) {
       int fallbackIndex = entryIndexByCommandId.getOrDefault(command.getCommandId(), 0);
-      command.setQueueSourceKind(selectionSourceKind(command));
-      command.setQueueSourceState(selectionSourceState(command));
-      command.setQueueSourceOrdinal(selectionSourceOrdinal(command, fallbackIndex));
-      command.setQueueSourceDueTickId(selectionSourceDueTickId(command));
-      command.setQueueSourceDueAtMs(selectionSourceDueAtMs(command));
+      stampQueueSource(command, executionOutcome, fallbackIndex);
       command.setExecutionOutcome(executionOutcome);
       command.setGameplayResult(gameplayResult);
       command.setLastAttemptAt(attemptedAt);
@@ -1413,6 +1410,15 @@ public class TickServiceImpl implements TickService {
       return List.of();
     }
     return gameplayCommandRepository.findByCommandIdIn(commandIds);
+  }
+
+  private void stampQueueSource(
+      GameplayCommand command, String targetExecutionOutcome, int fallbackIndex) {
+    command.setQueueSourceKind(queueSourceKind(command, targetExecutionOutcome));
+    command.setQueueSourceState(queueSourceState(command, targetExecutionOutcome));
+    command.setQueueSourceOrdinal(selectionSourceOrdinal(command, fallbackIndex));
+    command.setQueueSourceDueTickId(selectionSourceDueTickId(command));
+    command.setQueueSourceDueAtMs(selectionSourceDueAtMs(command));
   }
 
   private List<GameplayCommand> loadCommandsForEffects(List<TickEffect> effects) {
@@ -1637,6 +1643,20 @@ public class TickServiceImpl implements TickService {
       return "REDIS_RETRY_CLAIMED";
     }
     return "REDIS_PENDING_CLAIMED";
+  }
+
+  private String queueSourceKind(GameplayCommand command, String targetExecutionOutcome) {
+    if ("RETRY_QUEUED".equals(targetExecutionOutcome)) {
+      return "GAMEPLAY_RETRY";
+    }
+    return selectionSourceKind(command);
+  }
+
+  private String queueSourceState(GameplayCommand command, String targetExecutionOutcome) {
+    if ("RETRY_QUEUED".equals(targetExecutionOutcome)) {
+      return "REDIS_RETRY_QUEUED";
+    }
+    return selectionSourceState(command);
   }
 
   private Long selectionSourceDueTickId(GameplayCommand command) {

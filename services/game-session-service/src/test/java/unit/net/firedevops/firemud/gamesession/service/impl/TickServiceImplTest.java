@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -13,6 +14,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.lang.reflect.Field;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
@@ -672,6 +674,9 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", drainedBatch.getStatus());
     org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", drainedEffect.getStatus());
     org.junit.jupiter.api.Assertions.assertEquals("RETRY_QUEUED", command.getExecutionOutcome());
+    org.junit.jupiter.api.Assertions.assertEquals("GAMEPLAY_RETRY", command.getQueueSourceKind());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "REDIS_RETRY_QUEUED", command.getQueueSourceState());
     verify(durableGameplayCommandExecutionService, never()).execute(any(), any());
     verify(remoteFollowupDrainService)
         .releaseClaimedFollowups(
@@ -1096,6 +1101,21 @@ class TickServiceImplTest {
     second.setSanitizedCommandText("wave");
     second.setEnqueueSeq(6L);
     second.setSourceType("AUTOMATION");
+    List<net.firedevops.firemud.gamesession.entity.GameplayCommand> savedSnapshots =
+        new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              @SuppressWarnings("unchecked")
+              List<net.firedevops.firemud.gamesession.entity.GameplayCommand> saved =
+                  (List<net.firedevops.firemud.gamesession.entity.GameplayCommand>)
+                      invocation.getArgument(0);
+              saved.stream()
+                  .map(TickServiceImplTest::copyGameplayCommand)
+                  .forEach(savedSnapshots::add);
+              return saved;
+            })
+        .when(gameplayCommandRepository)
+        .saveAll(any());
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
         .thenReturn(List.of(first, second));
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
@@ -1109,6 +1129,14 @@ class TickServiceImplTest {
     verify(redisTemplate).delete("gamesession:tick:pending:1:2");
     verify(listOps).rightPush("gamesession:tick:pending:1:2", "N|cmd-1|look");
     verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-2|wave");
+    org.junit.jupiter.api.Assertions.assertTrue(
+        savedSnapshots.stream()
+            .anyMatch(
+                saved ->
+                    "cmd-2".equals(saved.getCommandId())
+                        && "RETRY_QUEUED".equals(saved.getExecutionOutcome())
+                        && "GAMEPLAY_RETRY".equals(saved.getQueueSourceKind())
+                        && "REDIS_RETRY_QUEUED".equals(saved.getQueueSourceState())));
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0,
         meterRegistry
@@ -1129,6 +1157,16 @@ class TickServiceImplTest {
     command.setExecutionOutcome("STAGED");
     command.setGameplayResult("PENDING");
     return command;
+  }
+
+  private static net.firedevops.firemud.gamesession.entity.GameplayCommand copyGameplayCommand(
+      net.firedevops.firemud.gamesession.entity.GameplayCommand source) {
+    var copy = new net.firedevops.firemud.gamesession.entity.GameplayCommand();
+    copy.setCommandId(source.getCommandId());
+    copy.setExecutionOutcome(source.getExecutionOutcome());
+    copy.setQueueSourceKind(source.getQueueSourceKind());
+    copy.setQueueSourceState(source.getQueueSourceState());
+    return copy;
   }
 
   private static net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus runtimeOwnership(
