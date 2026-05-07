@@ -283,6 +283,10 @@ message ScriptDeadLetterEntry {
   string plugin_version_id = 25;
   ScriptPatchPublicationLink publication = 26;
   PluginPublicationLink plugin_publication = 27;
+  string current_runtime_game_instance_id = 28;
+  string current_runtime_region_id = 29;
+  int64 current_runtime_region_epoch = 30;
+  bool is_runtime_scope_stale = 31;
 }
 
 message ListScriptDeadLettersResponse {
@@ -600,6 +604,10 @@ message ScriptScheduleInstanceEntry {
   bool is_runtime_progress_stale = 34;
   ScriptPatchPublicationLink publication = 35;
   PluginPublicationLink plugin_publication = 36;
+  string current_runtime_game_instance_id = 37;
+  string current_runtime_region_id = 38;
+  int64 current_runtime_region_epoch = 39;
+  bool is_runtime_scope_stale = 40;
 }
 
 message ListScriptScheduleInstancesResponse {
@@ -648,6 +656,10 @@ message ScriptTimerAuditEventEntry {
   string work_item_id = 26;
   ScriptPatchPublicationLink publication = 27;
   PluginPublicationLink plugin_publication = 28;
+  string current_runtime_game_instance_id = 29;
+  string current_runtime_region_id = 30;
+  int64 current_runtime_region_epoch = 31;
+  bool is_runtime_scope_stale = 32;
 }
 
 message ListScriptTimerAuditEventsResponse {

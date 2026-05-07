@@ -415,13 +415,14 @@ Inputs:
 
 Outputs:
 
-- Instance-scoped schedule entries containing `scriptPatchVersion`, `scriptId`, plugin owner metadata, resolved `playableStateScope`, `scheduleDefinitionId`, event type, cadence, scheduler priority tag, target-scope identity (`targetScopeType`, `targetScopeId`), binding priority/exclusivity flags, materialization status, due-point fields, observed runtime version id, observed pin request id, pin observation time, and row timestamps.
+- Instance-scoped schedule entries containing `scriptPatchVersion`, `scriptId`, plugin owner metadata, resolved `playableStateScope`, `scheduleDefinitionId`, event type, cadence, scheduler priority tag, target-scope identity (`targetScopeType`, `targetScopeId`), binding priority/exclusivity flags, materialization status, due-point fields, observed runtime version id, observed pin request id, pin observation time, row timestamps, and the current owned runtime scope (`currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus stale-scope signaling beside the persisted scheduler row scope.
 
 Contract rules:
 
 - This is a read-only operator/debugging surface for the first durable scheduler substrate below Redis timer indexes.
 - The live implementation must report tick-aligned schedules honestly as not-yet-advanced when no heartbeat-derived due point exists; it must not invent synthetic tick coordinates.
 - Reconciliation across repins is keyed by stable `scheduleDefinitionId` plus plugin owner metadata and binding target identity, not by inferred semantic similarity.
+- The read must also expose the current owned runtime scope from Game Session when the instance still exists so operators can tell directly whether persisted scheduler scope has gone stale without a second runtime-state lookup.
 
 #### `ListScriptTimerAuditEvents`
 
@@ -436,13 +437,14 @@ Inputs:
 
 Outputs:
 
-- newest-first timer audit rows containing Trigger Identity fields, resolved `playableStateScope`, admitted routing bundle, plugin owner metadata, trigger mode, scheduler source state/ordinal/due-point fields, optional `workItemId`, final stage/outcome/reason, and row timestamps
+- newest-first timer audit rows containing Trigger Identity fields, resolved `playableStateScope`, admitted routing bundle, plugin owner metadata, trigger mode, scheduler source state/ordinal/due-point fields, optional `workItemId`, final stage/outcome/reason, row timestamps, and the current owned runtime scope (`currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus stale-scope signaling beside the persisted timer row scope
 
 Contract rules:
 
 - This is a read-only operator/debugging surface for scheduler-owned timer decisions; it must not mutate work-item or schedule state.
 - The live implementation is sourced from durable `script_event_audit` rows, not reconstructed from metrics or volatile queue indexes.
 - Timer-fired work that reached durable work-item persistence and timer-fired work intentionally dropped by scheduler fences/truncation share this history surface so operators can correlate a due point without joining multiple ad hoc tables first.
+- The read must also expose the current owned runtime scope from Game Session when the instance still exists so operators can distinguish stale timer history from current-timeline timer activity without a second runtime-state lookup.
 
 #### `ListScriptDeadLetters`
 
@@ -456,11 +458,12 @@ Inputs:
 
 Outputs:
 
-- Newest-first dead-letter entries containing `workItemId`, Trigger Identity fields, resolved `playableStateScope`, script/event identity, `status`, bounded failure/cancel reason, `createdAt`, and `updatedAt`.
+- Newest-first dead-letter entries containing `workItemId`, Trigger Identity fields, resolved `playableStateScope`, script/event identity, `status`, bounded failure/cancel reason, `createdAt`, `updatedAt`, and the current owned runtime scope (`currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus stale-scope signaling beside the persisted dead-letter row scope.
 
 Boundary rule:
 
 - Operators use this read to decide whether a replay or manual remediation workflow is needed; replay itself remains a separate controlled operation so listing dead letters cannot accidentally mutate runtime state.
+- The read must also expose the current owned runtime scope from Game Session when the instance still exists so stale timeline dead letters are visible directly on the dead-letter row instead of only via manual runtime-state correlation.
 
 #### `ReplayDeadLetteredWorkItems`
 

@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
@@ -417,14 +418,20 @@ public final class AutomationScriptingControlPlaneGrpcService
         ListScriptScheduleInstancesResponse.newBuilder();
     try {
       requireAdminRole();
-      scriptScheduleInstanceService
-          .listInstances(
+      List<ScriptScheduleInstanceService.ScheduleInstanceSummary> summaries =
+          scriptScheduleInstanceService.listInstances(
               request.getTenantId(),
               request.getGameInstanceId(),
               request.getScriptPatchVersion(),
-              request.getLimit())
-          .stream()
-          .map(this::toProto)
+              request.getLimit());
+      Map<String, CurrentRuntimeScope> currentScopes =
+          loadCurrentRuntimeScopes(
+              request.getTenantId(),
+              summaries,
+              ScriptScheduleInstanceService.ScheduleInstanceSummary::gameInstanceId,
+              ScriptScheduleInstanceService.ScheduleInstanceSummary::runtimeRegionId);
+      summaries.stream()
+          .map(summary -> toProto(summary, currentScopes.get(summary.gameInstanceId())))
           .forEach(response::addSchedules);
     } catch (IllegalArgumentException ex) {
       response.setError(
@@ -445,8 +452,8 @@ public final class AutomationScriptingControlPlaneGrpcService
         ListScriptTimerAuditEventsResponse.newBuilder();
     try {
       requireAdminRole();
-      scriptScheduleInstanceService
-          .listTimerAuditEvents(
+      List<ScriptScheduleInstanceService.TimerAuditEventSummary> summaries =
+          scriptScheduleInstanceService.listTimerAuditEvents(
               request.getTenantId(),
               request.getGameInstanceId(),
               request.getScriptPatchVersion(),
@@ -455,9 +462,15 @@ public final class AutomationScriptingControlPlaneGrpcService
               request.getFinalReason(),
               request.getChangedAfterMs(),
               request.getChangedBeforeMs(),
-              request.getLimit())
-          .stream()
-          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+              request.getLimit());
+      Map<String, CurrentRuntimeScope> currentScopes =
+          loadCurrentRuntimeScopes(
+              request.getTenantId(),
+              summaries,
+              ScriptScheduleInstanceService.TimerAuditEventSummary::gameInstanceId,
+              ScriptScheduleInstanceService.TimerAuditEventSummary::regionId);
+      summaries.stream()
+          .map(summary -> toProto(summary, currentScopes.get(summary.gameInstanceId())))
           .forEach(response::addEvents);
     } catch (IllegalArgumentException ex) {
       response.setError(
@@ -594,14 +607,20 @@ public final class AutomationScriptingControlPlaneGrpcService
     ListScriptDeadLettersResponse.Builder response = ListScriptDeadLettersResponse.newBuilder();
     try {
       requireAdminRole();
-      workItemService
-          .listDeadLetters(
+      List<ScriptWorkItemService.DeadLetterSummary> summaries =
+          workItemService.listDeadLetters(
               request.getTenantId(),
               request.getGameInstanceId(),
               request.getScriptPatchVersion(),
-              request.getLimit())
-          .stream()
-          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+              request.getLimit());
+      Map<String, CurrentRuntimeScope> currentScopes =
+          loadCurrentRuntimeScopes(
+              request.getTenantId(),
+              summaries,
+              ScriptWorkItemService.DeadLetterSummary::gameInstanceId,
+              ScriptWorkItemService.DeadLetterSummary::regionId);
+      summaries.stream()
+          .map(summary -> toProto(summary, currentScopes.get(summary.gameInstanceId())))
           .forEach(response::addDeadLetters);
     } catch (IllegalArgumentException ex) {
       response.setError(
@@ -1093,7 +1112,8 @@ public final class AutomationScriptingControlPlaneGrpcService
     };
   }
 
-  private static ScriptDeadLetterEntry toProto(ScriptWorkItemService.DeadLetterSummary summary) {
+  private static ScriptDeadLetterEntry toProto(
+      ScriptWorkItemService.DeadLetterSummary summary, CurrentRuntimeScope currentScope) {
     ScriptDeadLetterEntry.Builder builder =
         ScriptDeadLetterEntry.newBuilder()
             .setWorkItemId(summary.workItemId())
@@ -1124,6 +1144,14 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setPublication(toProto(summary.publication()));
     if (summary.pluginPublication() != null) {
       builder.setPluginPublication(toProto(summary.pluginPublication()));
+    }
+    if (currentScope != null) {
+      builder
+          .setCurrentRuntimeGameInstanceId(currentScope.gameInstanceId())
+          .setCurrentRuntimeRegionId(currentScope.regionId())
+          .setCurrentRuntimeRegionEpoch(currentScope.regionEpoch())
+          .setIsRuntimeScopeStale(
+              isRuntimeScopeStale(summary.regionId(), summary.regionEpoch(), currentScope));
     }
     return builder.build();
   }
@@ -1160,7 +1188,8 @@ public final class AutomationScriptingControlPlaneGrpcService
   }
 
   private ScriptScheduleInstanceEntry toProto(
-      ScriptScheduleInstanceService.ScheduleInstanceSummary summary) {
+      ScriptScheduleInstanceService.ScheduleInstanceSummary summary,
+      CurrentRuntimeScope currentScope) {
     ScriptScheduleInstanceEntry.Builder builder =
         ScriptScheduleInstanceEntry.newBuilder()
             .setTenantId(summary.tenantId())
@@ -1202,11 +1231,21 @@ public final class AutomationScriptingControlPlaneGrpcService
     if (summary.pluginPublication() != null) {
       builder.setPluginPublication(toProto(summary.pluginPublication()));
     }
+    if (currentScope != null) {
+      builder
+          .setCurrentRuntimeGameInstanceId(currentScope.gameInstanceId())
+          .setCurrentRuntimeRegionId(currentScope.regionId())
+          .setCurrentRuntimeRegionEpoch(currentScope.regionEpoch())
+          .setIsRuntimeScopeStale(
+              isRuntimeScopeStale(
+                  summary.runtimeRegionId(), summary.runtimeRegionEpoch(), currentScope));
+    }
     return builder.build();
   }
 
   private static ScriptTimerAuditEventEntry toProto(
-      ScriptScheduleInstanceService.TimerAuditEventSummary summary) {
+      ScriptScheduleInstanceService.TimerAuditEventSummary summary,
+      CurrentRuntimeScope currentScope) {
     ScriptTimerAuditEventEntry.Builder builder =
         ScriptTimerAuditEventEntry.newBuilder()
             .setTenantId(summary.tenantId())
@@ -1240,6 +1279,14 @@ public final class AutomationScriptingControlPlaneGrpcService
     }
     if (summary.workItemId() > 0) {
       builder.setWorkItemId(Long.toString(summary.workItemId()));
+    }
+    if (currentScope != null) {
+      builder
+          .setCurrentRuntimeGameInstanceId(currentScope.gameInstanceId())
+          .setCurrentRuntimeRegionId(currentScope.regionId())
+          .setCurrentRuntimeRegionEpoch(currentScope.regionEpoch())
+          .setIsRuntimeScopeStale(
+              isRuntimeScopeStale(summary.regionId(), summary.regionEpoch(), currentScope));
     }
     return builder.build();
   }
@@ -1331,6 +1378,35 @@ public final class AutomationScriptingControlPlaneGrpcService
     return scopes;
   }
 
+  private <T> Map<String, CurrentRuntimeScope> loadCurrentRuntimeScopes(
+      String tenantId,
+      List<T> summaries,
+      Function<T, String> gameInstanceIdExtractor,
+      Function<T, String> preferredRegionIdExtractor) {
+    Map<String, CurrentRuntimeScope> scopes = new LinkedHashMap<>();
+    for (T summary : summaries) {
+      String gameInstanceId = emptyIfNull(gameInstanceIdExtractor.apply(summary));
+      if (gameInstanceId.isBlank() || scopes.containsKey(gameInstanceId)) {
+        continue;
+      }
+      GetGameInstanceRuntimeStateResponse runtime =
+          gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+              tenantId, gameInstanceId, emptyIfNull(preferredRegionIdExtractor.apply(summary)));
+      if (runtime == null
+          || runtime.hasError()
+          || emptyIfNull(runtime.getRuntimeState().getGameInstanceId()).isBlank()) {
+        continue;
+      }
+      scopes.put(
+          gameInstanceId,
+          new CurrentRuntimeScope(
+              emptyIfNull(runtime.getRuntimeState().getGameInstanceId()),
+              emptyIfNull(runtime.getRuntimeState().getRegionId()),
+              runtime.getRuntimeState().getRegionEpoch()));
+    }
+    return scopes;
+  }
+
   private Map<String, GameplayCommandStatusView> loadGameplayCommandStatuses(
       String tenantId, List<ScriptWorkItemService.HandoffEventSummary> summaries) {
     Map<String, GameplayCommandStatusView> statuses = new LinkedHashMap<>();
@@ -1362,17 +1438,25 @@ public final class AutomationScriptingControlPlaneGrpcService
 
   private static boolean isTargetRuntimeScopeStale(
       ScriptWorkItemService.HandoffEventSummary summary, CurrentTargetRuntimeScope currentScope) {
+    return isRuntimeScopeStale(
+        summary.targetRegionId(),
+        summary.targetRegionEpoch(),
+        new CurrentRuntimeScope(
+            currentScope.gameInstanceId(), currentScope.regionId(), currentScope.regionEpoch()));
+  }
+
+  private static boolean isRuntimeScopeStale(
+      String persistedRegionId, long persistedRegionEpoch, CurrentRuntimeScope currentScope) {
     if (currentScope == null) {
       return false;
     }
-    String targetRegionId = emptyIfNull(summary.targetRegionId());
-    if (!targetRegionId.isBlank() && !targetRegionId.equals(currentScope.regionId())) {
+    String regionId = emptyIfNull(persistedRegionId);
+    if (!regionId.isBlank() && !regionId.equals(currentScope.regionId())) {
       return true;
     }
-    long targetRegionEpoch = summary.targetRegionEpoch();
-    return targetRegionEpoch > 0
+    return persistedRegionEpoch > 0
         && currentScope.regionEpoch() > 0
-        && targetRegionEpoch != currentScope.regionEpoch();
+        && persistedRegionEpoch != currentScope.regionEpoch();
   }
 
   private static PlayableStateScope toPlayableStateScope(String playableStateScope) {
@@ -1401,6 +1485,8 @@ public final class AutomationScriptingControlPlaneGrpcService
 
   private record CurrentTargetRuntimeScope(
       String gameInstanceId, String regionId, long regionEpoch) {}
+
+  private record CurrentRuntimeScope(String gameInstanceId, String regionId, long regionEpoch) {}
 
   private record GameplayCommandStatusView(
       String executionOutcome,
