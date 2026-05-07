@@ -113,6 +113,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                 followup ->
                     "SHARED".equals(followup.getPlayableStateScope())
                         && "cmd-1".equals(followup.getCommandId())
+                        && "entity:entity-9".equals(followup.getClaimTargetAggregate())
                         && "enqueue_automation_command".equals(followup.getPayloadKind())
                         && "LOOK".equals(followup.getRequestedCommand())
                         && followup.isRequiresSoloTick()
@@ -167,6 +168,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                 followup ->
                     "SHARED".equals(followup.getPlayableStateScope())
                         && "cmd-1".equals(followup.getCommandId())
+                        && "entity:entity-9".equals(followup.getClaimTargetAggregate())
                         && "enqueue_automation_command".equals(followup.getPayloadKind())
                         && "LOOK".equals(followup.getRequestedCommand())
                         && followup.isRequiresSoloTick()

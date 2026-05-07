@@ -179,9 +179,13 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
   }
 
   private static String claimEntityKey(RemoteFollowup followup) {
-    if (followup.getTargetEntityId() == null || followup.getTargetEntityId().isBlank()) {
-      return "followup:" + followup.getFollowupId();
+    if (followup.getClaimTargetAggregate() != null
+        && !followup.getClaimTargetAggregate().isBlank()) {
+      return followup.getClaimTargetAggregate();
     }
-    return "entity:" + followup.getTargetEntityId();
+    if (followup.getTargetEntityId() != null && !followup.getTargetEntityId().isBlank()) {
+      return "entity:" + followup.getTargetEntityId();
+    }
+    return "game-instance:" + followup.getTargetGameInstanceId();
   }
 }

@@ -958,6 +958,10 @@ public class TickServiceImpl implements TickService {
 
   private static String remoteFollowupTargetAggregate(
       net.firedevops.firemud.gamesession.entity.RemoteFollowup followup) {
+    if (followup.getClaimTargetAggregate() != null
+        && !followup.getClaimTargetAggregate().isBlank()) {
+      return followup.getClaimTargetAggregate();
+    }
     if (followup.getTargetEntityId() != null && !followup.getTargetEntityId().isBlank()) {
       return "entity:" + followup.getTargetEntityId();
     }
@@ -1587,6 +1591,7 @@ public class TickServiceImpl implements TickService {
       appendJsonNumberField(builder, "targetRegionEpoch", followup.getTargetRegionEpoch());
       appendJsonNumberField(builder, "dueTickId", followup.getDueTickId());
       appendJsonStringField(builder, "targetEntityId", followup.getTargetEntityId());
+      appendJsonStringField(builder, "claimTargetAggregate", followup.getClaimTargetAggregate());
       appendJsonStringField(builder, "commandId", followup.getCommandId());
       appendJsonStringField(builder, "automationDispatchId", followup.getAutomationDispatchId());
       appendJsonStringField(builder, "automationWorkItemId", followup.getAutomationWorkItemId());

@@ -56,6 +56,8 @@ public interface RemoteCommandCoordinatorRepository
         and (:realmSlug = '' or coordinator.realmSlug = :realmSlug)
         and (:pointerVersion is null or coordinator.pointerVersion = :pointerVersion)
         and (:targetEntityId = '' or linkedFollowup.targetEntityId = :targetEntityId)
+        and (:claimTargetAggregate = ''
+             or linkedFollowup.claimTargetAggregate = :claimTargetAggregate)
         and (:effectKey = '' or linkedFollowup.effectKey = :effectKey)
         and (:payloadKind = '' or linkedFollowup.payloadKind = :payloadKind)
         and (:originSourceKind = '' or linkedFollowup.originSourceKind = :originSourceKind)
@@ -119,6 +121,7 @@ public interface RemoteCommandCoordinatorRepository
       @Param("realmSlug") String realmSlug,
       @Param("pointerVersion") Long pointerVersion,
       @Param("targetEntityId") String targetEntityId,
+      @Param("claimTargetAggregate") String claimTargetAggregate,
       @Param("effectKey") String effectKey,
       @Param("payloadKind") String payloadKind,
       @Param("originSourceKind") String originSourceKind,

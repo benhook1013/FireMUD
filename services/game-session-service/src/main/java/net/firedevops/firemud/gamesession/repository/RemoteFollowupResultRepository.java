@@ -54,6 +54,8 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
         and (:resultCommandGameplayResult = ''
              or resultCommand.gameplayResult = :resultCommandGameplayResult)
         and (:targetEntityId = '' or linkedFollowup.targetEntityId = :targetEntityId)
+        and (:claimTargetAggregate = ''
+             or linkedFollowup.claimTargetAggregate = :claimTargetAggregate)
         and (:effectKey = '' or linkedFollowup.effectKey = :effectKey)
         and (:failureCode = '' or linkedFollowup.failureCode = :failureCode)
         and (:payloadKind = '' or linkedFollowup.payloadKind = :payloadKind)
@@ -99,6 +101,7 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
       @Param("resultCommandExecutionOutcome") String resultCommandExecutionOutcome,
       @Param("resultCommandGameplayResult") String resultCommandGameplayResult,
       @Param("targetEntityId") String targetEntityId,
+      @Param("claimTargetAggregate") String claimTargetAggregate,
       @Param("effectKey") String effectKey,
       @Param("failureCode") String failureCode,
       @Param("payloadKind") String payloadKind,

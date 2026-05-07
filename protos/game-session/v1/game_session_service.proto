@@ -519,6 +519,7 @@ message GameplayCommandStatus {
   string remote_followup_event_schema_version = 81;
   string remote_followup_script_event_id = 82;
   string remote_followup_trigger_mode = 83;
+  string remote_followup_claim_target_aggregate = 84;
 }
 
 message GetGameplayCommandStatusResponse {
@@ -621,6 +622,7 @@ message RemoteCommandCoordinatorEntry {
   string followup_trigger_mode = 58;
   string followup_read_snapshot_token = 59;
   string followup_event_payload_json = 60;
+  string followup_claim_target_aggregate = 61;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -668,6 +670,7 @@ message ListRemoteCommandCoordinatorsRequest {
   string followup_origin_source_state = 37;
   string latest_result_outcome = 38;
   string latest_result_error_code = 39;
+  string claim_target_aggregate = 40;
 }
 
 message ListRemoteCommandCoordinatorsResponse {
@@ -766,6 +769,7 @@ message ListRemoteFollowupsRequest {
   int64 origin_deadline_region_epoch = 36;
   int64 origin_deadline_tick_id = 37;
   string late_result_policy = 38;
+  string claim_target_aggregate = 39;
 }
 
 message RemoteFollowupEntry {
@@ -821,6 +825,7 @@ message RemoteFollowupEntry {
   string trigger_mode = 50;
   string read_snapshot_token = 51;
   string event_payload_json = 52;
+  string claim_target_aggregate = 53;
 }
 
 message ListRemoteFollowupsResponse {
@@ -867,6 +872,7 @@ message ListRemoteFollowupResultsRequest {
   string origin_source_state = 36;
   string late_result_policy = 37;
   string claimed_tick_batch_id = 38;
+  string claim_target_aggregate = 39;
 }
 
 message RemoteFollowupResultEntry {
@@ -921,6 +927,7 @@ message RemoteFollowupResultEntry {
   string trigger_mode = 49;
   string read_snapshot_token = 50;
   string event_payload_json = 51;
+  string claim_target_aggregate = 52;
 }
 
 message ListRemoteFollowupResultsResponse {

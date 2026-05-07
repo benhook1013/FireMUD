@@ -69,6 +69,8 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
         and (:originSourceState = '' or followup.originSourceState = :originSourceState)
         and (:automationWorkItemId = '' or followup.automationWorkItemId = :automationWorkItemId)
         and (:targetEntityId = '' or followup.targetEntityId = :targetEntityId)
+        and (:claimTargetAggregate = ''
+             or followup.claimTargetAggregate = :claimTargetAggregate)
         and (:effectKey = '' or followup.effectKey = :effectKey)
         and (:failureCode = '' or followup.failureCode = :failureCode)
         and (:requiresSoloTick is null or followup.requiresSoloTick = :requiresSoloTick)
@@ -126,6 +128,7 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
       @Param("originSourceState") String originSourceState,
       @Param("automationWorkItemId") String automationWorkItemId,
       @Param("targetEntityId") String targetEntityId,
+      @Param("claimTargetAggregate") String claimTargetAggregate,
       @Param("effectKey") String effectKey,
       @Param("failureCode") String failureCode,
       @Param("requiresSoloTick") Boolean requiresSoloTick,

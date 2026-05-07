@@ -71,6 +71,9 @@ public class RemoteFollowup {
   @Column(name = "target_entity_id", length = 64)
   private String targetEntityId;
 
+  @Column(name = "claim_target_aggregate", length = 128)
+  private String claimTargetAggregate;
+
   @Column(name = "status", nullable = false, length = 40)
   private String status;
 

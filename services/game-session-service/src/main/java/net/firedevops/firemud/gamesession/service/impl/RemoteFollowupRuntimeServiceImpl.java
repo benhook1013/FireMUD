@@ -619,6 +619,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     followup.setDueTickId(request.targetDueTickId());
     followup.setEffectKey(request.effectKey());
     followup.setTargetEntityId(blankToNull(request.targetEntityId()));
+    followup.setClaimTargetAggregate(
+        claimTargetAggregate(request.targetEntityId(), request.targetGameInstanceId()));
     followup.setPayloadJson(blankToNull(request.payloadJson()));
     PayloadSummary payloadSummary =
         payloadSummary(
@@ -1291,6 +1293,14 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         .opsForValue()
         .set(
             "remote:" + tenantId + ":" + targetEntityId, "1", java.time.Duration.ofMillis(60_000L));
+  }
+
+  private static String claimTargetAggregate(String targetEntityId, long targetGameInstanceId) {
+    String normalizedTargetEntityId = blankToNull(targetEntityId);
+    if (normalizedTargetEntityId != null) {
+      return "entity:" + normalizedTargetEntityId;
+    }
+    return "game-instance:" + targetGameInstanceId;
   }
 
   private record PayloadSummary(

@@ -766,6 +766,7 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getRealmSlug()),
               request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
               blankToEmpty(request.getTargetEntityId()),
+              blankToEmpty(request.getClaimTargetAggregate()),
               blankToEmpty(request.getEffectKey()),
               blankToEmpty(request.getPayloadKind()),
               blankToEmpty(request.getOriginSourceKind()),
@@ -942,6 +943,7 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getOriginSourceState()),
               blankToEmpty(request.getAutomationWorkItemId()),
               blankToEmpty(request.getTargetEntityId()),
+              blankToEmpty(request.getClaimTargetAggregate()),
               blankToEmpty(request.getEffectKey()),
               blankToEmpty(request.getFailureCode()),
               request.getRequiresSoloTick() ? Boolean.TRUE : null,
@@ -1030,6 +1032,7 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getResultCommandExecutionOutcome()),
               blankToEmpty(request.getResultCommandGameplayResult()),
               blankToEmpty(request.getTargetEntityId()),
+              blankToEmpty(request.getClaimTargetAggregate()),
               blankToEmpty(request.getEffectKey()),
               blankToEmpty(request.getFailureCode()),
               blankToEmpty(request.getPayloadKind()),
@@ -2303,6 +2306,9 @@ public final class GameSessionControlPlaneGrpcService
       if (followup.getTargetEntityId() != null) {
         builder.setTargetEntityId(followup.getTargetEntityId());
       }
+      if (followup.getClaimTargetAggregate() != null) {
+        builder.setFollowupClaimTargetAggregate(followup.getClaimTargetAggregate());
+      }
       if (followup.getEffectKey() != null) {
         builder.setFollowupEffectKey(followup.getEffectKey());
       }
@@ -2327,6 +2333,7 @@ public final class GameSessionControlPlaneGrpcService
           followup.getRequestedCommand(),
           followup.isRequiresSoloTick());
       applyFollowupOriginSource(builder, followup);
+      applyClaimTargetAggregate(builder, followup);
     }
     if (latestResult != null) {
       builder.setLatestResultOutcome(latestResult.getOutcome());
@@ -2388,6 +2395,9 @@ public final class GameSessionControlPlaneGrpcService
     if (followup.getTargetEntityId() != null) {
       builder.setTargetEntityId(followup.getTargetEntityId());
     }
+    if (followup.getClaimTargetAggregate() != null) {
+      builder.setClaimTargetAggregate(followup.getClaimTargetAggregate());
+    }
     if (followup.getClaimedTickBatchId() != null) {
       builder.setClaimedTickBatchId(followup.getClaimedTickBatchId());
     }
@@ -2429,6 +2439,7 @@ public final class GameSessionControlPlaneGrpcService
         followup.getOriginSourceOrdinal(),
         followup.getOriginSourceDueTickId(),
         followup.getOriginSourceDueAtMs());
+    applyClaimTargetAggregate(builder, followup);
     applyRoutingBundle(
         builder,
         followup.getPlayableStateScope(),
@@ -2498,6 +2509,7 @@ public final class GameSessionControlPlaneGrpcService
     applyFollowupIdentity(builder, followup);
     applyPayloadSummary(builder, followup);
     applyOriginSource(builder, followup);
+    applyClaimTargetAggregate(builder, followup);
     applyTriggerScriptEventSummary(builder, followup);
     applyCoordinatorDeadlinePolicy(builder, coordinator);
     return builder.build();
@@ -2709,6 +2721,27 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private static void applyClaimTargetAggregate(
+      RemoteFollowupEntry.Builder builder, RemoteFollowup followup) {
+    if (followup != null && followup.getClaimTargetAggregate() != null) {
+      builder.setClaimTargetAggregate(followup.getClaimTargetAggregate());
+    }
+  }
+
+  private static void applyClaimTargetAggregate(
+      RemoteFollowupResultEntry.Builder builder, RemoteFollowup followup) {
+    if (followup != null && followup.getClaimTargetAggregate() != null) {
+      builder.setClaimTargetAggregate(followup.getClaimTargetAggregate());
+    }
+  }
+
+  private static void applyClaimTargetAggregate(
+      RemoteCommandCoordinatorEntry.Builder builder, RemoteFollowup followup) {
+    if (followup != null && followup.getClaimTargetAggregate() != null) {
+      builder.setFollowupClaimTargetAggregate(followup.getClaimTargetAggregate());
+    }
+  }
+
   private static void applyRoutingBundle(
       RemoteFollowupEntry.Builder builder,
       String playableStateScope,
@@ -2851,6 +2884,9 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (followup.getTargetEntityId() != null) {
       builder.setTargetEntityId(followup.getTargetEntityId());
+    }
+    if (followup.getClaimTargetAggregate() != null) {
+      builder.setClaimTargetAggregate(followup.getClaimTargetAggregate());
     }
     if (followup.getEffectKey() != null) {
       builder.setEffectKey(followup.getEffectKey());
@@ -3337,6 +3373,9 @@ public final class GameSessionControlPlaneGrpcService
       }
       if (remoteFollowup.getTargetEntityId() != null) {
         builder.setRemoteTargetEntityId(remoteFollowup.getTargetEntityId());
+      }
+      if (remoteFollowup.getClaimTargetAggregate() != null) {
+        builder.setRemoteFollowupClaimTargetAggregate(remoteFollowup.getClaimTargetAggregate());
       }
       if (remoteFollowup.getEffectKey() != null) {
         builder.setRemoteFollowupEffectKey(remoteFollowup.getEffectKey());

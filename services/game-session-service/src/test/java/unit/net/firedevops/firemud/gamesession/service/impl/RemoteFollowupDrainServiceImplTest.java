@@ -137,10 +137,39 @@ class RemoteFollowupDrainServiceImplTest {
     assertEquals("rollback", first.getFailureMessage());
   }
 
+  @Test
+  void claimDueFollowupsUsesGameInstanceAggregateWhenTargetEntityIsBlank() {
+    RemoteFollowup first = followup("rf-1", 10L);
+    first.setTargetEntityId("");
+    RemoteFollowup second = followup("rf-2", 11L);
+    second.setTargetEntityId("");
+    second.setTargetGameInstanceId(9L);
+    RemoteFollowup third = followup("rf-3", 12L);
+    third.setTargetEntityId("");
+    third.setTargetGameInstanceId(10L);
+    when(remoteFollowupRepository
+            .findByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAscIdAsc(
+                1L,
+                "region-b",
+                RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
+                12L,
+                Pageable.ofSize(8)))
+        .thenReturn(List.of(first, second, third));
+
+    RemoteFollowupDrainService.ClaimOutcome outcome =
+        service.claimDueFollowups(1L, "region-b", 12L, "tb-1", 2);
+
+    assertEquals(List.of("rf-1", "rf-3"), outcome.followupIds());
+    assertEquals(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED, first.getStatus());
+    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, second.getStatus());
+    assertEquals(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED, third.getStatus());
+  }
+
   private static RemoteFollowup followup(String followupId, long dueTickId) {
     RemoteFollowup followup = new RemoteFollowup();
     followup.setFollowupId(followupId);
     followup.setTenantId(1L);
+    followup.setTargetGameInstanceId(9L);
     followup.setTargetRegionId("region-b");
     followup.setTargetRegionEpoch(4L);
     followup.setStatus(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED);
