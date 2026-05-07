@@ -2567,8 +2567,10 @@ class GameSessionControlPlaneGrpcServiceTest {
                 Mockito.anyLong(),
                 Mockito.anyString(),
                 Mockito.anyLong(),
+                Mockito.nullable(Long.class),
                 Mockito.anyString(),
                 Mockito.anyLong(),
+                Mockito.nullable(Long.class),
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),
@@ -2655,8 +2657,10 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setTargetRegionEpoch(4L)
             .setCurrentOriginRuntimeRegionId("region-origin-current")
             .setCurrentOriginRuntimeRegionEpoch(13L)
+            .setCurrentOriginRuntimeGameInstanceId("7")
             .setCurrentTargetRuntimeRegionId("region-target-current")
             .setCurrentTargetRuntimeRegionEpoch(14L)
+            .setCurrentTargetRuntimeGameInstanceId("9")
             .setState("PENDING_REMOTE")
             .setFollowupId("rf-1")
             .setScriptId("script-1")
@@ -2758,8 +2762,10 @@ class GameSessionControlPlaneGrpcServiceTest {
             4L,
             "region-origin-current",
             13L,
+            7L,
             "region-target-current",
             14L,
+            9L,
             "PENDING_REMOTE",
             "rf-1",
             "script-1",
@@ -2878,8 +2884,10 @@ class GameSessionControlPlaneGrpcServiceTest {
                 4L,
                 "region-origin-current",
                 13L,
+                7L,
                 "region-target-current",
                 14L,
+                9L,
                 "rf-1",
                 "script-1",
                 "plugin-1",
@@ -2950,8 +2958,10 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setTargetRegionEpoch(4L)
             .setCurrentOriginRuntimeRegionId("region-origin-current")
             .setCurrentOriginRuntimeRegionEpoch(13L)
+            .setCurrentOriginRuntimeGameInstanceId("7")
             .setCurrentTargetRuntimeRegionId("region-target-current")
             .setCurrentTargetRuntimeRegionEpoch(14L)
+            .setCurrentTargetRuntimeGameInstanceId("9")
             .setFollowupId("rf-1")
             .setScriptId("script-1")
             .setPluginId("plugin-1")
@@ -3241,8 +3251,10 @@ class GameSessionControlPlaneGrpcServiceTest {
                 4L,
                 "region-origin-current",
                 13L,
+                7L,
                 "region-target-current",
                 14L,
+                9L,
                 "REMOTE_APPLIED",
                 "script-1",
                 "plugin-1",
@@ -3317,8 +3329,10 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setTargetRegionEpoch(4L)
             .setCurrentOriginRuntimeRegionId("region-origin-current")
             .setCurrentOriginRuntimeRegionEpoch(13L)
+            .setCurrentOriginRuntimeGameInstanceId("7")
             .setCurrentTargetRuntimeRegionId("region-target-current")
             .setCurrentTargetRuntimeRegionEpoch(14L)
+            .setCurrentTargetRuntimeGameInstanceId("9")
             .setOutcome("REMOTE_APPLIED")
             .setScriptId("script-1")
             .setPluginId("plugin-1")
@@ -3481,8 +3495,10 @@ class GameSessionControlPlaneGrpcServiceTest {
                 Mockito.anyLong(),
                 Mockito.anyString(),
                 Mockito.anyLong(),
+                Mockito.nullable(Long.class),
                 Mockito.anyString(),
                 Mockito.anyLong(),
+                Mockito.nullable(Long.class),
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),

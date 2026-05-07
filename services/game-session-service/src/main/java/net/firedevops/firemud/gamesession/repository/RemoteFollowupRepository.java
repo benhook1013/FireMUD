@@ -65,10 +65,14 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
              or currentOrigin.regionId = :currentOriginRuntimeRegionId)
         and (:currentOriginRuntimeRegionEpoch <= 0
              or currentOrigin.regionEpoch = :currentOriginRuntimeRegionEpoch)
+        and (:currentOriginRuntimeGameInstanceId is null
+             or currentOrigin.gameInstanceId = :currentOriginRuntimeGameInstanceId)
         and (:currentTargetRuntimeRegionId = ''
              or currentTarget.regionId = :currentTargetRuntimeRegionId)
         and (:currentTargetRuntimeRegionEpoch <= 0
              or currentTarget.regionEpoch = :currentTargetRuntimeRegionEpoch)
+        and (:currentTargetRuntimeGameInstanceId is null
+             or currentTarget.gameInstanceId = :currentTargetRuntimeGameInstanceId)
         and (:followupId = '' or followup.followupId = :followupId)
         and (:scriptId = '' or followup.scriptId = :scriptId)
         and (:pluginId = '' or followup.pluginId = :pluginId)
@@ -135,8 +139,10 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
       @Param("targetRegionEpoch") long targetRegionEpoch,
       @Param("currentOriginRuntimeRegionId") String currentOriginRuntimeRegionId,
       @Param("currentOriginRuntimeRegionEpoch") long currentOriginRuntimeRegionEpoch,
+      @Param("currentOriginRuntimeGameInstanceId") Long currentOriginRuntimeGameInstanceId,
       @Param("currentTargetRuntimeRegionId") String currentTargetRuntimeRegionId,
       @Param("currentTargetRuntimeRegionEpoch") long currentTargetRuntimeRegionEpoch,
+      @Param("currentTargetRuntimeGameInstanceId") Long currentTargetRuntimeGameInstanceId,
       @Param("followupId") String followupId,
       @Param("scriptId") String scriptId,
       @Param("pluginId") String pluginId,

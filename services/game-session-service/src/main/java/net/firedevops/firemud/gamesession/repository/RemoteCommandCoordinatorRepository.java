@@ -55,10 +55,14 @@ public interface RemoteCommandCoordinatorRepository
              or currentOrigin.regionId = :currentOriginRuntimeRegionId)
         and (:currentOriginRuntimeRegionEpoch = 0
              or currentOrigin.regionEpoch = :currentOriginRuntimeRegionEpoch)
+        and (:currentOriginRuntimeGameInstanceId is null
+             or currentOrigin.gameInstanceId = :currentOriginRuntimeGameInstanceId)
         and (:currentTargetRuntimeRegionId = ''
              or currentTarget.regionId = :currentTargetRuntimeRegionId)
         and (:currentTargetRuntimeRegionEpoch = 0
              or currentTarget.regionEpoch = :currentTargetRuntimeRegionEpoch)
+        and (:currentTargetRuntimeGameInstanceId is null
+             or currentTarget.gameInstanceId = :currentTargetRuntimeGameInstanceId)
         and (:state = '' or coordinator.state = :state)
         and (:followupId = '' or coordinator.followupId = :followupId)
         and (:scriptId = '' or coordinator.scriptId = :scriptId)
@@ -136,8 +140,10 @@ public interface RemoteCommandCoordinatorRepository
       @Param("targetRegionEpoch") long targetRegionEpoch,
       @Param("currentOriginRuntimeRegionId") String currentOriginRuntimeRegionId,
       @Param("currentOriginRuntimeRegionEpoch") long currentOriginRuntimeRegionEpoch,
+      @Param("currentOriginRuntimeGameInstanceId") Long currentOriginRuntimeGameInstanceId,
       @Param("currentTargetRuntimeRegionId") String currentTargetRuntimeRegionId,
       @Param("currentTargetRuntimeRegionEpoch") long currentTargetRuntimeRegionEpoch,
+      @Param("currentTargetRuntimeGameInstanceId") Long currentTargetRuntimeGameInstanceId,
       @Param("state") String state,
       @Param("followupId") String followupId,
       @Param("scriptId") String scriptId,

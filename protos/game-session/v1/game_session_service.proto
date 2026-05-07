@@ -694,6 +694,8 @@ message ListRemoteCommandCoordinatorsRequest {
   int64 followup_queue_source_ordinal = 47;
   int64 followup_queue_source_due_tick_id = 48;
   int64 followup_queue_source_due_at_ms = 49;
+  string current_origin_runtime_game_instance_id = 50;
+  string current_target_runtime_game_instance_id = 51;
 }
 
 message ListRemoteCommandCoordinatorsResponse {
@@ -802,6 +804,8 @@ message ListRemoteFollowupsRequest {
   int64 queue_source_ordinal = 46;
   int64 queue_source_due_tick_id = 47;
   int64 queue_source_due_at_ms = 48;
+  string current_origin_runtime_game_instance_id = 49;
+  string current_target_runtime_game_instance_id = 50;
 }
 
 message RemoteFollowupEntry {
@@ -925,6 +929,8 @@ message ListRemoteFollowupResultsRequest {
   int64 queue_source_ordinal = 46;
   int64 queue_source_due_tick_id = 47;
   int64 queue_source_due_at_ms = 48;
+  string current_origin_runtime_game_instance_id = 49;
+  string current_target_runtime_game_instance_id = 50;
 }
 
 message RemoteFollowupResultEntry {
