@@ -2441,10 +2441,24 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(13L, responseRef.get().getCoordinator().getCurrentOriginRuntimeRegionEpoch());
     assertEquals("7", responseRef.get().getCoordinator().getCurrentOriginRuntimeGameInstanceId());
     assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getCoordinator().getCurrentOriginRuntimePlayableStateScope());
+    assertEquals("world-7", responseRef.get().getCoordinator().getCurrentOriginRuntimeWorldSlug());
+    assertEquals("realm-7", responseRef.get().getCoordinator().getCurrentOriginRuntimeRealmSlug());
+    assertEquals(107L, responseRef.get().getCoordinator().getCurrentOriginRuntimePointerVersion());
+    assertEquals(true, responseRef.get().getCoordinator().getIsOriginRoutingBundleStale());
+    assertEquals(
         "region-target-current",
         responseRef.get().getCoordinator().getCurrentTargetRuntimeRegionId());
     assertEquals(14L, responseRef.get().getCoordinator().getCurrentTargetRuntimeRegionEpoch());
     assertEquals("9", responseRef.get().getCoordinator().getCurrentTargetRuntimeGameInstanceId());
+    assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getCoordinator().getCurrentTargetRuntimePlayableStateScope());
+    assertEquals("world-9", responseRef.get().getCoordinator().getCurrentTargetRuntimeWorldSlug());
+    assertEquals("realm-9", responseRef.get().getCoordinator().getCurrentTargetRuntimeRealmSlug());
+    assertEquals(109L, responseRef.get().getCoordinator().getCurrentTargetRuntimePointerVersion());
+    assertEquals(true, responseRef.get().getCoordinator().getIsTargetRoutingBundleStale());
     assertEquals(55L, responseRef.get().getCoordinator().getTargetDueTickId());
     assertEquals("PENDING_REMOTE", responseRef.get().getCoordinator().getState());
     assertEquals("dispatch-1", responseRef.get().getCoordinator().getAutomationDispatchId());
@@ -2716,10 +2730,30 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(13L, responseRef.get().getCoordinators(0).getCurrentOriginRuntimeRegionEpoch());
     assertEquals("7", responseRef.get().getCoordinators(0).getCurrentOriginRuntimeGameInstanceId());
     assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getCoordinators(0).getCurrentOriginRuntimePlayableStateScope());
+    assertEquals(
+        "world-7", responseRef.get().getCoordinators(0).getCurrentOriginRuntimeWorldSlug());
+    assertEquals(
+        "realm-7", responseRef.get().getCoordinators(0).getCurrentOriginRuntimeRealmSlug());
+    assertEquals(
+        107L, responseRef.get().getCoordinators(0).getCurrentOriginRuntimePointerVersion());
+    assertEquals(true, responseRef.get().getCoordinators(0).getIsOriginRoutingBundleStale());
+    assertEquals(
         "region-target-current",
         responseRef.get().getCoordinators(0).getCurrentTargetRuntimeRegionId());
     assertEquals(14L, responseRef.get().getCoordinators(0).getCurrentTargetRuntimeRegionEpoch());
     assertEquals("9", responseRef.get().getCoordinators(0).getCurrentTargetRuntimeGameInstanceId());
+    assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getCoordinators(0).getCurrentTargetRuntimePlayableStateScope());
+    assertEquals(
+        "world-9", responseRef.get().getCoordinators(0).getCurrentTargetRuntimeWorldSlug());
+    assertEquals(
+        "realm-9", responseRef.get().getCoordinators(0).getCurrentTargetRuntimeRealmSlug());
+    assertEquals(
+        109L, responseRef.get().getCoordinators(0).getCurrentTargetRuntimePointerVersion());
+    assertEquals(true, responseRef.get().getCoordinators(0).getIsTargetRoutingBundleStale());
     assertEquals("7", responseRef.get().getCoordinators(0).getOriginGameInstanceId());
     assertEquals(3L, responseRef.get().getCoordinators(0).getOriginRegionEpoch());
     assertEquals("9", responseRef.get().getCoordinators(0).getTargetGameInstanceId());
@@ -3014,10 +3048,24 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(13L, responseRef.get().getFollowups(0).getCurrentOriginRuntimeRegionEpoch());
     assertEquals("7", responseRef.get().getFollowups(0).getCurrentOriginRuntimeGameInstanceId());
     assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getFollowups(0).getCurrentOriginRuntimePlayableStateScope());
+    assertEquals("world-7", responseRef.get().getFollowups(0).getCurrentOriginRuntimeWorldSlug());
+    assertEquals("realm-7", responseRef.get().getFollowups(0).getCurrentOriginRuntimeRealmSlug());
+    assertEquals(107L, responseRef.get().getFollowups(0).getCurrentOriginRuntimePointerVersion());
+    assertEquals(true, responseRef.get().getFollowups(0).getIsOriginRoutingBundleStale());
+    assertEquals(
         "region-target-current",
         responseRef.get().getFollowups(0).getCurrentTargetRuntimeRegionId());
     assertEquals(14L, responseRef.get().getFollowups(0).getCurrentTargetRuntimeRegionEpoch());
     assertEquals("9", responseRef.get().getFollowups(0).getCurrentTargetRuntimeGameInstanceId());
+    assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getFollowups(0).getCurrentTargetRuntimePlayableStateScope());
+    assertEquals("world-9", responseRef.get().getFollowups(0).getCurrentTargetRuntimeWorldSlug());
+    assertEquals("realm-9", responseRef.get().getFollowups(0).getCurrentTargetRuntimeRealmSlug());
+    assertEquals(109L, responseRef.get().getFollowups(0).getCurrentTargetRuntimePointerVersion());
+    assertEquals(true, responseRef.get().getFollowups(0).getIsTargetRoutingBundleStale());
     assertEquals("tick-batch-7", responseRef.get().getFollowups(0).getClaimedTickBatchId());
     assertEquals("REMOTE_FOLLOWUP", responseRef.get().getFollowups(0).getQueueSourceKind());
     assertEquals("TARGET_REGION_CLAIMED", responseRef.get().getFollowups(0).getQueueSourceState());
@@ -3385,9 +3433,23 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(13L, responseRef.get().getResults(0).getCurrentOriginRuntimeRegionEpoch());
     assertEquals("7", responseRef.get().getResults(0).getCurrentOriginRuntimeGameInstanceId());
     assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getResults(0).getCurrentOriginRuntimePlayableStateScope());
+    assertEquals("world-7", responseRef.get().getResults(0).getCurrentOriginRuntimeWorldSlug());
+    assertEquals("realm-7", responseRef.get().getResults(0).getCurrentOriginRuntimeRealmSlug());
+    assertEquals(107L, responseRef.get().getResults(0).getCurrentOriginRuntimePointerVersion());
+    assertEquals(true, responseRef.get().getResults(0).getIsOriginRoutingBundleStale());
+    assertEquals(
         "region-target-current", responseRef.get().getResults(0).getCurrentTargetRuntimeRegionId());
     assertEquals(14L, responseRef.get().getResults(0).getCurrentTargetRuntimeRegionEpoch());
     assertEquals("9", responseRef.get().getResults(0).getCurrentTargetRuntimeGameInstanceId());
+    assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getResults(0).getCurrentTargetRuntimePlayableStateScope());
+    assertEquals("world-9", responseRef.get().getResults(0).getCurrentTargetRuntimeWorldSlug());
+    assertEquals("realm-9", responseRef.get().getResults(0).getCurrentTargetRuntimeRealmSlug());
+    assertEquals(109L, responseRef.get().getResults(0).getCurrentTargetRuntimePointerVersion());
+    assertEquals(true, responseRef.get().getResults(0).getIsTargetRoutingBundleStale());
     assertEquals("cmd-1", responseRef.get().getResults(0).getCommandId());
     assertEquals("dispatch-1", responseRef.get().getResults(0).getAutomationDispatchId());
     assertEquals("work-1", responseRef.get().getResults(0).getAutomationWorkItemId());
@@ -3589,9 +3651,23 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(13L, responseRef.get().getResults(0).getCurrentOriginRuntimeRegionEpoch());
     assertEquals("7", responseRef.get().getResults(0).getCurrentOriginRuntimeGameInstanceId());
     assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getResults(0).getCurrentOriginRuntimePlayableStateScope());
+    assertEquals("world-7", responseRef.get().getResults(0).getCurrentOriginRuntimeWorldSlug());
+    assertEquals("realm-7", responseRef.get().getResults(0).getCurrentOriginRuntimeRealmSlug());
+    assertEquals(107L, responseRef.get().getResults(0).getCurrentOriginRuntimePointerVersion());
+    assertEquals(true, responseRef.get().getResults(0).getIsOriginRoutingBundleStale());
+    assertEquals(
         "region-target-current", responseRef.get().getResults(0).getCurrentTargetRuntimeRegionId());
     assertEquals(14L, responseRef.get().getResults(0).getCurrentTargetRuntimeRegionEpoch());
     assertEquals("9", responseRef.get().getResults(0).getCurrentTargetRuntimeGameInstanceId());
+    assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getResults(0).getCurrentTargetRuntimePlayableStateScope());
+    assertEquals("world-9", responseRef.get().getResults(0).getCurrentTargetRuntimeWorldSlug());
+    assertEquals("realm-9", responseRef.get().getResults(0).getCurrentTargetRuntimeRealmSlug());
+    assertEquals(109L, responseRef.get().getResults(0).getCurrentTargetRuntimePointerVersion());
+    assertEquals(true, responseRef.get().getResults(0).getIsTargetRoutingBundleStale());
     assertEquals("TIMEOUT", responseRef.get().getResults(0).getResultErrorCode());
     assertEquals(
         "Target region timed out the remote gameplay command",
@@ -3949,8 +4025,41 @@ class GameSessionControlPlaneGrpcServiceTest {
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       RemoteFollowupRuntimeService remoteFollowupRuntimeService,
       GameDesignClient gameDesignClient) {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    Mockito.when(gameInstanceRepository.findById(Mockito.anyLong()))
+        .thenAnswer(
+            invocation -> {
+              Long gameInstanceId = invocation.getArgument(0, Long.class);
+              GameInstance instance = new GameInstance();
+              instance.setId(gameInstanceId);
+              instance.setTenantId(1L);
+              return Optional.of(instance);
+            });
+    GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(
+            gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(
+                Mockito.eq(1L), Mockito.anyLong()))
+        .thenAnswer(
+            invocation -> {
+              Long gameInstanceId = invocation.getArgument(1, Long.class);
+              return Optional.of(
+                  new net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot(
+                      "world-" + gameInstanceId,
+                      "World " + gameInstanceId,
+                      "realm-" + gameInstanceId,
+                      "Realm " + gameInstanceId,
+                      1L,
+                      gameInstanceId,
+                      gameInstanceId + 100L,
+                      true,
+                      true,
+                      true,
+                      gameInstanceId % 2 == 0 ? "ISOLATED" : "SHARED",
+                      "interactive"));
+            });
     return new GameSessionControlPlaneGrpcService(
-        Mockito.mock(GameInstanceRepository.class),
+        gameInstanceRepository,
         gameplayCommandRepository == null
             ? Mockito.mock(GameplayCommandRepository.class)
             : gameplayCommandRepository,
@@ -3967,7 +4076,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             ? Mockito.mock(RemoteFollowupResultRepository.class)
             : remoteFollowupResultRepository,
         remoteFollowupRuntimeService,
-        Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+        gameplayAdmissionPointerAuthorityService,
         Mockito.mock(InstanceCutoverCompatibilityService.class),
         Mockito.mock(VersionUpgradePreparationService.class),
         gameDesignClient,

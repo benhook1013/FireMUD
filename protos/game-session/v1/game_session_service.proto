@@ -637,6 +637,16 @@ message RemoteCommandCoordinatorEntry {
   int64 followup_queue_source_due_at_ms = 70;
   string current_origin_runtime_game_instance_id = 71;
   string current_target_runtime_game_instance_id = 72;
+  entity_management.v1.PlayableStateScope current_origin_runtime_playable_state_scope = 73;
+  string current_origin_runtime_world_slug = 74;
+  string current_origin_runtime_realm_slug = 75;
+  int64 current_origin_runtime_pointer_version = 76;
+  entity_management.v1.PlayableStateScope current_target_runtime_playable_state_scope = 77;
+  string current_target_runtime_world_slug = 78;
+  string current_target_runtime_realm_slug = 79;
+  int64 current_target_runtime_pointer_version = 80;
+  bool is_origin_routing_bundle_stale = 81;
+  bool is_target_routing_bundle_stale = 82;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -873,6 +883,16 @@ message RemoteFollowupEntry {
   int64 queue_source_due_at_ms = 62;
   string current_origin_runtime_game_instance_id = 63;
   string current_target_runtime_game_instance_id = 64;
+  entity_management.v1.PlayableStateScope current_origin_runtime_playable_state_scope = 65;
+  string current_origin_runtime_world_slug = 66;
+  string current_origin_runtime_realm_slug = 67;
+  int64 current_origin_runtime_pointer_version = 68;
+  entity_management.v1.PlayableStateScope current_target_runtime_playable_state_scope = 69;
+  string current_target_runtime_world_slug = 70;
+  string current_target_runtime_realm_slug = 71;
+  int64 current_target_runtime_pointer_version = 72;
+  bool is_origin_routing_bundle_stale = 73;
+  bool is_target_routing_bundle_stale = 74;
 }
 
 message ListRemoteFollowupsResponse {
@@ -997,6 +1017,16 @@ message RemoteFollowupResultEntry {
   int64 queue_source_due_at_ms = 61;
   string current_origin_runtime_game_instance_id = 62;
   string current_target_runtime_game_instance_id = 63;
+  entity_management.v1.PlayableStateScope current_origin_runtime_playable_state_scope = 64;
+  string current_origin_runtime_world_slug = 65;
+  string current_origin_runtime_realm_slug = 66;
+  int64 current_origin_runtime_pointer_version = 67;
+  entity_management.v1.PlayableStateScope current_target_runtime_playable_state_scope = 68;
+  string current_target_runtime_world_slug = 69;
+  string current_target_runtime_realm_slug = 70;
+  int64 current_target_runtime_pointer_version = 71;
+  bool is_origin_routing_bundle_stale = 72;
+  bool is_target_routing_bundle_stale = 73;
 }
 
 message ListRemoteFollowupResultsResponse {
