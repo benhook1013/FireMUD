@@ -50,8 +50,14 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     Optional<ScriptPatchPinProjection> existing =
         repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
     if (existing.isEmpty() || isStale(existing.get(), now)) {
+      String regionId =
+          existing
+              .map(ScriptPatchPinProjection::getRuntimeRegionId)
+              .map(ScriptPatchPinProjectionServiceImpl::blankToEmpty)
+              .orElse("");
       GetGameInstanceRuntimeStateResponse runtime =
-          gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, gameInstanceId);
+          gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+              tenantId, gameInstanceId, regionId);
       if (runtime.hasRuntimeState()) {
         ScriptPatchPinProjection refreshed =
             saveObservation(

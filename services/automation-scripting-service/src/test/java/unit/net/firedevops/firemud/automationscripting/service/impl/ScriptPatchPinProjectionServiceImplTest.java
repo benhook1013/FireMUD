@@ -28,7 +28,7 @@ class ScriptPatchPinProjectionServiceImplTest {
         .thenReturn(Optional.empty());
     Mockito.when(repository.save(Mockito.any(ScriptPatchPinProjection.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    Mockito.when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    Mockito.when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", ""))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -92,7 +92,8 @@ class ScriptPatchPinProjectionServiceImplTest {
         Mockito.mock(GameSessionControlPlaneClient.class);
     Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
         .thenReturn(Optional.of(existing));
-    Mockito.when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    Mockito.when(
+            gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-4"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setError(
