@@ -714,6 +714,8 @@ class PluginRuntimeStateServiceImplTest {
     PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
     GameDesignControlPlaneClient gameDesignClient =
         Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
     when(repository
             .findByTenantIdAndGameInstanceIdAndPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
                 Mockito.eq("1"),
@@ -726,6 +728,16 @@ class PluginRuntimeStateServiceImplTest {
         .thenReturn(
             publishedPluginVersion(
                 PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_BLOCKED, false));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setRegionId("region-7")
+                        .build())
+                .build());
     active.setRuntimeRegionId("region-7");
     active.setRuntimeRegionEpoch(12L);
     PluginRuntimeStateService service =
@@ -733,7 +745,7 @@ class PluginRuntimeStateServiceImplTest {
             repository,
             eventRepository,
             gameDesignClient,
-            Mockito.mock(GameSessionControlPlaneClient.class),
+            gameSessionClient,
             Mockito.mock(ScriptScheduleInstanceService.class));
 
     PluginRuntimeStateService.PluginPolicyConvergence convergence =
@@ -750,6 +762,52 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(convergence.violations().get(0).activePublication()).isNotNull();
     assertThat(convergence.violations().get(0).activePublication().pluginVersionId())
         .isEqualTo("plugin-v1");
+  }
+
+  @Test
+  void policyConvergenceIgnoresStatesFromDifferentObservedRuntimeRegion() {
+    PluginRuntimeState active = activePluginState();
+    active.setRuntimeRegionId("region-stale");
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(repository
+            .findByTenantIdAndGameInstanceIdAndPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+                Mockito.eq("1"),
+                Mockito.eq("game-1"),
+                Mockito.eq(PluginState.PLUGIN_STATE_ENABLED.name()),
+                Mockito.eq(""),
+                Mockito.any()))
+        .thenReturn(List.of(active));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setRegionId("region-live")
+                        .build())
+                .build());
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            Mockito.mock(ScriptScheduleInstanceService.class));
+
+    PluginRuntimeStateService.PluginPolicyConvergence convergence =
+        service.getPluginPolicyConvergence("1", "game-1", 10);
+
+    assertThat(convergence.inspectedCount()).isZero();
+    assertThat(convergence.failClosedCount()).isZero();
+    assertThat(convergence.converged()).isTrue();
+    assertThat(convergence.violations()).isEmpty();
+    Mockito.verifyNoInteractions(gameDesignClient);
   }
 
   @Test

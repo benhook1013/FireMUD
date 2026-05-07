@@ -296,6 +296,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       String tenantId, String gameInstanceId, int maxResults) {
     requireText(tenantId, "tenant_id");
     int limit = Math.max(1, maxResults <= 0 ? 100 : maxResults);
+    String runtimeRegionId =
+        normalize(gameInstanceId).isBlank() ? "" : currentRuntimeRegionId(tenantId, gameInstanceId);
     List<PluginRuntimeState> activeStates =
         normalize(gameInstanceId).isBlank()
             ? repository
@@ -308,6 +310,10 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
                     PluginState.PLUGIN_STATE_ENABLED.name(),
                     "",
                     PageRequest.of(0, limit));
+    activeStates =
+        activeStates.stream()
+            .filter(state -> matchesRuntimeRegion(state, runtimeRegionId))
+            .toList();
     long evaluatedAtMs = Instant.now().toEpochMilli();
     List<PluginPolicyViolation> violations =
         activeStates.stream()
@@ -378,6 +384,25 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         normalize(saved.getActorPrincipal()),
         now);
     reconcileSchedules(saved);
+  }
+
+  private String currentRuntimeRegionId(String tenantId, String gameInstanceId) {
+    GetGameInstanceRuntimeStateResponse runtime =
+        gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, gameInstanceId, "");
+    if (runtime == null
+        || (runtime.hasError() && !runtime.getError().getCode().isBlank())
+        || !runtime.hasRuntimeState()) {
+      return "";
+    }
+    return normalize(runtime.getRuntimeState().getRegionId());
+  }
+
+  private static boolean matchesRuntimeRegion(PluginRuntimeState state, String runtimeRegionId) {
+    String stateRegionId = normalize(state.getRuntimeRegionId());
+    if (runtimeRegionId.isBlank() || stateRegionId.isBlank()) {
+      return true;
+    }
+    return stateRegionId.equals(runtimeRegionId);
   }
 
   private void transition(
