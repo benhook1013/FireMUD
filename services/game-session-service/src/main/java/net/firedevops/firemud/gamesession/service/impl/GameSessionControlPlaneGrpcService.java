@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
@@ -3317,6 +3318,14 @@ public final class GameSessionControlPlaneGrpcService
     if (command.getQueueSourceDueAtMs() != null) {
       builder.setQueueSourceDueAtMs(command.getQueueSourceDueAtMs());
     }
+    currentRuntimeOwnership(command)
+        .ifPresent(
+            ownership -> {
+              if (ownership.getRegionId() != null && !ownership.getRegionId().isBlank()) {
+                builder.setCurrentRuntimeRegionId(ownership.getRegionId());
+              }
+              builder.setCurrentRuntimeRegionEpoch(ownership.getRegionEpoch());
+            });
     if (remoteCoordinator != null) {
       builder.setRemoteCoordinatorId(remoteCoordinator.getCoordinatorId());
       builder.setRemoteFollowupId(remoteCoordinator.getFollowupId());
@@ -3436,6 +3445,17 @@ public final class GameSessionControlPlaneGrpcService
               command.getTenantId(), command.getPluginId(), command.getPluginVersionId()));
     }
     return builder.build();
+  }
+
+  private Optional<RuntimeRegionStatus> currentRuntimeOwnership(GameplayCommand command) {
+    if (command.getTenantId() == null
+        || command.getTenantId() <= 0
+        || command.getGameInstanceId() == null
+        || command.getGameInstanceId() <= 0) {
+      return Optional.empty();
+    }
+    return runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(
+        command.getTenantId(), command.getGameInstanceId());
   }
 
   private RemoteCommandCoordinator resolveRemoteCoordinator(GameplayCommand command) {

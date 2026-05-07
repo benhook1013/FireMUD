@@ -520,6 +520,8 @@ message GameplayCommandStatus {
   string remote_followup_script_event_id = 82;
   string remote_followup_trigger_mode = 83;
   string remote_followup_claim_target_aggregate = 84;
+  string current_runtime_region_id = 85;
+  int64 current_runtime_region_epoch = 86;
 }
 
 message GetGameplayCommandStatusResponse {

@@ -1251,12 +1251,21 @@ class GameSessionControlPlaneGrpcServiceTest {
                         .setLastChangedAtMs(175L)
                         .build())
                 .build());
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    RuntimeRegionStatus currentOwnership = new RuntimeRegionStatus();
+    currentOwnership.setTenantId(1L);
+    currentOwnership.setGameInstanceId(7L);
+    currentOwnership.setRegionId("runtime-region-7");
+    currentOwnership.setRegionEpoch(22L);
+    Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 7L))
+        .thenReturn(Optional.of(currentOwnership));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
             commandRepository,
-            Mockito.mock(RuntimeRegionStatusRepository.class),
+            runtimeRegionStatusRepository,
             remoteFollowupRepository,
             remoteCommandCoordinatorRepository,
             remoteFollowupResultRepository,
@@ -1289,6 +1298,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("demo", responseRef.get().getCommand().getWorldSlug());
     assertEquals("production", responseRef.get().getCommand().getRealmSlug());
     assertEquals(17L, responseRef.get().getCommand().getPointerVersion());
+    assertEquals("runtime-region-7", responseRef.get().getCommand().getCurrentRuntimeRegionId());
+    assertEquals(22L, responseRef.get().getCommand().getCurrentRuntimeRegionEpoch());
     assertEquals("plugin-1", responseRef.get().getCommand().getPluginId());
     assertEquals("plugin-v1", responseRef.get().getCommand().getPluginVersionId());
     assertEquals(
@@ -1455,12 +1466,21 @@ class GameSessionControlPlaneGrpcServiceTest {
                         .setLastChangedAtMs(275L)
                         .build())
                 .build());
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    RuntimeRegionStatus currentOwnership = new RuntimeRegionStatus();
+    currentOwnership.setTenantId(1L);
+    currentOwnership.setGameInstanceId(7L);
+    currentOwnership.setRegionId("runtime-region-7");
+    currentOwnership.setRegionEpoch(19L);
+    Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 7L))
+        .thenReturn(Optional.of(currentOwnership));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
             commandRepository,
-            Mockito.mock(RuntimeRegionStatusRepository.class),
+            runtimeRegionStatusRepository,
             Mockito.mock(RemoteFollowupRepository.class),
             remoteCommandCoordinatorRepository,
             remoteFollowupResultRepository,
@@ -1510,6 +1530,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("ops", responseRef.get().getCommand().getWorldSlug());
     assertEquals("preview", responseRef.get().getCommand().getRealmSlug());
     assertEquals(29L, responseRef.get().getCommand().getPointerVersion());
+    assertEquals("runtime-region-7", responseRef.get().getCommand().getCurrentRuntimeRegionId());
+    assertEquals(19L, responseRef.get().getCommand().getCurrentRuntimeRegionEpoch());
     assertEquals("plugin-2", responseRef.get().getCommand().getPluginId());
     assertEquals("plugin-v2", responseRef.get().getCommand().getPluginVersionId());
     assertEquals(
@@ -1607,12 +1629,21 @@ class GameSessionControlPlaneGrpcServiceTest {
                         .setLastChangedAtMs(250L)
                         .build())
                 .build());
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    RuntimeRegionStatus currentOwnership = new RuntimeRegionStatus();
+    currentOwnership.setTenantId(1L);
+    currentOwnership.setGameInstanceId(7L);
+    currentOwnership.setRegionId("runtime-region-9");
+    currentOwnership.setRegionEpoch(14L);
+    Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 7L))
+        .thenReturn(Optional.of(currentOwnership));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
             Mockito.mock(GameInstanceRepository.class),
             commandRepository,
-            Mockito.mock(RuntimeRegionStatusRepository.class),
+            runtimeRegionStatusRepository,
             Mockito.mock(RemoteFollowupRepository.class),
             remoteCommandCoordinatorRepository,
             remoteFollowupResultRepository,
@@ -1638,6 +1669,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("rfcmd-followup-2", responseRef.get().getCommand().getCommandId());
     assertEquals("coord-2", responseRef.get().getCommand().getRemoteCoordinatorId());
     assertEquals("followup-2", responseRef.get().getCommand().getRemoteFollowupId());
+    assertEquals("runtime-region-9", responseRef.get().getCommand().getCurrentRuntimeRegionId());
+    assertEquals(14L, responseRef.get().getCommand().getCurrentRuntimeRegionEpoch());
     assertEquals("REMOTE_APPLIED", responseRef.get().getCommand().getRemoteState());
     assertEquals("region-origin", responseRef.get().getCommand().getRemoteOriginRegionId());
     assertEquals(7L, responseRef.get().getCommand().getRemoteOriginRegionEpoch());
