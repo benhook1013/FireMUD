@@ -726,6 +726,8 @@ class PluginRuntimeStateServiceImplTest {
         .thenReturn(
             publishedPluginVersion(
                 PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_BLOCKED, false));
+    active.setRuntimeRegionId("region-7");
+    active.setRuntimeRegionEpoch(12L);
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
             repository,
@@ -741,6 +743,8 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(convergence.failClosedCount()).isEqualTo(1);
     assertThat(convergence.converged()).isFalse();
     assertThat(convergence.violations()).hasSize(1);
+    assertThat(convergence.violations().get(0).runtimeRegionId()).isEqualTo("region-7");
+    assertThat(convergence.violations().get(0).runtimeRegionEpoch()).isEqualTo(12L);
     assertThat(convergence.violations().get(0).reason())
         .isEqualTo("plugin_component_policy_blocked");
     assertThat(convergence.violations().get(0).activePublication()).isNotNull();

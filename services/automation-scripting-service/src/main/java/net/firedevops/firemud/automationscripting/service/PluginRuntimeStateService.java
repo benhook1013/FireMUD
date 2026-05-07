@@ -63,6 +63,8 @@ public interface PluginRuntimeStateService {
 
   record PluginPolicyViolation(
       String gameInstanceId,
+      String runtimeRegionId,
+      long runtimeRegionEpoch,
       String pluginId,
       String activePluginVersionId,
       String reason,

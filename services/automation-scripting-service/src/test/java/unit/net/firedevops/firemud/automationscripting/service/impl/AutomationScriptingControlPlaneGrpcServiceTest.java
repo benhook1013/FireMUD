@@ -1374,6 +1374,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 List.of(
                     new PluginRuntimeStateService.PluginPolicyViolation(
                         "game-1",
+                        "region-7",
+                        12L,
                         "plugin-1",
                         "plugin-v1",
                         "signer_revoked",
@@ -1410,6 +1412,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvaluatedAtMs()).isEqualTo(evaluatedAtMs);
     assertThat(ref.get().getIsStale()).isFalse();
     assertThat(ref.get().getViolationsList()).hasSize(1);
+    assertThat(ref.get().getViolations(0).getRuntimeRegionId()).isEqualTo("region-7");
+    assertThat(ref.get().getViolations(0).getRuntimeRegionEpoch()).isEqualTo(12L);
     assertThat(ref.get().getViolations(0).getPluginId()).isEqualTo("plugin-1");
     assertThat(ref.get().getViolations(0).getActivePublication().getPublicationId()).isEqualTo(17L);
   }

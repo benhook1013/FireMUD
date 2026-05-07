@@ -887,6 +887,8 @@ public final class AutomationScriptingControlPlaneGrpcService
     PluginPolicyViolation.Builder builder =
         PluginPolicyViolation.newBuilder()
             .setGameInstanceId(violation.gameInstanceId())
+            .setRuntimeRegionId(violation.runtimeRegionId())
+            .setRuntimeRegionEpoch(violation.runtimeRegionEpoch())
             .setPluginId(violation.pluginId())
             .setActivePluginVersionId(violation.activePluginVersionId())
             .setReason(violation.reason())

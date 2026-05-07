@@ -329,6 +329,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
             reason ->
                 new PluginPolicyViolation(
                     state.getGameInstanceId(),
+                    normalize(state.getRuntimeRegionId()),
+                    zeroIfNull(state.getRuntimeRegionEpoch()),
                     state.getPluginId(),
                     activePluginVersionId,
                     reason,
