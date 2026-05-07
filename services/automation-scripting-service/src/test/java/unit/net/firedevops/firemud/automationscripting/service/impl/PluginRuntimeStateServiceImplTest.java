@@ -494,17 +494,21 @@ class PluginRuntimeStateServiceImplTest {
                             PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
                         .build())
                 .build());
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
-        .thenReturn(
-            GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setRuntimeState(
-                    GameInstanceRuntimeState.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("game-1")
-                        .setRuntimeVersionId("7")
-                        .setStatus("RUNNING")
-                        .build())
-                .build());
+    GetGameInstanceRuntimeStateResponse runtimeState =
+        GetGameInstanceRuntimeStateResponse.newBuilder()
+            .setRuntimeState(
+                GameInstanceRuntimeState.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setRegionId("region-7")
+                    .setRegionEpoch(12L)
+                    .setRuntimeVersionId("7")
+                    .setStatus("RUNNING")
+                    .build())
+            .build();
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "")).thenReturn(runtimeState);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
+        .thenReturn(runtimeState);
     when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
         .thenReturn(
             GetPublishedReleaseBundleResponse.newBuilder()
@@ -563,17 +567,21 @@ class PluginRuntimeStateServiceImplTest {
                             PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
                         .build())
                 .build());
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
-        .thenReturn(
-            GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setRuntimeState(
-                    GameInstanceRuntimeState.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("game-1")
-                        .setRuntimeVersionId("7")
-                        .setStatus("RUNNING")
-                        .build())
-                .build());
+    GetGameInstanceRuntimeStateResponse runtimeState =
+        GetGameInstanceRuntimeStateResponse.newBuilder()
+            .setRuntimeState(
+                GameInstanceRuntimeState.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setRegionId("region-7")
+                    .setRegionEpoch(12L)
+                    .setRuntimeVersionId("7")
+                    .setStatus("RUNNING")
+                    .build())
+            .build();
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "")).thenReturn(runtimeState);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
+        .thenReturn(runtimeState);
     when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
         .thenReturn(
             GetPublishedReleaseBundleResponse.newBuilder()
@@ -790,6 +798,55 @@ class PluginRuntimeStateServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setRegionId("region-live")
+                        .setRegionEpoch(12L)
+                        .build())
+                .build());
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            Mockito.mock(ScriptScheduleInstanceService.class));
+
+    PluginRuntimeStateService.PluginPolicyConvergence convergence =
+        service.getPluginPolicyConvergence("1", "game-1", 10);
+
+    assertThat(convergence.inspectedCount()).isZero();
+    assertThat(convergence.failClosedCount()).isZero();
+    assertThat(convergence.converged()).isTrue();
+    assertThat(convergence.violations()).isEmpty();
+    Mockito.verifyNoInteractions(gameDesignClient);
+  }
+
+  @Test
+  void policyConvergenceIgnoresStatesFromDifferentObservedRuntimeEpoch() {
+    PluginRuntimeState active = activePluginState();
+    active.setRuntimeRegionId("region-7");
+    active.setRuntimeRegionEpoch(11L);
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(repository
+            .findByTenantIdAndGameInstanceIdAndPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
+                Mockito.eq("1"),
+                Mockito.eq("game-1"),
+                Mockito.eq(PluginState.PLUGIN_STATE_ENABLED.name()),
+                Mockito.eq(""),
+                Mockito.any()))
+        .thenReturn(List.of(active));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setRegionId("region-7")
+                        .setRegionEpoch(12L)
                         .build())
                 .build());
     PluginRuntimeStateService service =
@@ -827,17 +884,21 @@ class PluginRuntimeStateServiceImplTest {
         .thenReturn(
             publishedPluginVersion(
                 PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED, false));
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
-        .thenReturn(
-            GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setRuntimeState(
-                    GameInstanceRuntimeState.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("game-1")
-                        .setRuntimeVersionId("7")
-                        .setStatus("RUNNING")
-                        .build())
-                .build());
+    GetGameInstanceRuntimeStateResponse runtimeState =
+        GetGameInstanceRuntimeStateResponse.newBuilder()
+            .setRuntimeState(
+                GameInstanceRuntimeState.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setRegionId("region-7")
+                    .setRegionEpoch(12L)
+                    .setRuntimeVersionId("7")
+                    .setStatus("RUNNING")
+                    .build())
+            .build();
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "")).thenReturn(runtimeState);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
+        .thenReturn(runtimeState);
     when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
         .thenReturn(
             GetPublishedReleaseBundleResponse.newBuilder()
@@ -952,6 +1013,8 @@ class PluginRuntimeStateServiceImplTest {
     PluginRuntimeState active = new PluginRuntimeState();
     active.setTenantId("1");
     active.setGameInstanceId("game-1");
+    active.setRuntimeRegionId("region-7");
+    active.setRuntimeRegionEpoch(12L);
     active.setPluginId("plugin-1");
     active.setActivePluginVersionId("plugin-v1");
     active.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());

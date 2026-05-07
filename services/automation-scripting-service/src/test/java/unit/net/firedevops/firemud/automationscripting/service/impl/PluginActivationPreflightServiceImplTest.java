@@ -39,7 +39,7 @@ class PluginActivationPreflightServiceImplTest {
     when(runtimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
         .thenReturn(List.of());
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
-        .thenReturn(runtimeStateResponse("region-1"));
+        .thenReturn(runtimeStateResponse("region-1", 7L));
     when(gameSessionClient.validateBuiltInCommandAlias("warp"))
         .thenReturn(ValidateBuiltInCommandAliasResponse.newBuilder().build());
     PluginActivationPreflightServiceImpl service =
@@ -82,7 +82,7 @@ class PluginActivationPreflightServiceImplTest {
     when(runtimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
         .thenReturn(List.of());
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
-        .thenReturn(runtimeStateResponse("region-1"));
+        .thenReturn(runtimeStateResponse("region-1", 7L));
     when(gameSessionClient.validateBuiltInCommandAlias("look"))
         .thenReturn(
             ValidateBuiltInCommandAliasResponse.newBuilder()
@@ -130,7 +130,7 @@ class PluginActivationPreflightServiceImplTest {
         .thenReturn(
             List.of(activePlugin("market-bell", "market-bell-v1"), disabledPlugin("town-crier")));
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
-        .thenReturn(runtimeStateResponse("region-1"));
+        .thenReturn(runtimeStateResponse("region-1", 7L));
     PluginActivationPreflightServiceImpl service =
         new PluginActivationPreflightServiceImpl(
             definitionRepository,
@@ -170,10 +170,50 @@ class PluginActivationPreflightServiceImplTest {
                 binding("plugin-town-crier", "onEnterRegion", "REGION", "market-square", true)));
     PluginRuntimeState staleRegion = activePlugin("market-bell", "market-bell-v1");
     staleRegion.setRuntimeRegionId("region-stale");
+    staleRegion.setRuntimeRegionEpoch(7L);
     when(runtimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
         .thenReturn(List.of(staleRegion));
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
-        .thenReturn(runtimeStateResponse("region-live"));
+        .thenReturn(runtimeStateResponse("region-live", 7L));
+    PluginActivationPreflightServiceImpl service =
+        new PluginActivationPreflightServiceImpl(
+            definitionRepository,
+            bindingRepository,
+            runtimeStateRepository,
+            gameSessionClient,
+            new ObjectMapper());
+
+    service.validateActivation("1", "game-1", "patch-1", "town-crier", "town-crier-v2");
+  }
+
+  @Test
+  void ignoresActivePluginRowsFromDifferentObservedRuntimeEpoch() {
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    PluginRuntimeStateRepository runtimeStateRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(definitionRepository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
+        .thenReturn(
+            List.of(
+                pluginScript("plugin-market-bell", "market-bell", "market-bell-v1"),
+                pluginScript("plugin-town-crier", "town-crier", "town-crier-v2")));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(
+            List.of(
+                binding("plugin-market-bell", "onEnterRegion", "REGION", "market-square", false),
+                binding("plugin-town-crier", "onEnterRegion", "REGION", "market-square", true)));
+    PluginRuntimeState staleEpoch = activePlugin("market-bell", "market-bell-v1");
+    staleEpoch.setRuntimeRegionEpoch(6L);
+    when(runtimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(List.of(staleEpoch));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
+        .thenReturn(runtimeStateResponse("region-1", 7L));
     PluginActivationPreflightServiceImpl service =
         new PluginActivationPreflightServiceImpl(
             definitionRepository,
@@ -239,6 +279,7 @@ class PluginActivationPreflightServiceImplTest {
     state.setTenantId("1");
     state.setGameInstanceId("game-1");
     state.setRuntimeRegionId("region-1");
+    state.setRuntimeRegionEpoch(7L);
     state.setPluginId(pluginId);
     state.setActivePluginVersionId(pluginVersionId);
     state.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
@@ -254,11 +295,13 @@ class PluginActivationPreflightServiceImplTest {
     return state;
   }
 
-  private static GetGameInstanceRuntimeStateResponse runtimeStateResponse(String regionId) {
+  private static GetGameInstanceRuntimeStateResponse runtimeStateResponse(
+      String regionId, long regionEpoch) {
     return GetGameInstanceRuntimeStateResponse.newBuilder()
         .setRuntimeState(
             net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
-                .setRegionId(regionId))
+                .setRegionId(regionId)
+                .setRegionEpoch(regionEpoch))
         .build();
   }
 }

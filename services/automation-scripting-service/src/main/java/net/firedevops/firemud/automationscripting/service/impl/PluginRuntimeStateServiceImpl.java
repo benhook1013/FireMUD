@@ -296,8 +296,10 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       String tenantId, String gameInstanceId, int maxResults) {
     requireText(tenantId, "tenant_id");
     int limit = Math.max(1, maxResults <= 0 ? 100 : maxResults);
-    String runtimeRegionId =
-        normalize(gameInstanceId).isBlank() ? "" : currentRuntimeRegionId(tenantId, gameInstanceId);
+    RuntimeScope runtimeScope =
+        normalize(gameInstanceId).isBlank()
+            ? RuntimeScope.UNKNOWN
+            : currentRuntimeScope(tenantId, gameInstanceId);
     List<PluginRuntimeState> activeStates =
         normalize(gameInstanceId).isBlank()
             ? repository
@@ -311,9 +313,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
                     "",
                     PageRequest.of(0, limit));
     activeStates =
-        activeStates.stream()
-            .filter(state -> matchesRuntimeRegion(state, runtimeRegionId))
-            .toList();
+        activeStates.stream().filter(state -> matchesRuntimeScope(state, runtimeScope)).toList();
     long evaluatedAtMs = Instant.now().toEpochMilli();
     List<PluginPolicyViolation> violations =
         activeStates.stream()
@@ -386,23 +386,38 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     reconcileSchedules(saved);
   }
 
-  private String currentRuntimeRegionId(String tenantId, String gameInstanceId) {
+  private RuntimeScope currentRuntimeScope(String tenantId, String gameInstanceId) {
     GetGameInstanceRuntimeStateResponse runtime =
         gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, gameInstanceId, "");
     if (runtime == null
         || (runtime.hasError() && !runtime.getError().getCode().isBlank())
         || !runtime.hasRuntimeState()) {
-      return "";
+      return RuntimeScope.UNKNOWN;
     }
-    return normalize(runtime.getRuntimeState().getRegionId());
+    return new RuntimeScope(
+        normalize(runtime.getRuntimeState().getRegionId()),
+        runtime.getRuntimeState().getRegionEpoch());
   }
 
-  private static boolean matchesRuntimeRegion(PluginRuntimeState state, String runtimeRegionId) {
-    String stateRegionId = normalize(state.getRuntimeRegionId());
-    if (runtimeRegionId.isBlank() || stateRegionId.isBlank()) {
+  private static boolean matchesRuntimeScope(PluginRuntimeState state, RuntimeScope runtimeScope) {
+    if (!runtimeScope.known()) {
       return true;
     }
-    return stateRegionId.equals(runtimeRegionId);
+    String stateRegionId = normalize(state.getRuntimeRegionId());
+    long stateRegionEpoch = zeroIfNull(state.getRuntimeRegionEpoch());
+    if (stateRegionId.isBlank() || stateRegionEpoch <= 0) {
+      return false;
+    }
+    return stateRegionId.equals(runtimeScope.regionId())
+        && stateRegionEpoch == runtimeScope.regionEpoch();
+  }
+
+  private record RuntimeScope(String regionId, long regionEpoch) {
+    private static final RuntimeScope UNKNOWN = new RuntimeScope("", 0L);
+
+    private boolean known() {
+      return !regionId.isBlank() && regionEpoch > 0;
+    }
   }
 
   private void transition(

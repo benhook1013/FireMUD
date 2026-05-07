@@ -89,9 +89,9 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
       return;
     }
 
-    String runtimeRegionId = currentRuntimeRegionId(tenantId, gameInstanceId);
+    RuntimeScope runtimeScope = currentRuntimeScope(tenantId, gameInstanceId);
     Map<String, String> activePluginVersions =
-        activePluginVersions(tenantId, gameInstanceId, runtimeRegionId);
+        activePluginVersions(tenantId, gameInstanceId, runtimeScope);
     List<ResolvedBinding> existingBindings =
         allBindings.stream()
             .filter(ResolvedBinding::enabled)
@@ -158,14 +158,14 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
   }
 
   private Map<String, String> activePluginVersions(
-      String tenantId, String gameInstanceId, String runtimeRegionId) {
+      String tenantId, String gameInstanceId, RuntimeScope runtimeScope) {
     Map<String, String> active = new LinkedHashMap<>();
     for (PluginRuntimeState state :
         pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)) {
       if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
         continue;
       }
-      if (!matchesRuntimeRegion(state, runtimeRegionId)) {
+      if (!matchesRuntimeScope(state, runtimeScope)) {
         continue;
       }
       String pluginId = blankToEmpty(state.getPluginId());
@@ -177,21 +177,36 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
     return active;
   }
 
-  private String currentRuntimeRegionId(String tenantId, String gameInstanceId) {
+  private RuntimeScope currentRuntimeScope(String tenantId, String gameInstanceId) {
     GetGameInstanceRuntimeStateResponse runtime =
         gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, gameInstanceId, "");
     if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
-      return "";
+      return RuntimeScope.UNKNOWN;
     }
-    return blankToEmpty(runtime.getRuntimeState().getRegionId());
+    return new RuntimeScope(
+        blankToEmpty(runtime.getRuntimeState().getRegionId()),
+        runtime.getRuntimeState().getRegionEpoch());
   }
 
-  private static boolean matchesRuntimeRegion(PluginRuntimeState state, String runtimeRegionId) {
-    String stateRegionId = blankToEmpty(state.getRuntimeRegionId());
-    if (runtimeRegionId.isBlank() || stateRegionId.isBlank()) {
+  private static boolean matchesRuntimeScope(PluginRuntimeState state, RuntimeScope runtimeScope) {
+    if (!runtimeScope.known()) {
       return true;
     }
-    return stateRegionId.equals(runtimeRegionId);
+    String stateRegionId = blankToEmpty(state.getRuntimeRegionId());
+    long stateRegionEpoch = zeroIfNull(state.getRuntimeRegionEpoch());
+    if (stateRegionId.isBlank() || stateRegionEpoch <= 0) {
+      return false;
+    }
+    return stateRegionId.equals(runtimeScope.regionId())
+        && stateRegionEpoch == runtimeScope.regionEpoch();
+  }
+
+  private record RuntimeScope(String regionId, long regionEpoch) {
+    private static final RuntimeScope UNKNOWN = new RuntimeScope("", 0L);
+
+    private boolean known() {
+      return !regionId.isBlank() && regionEpoch > 0;
+    }
   }
 
   private boolean participatesInResolvedHandlerSet(
@@ -318,6 +333,10 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
 
   private static String blankToEmpty(String value) {
     return value == null ? "" : value;
+  }
+
+  private static long zeroIfNull(Long value) {
+    return value == null ? 0L : value;
   }
 
   private static void requireText(String value, String message) {

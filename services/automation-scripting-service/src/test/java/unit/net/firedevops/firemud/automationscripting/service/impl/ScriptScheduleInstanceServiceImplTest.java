@@ -282,6 +282,7 @@ class ScriptScheduleInstanceServiceImplTest {
     runtimeState.setTenantId("1");
     runtimeState.setGameInstanceId("game-1");
     runtimeState.setRuntimeRegionId("region-stale");
+    runtimeState.setRuntimeRegionEpoch(7L);
     runtimeState.setPluginId("town-crier");
     runtimeState.setActivePluginVersionId("town-crier-v3");
     runtimeState.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
@@ -303,6 +304,60 @@ class ScriptScheduleInstanceServiceImplTest {
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
             .setRegionId("region-live")
+            .setRegionEpoch(7L)
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setPointerVersion(17L)
+            .build());
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<ScriptScheduleInstance>> captor = ArgumentCaptor.forClass(List.class);
+    verify(scheduleInstanceRepository).saveAll(captor.capture());
+    assertThat(captor.getValue())
+        .extracting(ScriptScheduleInstance::getScheduleDefinitionId)
+        .containsExactly("guard.alert.expire.v1");
+  }
+
+  @Test
+  void reconcileObservedRuntimeStateIgnoresEnabledPluginRowsFromDifferentRuntimeEpoch() {
+    ScriptScheduleDefinition core = millisecondsDefinition();
+    ScriptScheduleDefinition pluginSchedule = pluginDefinition("town-crier", "town-crier-v3");
+    when(scheduleDefinitionRepository
+            .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(core, pluginSchedule));
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1"))
+        .thenReturn(List.of());
+    PluginRuntimeState runtimeState = new PluginRuntimeState();
+    runtimeState.setTenantId("1");
+    runtimeState.setGameInstanceId("game-1");
+    runtimeState.setRuntimeRegionId("region-1");
+    runtimeState.setRuntimeRegionEpoch(6L);
+    runtimeState.setPluginId("town-crier");
+    runtimeState.setActivePluginVersionId("town-crier-v3");
+    runtimeState.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(List.of(runtimeState));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(
+            List.of(
+                binding("npc-guard", "onTimerExpire", "ENTITY", "guard-1", 10, false),
+                binding("plugin-town-crier", "onInterval", "GLOBAL", "", 5, false)));
+
+    service.reconcileObservedRuntimeState(
+        "1",
+        "game-1",
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPinnedScriptPatchVersion("patch-1")
+            .setRegionId("region-1")
+            .setRegionEpoch(7L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setWorldSlug("demo")
             .setRealmSlug("production")
