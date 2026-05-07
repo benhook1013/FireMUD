@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
+import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
@@ -68,6 +69,7 @@ import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -108,7 +110,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         scriptPatchPinProjectionService,
         new ScriptRuntimeProperties(),
         Mockito.mock(ScriptScheduleInstanceService.class),
-        gameDesignClient());
+        gameDesignClient(),
+        Mockito.mock(GameSessionControlPlaneClient.class));
   }
 
   private static AutomationScriptingControlPlaneGrpcService newService(
@@ -124,7 +127,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         scriptPatchPinProjectionService,
         runtimeProperties,
         Mockito.mock(ScriptScheduleInstanceService.class),
-        gameDesignClient());
+        gameDesignClient(),
+        Mockito.mock(GameSessionControlPlaneClient.class));
   }
 
   private static AutomationScriptingControlPlaneGrpcService newService(
@@ -141,7 +145,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         scriptPatchPinProjectionService,
         runtimeProperties,
         scriptScheduleInstanceService,
-        gameDesignClient());
+        gameDesignClient(),
+        Mockito.mock(GameSessionControlPlaneClient.class));
   }
 
   private static AutomationScriptingControlPlaneGrpcService newService(
@@ -151,7 +156,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptRuntimeProperties runtimeProperties,
       ScriptScheduleInstanceService scriptScheduleInstanceService,
-      GameDesignControlPlaneClient gameDesignControlPlaneClient) {
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient) {
     return new AutomationScriptingControlPlaneGrpcService(
         new BuiltInScriptEventRegistryService(),
         workItemService,
@@ -160,6 +166,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         scriptPatchPinProjectionService,
         scriptScheduleInstanceService,
         gameDesignControlPlaneClient,
+        gameSessionControlPlaneClient,
         runtimeProperties);
   }
 
@@ -1050,12 +1057,28 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         "",
                         ""),
                     null)));
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    Mockito.when(gameSessionClient.getGameInstanceRuntimeState("1", "game-2"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setGameInstanceId("game-2")
+                        .setRegionId("region-live")
+                        .setRegionEpoch(22L)
+                        .build())
+                .build());
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
-            Mockito.mock(ScriptPatchPinProjectionService.class));
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            gameDesignClient(),
+            gameSessionClient);
     AtomicReference<ListScriptHandoffEventsResponse> ref = new AtomicReference<>();
 
     service.listScriptHandoffEvents(
@@ -1100,6 +1123,10 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         .isEqualTo("remote-coordinator:workItem:99#0");
     assertThat(ref.get().getEvents(0).getRemoteFollowupId())
         .isEqualTo("remote-followup:workItem:99#0");
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeGameInstanceId()).isEqualTo("game-2");
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeRegionId()).isEqualTo("region-live");
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeRegionEpoch()).isEqualTo(22L);
+    assertThat(ref.get().getEvents(0).getIsTargetRuntimeScopeStale()).isTrue();
     assertThat(ref.get().getEvents(0).getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getEvents(0).getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getEvents(0).getPointerVersion()).isEqualTo("17");

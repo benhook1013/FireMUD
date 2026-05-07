@@ -4,7 +4,11 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
+import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
@@ -78,6 +82,7 @@ import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
@@ -96,6 +101,7 @@ public final class AutomationScriptingControlPlaneGrpcService
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
   private final ScriptScheduleInstanceService scriptScheduleInstanceService;
   private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
+  private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptRuntimeProperties runtimeProperties;
 
   public AutomationScriptingControlPlaneGrpcService(
@@ -105,7 +111,8 @@ public final class AutomationScriptingControlPlaneGrpcService
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptScheduleInstanceService scriptScheduleInstanceService,
-      GameDesignControlPlaneClient gameDesignControlPlaneClient) {
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient) {
     this(
         eventRegistryService,
         workItemService,
@@ -114,6 +121,7 @@ public final class AutomationScriptingControlPlaneGrpcService
         scriptPatchPinProjectionService,
         scriptScheduleInstanceService,
         gameDesignControlPlaneClient,
+        gameSessionControlPlaneClient,
         new ScriptRuntimeProperties());
   }
 
@@ -126,6 +134,7 @@ public final class AutomationScriptingControlPlaneGrpcService
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptScheduleInstanceService scriptScheduleInstanceService,
       GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
       ScriptRuntimeProperties runtimeProperties) {
     this.eventRegistryService = eventRegistryService;
     this.workItemService = workItemService;
@@ -134,6 +143,7 @@ public final class AutomationScriptingControlPlaneGrpcService
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
     this.scriptScheduleInstanceService = scriptScheduleInstanceService;
     this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
+    this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.runtimeProperties = runtimeProperties;
   }
 
@@ -527,8 +537,8 @@ public final class AutomationScriptingControlPlaneGrpcService
     ListScriptHandoffEventsResponse.Builder response = ListScriptHandoffEventsResponse.newBuilder();
     try {
       requireAdminRole();
-      workItemService
-          .listHandoffEvents(
+      List<ScriptWorkItemService.HandoffEventSummary> summaries =
+          workItemService.listHandoffEvents(
               request.getTenantId(),
               request.getGameInstanceId(),
               request.getScriptPatchVersion(),
@@ -552,9 +562,11 @@ public final class AutomationScriptingControlPlaneGrpcService
               request.getSourceState(),
               request.getChangedAfterMs(),
               request.getChangedBeforeMs(),
-              request.getLimit())
-          .stream()
-          .map(AutomationScriptingControlPlaneGrpcService::toProto)
+              request.getLimit());
+      Map<String, CurrentTargetRuntimeScope> currentScopes =
+          loadCurrentTargetRuntimeScopes(request.getTenantId(), summaries);
+      summaries.stream()
+          .map(summary -> toProto(summary, currentScopes.get(summary.targetGameInstanceId())))
           .forEach(response::addEvents);
     } catch (IllegalArgumentException ex) {
       response.setError(
@@ -1224,8 +1236,8 @@ public final class AutomationScriptingControlPlaneGrpcService
     return builder.build();
   }
 
-  private static ScriptHandoffEventEntry toProto(
-      ScriptWorkItemService.HandoffEventSummary summary) {
+  private ScriptHandoffEventEntry toProto(
+      ScriptWorkItemService.HandoffEventSummary summary, CurrentTargetRuntimeScope currentScope) {
     ScriptHandoffEventEntry.Builder builder =
         ScriptHandoffEventEntry.newBuilder()
             .setEventId(summary.eventId())
@@ -1262,7 +1274,54 @@ public final class AutomationScriptingControlPlaneGrpcService
     if (summary.pluginPublication() != null) {
       builder.setPluginPublication(toProto(summary.pluginPublication()));
     }
+    if (currentScope != null) {
+      builder
+          .setCurrentTargetRuntimeGameInstanceId(currentScope.gameInstanceId())
+          .setCurrentTargetRuntimeRegionId(currentScope.regionId())
+          .setCurrentTargetRuntimeRegionEpoch(currentScope.regionEpoch())
+          .setIsTargetRuntimeScopeStale(isTargetRuntimeScopeStale(summary, currentScope));
+    }
     return builder.build();
+  }
+
+  private Map<String, CurrentTargetRuntimeScope> loadCurrentTargetRuntimeScopes(
+      String tenantId, List<ScriptWorkItemService.HandoffEventSummary> summaries) {
+    Map<String, CurrentTargetRuntimeScope> scopes = new LinkedHashMap<>();
+    for (ScriptWorkItemService.HandoffEventSummary summary : summaries) {
+      String targetGameInstanceId = emptyIfNull(summary.targetGameInstanceId());
+      if (targetGameInstanceId.isBlank() || scopes.containsKey(targetGameInstanceId)) {
+        continue;
+      }
+      GetGameInstanceRuntimeStateResponse runtime =
+          gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, targetGameInstanceId);
+      if (runtime == null
+          || runtime.hasError()
+          || emptyIfNull(runtime.getRuntimeState().getGameInstanceId()).isBlank()) {
+        continue;
+      }
+      scopes.put(
+          targetGameInstanceId,
+          new CurrentTargetRuntimeScope(
+              emptyIfNull(runtime.getRuntimeState().getGameInstanceId()),
+              emptyIfNull(runtime.getRuntimeState().getRegionId()),
+              runtime.getRuntimeState().getRegionEpoch()));
+    }
+    return scopes;
+  }
+
+  private static boolean isTargetRuntimeScopeStale(
+      ScriptWorkItemService.HandoffEventSummary summary, CurrentTargetRuntimeScope currentScope) {
+    if (currentScope == null) {
+      return false;
+    }
+    String targetRegionId = emptyIfNull(summary.targetRegionId());
+    if (!targetRegionId.isBlank() && !targetRegionId.equals(currentScope.regionId())) {
+      return true;
+    }
+    long targetRegionEpoch = summary.targetRegionEpoch();
+    return targetRegionEpoch > 0
+        && currentScope.regionEpoch() > 0
+        && targetRegionEpoch != currentScope.regionEpoch();
   }
 
   private static PlayableStateScope toPlayableStateScope(String playableStateScope) {
@@ -1284,4 +1343,11 @@ public final class AutomationScriptingControlPlaneGrpcService
   private static String normalize(String value) {
     return value == null ? "" : value.trim().toUpperCase(java.util.Locale.ROOT);
   }
+
+  private static String emptyIfNull(String value) {
+    return value == null ? "" : value;
+  }
+
+  private record CurrentTargetRuntimeScope(
+      String gameInstanceId, String regionId, long regionEpoch) {}
 }

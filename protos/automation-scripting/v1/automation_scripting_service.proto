@@ -769,6 +769,10 @@ message ScriptHandoffEventEntry {
   int64 source_due_at_ms = 30;
   ScriptPatchPublicationLink publication = 31;
   PluginPublicationLink plugin_publication = 32;
+  string current_target_runtime_game_instance_id = 33;
+  string current_target_runtime_region_id = 34;
+  int64 current_target_runtime_region_epoch = 35;
+  bool is_target_runtime_scope_stale = 36;
 }
 
 message ListScriptHandoffEventsResponse {
