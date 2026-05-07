@@ -342,7 +342,7 @@ Inputs:
 
 Outputs:
 
-- ordered event rows containing `eventId`, `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `scriptId`, optional plugin identity, `workItemId`, `commandOrdinal`, `automationDispatchId`, optional `gameSessionCommandId`, explicit target runtime scope (`targetGameInstanceId`, `targetRegionId`, `targetRegionEpoch`), optional remote follow-up ids (`remoteCoordinatorId`, `remoteFollowupId`), current owned target runtime scope (`currentTargetRuntimeGameInstanceId`, `currentTargetRuntimeRegionId`, `currentTargetRuntimeRegionEpoch`) plus stale-scope signaling, `targetEntityId`, resolved `playableStateScope`, rendered `emittedCommandText`, `handoffOutcome`, `handoffReason`, and `observedAt`
+- ordered event rows containing `eventId`, `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `scriptId`, optional plugin identity, `workItemId`, `commandOrdinal`, `automationDispatchId`, optional `gameSessionCommandId`, explicit target runtime scope (`targetGameInstanceId`, `targetRegionId`, `targetRegionEpoch`), optional remote follow-up ids (`remoteCoordinatorId`, `remoteFollowupId`), current owned target runtime scope (`currentTargetRuntimeGameInstanceId`, `currentTargetRuntimeRegionId`, `currentTargetRuntimeRegionEpoch`) plus stale-scope signaling, later Game Session gameplay-command execution truth (`gameplayCommandExecutionOutcome`, `gameplayCommandGameplayResult`, failure details, and remote-state tail), `targetEntityId`, resolved `playableStateScope`, rendered `emittedCommandText`, `handoffOutcome`, `handoffReason`, and `observedAt`
 
 Contract rules:
 
@@ -352,6 +352,7 @@ Contract rules:
 - Operators use this read to answer which emitted command ordinal reached Game Session, which rendered command text, target entity, and target runtime scope it addressed, whether it stayed local or became a durable remote follow-up, and whether the failure happened before handoff, at Game Session admission, or after later gameplay-side execution disposition.
 - Because remote follow-up legs are now durable first-class runtime rows, this read must support direct filtering by target runtime scope, remote coordinator/follow-up ids, and origin script/plugin/dispatch identity rather than assuming one bulk history scan plus client-side correlation.
 - The read must also expose the current owned target runtime scope from Game Session when the target instance still exists, so operators can see directly whether the persisted target runtime scope has gone stale without a separate ownership-status lookup.
+- When `gameSessionCommandId` is known, the read should also expose the later Game Session gameplay-command execution outcome instead of stopping at handoff-time admission, so operator diagnostics can stay on one handoff-history surface through local and remote gameplay execution tails.
 
 #### `CancelPendingWorkItemsForPluginVersion`
 

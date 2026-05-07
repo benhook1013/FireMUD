@@ -83,6 +83,7 @@ import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
@@ -565,8 +566,15 @@ public final class AutomationScriptingControlPlaneGrpcService
               request.getLimit());
       Map<String, CurrentTargetRuntimeScope> currentScopes =
           loadCurrentTargetRuntimeScopes(request.getTenantId(), summaries);
+      Map<String, GameplayCommandStatusView> commandStatuses =
+          loadGameplayCommandStatuses(request.getTenantId(), summaries);
       summaries.stream()
-          .map(summary -> toProto(summary, currentScopes.get(summary.targetGameInstanceId())))
+          .map(
+              summary ->
+                  toProto(
+                      summary,
+                      currentScopes.get(summary.targetGameInstanceId()),
+                      commandStatuses.get(summary.gameSessionCommandId())))
           .forEach(response::addEvents);
     } catch (IllegalArgumentException ex) {
       response.setError(
@@ -1237,7 +1245,9 @@ public final class AutomationScriptingControlPlaneGrpcService
   }
 
   private ScriptHandoffEventEntry toProto(
-      ScriptWorkItemService.HandoffEventSummary summary, CurrentTargetRuntimeScope currentScope) {
+      ScriptWorkItemService.HandoffEventSummary summary,
+      CurrentTargetRuntimeScope currentScope,
+      GameplayCommandStatusView commandStatus) {
     ScriptHandoffEventEntry.Builder builder =
         ScriptHandoffEventEntry.newBuilder()
             .setEventId(summary.eventId())
@@ -1281,6 +1291,18 @@ public final class AutomationScriptingControlPlaneGrpcService
           .setCurrentTargetRuntimeRegionEpoch(currentScope.regionEpoch())
           .setIsTargetRuntimeScopeStale(isTargetRuntimeScopeStale(summary, currentScope));
     }
+    if (commandStatus != null) {
+      builder
+          .setGameplayCommandExecutionOutcome(commandStatus.executionOutcome())
+          .setGameplayCommandGameplayResult(commandStatus.gameplayResult())
+          .setGameplayCommandFailureCode(commandStatus.failureCode())
+          .setGameplayCommandFailureMessage(commandStatus.failureMessage())
+          .setGameplayRemoteState(commandStatus.remoteState())
+          .setGameplayRemoteTargetCommandExecutionOutcome(
+              commandStatus.remoteTargetCommandExecutionOutcome())
+          .setGameplayRemoteTargetCommandGameplayResult(
+              commandStatus.remoteTargetCommandGameplayResult());
+    }
     return builder.build();
   }
 
@@ -1307,6 +1329,35 @@ public final class AutomationScriptingControlPlaneGrpcService
               runtime.getRuntimeState().getRegionEpoch()));
     }
     return scopes;
+  }
+
+  private Map<String, GameplayCommandStatusView> loadGameplayCommandStatuses(
+      String tenantId, List<ScriptWorkItemService.HandoffEventSummary> summaries) {
+    Map<String, GameplayCommandStatusView> statuses = new LinkedHashMap<>();
+    for (ScriptWorkItemService.HandoffEventSummary summary : summaries) {
+      String commandId = emptyIfNull(summary.gameSessionCommandId());
+      if (commandId.isBlank() || statuses.containsKey(commandId)) {
+        continue;
+      }
+      GetGameplayCommandStatusResponse response =
+          gameSessionControlPlaneClient.getGameplayCommandStatus(tenantId, commandId);
+      if (response == null
+          || response.hasError()
+          || emptyIfNull(response.getCommand().getCommandId()).isBlank()) {
+        continue;
+      }
+      statuses.put(
+          commandId,
+          new GameplayCommandStatusView(
+              emptyIfNull(response.getCommand().getExecutionOutcome()),
+              emptyIfNull(response.getCommand().getGameplayResult()),
+              emptyIfNull(response.getCommand().getFailureCode()),
+              emptyIfNull(response.getCommand().getFailureMessage()),
+              emptyIfNull(response.getCommand().getRemoteState()),
+              emptyIfNull(response.getCommand().getRemoteTargetCommandExecutionOutcome()),
+              emptyIfNull(response.getCommand().getRemoteTargetCommandGameplayResult())));
+    }
+    return statuses;
   }
 
   private static boolean isTargetRuntimeScopeStale(
@@ -1350,4 +1401,13 @@ public final class AutomationScriptingControlPlaneGrpcService
 
   private record CurrentTargetRuntimeScope(
       String gameInstanceId, String regionId, long regionEpoch) {}
+
+  private record GameplayCommandStatusView(
+      String executionOutcome,
+      String gameplayResult,
+      String failureCode,
+      String failureMessage,
+      String remoteState,
+      String remoteTargetCommandExecutionOutcome,
+      String remoteTargetCommandGameplayResult) {}
 }

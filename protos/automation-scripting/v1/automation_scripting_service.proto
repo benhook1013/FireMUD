@@ -773,6 +773,13 @@ message ScriptHandoffEventEntry {
   string current_target_runtime_region_id = 34;
   int64 current_target_runtime_region_epoch = 35;
   bool is_target_runtime_scope_stale = 36;
+  string gameplay_command_execution_outcome = 37;
+  string gameplay_command_gameplay_result = 38;
+  string gameplay_command_failure_code = 39;
+  string gameplay_command_failure_message = 40;
+  string gameplay_remote_state = 41;
+  string gameplay_remote_target_command_execution_outcome = 42;
+  string gameplay_remote_target_command_gameplay_result = 43;
 }
 
 message ListScriptHandoffEventsResponse {

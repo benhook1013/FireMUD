@@ -12,6 +12,8 @@ import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRes
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
+import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupRequest;
 import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupResponse;
 import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasRequest;
@@ -113,6 +115,25 @@ public class GameSessionControlPlaneClient
     }
   }
 
+  public GetGameplayCommandStatusResponse getGameplayCommandStatus(
+      String tenantId, String commandId) {
+    if (stub() == null) {
+      return gameplayCommandUnavailable();
+    }
+    try {
+      return stub()
+          .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+          .getGameplayCommandStatus(
+              GetGameplayCommandStatusRequest.newBuilder()
+                  .setTenantId(tenantId)
+                  .setCommandId(commandId == null ? "" : commandId)
+                  .build());
+    } catch (RuntimeException ex) {
+      logger.warn("Game Session getGameplayCommandStatus failed", ex);
+      return gameplayCommandUnavailable();
+    }
+  }
+
   public ValidateBuiltInCommandAliasResponse validateBuiltInCommandAlias(String alias) {
     if (stub() == null) {
       return aliasUnavailable();
@@ -159,6 +180,15 @@ public class GameSessionControlPlaneClient
 
   private static ScheduleRemoteFollowupResponse remoteFollowupUnavailable() {
     return ScheduleRemoteFollowupResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("GAME_SESSION_UNAVAILABLE")
+                .setMessage("Game Session service unavailable"))
+        .build();
+  }
+
+  private static GetGameplayCommandStatusResponse gameplayCommandUnavailable() {
+    return GetGameplayCommandStatusResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
                 .setCode("GAME_SESSION_UNAVAILABLE")

@@ -69,7 +69,9 @@ import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
+import net.firedevops.firemud.gamesession.v1.GameplayCommandStatus;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -1069,6 +1071,19 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         .setRegionEpoch(22L)
                         .build())
                 .build());
+    Mockito.when(gameSessionClient.getGameplayCommandStatus("1", "command-1"))
+        .thenReturn(
+            GetGameplayCommandStatusResponse.newBuilder()
+                .setCommand(
+                    GameplayCommandStatus.newBuilder()
+                        .setCommandId("command-1")
+                        .setExecutionOutcome("APPLIED")
+                        .setGameplayResult("SUCCESS")
+                        .setRemoteState("REMOTE_APPLIED")
+                        .setRemoteTargetCommandExecutionOutcome("APPLIED")
+                        .setRemoteTargetCommandGameplayResult("SUCCESS")
+                        .build())
+                .build());
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -1127,6 +1142,13 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeRegionId()).isEqualTo("region-live");
     assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeRegionEpoch()).isEqualTo(22L);
     assertThat(ref.get().getEvents(0).getIsTargetRuntimeScopeStale()).isTrue();
+    assertThat(ref.get().getEvents(0).getGameplayCommandExecutionOutcome()).isEqualTo("APPLIED");
+    assertThat(ref.get().getEvents(0).getGameplayCommandGameplayResult()).isEqualTo("SUCCESS");
+    assertThat(ref.get().getEvents(0).getGameplayRemoteState()).isEqualTo("REMOTE_APPLIED");
+    assertThat(ref.get().getEvents(0).getGameplayRemoteTargetCommandExecutionOutcome())
+        .isEqualTo("APPLIED");
+    assertThat(ref.get().getEvents(0).getGameplayRemoteTargetCommandGameplayResult())
+        .isEqualTo("SUCCESS");
     assertThat(ref.get().getEvents(0).getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getEvents(0).getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getEvents(0).getPointerVersion()).isEqualTo("17");
