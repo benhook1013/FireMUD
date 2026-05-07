@@ -522,6 +522,7 @@ message GameplayCommandStatus {
   string remote_followup_claim_target_aggregate = 84;
   string current_runtime_region_id = 85;
   int64 current_runtime_region_epoch = 86;
+  string current_runtime_game_instance_id = 87;
 }
 
 message GetGameplayCommandStatusResponse {
@@ -634,6 +635,8 @@ message RemoteCommandCoordinatorEntry {
   int64 followup_queue_source_ordinal = 68;
   int64 followup_queue_source_due_tick_id = 69;
   int64 followup_queue_source_due_at_ms = 70;
+  string current_origin_runtime_game_instance_id = 71;
+  string current_target_runtime_game_instance_id = 72;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -864,6 +867,8 @@ message RemoteFollowupEntry {
   int64 queue_source_ordinal = 60;
   int64 queue_source_due_tick_id = 61;
   int64 queue_source_due_at_ms = 62;
+  string current_origin_runtime_game_instance_id = 63;
+  string current_target_runtime_game_instance_id = 64;
 }
 
 message ListRemoteFollowupsResponse {
@@ -984,6 +989,8 @@ message RemoteFollowupResultEntry {
   int64 queue_source_ordinal = 59;
   int64 queue_source_due_tick_id = 60;
   int64 queue_source_due_at_ms = 61;
+  string current_origin_runtime_game_instance_id = 62;
+  string current_target_runtime_game_instance_id = 63;
 }
 
 message ListRemoteFollowupResultsResponse {

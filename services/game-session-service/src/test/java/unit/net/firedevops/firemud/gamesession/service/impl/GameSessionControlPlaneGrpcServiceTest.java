@@ -1300,6 +1300,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(17L, responseRef.get().getCommand().getPointerVersion());
     assertEquals("runtime-region-7", responseRef.get().getCommand().getCurrentRuntimeRegionId());
     assertEquals(22L, responseRef.get().getCommand().getCurrentRuntimeRegionEpoch());
+    assertEquals("7", responseRef.get().getCommand().getCurrentRuntimeGameInstanceId());
     assertEquals("plugin-1", responseRef.get().getCommand().getPluginId());
     assertEquals("plugin-v1", responseRef.get().getCommand().getPluginVersionId());
     assertEquals(
@@ -1532,6 +1533,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(29L, responseRef.get().getCommand().getPointerVersion());
     assertEquals("runtime-region-7", responseRef.get().getCommand().getCurrentRuntimeRegionId());
     assertEquals(19L, responseRef.get().getCommand().getCurrentRuntimeRegionEpoch());
+    assertEquals("7", responseRef.get().getCommand().getCurrentRuntimeGameInstanceId());
     assertEquals("plugin-2", responseRef.get().getCommand().getPluginId());
     assertEquals("plugin-v2", responseRef.get().getCommand().getPluginVersionId());
     assertEquals(
@@ -1671,6 +1673,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("followup-2", responseRef.get().getCommand().getRemoteFollowupId());
     assertEquals("runtime-region-9", responseRef.get().getCommand().getCurrentRuntimeRegionId());
     assertEquals(14L, responseRef.get().getCommand().getCurrentRuntimeRegionEpoch());
+    assertEquals("7", responseRef.get().getCommand().getCurrentRuntimeGameInstanceId());
     assertEquals("REMOTE_APPLIED", responseRef.get().getCommand().getRemoteState());
     assertEquals("region-origin", responseRef.get().getCommand().getRemoteOriginRegionId());
     assertEquals(7L, responseRef.get().getCommand().getRemoteOriginRegionEpoch());
@@ -2436,10 +2439,12 @@ class GameSessionControlPlaneGrpcServiceTest {
         "region-origin-current",
         responseRef.get().getCoordinator().getCurrentOriginRuntimeRegionId());
     assertEquals(13L, responseRef.get().getCoordinator().getCurrentOriginRuntimeRegionEpoch());
+    assertEquals("7", responseRef.get().getCoordinator().getCurrentOriginRuntimeGameInstanceId());
     assertEquals(
         "region-target-current",
         responseRef.get().getCoordinator().getCurrentTargetRuntimeRegionId());
     assertEquals(14L, responseRef.get().getCoordinator().getCurrentTargetRuntimeRegionEpoch());
+    assertEquals("9", responseRef.get().getCoordinator().getCurrentTargetRuntimeGameInstanceId());
     assertEquals(55L, responseRef.get().getCoordinator().getTargetDueTickId());
     assertEquals("PENDING_REMOTE", responseRef.get().getCoordinator().getState());
     assertEquals("dispatch-1", responseRef.get().getCoordinator().getAutomationDispatchId());
@@ -2705,10 +2710,12 @@ class GameSessionControlPlaneGrpcServiceTest {
         "region-origin-current",
         responseRef.get().getCoordinators(0).getCurrentOriginRuntimeRegionId());
     assertEquals(13L, responseRef.get().getCoordinators(0).getCurrentOriginRuntimeRegionEpoch());
+    assertEquals("7", responseRef.get().getCoordinators(0).getCurrentOriginRuntimeGameInstanceId());
     assertEquals(
         "region-target-current",
         responseRef.get().getCoordinators(0).getCurrentTargetRuntimeRegionId());
     assertEquals(14L, responseRef.get().getCoordinators(0).getCurrentTargetRuntimeRegionEpoch());
+    assertEquals("9", responseRef.get().getCoordinators(0).getCurrentTargetRuntimeGameInstanceId());
     assertEquals("7", responseRef.get().getCoordinators(0).getOriginGameInstanceId());
     assertEquals(3L, responseRef.get().getCoordinators(0).getOriginRegionEpoch());
     assertEquals("9", responseRef.get().getCoordinators(0).getTargetGameInstanceId());
@@ -2995,10 +3002,12 @@ class GameSessionControlPlaneGrpcServiceTest {
         "region-origin-current",
         responseRef.get().getFollowups(0).getCurrentOriginRuntimeRegionId());
     assertEquals(13L, responseRef.get().getFollowups(0).getCurrentOriginRuntimeRegionEpoch());
+    assertEquals("7", responseRef.get().getFollowups(0).getCurrentOriginRuntimeGameInstanceId());
     assertEquals(
         "region-target-current",
         responseRef.get().getFollowups(0).getCurrentTargetRuntimeRegionId());
     assertEquals(14L, responseRef.get().getFollowups(0).getCurrentTargetRuntimeRegionEpoch());
+    assertEquals("9", responseRef.get().getFollowups(0).getCurrentTargetRuntimeGameInstanceId());
     assertEquals("tick-batch-7", responseRef.get().getFollowups(0).getClaimedTickBatchId());
     assertEquals("REMOTE_FOLLOWUP", responseRef.get().getFollowups(0).getQueueSourceKind());
     assertEquals("TARGET_REGION_CLAIMED", responseRef.get().getFollowups(0).getQueueSourceState());
@@ -3360,9 +3369,11 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         "region-origin-current", responseRef.get().getResults(0).getCurrentOriginRuntimeRegionId());
     assertEquals(13L, responseRef.get().getResults(0).getCurrentOriginRuntimeRegionEpoch());
+    assertEquals("7", responseRef.get().getResults(0).getCurrentOriginRuntimeGameInstanceId());
     assertEquals(
         "region-target-current", responseRef.get().getResults(0).getCurrentTargetRuntimeRegionId());
     assertEquals(14L, responseRef.get().getResults(0).getCurrentTargetRuntimeRegionEpoch());
+    assertEquals("9", responseRef.get().getResults(0).getCurrentTargetRuntimeGameInstanceId());
     assertEquals("cmd-1", responseRef.get().getResults(0).getCommandId());
     assertEquals("dispatch-1", responseRef.get().getResults(0).getAutomationDispatchId());
     assertEquals("work-1", responseRef.get().getResults(0).getAutomationWorkItemId());
@@ -3560,9 +3571,11 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         "region-origin-current", responseRef.get().getResults(0).getCurrentOriginRuntimeRegionId());
     assertEquals(13L, responseRef.get().getResults(0).getCurrentOriginRuntimeRegionEpoch());
+    assertEquals("7", responseRef.get().getResults(0).getCurrentOriginRuntimeGameInstanceId());
     assertEquals(
         "region-target-current", responseRef.get().getResults(0).getCurrentTargetRuntimeRegionId());
     assertEquals(14L, responseRef.get().getResults(0).getCurrentTargetRuntimeRegionEpoch());
+    assertEquals("9", responseRef.get().getResults(0).getCurrentTargetRuntimeGameInstanceId());
     assertEquals("TIMEOUT", responseRef.get().getResults(0).getResultErrorCode());
     assertEquals(
         "Target region timed out the remote gameplay command",

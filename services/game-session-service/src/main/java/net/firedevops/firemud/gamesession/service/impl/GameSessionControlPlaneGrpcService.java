@@ -2565,6 +2565,15 @@ public final class GameSessionControlPlaneGrpcService
     currentRuntimeOwnership(tenantId, gameInstanceId)
         .ifPresent(
             ownership -> {
+              if (ownership.getGameInstanceId() != null && ownership.getGameInstanceId() > 0) {
+                if (originScope) {
+                  builder.setCurrentOriginRuntimeGameInstanceId(
+                      Long.toString(ownership.getGameInstanceId()));
+                } else {
+                  builder.setCurrentTargetRuntimeGameInstanceId(
+                      Long.toString(ownership.getGameInstanceId()));
+                }
+              }
               if (ownership.getRegionId() != null && !ownership.getRegionId().isBlank()) {
                 if (originScope) {
                   builder.setCurrentOriginRuntimeRegionId(ownership.getRegionId());
@@ -2588,6 +2597,15 @@ public final class GameSessionControlPlaneGrpcService
     currentRuntimeOwnership(tenantId, gameInstanceId)
         .ifPresent(
             ownership -> {
+              if (ownership.getGameInstanceId() != null && ownership.getGameInstanceId() > 0) {
+                if (originScope) {
+                  builder.setCurrentOriginRuntimeGameInstanceId(
+                      Long.toString(ownership.getGameInstanceId()));
+                } else {
+                  builder.setCurrentTargetRuntimeGameInstanceId(
+                      Long.toString(ownership.getGameInstanceId()));
+                }
+              }
               if (ownership.getRegionId() != null && !ownership.getRegionId().isBlank()) {
                 if (originScope) {
                   builder.setCurrentOriginRuntimeRegionId(ownership.getRegionId());
@@ -2611,6 +2629,15 @@ public final class GameSessionControlPlaneGrpcService
     currentRuntimeOwnership(tenantId, gameInstanceId)
         .ifPresent(
             ownership -> {
+              if (ownership.getGameInstanceId() != null && ownership.getGameInstanceId() > 0) {
+                if (originScope) {
+                  builder.setCurrentOriginRuntimeGameInstanceId(
+                      Long.toString(ownership.getGameInstanceId()));
+                } else {
+                  builder.setCurrentTargetRuntimeGameInstanceId(
+                      Long.toString(ownership.getGameInstanceId()));
+                }
+              }
               if (ownership.getRegionId() != null && !ownership.getRegionId().isBlank()) {
                 if (originScope) {
                   builder.setCurrentOriginRuntimeRegionId(ownership.getRegionId());
@@ -3494,6 +3521,10 @@ public final class GameSessionControlPlaneGrpcService
     currentRuntimeOwnership(command)
         .ifPresent(
             ownership -> {
+              if (ownership.getGameInstanceId() != null && ownership.getGameInstanceId() > 0) {
+                builder.setCurrentRuntimeGameInstanceId(
+                    Long.toString(ownership.getGameInstanceId()));
+              }
               if (ownership.getRegionId() != null && !ownership.getRegionId().isBlank()) {
                 builder.setCurrentRuntimeRegionId(ownership.getRegionId());
               }
