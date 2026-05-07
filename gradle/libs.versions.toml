@@ -1,6 +1,6 @@
 [versions]
 spring-boot = "4.0.6"
-flyway = "12.4.0"
+flyway = "12.5.0"
 mapstruct = "1.6.3"
 lombok = "1.18.42"
 lombok-mapstruct-binding = "0.2.0"
@@ -48,11 +48,11 @@ mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version = 
 lombok = { module = "org.projectlombok:lombok", version = "1.18.46" }
 lombok-mapstruct-binding = { module = "org.projectlombok:lombok-mapstruct-binding", version = "0.2.0" }
 
-grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version = "1.80.0" }
-grpc-protobuf = { module = "io.grpc:grpc-protobuf", version = "1.80.0" }
-grpc-stub = { module = "io.grpc:grpc-stub", version = "1.80.0" }
-grpc-inprocess = { module = "io.grpc:grpc-inprocess", version = "1.80.0" }
-protoc-gen-grpc-java = { module = "io.grpc:protoc-gen-grpc-java", version = "1.80.0" }
+grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version = "1.81.0" }
+grpc-protobuf = { module = "io.grpc:grpc-protobuf", version = "1.81.0" }
+grpc-stub = { module = "io.grpc:grpc-stub", version = "1.81.0" }
+grpc-inprocess = { module = "io.grpc:grpc-inprocess", version = "1.81.0" }
+protoc-gen-grpc-java = { module = "io.grpc:protoc-gen-grpc-java", version = "1.81.0" }
 
 protobuf-java = { module = "com.google.protobuf:protobuf-java", version = "4.34.1" }
 protoc = { module = "com.google.protobuf:protoc", version = "4.34.1" }
@@ -70,8 +70,8 @@ jjwt-jackson = { module = "io.jsonwebtoken:jjwt-jackson", version = "0.13.0" }
 argon2 = { module = "de.mkammerer:argon2-jvm", version = "2.12" }
 
 grpc-spring-boot-starter = { module = "org.springframework.grpc:spring-grpc-spring-boot-starter", version = "1.0.3" }
-postgresql = { module = "org.postgresql:postgresql", version = "42.7.10" }
-aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.41" }
+postgresql = { module = "org.postgresql:postgresql", version = "42.7.11" }
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.44.2" }
 h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
 springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "3.0.3" }
@@ -86,5 +86,5 @@ junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
-flyway = { id = "org.flywaydb.flyway", version = "12.4.0" }
+flyway = { id = "org.flywaydb.flyway", version = "12.5.0" }
 protobuf = { id = "com.google.protobuf", version = "0.10.0" }
