@@ -16,6 +16,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.service.PluginActivationPreflightService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -88,7 +89,9 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
       return;
     }
 
-    Map<String, String> activePluginVersions = activePluginVersions(tenantId, gameInstanceId);
+    String runtimeRegionId = currentRuntimeRegionId(tenantId, gameInstanceId);
+    Map<String, String> activePluginVersions =
+        activePluginVersions(tenantId, gameInstanceId, runtimeRegionId);
     List<ResolvedBinding> existingBindings =
         allBindings.stream()
             .filter(ResolvedBinding::enabled)
@@ -154,11 +157,15 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
     return List.copyOf(resolved);
   }
 
-  private Map<String, String> activePluginVersions(String tenantId, String gameInstanceId) {
+  private Map<String, String> activePluginVersions(
+      String tenantId, String gameInstanceId, String runtimeRegionId) {
     Map<String, String> active = new LinkedHashMap<>();
     for (PluginRuntimeState state :
         pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)) {
       if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
+        continue;
+      }
+      if (!matchesRuntimeRegion(state, runtimeRegionId)) {
         continue;
       }
       String pluginId = blankToEmpty(state.getPluginId());
@@ -168,6 +175,23 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
       }
     }
     return active;
+  }
+
+  private String currentRuntimeRegionId(String tenantId, String gameInstanceId) {
+    GetGameInstanceRuntimeStateResponse runtime =
+        gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, gameInstanceId, "");
+    if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
+      return "";
+    }
+    return blankToEmpty(runtime.getRuntimeState().getRegionId());
+  }
+
+  private static boolean matchesRuntimeRegion(PluginRuntimeState state, String runtimeRegionId) {
+    String stateRegionId = blankToEmpty(state.getRuntimeRegionId());
+    if (runtimeRegionId.isBlank() || stateRegionId.isBlank()) {
+      return true;
+    }
+    return stateRegionId.equals(runtimeRegionId);
   }
 
   private boolean participatesInResolvedHandlerSet(

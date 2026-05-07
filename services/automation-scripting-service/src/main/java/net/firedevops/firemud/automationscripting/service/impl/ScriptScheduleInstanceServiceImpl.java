@@ -118,7 +118,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 Long.parseLong(tenantId), scriptPatchVersion);
     Map<String, List<ScriptEventBinding>> bindingsByScriptEvent =
         bindingsByScriptEvent(Long.parseLong(tenantId), scriptPatchVersion);
-    Map<String, String> activePluginVersions = activePluginVersions(tenantId, gameInstanceId);
+    Map<String, String> activePluginVersions =
+        activePluginVersions(tenantId, gameInstanceId, blankToEmpty(runtimeState.getRegionId()));
     List<ScriptScheduleInstance> existing =
         scheduleInstanceRepository
             .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
@@ -361,11 +362,15 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         .toList();
   }
 
-  private Map<String, String> activePluginVersions(String tenantId, String gameInstanceId) {
+  private Map<String, String> activePluginVersions(
+      String tenantId, String gameInstanceId, String runtimeRegionId) {
     Map<String, String> active = new HashMap<>();
     for (PluginRuntimeState state :
         pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)) {
       if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
+        continue;
+      }
+      if (!matchesRuntimeRegion(state, runtimeRegionId)) {
         continue;
       }
       String pluginId = blankToEmpty(state.getPluginId());
@@ -375,6 +380,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       }
     }
     return active;
+  }
+
+  private static boolean matchesRuntimeRegion(PluginRuntimeState state, String runtimeRegionId) {
+    String stateRegionId = blankToEmpty(state.getRuntimeRegionId());
+    if (runtimeRegionId.isBlank() || stateRegionId.isBlank()) {
+      return true;
+    }
+    return stateRegionId.equals(runtimeRegionId);
   }
 
   private static boolean shouldMaterialize(
