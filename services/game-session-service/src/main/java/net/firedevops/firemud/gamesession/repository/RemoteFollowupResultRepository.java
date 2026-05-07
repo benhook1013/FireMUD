@@ -23,6 +23,12 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
   @Query(
       """
       select result from RemoteFollowupResult result
+      left join RuntimeRegionStatus currentOrigin
+        on currentOrigin.tenantId = result.tenantId
+       and currentOrigin.gameInstanceId = result.originGameInstanceId
+      left join RuntimeRegionStatus currentTarget
+        on currentTarget.tenantId = result.tenantId
+       and currentTarget.gameInstanceId = result.targetGameInstanceId
       left join RemoteFollowup linkedFollowup
         on linkedFollowup.tenantId = result.tenantId
        and linkedFollowup.followupId = result.followupId
@@ -37,6 +43,14 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
         and (:targetGameInstanceId is null or result.targetGameInstanceId = :targetGameInstanceId)
         and (:targetRegionId = '' or result.targetRegionId = :targetRegionId)
         and (:targetRegionEpoch <= 0 or result.targetRegionEpoch = :targetRegionEpoch)
+        and (:currentOriginRuntimeRegionId = ''
+             or currentOrigin.regionId = :currentOriginRuntimeRegionId)
+        and (:currentOriginRuntimeRegionEpoch <= 0
+             or currentOrigin.regionEpoch = :currentOriginRuntimeRegionEpoch)
+        and (:currentTargetRuntimeRegionId = ''
+             or currentTarget.regionId = :currentTargetRuntimeRegionId)
+        and (:currentTargetRuntimeRegionEpoch <= 0
+             or currentTarget.regionEpoch = :currentTargetRuntimeRegionEpoch)
         and (:outcome = '' or result.outcome = :outcome)
         and (:scriptId = '' or result.scriptId = :scriptId)
         and (:pluginId = '' or result.pluginId = :pluginId)
@@ -86,6 +100,10 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
       @Param("targetGameInstanceId") Long targetGameInstanceId,
       @Param("targetRegionId") String targetRegionId,
       @Param("targetRegionEpoch") long targetRegionEpoch,
+      @Param("currentOriginRuntimeRegionId") String currentOriginRuntimeRegionId,
+      @Param("currentOriginRuntimeRegionEpoch") long currentOriginRuntimeRegionEpoch,
+      @Param("currentTargetRuntimeRegionId") String currentTargetRuntimeRegionId,
+      @Param("currentTargetRuntimeRegionEpoch") long currentTargetRuntimeRegionEpoch,
       @Param("outcome") String outcome,
       @Param("scriptId") String scriptId,
       @Param("pluginId") String pluginId,

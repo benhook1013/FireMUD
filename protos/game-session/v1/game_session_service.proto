@@ -677,6 +677,10 @@ message ListRemoteCommandCoordinatorsRequest {
   string latest_result_outcome = 38;
   string latest_result_error_code = 39;
   string claim_target_aggregate = 40;
+  string current_origin_runtime_region_id = 41;
+  int64 current_origin_runtime_region_epoch = 42;
+  string current_target_runtime_region_id = 43;
+  int64 current_target_runtime_region_epoch = 44;
 }
 
 message ListRemoteCommandCoordinatorsResponse {
@@ -776,6 +780,10 @@ message ListRemoteFollowupsRequest {
   int64 origin_deadline_tick_id = 37;
   string late_result_policy = 38;
   string claim_target_aggregate = 39;
+  string current_origin_runtime_region_id = 40;
+  int64 current_origin_runtime_region_epoch = 41;
+  string current_target_runtime_region_id = 42;
+  int64 current_target_runtime_region_epoch = 43;
 }
 
 message RemoteFollowupEntry {
@@ -883,6 +891,10 @@ message ListRemoteFollowupResultsRequest {
   string late_result_policy = 37;
   string claimed_tick_batch_id = 38;
   string claim_target_aggregate = 39;
+  string current_origin_runtime_region_id = 40;
+  int64 current_origin_runtime_region_epoch = 41;
+  string current_target_runtime_region_id = 42;
+  int64 current_target_runtime_region_epoch = 43;
 }
 
 message RemoteFollowupResultEntry {
