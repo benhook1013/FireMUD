@@ -122,6 +122,11 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && Long.valueOf(44L).equals(followup.getOriginSourceOrdinal())
                         && Long.valueOf(22L).equals(followup.getOriginSourceDueTickId())
                         && Long.valueOf(1700L).equals(followup.getOriginSourceDueAtMs())
+                        && "REMOTE_FOLLOWUP".equals(followup.getQueueSourceKind())
+                        && "TARGET_REGION_SCHEDULED".equals(followup.getQueueSourceState())
+                        && followup.getQueueSourceOrdinal() == null
+                        && Long.valueOf(22L).equals(followup.getQueueSourceDueTickId())
+                        && followup.getQueueSourceDueAtMs() == null
                         && "dispatch-1".equals(followup.getAutomationDispatchId())
                         && "work-1".equals(followup.getAutomationWorkItemId())
                         && "script-1".equals(followup.getScriptId())
@@ -172,6 +177,11 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && "enqueue_automation_command".equals(followup.getPayloadKind())
                         && "LOOK".equals(followup.getRequestedCommand())
                         && followup.isRequiresSoloTick()
+                        && "REMOTE_FOLLOWUP".equals(followup.getQueueSourceKind())
+                        && "TARGET_REGION_SCHEDULED".equals(followup.getQueueSourceState())
+                        && followup.getQueueSourceOrdinal() == null
+                        && Long.valueOf(22L).equals(followup.getQueueSourceDueTickId())
+                        && followup.getQueueSourceDueAtMs() == null
                         && "dispatch-1".equals(followup.getAutomationDispatchId())
                         && "work-1".equals(followup.getAutomationWorkItemId())
                         && "script-1".equals(followup.getScriptId())

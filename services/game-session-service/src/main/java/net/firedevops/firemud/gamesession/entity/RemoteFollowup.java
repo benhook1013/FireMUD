@@ -31,7 +31,11 @@ import lombok.Data;
               "tenant_id, automation_work_item_id, target_entity_id, effect_key, failure_code, due_tick_id"),
       @Index(
           name = "idx_remote_followup_event_due",
-          columnList = "tenant_id, event_type, script_event_id, due_tick_id")
+          columnList = "tenant_id, event_type, script_event_id, due_tick_id"),
+      @Index(
+          name = "idx_remote_followup_queue_source_due",
+          columnList =
+              "tenant_id, queue_source_kind, queue_source_state, queue_source_due_tick_id, due_tick_id")
     })
 public class RemoteFollowup {
   @Id
@@ -82,6 +86,21 @@ public class RemoteFollowup {
 
   @Column(name = "claim_ordinal")
   private Long claimOrdinal;
+
+  @Column(name = "queue_source_kind", length = 64)
+  private String queueSourceKind;
+
+  @Column(name = "queue_source_state", length = 64)
+  private String queueSourceState;
+
+  @Column(name = "queue_source_ordinal")
+  private Long queueSourceOrdinal;
+
+  @Column(name = "queue_source_due_tick_id")
+  private Long queueSourceDueTickId;
+
+  @Column(name = "queue_source_due_at_ms")
+  private Long queueSourceDueAtMs;
 
   @Column(name = "payload_json", columnDefinition = "TEXT")
   private String payloadJson;

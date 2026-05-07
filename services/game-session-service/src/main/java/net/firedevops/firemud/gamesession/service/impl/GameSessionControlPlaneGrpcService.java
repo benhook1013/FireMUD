@@ -785,6 +785,11 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getFollowupStatus()),
               blankToEmpty(request.getFollowupClaimedTickBatchId()),
               request.getFollowupRequiresSoloTick() ? Boolean.TRUE : null,
+              blankToEmpty(request.getFollowupQueueSourceKind()),
+              blankToEmpty(request.getFollowupQueueSourceState()),
+              request.getFollowupQueueSourceOrdinal(),
+              request.getFollowupQueueSourceDueTickId(),
+              request.getFollowupQueueSourceDueAtMs(),
               blankToEmpty(request.getAutomationDispatchId()),
               blankToEmpty(request.getCommandId()),
               blankToEmpty(request.getTargetCommandId()),
@@ -957,6 +962,11 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getFailureCode()),
               request.getRequiresSoloTick() ? Boolean.TRUE : null,
               blankToEmpty(request.getClaimedTickBatchId()),
+              blankToEmpty(request.getQueueSourceKind()),
+              blankToEmpty(request.getQueueSourceState()),
+              request.getQueueSourceOrdinal(),
+              request.getQueueSourceDueTickId(),
+              request.getQueueSourceDueAtMs(),
               blankToEmpty(request.getRequestedCommand()),
               blankToEmpty(request.getEventType()),
               blankToEmpty(request.getScriptEventId()),
@@ -1055,6 +1065,11 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getScriptEventId()),
               blankToEmpty(request.getResultMessage()),
               request.getRequiresSoloTick() ? Boolean.TRUE : null,
+              blankToEmpty(request.getQueueSourceKind()),
+              blankToEmpty(request.getQueueSourceState()),
+              request.getQueueSourceOrdinal(),
+              request.getQueueSourceDueTickId(),
+              request.getQueueSourceDueAtMs(),
               blankToEmpty(request.getLateResultPolicy()),
               blankToEmpty(request.getClaimedTickBatchId()),
               blankToEmpty(request.getAutomationDispatchId()),
@@ -2346,6 +2361,7 @@ public final class GameSessionControlPlaneGrpcService
           followup.getRequestedCommand(),
           followup.isRequiresSoloTick());
       applyFollowupOriginSource(builder, followup);
+      applyFollowupQueueSource(builder, followup);
       applyClaimTargetAggregate(builder, followup);
     }
     if (latestResult != null) {
@@ -2456,6 +2472,7 @@ public final class GameSessionControlPlaneGrpcService
         followup.getOriginSourceOrdinal(),
         followup.getOriginSourceDueTickId(),
         followup.getOriginSourceDueAtMs());
+    applyQueueSource(builder, followup);
     applyClaimTargetAggregate(builder, followup);
     applyRoutingBundle(
         builder,
@@ -2530,6 +2547,7 @@ public final class GameSessionControlPlaneGrpcService
     applyFollowupIdentity(builder, followup);
     applyPayloadSummary(builder, followup);
     applyOriginSource(builder, followup);
+    applyQueueSource(builder, followup);
     applyClaimTargetAggregate(builder, followup);
     applyTriggerScriptEventSummary(builder, followup);
     applyCoordinatorDeadlinePolicy(builder, coordinator);
@@ -2667,6 +2685,25 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private static void applyFollowupQueueSource(
+      RemoteCommandCoordinatorEntry.Builder builder, RemoteFollowup followup) {
+    if (followup.getQueueSourceKind() != null) {
+      builder.setFollowupQueueSourceKind(followup.getQueueSourceKind());
+    }
+    if (followup.getQueueSourceState() != null) {
+      builder.setFollowupQueueSourceState(followup.getQueueSourceState());
+    }
+    if (followup.getQueueSourceOrdinal() != null) {
+      builder.setFollowupQueueSourceOrdinal(followup.getQueueSourceOrdinal());
+    }
+    if (followup.getQueueSourceDueTickId() != null) {
+      builder.setFollowupQueueSourceDueTickId(followup.getQueueSourceDueTickId());
+    }
+    if (followup.getQueueSourceDueAtMs() != null) {
+      builder.setFollowupQueueSourceDueAtMs(followup.getQueueSourceDueAtMs());
+    }
+  }
+
   private static void applyOriginSource(
       RemoteFollowupEntry.Builder builder,
       String originSourceKind,
@@ -2688,6 +2725,28 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (originSourceDueAtMs != null) {
       builder.setOriginSourceDueAtMs(originSourceDueAtMs);
+    }
+  }
+
+  private static void applyQueueSource(
+      RemoteFollowupEntry.Builder builder, RemoteFollowup followup) {
+    if (followup == null) {
+      return;
+    }
+    if (followup.getQueueSourceKind() != null) {
+      builder.setQueueSourceKind(followup.getQueueSourceKind());
+    }
+    if (followup.getQueueSourceState() != null) {
+      builder.setQueueSourceState(followup.getQueueSourceState());
+    }
+    if (followup.getQueueSourceOrdinal() != null) {
+      builder.setQueueSourceOrdinal(followup.getQueueSourceOrdinal());
+    }
+    if (followup.getQueueSourceDueTickId() != null) {
+      builder.setQueueSourceDueTickId(followup.getQueueSourceDueTickId());
+    }
+    if (followup.getQueueSourceDueAtMs() != null) {
+      builder.setQueueSourceDueAtMs(followup.getQueueSourceDueAtMs());
     }
   }
 
@@ -3030,6 +3089,28 @@ public final class GameSessionControlPlaneGrpcService
     }
     if (followup.getOriginSourceDueAtMs() != null) {
       builder.setOriginSourceDueAtMs(followup.getOriginSourceDueAtMs());
+    }
+  }
+
+  private static void applyQueueSource(
+      RemoteFollowupResultEntry.Builder builder, RemoteFollowup followup) {
+    if (followup == null) {
+      return;
+    }
+    if (followup.getQueueSourceKind() != null) {
+      builder.setQueueSourceKind(followup.getQueueSourceKind());
+    }
+    if (followup.getQueueSourceState() != null) {
+      builder.setQueueSourceState(followup.getQueueSourceState());
+    }
+    if (followup.getQueueSourceOrdinal() != null) {
+      builder.setQueueSourceOrdinal(followup.getQueueSourceOrdinal());
+    }
+    if (followup.getQueueSourceDueTickId() != null) {
+      builder.setQueueSourceDueTickId(followup.getQueueSourceDueTickId());
+    }
+    if (followup.getQueueSourceDueAtMs() != null) {
+      builder.setQueueSourceDueAtMs(followup.getQueueSourceDueAtMs());
     }
   }
 

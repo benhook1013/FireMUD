@@ -629,6 +629,11 @@ message RemoteCommandCoordinatorEntry {
   int64 current_origin_runtime_region_epoch = 63;
   string current_target_runtime_region_id = 64;
   int64 current_target_runtime_region_epoch = 65;
+  string followup_queue_source_kind = 66;
+  string followup_queue_source_state = 67;
+  int64 followup_queue_source_ordinal = 68;
+  int64 followup_queue_source_due_tick_id = 69;
+  int64 followup_queue_source_due_at_ms = 70;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -681,6 +686,11 @@ message ListRemoteCommandCoordinatorsRequest {
   int64 current_origin_runtime_region_epoch = 42;
   string current_target_runtime_region_id = 43;
   int64 current_target_runtime_region_epoch = 44;
+  string followup_queue_source_kind = 45;
+  string followup_queue_source_state = 46;
+  int64 followup_queue_source_ordinal = 47;
+  int64 followup_queue_source_due_tick_id = 48;
+  int64 followup_queue_source_due_at_ms = 49;
 }
 
 message ListRemoteCommandCoordinatorsResponse {
@@ -784,6 +794,11 @@ message ListRemoteFollowupsRequest {
   int64 current_origin_runtime_region_epoch = 41;
   string current_target_runtime_region_id = 42;
   int64 current_target_runtime_region_epoch = 43;
+  string queue_source_kind = 44;
+  string queue_source_state = 45;
+  int64 queue_source_ordinal = 46;
+  int64 queue_source_due_tick_id = 47;
+  int64 queue_source_due_at_ms = 48;
 }
 
 message RemoteFollowupEntry {
@@ -844,6 +859,11 @@ message RemoteFollowupEntry {
   int64 current_origin_runtime_region_epoch = 55;
   string current_target_runtime_region_id = 56;
   int64 current_target_runtime_region_epoch = 57;
+  string queue_source_kind = 58;
+  string queue_source_state = 59;
+  int64 queue_source_ordinal = 60;
+  int64 queue_source_due_tick_id = 61;
+  int64 queue_source_due_at_ms = 62;
 }
 
 message ListRemoteFollowupsResponse {
@@ -895,6 +915,11 @@ message ListRemoteFollowupResultsRequest {
   int64 current_origin_runtime_region_epoch = 41;
   string current_target_runtime_region_id = 42;
   int64 current_target_runtime_region_epoch = 43;
+  string queue_source_kind = 44;
+  string queue_source_state = 45;
+  int64 queue_source_ordinal = 46;
+  int64 queue_source_due_tick_id = 47;
+  int64 queue_source_due_at_ms = 48;
 }
 
 message RemoteFollowupResultEntry {
@@ -954,6 +979,11 @@ message RemoteFollowupResultEntry {
   int64 current_origin_runtime_region_epoch = 54;
   string current_target_runtime_region_id = 55;
   int64 current_target_runtime_region_epoch = 56;
+  string queue_source_kind = 57;
+  string queue_source_state = 58;
+  int64 queue_source_ordinal = 59;
+  int64 queue_source_due_tick_id = 60;
+  int64 queue_source_due_at_ms = 61;
 }
 
 message ListRemoteFollowupResultsResponse {

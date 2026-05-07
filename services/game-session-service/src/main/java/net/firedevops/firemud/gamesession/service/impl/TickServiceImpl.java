@@ -1582,14 +1582,20 @@ public class TickServiceImpl implements TickService {
       }
       net.firedevops.firemud.gamesession.entity.RemoteFollowup followup = followups.get(index);
       builder
-          .append("{\"sourceKind\":\"REMOTE_FOLLOWUP\"")
+          .append("{\"sourceKind\":\"")
+          .append(jsonEscape(remoteFollowupQueueSourceKind(followup)))
+          .append("\"")
           .append(",\"sourceOrdinal\":")
           .append(remoteFollowupSourceOrdinal(followup))
-          .append(",\"sourceState\":\"TARGET_REGION_CLAIMED\"")
+          .append(",\"sourceState\":\"")
+          .append(jsonEscape(remoteFollowupQueueSourceState(followup)))
+          .append("\"")
           .append(",\"effectKey\":\"")
           .append(jsonEscape(followup.getFollowupId()))
           .append("\"");
-      appendJsonNumberField(builder, "sourceDueTickId", followup.getDueTickId());
+      appendJsonNumberField(
+          builder, "sourceDueTickId", remoteFollowupQueueSourceDueTickId(followup));
+      appendJsonNumberField(builder, "sourceDueAtMs", followup.getQueueSourceDueAtMs());
       appendJsonStringField(builder, "followupId", followup.getFollowupId());
       appendJsonStringField(builder, "originRegionId", followup.getOriginRegionId());
       appendJsonNumberField(builder, "originRegionEpoch", followup.getOriginRegionEpoch());
@@ -1626,9 +1632,33 @@ public class TickServiceImpl implements TickService {
 
   private long remoteFollowupSourceOrdinal(
       net.firedevops.firemud.gamesession.entity.RemoteFollowup followup) {
-    return followup.getClaimOrdinal() == null || followup.getClaimOrdinal() <= 0L
-        ? followup.getDueTickId()
-        : followup.getClaimOrdinal();
+    return followup.getQueueSourceOrdinal() != null && followup.getQueueSourceOrdinal() > 0L
+        ? followup.getQueueSourceOrdinal()
+        : followup.getClaimOrdinal() == null || followup.getClaimOrdinal() <= 0L
+            ? followup.getDueTickId()
+            : followup.getClaimOrdinal();
+  }
+
+  private String remoteFollowupQueueSourceKind(
+      net.firedevops.firemud.gamesession.entity.RemoteFollowup followup) {
+    return followup.getQueueSourceKind() == null || followup.getQueueSourceKind().isBlank()
+        ? RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_KIND
+        : followup.getQueueSourceKind();
+  }
+
+  private String remoteFollowupQueueSourceState(
+      net.firedevops.firemud.gamesession.entity.RemoteFollowup followup) {
+    return followup.getQueueSourceState() == null || followup.getQueueSourceState().isBlank()
+        ? RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_STATE_CLAIMED
+        : followup.getQueueSourceState();
+  }
+
+  private Long remoteFollowupQueueSourceDueTickId(
+      net.firedevops.firemud.gamesession.entity.RemoteFollowup followup) {
+    Long queueSourceDueTickId = followup.getQueueSourceDueTickId();
+    return queueSourceDueTickId != null
+        ? queueSourceDueTickId
+        : Long.valueOf(followup.getDueTickId());
   }
 
   private String selectionSourceKind(GameplayCommand command) {

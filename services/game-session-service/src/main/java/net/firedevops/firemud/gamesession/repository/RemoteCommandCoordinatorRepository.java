@@ -89,6 +89,16 @@ public interface RemoteCommandCoordinatorRepository
              or linkedFollowup.claimedTickBatchId = :followupClaimedTickBatchId)
         and (:followupRequiresSoloTick is null
              or linkedFollowup.requiresSoloTick = :followupRequiresSoloTick)
+        and (:followupQueueSourceKind = ''
+             or linkedFollowup.queueSourceKind = :followupQueueSourceKind)
+        and (:followupQueueSourceState = ''
+             or linkedFollowup.queueSourceState = :followupQueueSourceState)
+        and (:followupQueueSourceOrdinal <= 0
+             or linkedFollowup.queueSourceOrdinal = :followupQueueSourceOrdinal)
+        and (:followupQueueSourceDueTickId <= 0
+             or linkedFollowup.queueSourceDueTickId = :followupQueueSourceDueTickId)
+        and (:followupQueueSourceDueAtMs <= 0
+             or linkedFollowup.queueSourceDueAtMs = :followupQueueSourceDueAtMs)
         and (:targetCommandId = '' or targetCommand.commandId = :targetCommandId)
         and (:targetCommandExecutionOutcome = ''
              or targetCommand.executionOutcome = :targetCommandExecutionOutcome)
@@ -153,6 +163,11 @@ public interface RemoteCommandCoordinatorRepository
       @Param("followupStatus") String followupStatus,
       @Param("followupClaimedTickBatchId") String followupClaimedTickBatchId,
       @Param("followupRequiresSoloTick") Boolean followupRequiresSoloTick,
+      @Param("followupQueueSourceKind") String followupQueueSourceKind,
+      @Param("followupQueueSourceState") String followupQueueSourceState,
+      @Param("followupQueueSourceOrdinal") long followupQueueSourceOrdinal,
+      @Param("followupQueueSourceDueTickId") long followupQueueSourceDueTickId,
+      @Param("followupQueueSourceDueAtMs") long followupQueueSourceDueAtMs,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       @Param("targetCommandId") String targetCommandId,

@@ -79,6 +79,13 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
         and (:scriptEventId = '' or linkedFollowup.scriptEventId = :scriptEventId)
         and (:resultMessage = '' or result.resultMessage = :resultMessage)
         and (:requiresSoloTick is null or linkedFollowup.requiresSoloTick = :requiresSoloTick)
+        and (:queueSourceKind = '' or linkedFollowup.queueSourceKind = :queueSourceKind)
+        and (:queueSourceState = '' or linkedFollowup.queueSourceState = :queueSourceState)
+        and (:queueSourceOrdinal <= 0 or linkedFollowup.queueSourceOrdinal = :queueSourceOrdinal)
+        and (:queueSourceDueTickId <= 0
+             or linkedFollowup.queueSourceDueTickId = :queueSourceDueTickId)
+        and (:queueSourceDueAtMs <= 0
+             or linkedFollowup.queueSourceDueAtMs = :queueSourceDueAtMs)
         and (:lateResultPolicy = ''
              or exists (
                select 1 from RemoteCommandCoordinator coordinator
@@ -129,6 +136,11 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
       @Param("scriptEventId") String scriptEventId,
       @Param("resultMessage") String resultMessage,
       @Param("requiresSoloTick") Boolean requiresSoloTick,
+      @Param("queueSourceKind") String queueSourceKind,
+      @Param("queueSourceState") String queueSourceState,
+      @Param("queueSourceOrdinal") long queueSourceOrdinal,
+      @Param("queueSourceDueTickId") long queueSourceDueTickId,
+      @Param("queueSourceDueAtMs") long queueSourceDueAtMs,
       @Param("lateResultPolicy") String lateResultPolicy,
       @Param("claimedTickBatchId") String claimedTickBatchId,
       @Param("automationDispatchId") String automationDispatchId,

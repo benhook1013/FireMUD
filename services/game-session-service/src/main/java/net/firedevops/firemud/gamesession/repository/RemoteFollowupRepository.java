@@ -89,6 +89,11 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
         and (:failureCode = '' or followup.failureCode = :failureCode)
         and (:requiresSoloTick is null or followup.requiresSoloTick = :requiresSoloTick)
         and (:claimedTickBatchId = '' or followup.claimedTickBatchId = :claimedTickBatchId)
+        and (:queueSourceKind = '' or followup.queueSourceKind = :queueSourceKind)
+        and (:queueSourceState = '' or followup.queueSourceState = :queueSourceState)
+        and (:queueSourceOrdinal <= 0 or followup.queueSourceOrdinal = :queueSourceOrdinal)
+        and (:queueSourceDueTickId <= 0 or followup.queueSourceDueTickId = :queueSourceDueTickId)
+        and (:queueSourceDueAtMs <= 0 or followup.queueSourceDueAtMs = :queueSourceDueAtMs)
         and (:requestedCommand = '' or followup.requestedCommand = :requestedCommand)
         and (:eventType = '' or followup.eventType = :eventType)
         and (:scriptEventId = '' or followup.scriptEventId = :scriptEventId)
@@ -151,6 +156,11 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
       @Param("failureCode") String failureCode,
       @Param("requiresSoloTick") Boolean requiresSoloTick,
       @Param("claimedTickBatchId") String claimedTickBatchId,
+      @Param("queueSourceKind") String queueSourceKind,
+      @Param("queueSourceState") String queueSourceState,
+      @Param("queueSourceOrdinal") long queueSourceOrdinal,
+      @Param("queueSourceDueTickId") long queueSourceDueTickId,
+      @Param("queueSourceDueAtMs") long queueSourceDueAtMs,
       @Param("requestedCommand") String requestedCommand,
       @Param("eventType") String eventType,
       @Param("scriptEventId") String scriptEventId,

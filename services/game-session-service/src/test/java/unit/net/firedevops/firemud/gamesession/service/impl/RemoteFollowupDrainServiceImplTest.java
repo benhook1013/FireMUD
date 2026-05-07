@@ -63,10 +63,16 @@ class RemoteFollowupDrainServiceImplTest {
     assertEquals(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED, first.getStatus());
     assertEquals("tb-1", first.getClaimedTickBatchId());
     assertEquals(1L, first.getClaimOrdinal());
+    assertEquals("REMOTE_FOLLOWUP", first.getQueueSourceKind());
+    assertEquals("TARGET_REGION_CLAIMED", first.getQueueSourceState());
+    assertEquals(1L, first.getQueueSourceOrdinal());
+    assertEquals(10L, first.getQueueSourceDueTickId());
     assertEquals(null, first.getFailureCode());
     assertEquals(null, first.getFailureMessage());
     assertEquals(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED, second.getStatus());
     assertEquals(2L, second.getClaimOrdinal());
+    assertEquals("TARGET_REGION_CLAIMED", second.getQueueSourceState());
+    assertEquals(2L, second.getQueueSourceOrdinal());
   }
 
   @Test
@@ -117,6 +123,8 @@ class RemoteFollowupDrainServiceImplTest {
     assertEquals(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED, ninth.getStatus());
     assertEquals(1L, first.getClaimOrdinal());
     assertEquals(2L, ninth.getClaimOrdinal());
+    assertEquals("TARGET_REGION_CLAIMED", first.getQueueSourceState());
+    assertEquals("TARGET_REGION_CLAIMED", ninth.getQueueSourceState());
   }
 
   @Test
@@ -133,6 +141,10 @@ class RemoteFollowupDrainServiceImplTest {
     assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, first.getStatus());
     assertEquals(null, first.getClaimedTickBatchId());
     assertEquals(null, first.getClaimOrdinal());
+    assertEquals("REMOTE_FOLLOWUP", first.getQueueSourceKind());
+    assertEquals("TARGET_REGION_SCHEDULED", first.getQueueSourceState());
+    assertEquals(null, first.getQueueSourceOrdinal());
+    assertEquals(10L, first.getQueueSourceDueTickId());
     assertEquals("REMOTE_DRAIN_ABORTED", first.getFailureCode());
     assertEquals("rollback", first.getFailureMessage());
   }

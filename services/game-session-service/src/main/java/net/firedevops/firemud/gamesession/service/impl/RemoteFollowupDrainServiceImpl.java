@@ -75,6 +75,11 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
       followup.setStatus(FOLLOWUP_CLAIMED);
       followup.setClaimedTickBatchId(tickBatchId);
       followup.setClaimOrdinal((long) index + 1L);
+      followup.setQueueSourceKind(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_KIND);
+      followup.setQueueSourceState(
+          RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_STATE_CLAIMED);
+      followup.setQueueSourceOrdinal((long) index + 1L);
+      followup.setQueueSourceDueTickId(followup.getDueTickId());
       followup.setFailureCode(null);
       followup.setFailureMessage(null);
       followup.setUpdatedAt(now);
@@ -107,6 +112,11 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
       followup.setStatus(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED);
       followup.setClaimedTickBatchId(null);
       followup.setClaimOrdinal(null);
+      followup.setQueueSourceKind(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_KIND);
+      followup.setQueueSourceState(
+          RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_STATE_SCHEDULED);
+      followup.setQueueSourceOrdinal(null);
+      followup.setQueueSourceDueTickId(followup.getDueTickId());
       followup.setFailureCode(failureCode);
       followup.setFailureMessage(truncate(failureMessage));
       followup.setUpdatedAt(now);

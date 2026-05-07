@@ -39,6 +39,11 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   static final String COORDINATOR_LATE_RESULT_RECONCILED = "LATE_RESULT_RECONCILED";
 
   static final String FOLLOWUP_SCHEDULED = "SCHEDULED";
+  static final String FOLLOWUP_QUEUE_SOURCE_KIND = "REMOTE_FOLLOWUP";
+  static final String FOLLOWUP_QUEUE_SOURCE_STATE_SCHEDULED = "TARGET_REGION_SCHEDULED";
+  static final String FOLLOWUP_QUEUE_SOURCE_STATE_CLAIMED = "TARGET_REGION_CLAIMED";
+  static final String FOLLOWUP_QUEUE_SOURCE_STATE_APPLIED = "TARGET_REGION_APPLIED";
+  static final String FOLLOWUP_QUEUE_SOURCE_STATE_ABANDONED = "TARGET_REGION_ABANDONED";
   static final String FOLLOWUP_APPLIED = "APPLIED";
   static final String FOLLOWUP_ABANDONED = "ABANDONED";
 
@@ -206,6 +211,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             .orElseThrow(() -> new IllegalArgumentException("remote followup not found"));
     followup.setStatus(FOLLOWUP_ABANDONED);
     followup.setClaimedTickBatchId(null);
+    followup.setQueueSourceKind(FOLLOWUP_QUEUE_SOURCE_KIND);
+    followup.setQueueSourceState(FOLLOWUP_QUEUE_SOURCE_STATE_ABANDONED);
     followup.setFailureCode(failureCode);
     followup.setFailureMessage(truncate(failureMessage));
     followup.setUpdatedAt(Instant.now(clock));
@@ -660,6 +667,11 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     followup.setStatus(FOLLOWUP_SCHEDULED);
     followup.setClaimedTickBatchId(null);
     followup.setClaimOrdinal(null);
+    followup.setQueueSourceKind(FOLLOWUP_QUEUE_SOURCE_KIND);
+    followup.setQueueSourceState(FOLLOWUP_QUEUE_SOURCE_STATE_SCHEDULED);
+    followup.setQueueSourceOrdinal(null);
+    followup.setQueueSourceDueTickId(request.targetDueTickId());
+    followup.setQueueSourceDueAtMs(null);
     followup.setFailureCode(null);
     followup.setFailureMessage(null);
     applySchedulingMetadata(followup, request, command);
@@ -1178,10 +1190,14 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       RemoteFollowup followup, String outcome, ResultSummary resultSummary, Instant now) {
     if (RESULT_APPLIED.equalsIgnoreCase(outcome)) {
       followup.setStatus(FOLLOWUP_APPLIED);
+      followup.setQueueSourceKind(FOLLOWUP_QUEUE_SOURCE_KIND);
+      followup.setQueueSourceState(FOLLOWUP_QUEUE_SOURCE_STATE_APPLIED);
       followup.setFailureCode(null);
       followup.setFailureMessage(null);
     } else {
       followup.setStatus(FOLLOWUP_ABANDONED);
+      followup.setQueueSourceKind(FOLLOWUP_QUEUE_SOURCE_KIND);
+      followup.setQueueSourceState(FOLLOWUP_QUEUE_SOURCE_STATE_ABANDONED);
       followup.setFailureCode(
           resultSummary.errorCode() == null ? "REMOTE_ABANDONED" : resultSummary.errorCode());
       followup.setFailureMessage(
