@@ -625,6 +625,10 @@ message RemoteCommandCoordinatorEntry {
   string followup_read_snapshot_token = 59;
   string followup_event_payload_json = 60;
   string followup_claim_target_aggregate = 61;
+  string current_origin_runtime_region_id = 62;
+  int64 current_origin_runtime_region_epoch = 63;
+  string current_target_runtime_region_id = 64;
+  int64 current_target_runtime_region_epoch = 65;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -828,6 +832,10 @@ message RemoteFollowupEntry {
   string read_snapshot_token = 51;
   string event_payload_json = 52;
   string claim_target_aggregate = 53;
+  string current_origin_runtime_region_id = 54;
+  int64 current_origin_runtime_region_epoch = 55;
+  string current_target_runtime_region_id = 56;
+  int64 current_target_runtime_region_epoch = 57;
 }
 
 message ListRemoteFollowupsResponse {
@@ -930,6 +938,10 @@ message RemoteFollowupResultEntry {
   string read_snapshot_token = 50;
   string event_payload_json = 51;
   string claim_target_aggregate = 52;
+  string current_origin_runtime_region_id = 53;
+  int64 current_origin_runtime_region_epoch = 54;
+  string current_target_runtime_region_id = 55;
+  int64 current_target_runtime_region_epoch = 56;
 }
 
 message ListRemoteFollowupResultsResponse {

@@ -2386,6 +2386,10 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(RemoteFollowupResultRepository.class);
     GameplayCommandRepository gameplayCommandRepository =
         Mockito.mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        runtimeRegionStatusRepository(
+            runtimeStatus(1L, 7L, "region-origin-current", 13L),
+            runtimeStatus(1L, 9L, "region-target-current", 14L));
     Mockito.when(repository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
         .thenReturn(Optional.of(coordinator));
     Mockito.when(remoteFollowupRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
@@ -2407,6 +2411,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             repository,
             remoteFollowupResultRepository,
             gameplayCommandRepository,
+            runtimeRegionStatusRepository,
             null,
             gameDesignClient());
 
@@ -2427,6 +2432,14 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("rf-1", responseRef.get().getCoordinator().getFollowupId());
     assertEquals("region-a", responseRef.get().getCoordinator().getOriginRegionId());
     assertEquals("region-b", responseRef.get().getCoordinator().getTargetRegionId());
+    assertEquals(
+        "region-origin-current",
+        responseRef.get().getCoordinator().getCurrentOriginRuntimeRegionId());
+    assertEquals(13L, responseRef.get().getCoordinator().getCurrentOriginRuntimeRegionEpoch());
+    assertEquals(
+        "region-target-current",
+        responseRef.get().getCoordinator().getCurrentTargetRuntimeRegionId());
+    assertEquals(14L, responseRef.get().getCoordinator().getCurrentTargetRuntimeRegionEpoch());
     assertEquals(55L, responseRef.get().getCoordinator().getTargetDueTickId());
     assertEquals("PENDING_REMOTE", responseRef.get().getCoordinator().getState());
     assertEquals("dispatch-1", responseRef.get().getCoordinator().getAutomationDispatchId());
@@ -2591,6 +2604,10 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(List.of(latestResult));
     GameplayCommandRepository gameplayCommandRepository =
         Mockito.mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        runtimeRegionStatusRepository(
+            runtimeStatus(1L, 7L, "region-origin-current", 13L),
+            runtimeStatus(1L, 9L, "region-target-current", 14L));
     GameplayCommand targetCommand = new GameplayCommand();
     targetCommand.setCommandId("target-cmd-1");
     targetCommand.setRemoteFollowupId("rf-1");
@@ -2603,6 +2620,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             repository,
             resultRepository,
             gameplayCommandRepository,
+            runtimeRegionStatusRepository,
             null,
             gameDesignClient());
 
@@ -2660,6 +2678,14 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(1, responseRef.get().getCoordinatorsCount());
     assertEquals("coord-1", responseRef.get().getCoordinators(0).getCoordinatorId());
     assertEquals("rf-1", responseRef.get().getCoordinators(0).getFollowupId());
+    assertEquals(
+        "region-origin-current",
+        responseRef.get().getCoordinators(0).getCurrentOriginRuntimeRegionId());
+    assertEquals(13L, responseRef.get().getCoordinators(0).getCurrentOriginRuntimeRegionEpoch());
+    assertEquals(
+        "region-target-current",
+        responseRef.get().getCoordinators(0).getCurrentTargetRuntimeRegionId());
+    assertEquals(14L, responseRef.get().getCoordinators(0).getCurrentTargetRuntimeRegionEpoch());
     assertEquals("7", responseRef.get().getCoordinators(0).getOriginGameInstanceId());
     assertEquals(3L, responseRef.get().getCoordinators(0).getOriginRegionEpoch());
     assertEquals("9", responseRef.get().getCoordinators(0).getTargetGameInstanceId());
@@ -2778,6 +2804,10 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
     GameplayCommandRepository gameplayCommandRepository =
         Mockito.mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        runtimeRegionStatusRepository(
+            runtimeStatus(1L, 7L, "region-origin-current", 13L),
+            runtimeStatus(1L, 9L, "region-target-current", 14L));
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("rf-1");
@@ -2842,6 +2872,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             coordinatorRepository,
             null,
             gameplayCommandRepository,
+            runtimeRegionStatusRepository,
             null,
             gameDesignClient());
 
@@ -2897,6 +2928,14 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(1, responseRef.get().getFollowupsCount());
     assertEquals("rf-1", responseRef.get().getFollowups(0).getFollowupId());
     assertEquals("cmd-1", responseRef.get().getFollowups(0).getCommandId());
+    assertEquals(
+        "region-origin-current",
+        responseRef.get().getFollowups(0).getCurrentOriginRuntimeRegionId());
+    assertEquals(13L, responseRef.get().getFollowups(0).getCurrentOriginRuntimeRegionEpoch());
+    assertEquals(
+        "region-target-current",
+        responseRef.get().getFollowups(0).getCurrentTargetRuntimeRegionId());
+    assertEquals(14L, responseRef.get().getFollowups(0).getCurrentTargetRuntimeRegionEpoch());
     assertEquals("tick-batch-7", responseRef.get().getFollowups(0).getClaimedTickBatchId());
     assertEquals("dispatch-1", responseRef.get().getFollowups(0).getAutomationDispatchId());
     assertEquals("work-1", responseRef.get().getFollowups(0).getAutomationWorkItemId());
@@ -2954,7 +2993,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             new RemoteFollowupRuntimeService.ScheduleOutcome("coord-1", "followup-1", true, true));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
-        remoteControlPlaneService(null, null, null, null, runtimeService, gameDesignClient());
+        remoteControlPlaneService(null, null, null, null, null, runtimeService, gameDesignClient());
 
     AtomicReference<ScheduleRemoteFollowupResponse> responseRef = new AtomicReference<>();
     service.scheduleRemoteFollowup(
@@ -3018,7 +3057,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenThrow(new IllegalArgumentException("payload kind is required"));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
-        remoteControlPlaneService(null, null, null, null, runtimeService, gameDesignClient());
+        remoteControlPlaneService(null, null, null, null, null, runtimeService, gameDesignClient());
 
     AtomicReference<ScheduleRemoteFollowupResponse> responseRef = new AtomicReference<>();
     service.scheduleRemoteFollowup(
@@ -3071,6 +3110,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     RemoteFollowupRepository followupRepository = Mockito.mock(RemoteFollowupRepository.class);
     GameplayCommandRepository gameplayCommandRepository =
         Mockito.mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        runtimeRegionStatusRepository(
+            runtimeStatus(1L, 7L, "region-origin-current", 13L),
+            runtimeStatus(1L, 9L, "region-target-current", 14L));
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setTenantId(1L);
     coordinator.setCoordinatorId("coord-1");
@@ -3165,6 +3208,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             coordinatorRepository,
             repository,
             gameplayCommandRepository,
+            runtimeRegionStatusRepository,
             null,
             gameDesignClient());
 
@@ -3222,6 +3266,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("rr-1", responseRef.get().getResults(0).getResultId());
     assertEquals("7", responseRef.get().getResults(0).getOriginGameInstanceId());
     assertEquals("9", responseRef.get().getResults(0).getTargetGameInstanceId());
+    assertEquals(
+        "region-origin-current", responseRef.get().getResults(0).getCurrentOriginRuntimeRegionId());
+    assertEquals(13L, responseRef.get().getResults(0).getCurrentOriginRuntimeRegionEpoch());
+    assertEquals(
+        "region-target-current", responseRef.get().getResults(0).getCurrentTargetRuntimeRegionId());
+    assertEquals(14L, responseRef.get().getResults(0).getCurrentTargetRuntimeRegionEpoch());
     assertEquals("cmd-1", responseRef.get().getResults(0).getCommandId());
     assertEquals("dispatch-1", responseRef.get().getResults(0).getAutomationDispatchId());
     assertEquals("work-1", responseRef.get().getResults(0).getAutomationWorkItemId());
@@ -3306,6 +3356,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     RemoteFollowupRepository followupRepository = Mockito.mock(RemoteFollowupRepository.class);
     GameplayCommandRepository gameplayCommandRepository =
         Mockito.mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        runtimeRegionStatusRepository(
+            runtimeStatus(1L, 7L, "region-origin-current", 13L),
+            runtimeStatus(1L, 9L, "region-target-current", 14L));
     GameplayCommand targetCommand = new GameplayCommand();
     targetCommand.setCommandId("linked-cmd");
     targetCommand.setTenantId(1L);
@@ -3369,6 +3423,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             coordinatorRepository,
             repository,
             gameplayCommandRepository,
+            runtimeRegionStatusRepository,
             null,
             gameDesignClient());
 
@@ -3387,6 +3442,12 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals(1, responseRef.get().getResultsCount());
     assertEquals("linked-cmd", responseRef.get().getResults(0).getResultCommandId());
+    assertEquals(
+        "region-origin-current", responseRef.get().getResults(0).getCurrentOriginRuntimeRegionId());
+    assertEquals(13L, responseRef.get().getResults(0).getCurrentOriginRuntimeRegionEpoch());
+    assertEquals(
+        "region-target-current", responseRef.get().getResults(0).getCurrentTargetRuntimeRegionId());
+    assertEquals(14L, responseRef.get().getResults(0).getCurrentTargetRuntimeRegionEpoch());
     assertEquals("TIMEOUT", responseRef.get().getResults(0).getResultErrorCode());
     assertEquals(
         "Target region timed out the remote gameplay command",
@@ -3698,6 +3759,21 @@ class GameSessionControlPlaneGrpcServiceTest {
     return status;
   }
 
+  private static RuntimeRegionStatus runtimeStatus(
+      long tenantId, long gameInstanceId, String regionId, long regionEpoch) {
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setTenantId(tenantId);
+    status.setGameInstanceId(gameInstanceId);
+    status.setRegionId(regionId);
+    status.setRegionEpoch(regionEpoch);
+    status.setExecutorFence("fence-" + gameInstanceId);
+    status.setOwnerService("game-session-service");
+    status.setOwnerInstanceId("instance-" + gameInstanceId);
+    status.setPaused(false);
+    status.setUpdatedAt(Instant.EPOCH);
+    return status;
+  }
+
   private static RuntimeRegionStatusRepository runtimeRepository(RuntimeRegionStatus status) {
     RuntimeRegionStatusRepository repository = Mockito.mock(RuntimeRegionStatusRepository.class);
     Mockito.when(repository.findByTenantIdAndRegionId(1L, status.getRegionId()))
@@ -3707,11 +3783,26 @@ class GameSessionControlPlaneGrpcServiceTest {
     return repository;
   }
 
+  private static RuntimeRegionStatusRepository runtimeRegionStatusRepository(
+      RuntimeRegionStatus... statuses) {
+    RuntimeRegionStatusRepository repository = Mockito.mock(RuntimeRegionStatusRepository.class);
+    for (RuntimeRegionStatus status : statuses) {
+      Mockito.when(
+              repository.findByTenantIdAndGameInstanceId(
+                  status.getTenantId(), status.getGameInstanceId()))
+          .thenReturn(Optional.of(status));
+      Mockito.when(repository.findByTenantIdAndRegionId(status.getTenantId(), status.getRegionId()))
+          .thenReturn(Optional.of(status));
+    }
+    return repository;
+  }
+
   private static GameSessionControlPlaneGrpcService remoteControlPlaneService(
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
       GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       RemoteFollowupRuntimeService remoteFollowupRuntimeService,
       GameDesignClient gameDesignClient) {
     return new GameSessionControlPlaneGrpcService(
@@ -3719,7 +3810,9 @@ class GameSessionControlPlaneGrpcServiceTest {
         gameplayCommandRepository == null
             ? Mockito.mock(GameplayCommandRepository.class)
             : gameplayCommandRepository,
-        Mockito.mock(RuntimeRegionStatusRepository.class),
+        runtimeRegionStatusRepository == null
+            ? Mockito.mock(RuntimeRegionStatusRepository.class)
+            : runtimeRegionStatusRepository,
         remoteFollowupRepository == null
             ? Mockito.mock(RemoteFollowupRepository.class)
             : remoteFollowupRepository,

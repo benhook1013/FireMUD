@@ -2369,6 +2369,10 @@ public final class GameSessionControlPlaneGrpcService
         coordinator.getRealmSlug(),
         coordinator.getPointerVersion());
     applyTargetCommandStatus(builder, targetCommand);
+    applyCurrentRuntimeScope(
+        builder, coordinator.getTenantId(), coordinator.getOriginGameInstanceId(), true);
+    applyCurrentRuntimeScope(
+        builder, coordinator.getTenantId(), coordinator.getTargetGameInstanceId(), false);
     return builder.build();
   }
 
@@ -2449,6 +2453,10 @@ public final class GameSessionControlPlaneGrpcService
         followup.getPointerVersion());
     applyCoordinatorDeadlinePolicy(builder, coordinator);
     applyTargetCommandStatus(builder, targetCommand);
+    applyCurrentRuntimeScope(
+        builder, followup.getTenantId(), followup.getOriginGameInstanceId(), true);
+    applyCurrentRuntimeScope(
+        builder, followup.getTenantId(), followup.getTargetGameInstanceId(), false);
     return builder.build();
   }
 
@@ -2513,7 +2521,79 @@ public final class GameSessionControlPlaneGrpcService
     applyClaimTargetAggregate(builder, followup);
     applyTriggerScriptEventSummary(builder, followup);
     applyCoordinatorDeadlinePolicy(builder, coordinator);
+    applyCurrentRuntimeScope(builder, result.getTenantId(), result.getOriginGameInstanceId(), true);
+    applyCurrentRuntimeScope(
+        builder, result.getTenantId(), result.getTargetGameInstanceId(), false);
     return builder.build();
+  }
+
+  private void applyCurrentRuntimeScope(
+      RemoteCommandCoordinatorEntry.Builder builder,
+      long tenantId,
+      long gameInstanceId,
+      boolean originScope) {
+    currentRuntimeOwnership(tenantId, gameInstanceId)
+        .ifPresent(
+            ownership -> {
+              if (ownership.getRegionId() != null && !ownership.getRegionId().isBlank()) {
+                if (originScope) {
+                  builder.setCurrentOriginRuntimeRegionId(ownership.getRegionId());
+                } else {
+                  builder.setCurrentTargetRuntimeRegionId(ownership.getRegionId());
+                }
+              }
+              if (originScope) {
+                builder.setCurrentOriginRuntimeRegionEpoch(ownership.getRegionEpoch());
+              } else {
+                builder.setCurrentTargetRuntimeRegionEpoch(ownership.getRegionEpoch());
+              }
+            });
+  }
+
+  private void applyCurrentRuntimeScope(
+      RemoteFollowupEntry.Builder builder,
+      long tenantId,
+      long gameInstanceId,
+      boolean originScope) {
+    currentRuntimeOwnership(tenantId, gameInstanceId)
+        .ifPresent(
+            ownership -> {
+              if (ownership.getRegionId() != null && !ownership.getRegionId().isBlank()) {
+                if (originScope) {
+                  builder.setCurrentOriginRuntimeRegionId(ownership.getRegionId());
+                } else {
+                  builder.setCurrentTargetRuntimeRegionId(ownership.getRegionId());
+                }
+              }
+              if (originScope) {
+                builder.setCurrentOriginRuntimeRegionEpoch(ownership.getRegionEpoch());
+              } else {
+                builder.setCurrentTargetRuntimeRegionEpoch(ownership.getRegionEpoch());
+              }
+            });
+  }
+
+  private void applyCurrentRuntimeScope(
+      RemoteFollowupResultEntry.Builder builder,
+      long tenantId,
+      long gameInstanceId,
+      boolean originScope) {
+    currentRuntimeOwnership(tenantId, gameInstanceId)
+        .ifPresent(
+            ownership -> {
+              if (ownership.getRegionId() != null && !ownership.getRegionId().isBlank()) {
+                if (originScope) {
+                  builder.setCurrentOriginRuntimeRegionId(ownership.getRegionId());
+                } else {
+                  builder.setCurrentTargetRuntimeRegionId(ownership.getRegionId());
+                }
+              }
+              if (originScope) {
+                builder.setCurrentOriginRuntimeRegionEpoch(ownership.getRegionEpoch());
+              } else {
+                builder.setCurrentTargetRuntimeRegionEpoch(ownership.getRegionEpoch());
+              }
+            });
   }
 
   private void applyDirectCommandProvenance(
@@ -3454,8 +3534,15 @@ public final class GameSessionControlPlaneGrpcService
         || command.getGameInstanceId() <= 0) {
       return Optional.empty();
     }
-    return runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(
-        command.getTenantId(), command.getGameInstanceId());
+    return currentRuntimeOwnership(command.getTenantId(), command.getGameInstanceId());
+  }
+
+  private Optional<RuntimeRegionStatus> currentRuntimeOwnership(
+      long tenantId, long gameInstanceId) {
+    if (tenantId <= 0 || gameInstanceId <= 0) {
+      return Optional.empty();
+    }
+    return runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
   }
 
   private RemoteCommandCoordinator resolveRemoteCoordinator(GameplayCommand command) {
