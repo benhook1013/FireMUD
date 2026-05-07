@@ -520,6 +520,12 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         .setGameInstanceId("game-1")
                         .setRegionId("region-1")
                         .setRegionEpoch(12L)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_SHARED)
+                        .setWorldSlug("demo")
+                        .setRealmSlug("production")
+                        .setPointerVersion(17L)
                         .build())
                 .build());
     AutomationScriptingControlPlaneGrpcService service =
@@ -560,6 +566,14 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getSchedules(0).getCurrentRuntimeRegionId()).isEqualTo("region-1");
     assertThat(ref.get().getSchedules(0).getCurrentRuntimeRegionEpoch()).isEqualTo(12L);
     assertThat(ref.get().getSchedules(0).getIsRuntimeScopeStale()).isFalse();
+    assertThat(ref.get().getSchedules(0).getCurrentRuntimePlayableStateScope())
+        .isEqualTo(
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_SHARED);
+    assertThat(ref.get().getSchedules(0).getCurrentRuntimeWorldSlug()).isEqualTo("demo");
+    assertThat(ref.get().getSchedules(0).getCurrentRuntimeRealmSlug()).isEqualTo("production");
+    assertThat(ref.get().getSchedules(0).getCurrentRuntimePointerVersion()).isEqualTo("17");
+    assertThat(ref.get().getSchedules(0).getIsRoutingBundleStale()).isFalse();
     assertThat(ref.get().getSchedules(0).getPublication().getVersionId()).isEqualTo(17L);
   }
 
@@ -710,6 +724,12 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         .setGameInstanceId("game-1")
                         .setRegionId("region-live")
                         .setRegionEpoch(44L)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_ISOLATED)
+                        .setWorldSlug("demo-next")
+                        .setRealmSlug("staging")
+                        .setPointerVersion(99L)
                         .build())
                 .build());
     AutomationScriptingControlPlaneGrpcService service =
@@ -750,6 +770,14 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvents(0).getCurrentRuntimeRegionId()).isEqualTo("region-live");
     assertThat(ref.get().getEvents(0).getCurrentRuntimeRegionEpoch()).isEqualTo(44L);
     assertThat(ref.get().getEvents(0).getIsRuntimeScopeStale()).isTrue();
+    assertThat(ref.get().getEvents(0).getCurrentRuntimePlayableStateScope())
+        .isEqualTo(
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_ISOLATED);
+    assertThat(ref.get().getEvents(0).getCurrentRuntimeWorldSlug()).isEqualTo("demo-next");
+    assertThat(ref.get().getEvents(0).getCurrentRuntimeRealmSlug()).isEqualTo("staging");
+    assertThat(ref.get().getEvents(0).getCurrentRuntimePointerVersion()).isEqualTo("99");
+    assertThat(ref.get().getEvents(0).getIsRoutingBundleStale()).isTrue();
     assertThat(ref.get().getEvents(0).getPublication().getVersionId()).isEqualTo(17L);
   }
 
@@ -1105,6 +1133,12 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         .setGameInstanceId("game-2")
                         .setRegionId("region-live")
                         .setRegionEpoch(22L)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_ISOLATED)
+                        .setWorldSlug("demo-next")
+                        .setRealmSlug("staging")
+                        .setPointerVersion(99L)
                         .build())
                 .build());
     Mockito.when(gameSessionClient.getGameplayCommandStatus("1", "command-1"))
@@ -1178,6 +1212,14 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeRegionId()).isEqualTo("region-live");
     assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeRegionEpoch()).isEqualTo(22L);
     assertThat(ref.get().getEvents(0).getIsTargetRuntimeScopeStale()).isTrue();
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimePlayableStateScope())
+        .isEqualTo(
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_ISOLATED);
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeWorldSlug()).isEqualTo("demo-next");
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeRealmSlug()).isEqualTo("staging");
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimePointerVersion()).isEqualTo("99");
+    assertThat(ref.get().getEvents(0).getIsTargetRoutingBundleStale()).isTrue();
     assertThat(ref.get().getEvents(0).getGameplayCommandExecutionOutcome()).isEqualTo("APPLIED");
     assertThat(ref.get().getEvents(0).getGameplayCommandGameplayResult()).isEqualTo("SUCCESS");
     assertThat(ref.get().getEvents(0).getGameplayRemoteState()).isEqualTo("REMOTE_APPLIED");
@@ -1250,6 +1292,12 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         .setGameInstanceId("game-1")
                         .setRegionId("region-1")
                         .setRegionEpoch(99L)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_ISOLATED)
+                        .setWorldSlug("demo-next")
+                        .setRealmSlug("staging")
+                        .setPointerVersion(99L)
                         .build())
                 .build());
     AutomationScriptingControlPlaneGrpcService service =
@@ -1288,6 +1336,14 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeRegionId()).isEqualTo("region-1");
     assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeRegionEpoch()).isEqualTo(99L);
     assertThat(ref.get().getDeadLetters(0).getIsRuntimeScopeStale()).isTrue();
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimePlayableStateScope())
+        .isEqualTo(
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_ISOLATED);
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeWorldSlug()).isEqualTo("demo-next");
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeRealmSlug()).isEqualTo("staging");
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimePointerVersion()).isEqualTo("99");
+    assertThat(ref.get().getDeadLetters(0).getIsRoutingBundleStale()).isTrue();
     assertThat(ref.get().getDeadLetters(0).getReason()).isEqualTo("STALE_TIMELINE");
   }
 

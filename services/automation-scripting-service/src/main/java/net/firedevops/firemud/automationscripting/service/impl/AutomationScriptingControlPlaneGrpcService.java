@@ -1150,6 +1150,18 @@ public final class AutomationScriptingControlPlaneGrpcService
           .setCurrentRuntimeGameInstanceId(currentScope.gameInstanceId())
           .setCurrentRuntimeRegionId(currentScope.regionId())
           .setCurrentRuntimeRegionEpoch(currentScope.regionEpoch())
+          .setCurrentRuntimePlayableStateScope(
+              toPlayableStateScope(currentScope.playableStateScope()))
+          .setCurrentRuntimeWorldSlug(currentScope.worldSlug())
+          .setCurrentRuntimeRealmSlug(currentScope.realmSlug())
+          .setCurrentRuntimePointerVersion(currentScope.pointerVersion())
+          .setIsRoutingBundleStale(
+              isRoutingBundleStale(
+                  summary.playableStateScope(),
+                  summary.worldSlug(),
+                  summary.realmSlug(),
+                  summary.pointerVersion(),
+                  currentScope))
           .setIsRuntimeScopeStale(
               isRuntimeScopeStale(summary.regionId(), summary.regionEpoch(), currentScope));
     }
@@ -1236,6 +1248,18 @@ public final class AutomationScriptingControlPlaneGrpcService
           .setCurrentRuntimeGameInstanceId(currentScope.gameInstanceId())
           .setCurrentRuntimeRegionId(currentScope.regionId())
           .setCurrentRuntimeRegionEpoch(currentScope.regionEpoch())
+          .setCurrentRuntimePlayableStateScope(
+              toPlayableStateScope(currentScope.playableStateScope()))
+          .setCurrentRuntimeWorldSlug(currentScope.worldSlug())
+          .setCurrentRuntimeRealmSlug(currentScope.realmSlug())
+          .setCurrentRuntimePointerVersion(currentScope.pointerVersion())
+          .setIsRoutingBundleStale(
+              isRoutingBundleStale(
+                  summary.playableStateScope(),
+                  summary.worldSlug(),
+                  summary.realmSlug(),
+                  summary.pointerVersion(),
+                  currentScope))
           .setIsRuntimeScopeStale(
               isRuntimeScopeStale(
                   summary.runtimeRegionId(), summary.runtimeRegionEpoch(), currentScope));
@@ -1285,6 +1309,18 @@ public final class AutomationScriptingControlPlaneGrpcService
           .setCurrentRuntimeGameInstanceId(currentScope.gameInstanceId())
           .setCurrentRuntimeRegionId(currentScope.regionId())
           .setCurrentRuntimeRegionEpoch(currentScope.regionEpoch())
+          .setCurrentRuntimePlayableStateScope(
+              toPlayableStateScope(currentScope.playableStateScope()))
+          .setCurrentRuntimeWorldSlug(currentScope.worldSlug())
+          .setCurrentRuntimeRealmSlug(currentScope.realmSlug())
+          .setCurrentRuntimePointerVersion(currentScope.pointerVersion())
+          .setIsRoutingBundleStale(
+              isRoutingBundleStale(
+                  summary.playableStateScope(),
+                  summary.worldSlug(),
+                  summary.realmSlug(),
+                  summary.pointerVersion(),
+                  currentScope))
           .setIsRuntimeScopeStale(
               isRuntimeScopeStale(summary.regionId(), summary.regionEpoch(), currentScope));
     }
@@ -1336,6 +1372,12 @@ public final class AutomationScriptingControlPlaneGrpcService
           .setCurrentTargetRuntimeGameInstanceId(currentScope.gameInstanceId())
           .setCurrentTargetRuntimeRegionId(currentScope.regionId())
           .setCurrentTargetRuntimeRegionEpoch(currentScope.regionEpoch())
+          .setCurrentTargetRuntimePlayableStateScope(
+              toPlayableStateScope(currentScope.playableStateScope()))
+          .setCurrentTargetRuntimeWorldSlug(currentScope.worldSlug())
+          .setCurrentTargetRuntimeRealmSlug(currentScope.realmSlug())
+          .setCurrentTargetRuntimePointerVersion(currentScope.pointerVersion())
+          .setIsTargetRoutingBundleStale(isTargetRoutingBundleStale(summary, currentScope))
           .setIsTargetRuntimeScopeStale(isTargetRuntimeScopeStale(summary, currentScope));
     }
     if (commandStatus != null) {
@@ -1373,7 +1415,11 @@ public final class AutomationScriptingControlPlaneGrpcService
           new CurrentTargetRuntimeScope(
               emptyIfNull(runtime.getRuntimeState().getGameInstanceId()),
               emptyIfNull(runtime.getRuntimeState().getRegionId()),
-              runtime.getRuntimeState().getRegionEpoch()));
+              runtime.getRuntimeState().getRegionEpoch(),
+              normalizePlayableStateScope(runtime.getRuntimeState().getPlayableStateScope()),
+              emptyIfNull(runtime.getRuntimeState().getWorldSlug()),
+              emptyIfNull(runtime.getRuntimeState().getRealmSlug()),
+              Long.toString(runtime.getRuntimeState().getPointerVersion())));
     }
     return scopes;
   }
@@ -1402,7 +1448,11 @@ public final class AutomationScriptingControlPlaneGrpcService
           new CurrentRuntimeScope(
               emptyIfNull(runtime.getRuntimeState().getGameInstanceId()),
               emptyIfNull(runtime.getRuntimeState().getRegionId()),
-              runtime.getRuntimeState().getRegionEpoch()));
+              runtime.getRuntimeState().getRegionEpoch(),
+              normalizePlayableStateScope(runtime.getRuntimeState().getPlayableStateScope()),
+              emptyIfNull(runtime.getRuntimeState().getWorldSlug()),
+              emptyIfNull(runtime.getRuntimeState().getRealmSlug()),
+              Long.toString(runtime.getRuntimeState().getPointerVersion())));
     }
     return scopes;
   }
@@ -1442,7 +1492,30 @@ public final class AutomationScriptingControlPlaneGrpcService
         summary.targetRegionId(),
         summary.targetRegionEpoch(),
         new CurrentRuntimeScope(
-            currentScope.gameInstanceId(), currentScope.regionId(), currentScope.regionEpoch()));
+            currentScope.gameInstanceId(),
+            currentScope.regionId(),
+            currentScope.regionEpoch(),
+            currentScope.playableStateScope(),
+            currentScope.worldSlug(),
+            currentScope.realmSlug(),
+            currentScope.pointerVersion()));
+  }
+
+  private static boolean isTargetRoutingBundleStale(
+      ScriptWorkItemService.HandoffEventSummary summary, CurrentTargetRuntimeScope currentScope) {
+    return isRoutingBundleStale(
+        summary.playableStateScope(),
+        summary.worldSlug(),
+        summary.realmSlug(),
+        summary.pointerVersion(),
+        new CurrentRuntimeScope(
+            currentScope.gameInstanceId(),
+            currentScope.regionId(),
+            currentScope.regionEpoch(),
+            currentScope.playableStateScope(),
+            currentScope.worldSlug(),
+            currentScope.realmSlug(),
+            currentScope.pointerVersion()));
   }
 
   private static boolean isRuntimeScopeStale(
@@ -1457,6 +1530,32 @@ public final class AutomationScriptingControlPlaneGrpcService
     return persistedRegionEpoch > 0
         && currentScope.regionEpoch() > 0
         && persistedRegionEpoch != currentScope.regionEpoch();
+  }
+
+  private static boolean isRoutingBundleStale(
+      String persistedPlayableStateScope,
+      String persistedWorldSlug,
+      String persistedRealmSlug,
+      String persistedPointerVersion,
+      CurrentRuntimeScope currentScope) {
+    if (currentScope == null) {
+      return false;
+    }
+    String playableStateScope = normalize(persistedPlayableStateScope);
+    if (!playableStateScope.isBlank()
+        && !playableStateScope.equals(normalize(currentScope.playableStateScope()))) {
+      return true;
+    }
+    String worldSlug = emptyIfNull(persistedWorldSlug);
+    if (!worldSlug.isBlank() && !worldSlug.equals(currentScope.worldSlug())) {
+      return true;
+    }
+    String realmSlug = emptyIfNull(persistedRealmSlug);
+    if (!realmSlug.isBlank() && !realmSlug.equals(currentScope.realmSlug())) {
+      return true;
+    }
+    String pointerVersion = emptyIfNull(persistedPointerVersion);
+    return !pointerVersion.isBlank() && !pointerVersion.equals(currentScope.pointerVersion());
   }
 
   private static PlayableStateScope toPlayableStateScope(String playableStateScope) {
@@ -1484,9 +1583,22 @@ public final class AutomationScriptingControlPlaneGrpcService
   }
 
   private record CurrentTargetRuntimeScope(
-      String gameInstanceId, String regionId, long regionEpoch) {}
+      String gameInstanceId,
+      String regionId,
+      long regionEpoch,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion) {}
 
-  private record CurrentRuntimeScope(String gameInstanceId, String regionId, long regionEpoch) {}
+  private record CurrentRuntimeScope(
+      String gameInstanceId,
+      String regionId,
+      long regionEpoch,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion) {}
 
   private record GameplayCommandStatusView(
       String executionOutcome,

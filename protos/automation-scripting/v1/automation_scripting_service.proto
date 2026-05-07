@@ -287,6 +287,11 @@ message ScriptDeadLetterEntry {
   string current_runtime_region_id = 29;
   int64 current_runtime_region_epoch = 30;
   bool is_runtime_scope_stale = 31;
+  entity_management.v1.PlayableStateScope current_runtime_playable_state_scope = 32;
+  string current_runtime_world_slug = 33;
+  string current_runtime_realm_slug = 34;
+  string current_runtime_pointer_version = 35;
+  bool is_routing_bundle_stale = 36;
 }
 
 message ListScriptDeadLettersResponse {
@@ -608,6 +613,11 @@ message ScriptScheduleInstanceEntry {
   string current_runtime_region_id = 38;
   int64 current_runtime_region_epoch = 39;
   bool is_runtime_scope_stale = 40;
+  entity_management.v1.PlayableStateScope current_runtime_playable_state_scope = 41;
+  string current_runtime_world_slug = 42;
+  string current_runtime_realm_slug = 43;
+  string current_runtime_pointer_version = 44;
+  bool is_routing_bundle_stale = 45;
 }
 
 message ListScriptScheduleInstancesResponse {
@@ -660,6 +670,11 @@ message ScriptTimerAuditEventEntry {
   string current_runtime_region_id = 30;
   int64 current_runtime_region_epoch = 31;
   bool is_runtime_scope_stale = 32;
+  entity_management.v1.PlayableStateScope current_runtime_playable_state_scope = 33;
+  string current_runtime_world_slug = 34;
+  string current_runtime_realm_slug = 35;
+  string current_runtime_pointer_version = 36;
+  bool is_routing_bundle_stale = 37;
 }
 
 message ListScriptTimerAuditEventsResponse {
@@ -792,6 +807,11 @@ message ScriptHandoffEventEntry {
   string gameplay_remote_state = 41;
   string gameplay_remote_target_command_execution_outcome = 42;
   string gameplay_remote_target_command_gameplay_result = 43;
+  entity_management.v1.PlayableStateScope current_target_runtime_playable_state_scope = 44;
+  string current_target_runtime_world_slug = 45;
+  string current_target_runtime_realm_slug = 46;
+  string current_target_runtime_pointer_version = 47;
+  bool is_target_routing_bundle_stale = 48;
 }
 
 message ListScriptHandoffEventsResponse {
