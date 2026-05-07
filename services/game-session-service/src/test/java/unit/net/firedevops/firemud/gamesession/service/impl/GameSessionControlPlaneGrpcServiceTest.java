@@ -334,6 +334,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         GetGameInstanceRuntimeStateRequest.newBuilder()
             .setTenantId("1")
             .setGameInstanceId("7")
+            .setRegionId("region-7")
             .build(),
         new NoopObserver<>() {
           @Override
@@ -363,6 +364,62 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("region-7", responseRef.get().getRuntimeState().getRegionId());
     assertEquals(22L, responseRef.get().getRuntimeState().getRegionEpoch());
     assertEquals(17L, responseRef.get().getRuntimeState().getPublication().getVersionId());
+  }
+
+  @Test
+  void getGameInstanceRuntimeStateRejectsMismatchedRegionScope() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    RuntimeRegionStatus runtimeStatus = runtimeStatus(false, 22L);
+    Mockito.when(authorityService.findByRuntimeTarget(1L, 7L))
+        .thenReturn(
+            Optional.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Production",
+                    1L,
+                    7L,
+                    11L,
+                    true,
+                    true,
+                    true,
+                    "SHARED",
+                    "CREATE_ALLOWED")));
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            repository,
+            Mockito.mock(GameplayCommandRepository.class),
+            runtimeRepository(runtimeStatus),
+            authorityService,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            gameDesignClient(),
+            BuiltInTextCommandAliasResolver.unsupported(),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<GetGameInstanceRuntimeStateResponse> responseRef = new AtomicReference<>();
+    service.getGameInstanceRuntimeState(
+        GetGameInstanceRuntimeStateRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("8")
+            .setRegionId("region-1")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetGameInstanceRuntimeStateResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
+    assertEquals(
+        "region_id does not match game_instance_id", responseRef.get().getError().getMessage());
   }
 
   @Test

@@ -1099,6 +1099,27 @@ public final class GameSessionControlPlaneGrpcService
         .orElseThrow(() -> new IllegalArgumentException("Runtime ownership not found"));
   }
 
+  private RuntimeRegionStatus resolveRuntimeStateOwnership(
+      long tenantId, String requestedGameInstanceId, String requestedRegionId) {
+    if (!requestedRegionId.isBlank()) {
+      RuntimeRegionStatus status =
+          runtimeRegionStatusRepository
+              .findByTenantIdAndRegionId(tenantId, requestedRegionId)
+              .orElseThrow(() -> new IllegalArgumentException("Runtime ownership not found"));
+      if (!requestedGameInstanceId.isBlank()) {
+        long requestedGameInstance = parseGameInstanceId(requestedGameInstanceId);
+        if (!Long.valueOf(requestedGameInstance).equals(status.getGameInstanceId())) {
+          throw new IllegalArgumentException("region_id does not match game_instance_id");
+        }
+      }
+      return status;
+    }
+    long gameInstanceId = parseGameInstanceId(requestedGameInstanceId);
+    return runtimeRegionStatusRepository
+        .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
+        .orElseThrow(() -> new IllegalArgumentException("Runtime ownership not found"));
+  }
+
   @Override
   @Timed(value = "gamesessionGrpc.controlPlane.setAdmissionPointer")
   public void setAdmissionPointer(
@@ -1424,16 +1445,17 @@ public final class GameSessionControlPlaneGrpcService
     try {
       requireAdminRole();
       long tenantId = parseTenantId(request.getTenantId());
-      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      RuntimeRegionStatus runtimeStatus =
+          resolveRuntimeStateOwnership(
+              tenantId,
+              normalizeBlank(request.getGameInstanceId()),
+              normalizeBlank(request.getRegionId()));
+      long gameInstanceId = runtimeStatus.getGameInstanceId();
       GameInstance instance = getInstanceOrThrow(gameInstanceId);
       if (instance.getTenantId() != tenantId) {
         throw new IllegalArgumentException("tenant_id does not own game_instance_id");
       }
       GameplayRoutingBundle routingBundle = resolveGameplayRouting(instance);
-      RuntimeRegionStatus runtimeStatus =
-          runtimeRegionStatusRepository
-              .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-              .orElse(null);
       GetGameInstanceRuntimeStateResponse response =
           GetGameInstanceRuntimeStateResponse.newBuilder()
               .setRuntimeState(
@@ -1482,9 +1504,8 @@ public final class GameSessionControlPlaneGrpcService
                       .setWorldSlug(routingBundle.worldSlug())
                       .setRealmSlug(routingBundle.realmSlug())
                       .setPointerVersion(routingBundle.pointerVersion())
-                      .setRegionId(
-                          runtimeStatus == null ? "" : normalizeBlank(runtimeStatus.getRegionId()))
-                      .setRegionEpoch(runtimeStatus == null ? 0L : runtimeStatus.getRegionEpoch())
+                      .setRegionId(normalizeBlank(runtimeStatus.getRegionId()))
+                      .setRegionEpoch(runtimeStatus.getRegionEpoch())
                       .setPublication(
                           scriptPatchPublicationLink(
                               instance.getTenantId(), instance.getScriptPatchVersion()))

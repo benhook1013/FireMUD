@@ -75,6 +75,11 @@ public class GameSessionControlPlaneClient
 
   public GetGameInstanceRuntimeStateResponse getGameInstanceRuntimeState(
       String tenantId, String gameInstanceId) {
+    return getGameInstanceRuntimeState(tenantId, gameInstanceId, "");
+  }
+
+  public GetGameInstanceRuntimeStateResponse getGameInstanceRuntimeState(
+      String tenantId, String gameInstanceId, String regionId) {
     if (stub() == null) {
       return runtimeUnavailable();
     }
@@ -85,6 +90,7 @@ public class GameSessionControlPlaneClient
               GetGameInstanceRuntimeStateRequest.newBuilder()
                   .setTenantId(tenantId)
                   .setGameInstanceId(gameInstanceId)
+                  .setRegionId(regionId == null ? "" : regionId)
                   .build());
     } catch (RuntimeException ex) {
       logger.warn("Game Session getGameInstanceRuntimeState failed", ex);

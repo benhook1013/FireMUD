@@ -285,7 +285,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     }
     var runtime =
         gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-            request.getTenantId(), request.getGameInstanceId());
+            request.getTenantId(), request.getGameInstanceId(), request.getRegionId());
     if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
       return new TriggerAdmission(false, OUTCOME_PIN_STATE_UNAVAILABLE, "pin_state_unavailable", 0);
     }

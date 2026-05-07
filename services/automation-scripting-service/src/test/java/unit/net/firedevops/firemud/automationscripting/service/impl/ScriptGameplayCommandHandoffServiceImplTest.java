@@ -48,7 +48,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                 .setAdmissionOutcome("ENQUEUED")
                 .setCommandId("auto-1")
                 .build());
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "7"))
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -131,7 +131,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                 .setAdmissionOutcome("REJECTED")
                 .setError(ErrorDetail.newBuilder().setCode("STALE_TIMELINE").build())
                 .build());
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "7"))
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -236,7 +236,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   void advancedRuntimeRegionScopeCancelsBeforeGameSessionHandoff() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "7"))
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -286,7 +286,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   void remoteTargetSchedulesDurableFollowupAndMarksWorkItemHandedOff() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "7"))
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(

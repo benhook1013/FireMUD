@@ -147,7 +147,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
     }
     GetGameInstanceRuntimeStateResponse runtimeState =
         gameSessionClient.getGameInstanceRuntimeState(
-            workItem.getTenantId(), workItem.getGameInstanceId());
+            workItem.getTenantId(), workItem.getGameInstanceId(), workItem.getRegionId());
     if (runtimeState == null
         || runtimeState.hasError()
         || !runtimeState.hasRuntimeState()

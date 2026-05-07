@@ -348,6 +348,7 @@ message PluginPublicationLink {
 message GetGameInstanceRuntimeStateRequest {
   string tenant_id = 1;
   string game_instance_id = 2;
+  string region_id = 3;
 }
 
 message GameInstanceRuntimeState {

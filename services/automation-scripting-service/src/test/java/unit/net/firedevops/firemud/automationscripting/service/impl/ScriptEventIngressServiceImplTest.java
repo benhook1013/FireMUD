@@ -123,7 +123,7 @@ class ScriptEventIngressServiceImplTest {
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
                 1L, "patch-1", "onCommand", "v1"))
         .thenReturn(List.of(binding("script-1", "ENTITY", "entity-1", "high")));
-    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -241,7 +241,7 @@ class ScriptEventIngressServiceImplTest {
                 "event-1",
                 false))
         .thenReturn(Optional.empty());
-    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -415,7 +415,7 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -491,7 +491,7 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -594,7 +594,7 @@ class ScriptEventIngressServiceImplTest {
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
                 1L, "patch-1", "onCommand", "v1"))
         .thenReturn(List.of(binding("script-1", "ENTITY", "entity-1")));
-    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -674,7 +674,7 @@ class ScriptEventIngressServiceImplTest {
                 "event-dry-run-denied",
                 true))
         .thenReturn(Optional.empty());
-    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -987,7 +987,7 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -1044,7 +1044,7 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -1102,7 +1102,7 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setError(
@@ -1157,7 +1157,7 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
