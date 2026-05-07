@@ -58,8 +58,18 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
         and (:failureCode = '' or linkedFollowup.failureCode = :failureCode)
         and (:payloadKind = '' or linkedFollowup.payloadKind = :payloadKind)
         and (:originSourceKind = '' or linkedFollowup.originSourceKind = :originSourceKind)
+        and (:originSourceState = '' or linkedFollowup.originSourceState = :originSourceState)
         and (:eventType = '' or linkedFollowup.eventType = :eventType)
         and (:scriptEventId = '' or linkedFollowup.scriptEventId = :scriptEventId)
+        and (:resultMessage = '' or result.resultMessage = :resultMessage)
+        and (:requiresSoloTick is null or linkedFollowup.requiresSoloTick = :requiresSoloTick)
+        and (:lateResultPolicy = ''
+             or exists (
+               select 1 from RemoteCommandCoordinator coordinator
+               where coordinator.tenantId = result.tenantId
+                 and coordinator.coordinatorId = result.coordinatorId
+                 and coordinator.lateResultPolicy = :lateResultPolicy))
+        and (:claimedTickBatchId = '' or linkedFollowup.claimedTickBatchId = :claimedTickBatchId)
         and (:automationDispatchId = '' or result.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or result.commandId = :commandId)
       order by result.observedAt asc, result.id asc
@@ -93,8 +103,13 @@ public interface RemoteFollowupResultRepository extends JpaRepository<RemoteFoll
       @Param("failureCode") String failureCode,
       @Param("payloadKind") String payloadKind,
       @Param("originSourceKind") String originSourceKind,
+      @Param("originSourceState") String originSourceState,
       @Param("eventType") String eventType,
       @Param("scriptEventId") String scriptEventId,
+      @Param("resultMessage") String resultMessage,
+      @Param("requiresSoloTick") Boolean requiresSoloTick,
+      @Param("lateResultPolicy") String lateResultPolicy,
+      @Param("claimedTickBatchId") String claimedTickBatchId,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       Pageable pageable);

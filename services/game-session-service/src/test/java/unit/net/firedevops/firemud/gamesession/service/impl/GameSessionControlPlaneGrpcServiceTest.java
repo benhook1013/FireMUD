@@ -2412,6 +2412,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setOriginDeadlineTickId(88L);
     coordinator.setState("PENDING_REMOTE");
     coordinator.setLateResultPolicy("late_result_safe_to_ignore");
+    coordinator.setExecutionOutcome("APPLIED");
+    coordinator.setGameplayResult("SUCCESS");
     coordinator.setAutomationDispatchId("dispatch-1");
     coordinator.setAutomationWorkItemId("work-1");
     coordinator.setScriptId("script-1");
@@ -2423,10 +2425,13 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setTenantId(1L);
     followup.setFollowupId("rf-1");
     followup.setStatus("SCHEDULED");
+    followup.setClaimedTickBatchId("tick-batch-7");
     followup.setTargetEntityId("entity-9");
     followup.setEffectKey("effect-9");
     followup.setPayloadKind("enqueue_automation_command");
     followup.setOriginSourceKind("REMOTE_FOLLOWUP");
+    followup.setOriginSourceState("TARGET_REGION_EXECUTED");
+    followup.setRequiresSoloTick(true);
     followup.setEventType("onEnterRegion");
     followup.setEventSchemaVersion("v1");
     followup.setScriptEventId("evt-1");
@@ -2468,16 +2473,30 @@ class GameSessionControlPlaneGrpcServiceTest {
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
                 Mockito.any()))
         .thenReturn(List.of(coordinator));
     Mockito.when(remoteFollowupRepository.findByTenantIdAndFollowupIdIn(1L, List.of("rf-1")))
         .thenReturn(List.of(followup));
     RemoteFollowupResultRepository resultRepository =
         Mockito.mock(RemoteFollowupResultRepository.class);
+    RemoteFollowupResult latestResult = new RemoteFollowupResult();
+    latestResult.setTenantId(1L);
+    latestResult.setCoordinatorId("coord-1");
+    latestResult.setOutcome("REMOTE_APPLIED");
+    latestResult.setResultErrorCode("RATE_LIMIT");
     Mockito.when(
             resultRepository.findByTenantIdAndCoordinatorIdInOrderByObservedAtAsc(
                 1L, List.of("coord-1")))
-        .thenReturn(List.of());
+        .thenReturn(List.of(latestResult));
     GameplayCommandRepository gameplayCommandRepository =
         Mockito.mock(GameplayCommandRepository.class);
     GameplayCommand targetCommand = new GameplayCommand();
@@ -2522,9 +2541,18 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setAutomationWorkItemId("work-1")
             .setEventType("onEnterRegion")
             .setScriptEventId("evt-1")
+            .setLateResultPolicy("late_result_safe_to_ignore")
+            .setExecutionOutcome("APPLIED")
+            .setGameplayResult("SUCCESS")
+            .setFollowupStatus("SCHEDULED")
+            .setFollowupClaimedTickBatchId("tick-batch-7")
+            .setFollowupRequiresSoloTick(true)
+            .setFollowupOriginSourceState("TARGET_REGION_EXECUTED")
             .setTargetCommandId("target-cmd-1")
             .setTargetCommandExecutionOutcome("APPLIED")
             .setTargetCommandGameplayResult("SUCCESS")
+            .setLatestResultOutcome("REMOTE_APPLIED")
+            .setLatestResultErrorCode("RATE_LIMIT")
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -2551,6 +2579,14 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("effect-9", responseRef.get().getCoordinators(0).getFollowupEffectKey());
     assertEquals("onEnterRegion", responseRef.get().getCoordinators(0).getFollowupEventType());
     assertEquals("evt-1", responseRef.get().getCoordinators(0).getFollowupScriptEventId());
+    assertEquals(
+        "TARGET_REGION_EXECUTED",
+        responseRef.get().getCoordinators(0).getFollowupOriginSourceState());
+    assertEquals(
+        "tick-batch-7", responseRef.get().getCoordinators(0).getFollowupClaimedTickBatchId());
+    assertEquals(true, responseRef.get().getCoordinators(0).getFollowupRequiresSoloTick());
+    assertEquals("REMOTE_APPLIED", responseRef.get().getCoordinators(0).getLatestResultOutcome());
+    assertEquals("RATE_LIMIT", responseRef.get().getCoordinators(0).getLatestResultErrorCode());
     assertEquals(17L, responseRef.get().getCoordinators(0).getPublication().getVersionId());
     Mockito.verify(repository)
         .findForControlPlane(
@@ -2575,14 +2611,23 @@ class GameSessionControlPlaneGrpcServiceTest {
             "effect-9",
             "enqueue_automation_command",
             "REMOTE_FOLLOWUP",
+            "TARGET_REGION_EXECUTED",
             "work-1",
             "onEnterRegion",
             "evt-1",
+            "late_result_safe_to_ignore",
+            "APPLIED",
+            "SUCCESS",
+            "SCHEDULED",
+            "tick-batch-7",
+            true,
+            "dispatch-1",
+            "cmd-1",
             "target-cmd-1",
             "APPLIED",
             "SUCCESS",
-            "dispatch-1",
-            "cmd-1",
+            "REMOTE_APPLIED",
+            "RATE_LIMIT",
             org.springframework.data.domain.PageRequest.of(0, 25));
   }
 
@@ -2599,6 +2644,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setTargetRegionEpoch(4L);
     followup.setDueTickId(55L);
     followup.setClaimOrdinal(2L);
+    followup.setClaimedTickBatchId("tick-batch-7");
     followup.setPlayableStateScope("ISOLATED");
     followup.setWorldSlug("ops");
     followup.setRealmSlug("preview");
@@ -2662,18 +2708,24 @@ class GameSessionControlPlaneGrpcServiceTest {
                 29L,
                 "enqueue_automation_command",
                 "REMOTE_FOLLOWUP",
+                "TARGET_REGION_EXECUTED",
                 "work-1",
                 "entity-9",
                 "damage:1",
                 "",
                 true,
+                "tick-batch-7",
+                "LOOK",
                 "onEnterRegion",
                 "evt-1",
+                3L,
+                88L,
+                "late_result_safe_to_ignore",
+                "dispatch-1",
+                "cmd-1",
                 "target-cmd-1",
                 "APPLIED",
                 "SUCCESS",
-                "dispatch-1",
-                "cmd-1",
                 org.springframework.data.domain.PageRequest.of(0, 25)))
         .thenReturn(List.of(followup));
     Mockito.when(coordinatorRepository.findByTenantIdAndFollowupIdIn(1L, List.of("rf-1")))
@@ -2717,12 +2769,18 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setPointerVersion(29L)
             .setPayloadKind("enqueue_automation_command")
             .setOriginSourceKind("REMOTE_FOLLOWUP")
+            .setOriginSourceState("TARGET_REGION_EXECUTED")
             .setAutomationWorkItemId("work-1")
             .setTargetEntityId("entity-9")
             .setEffectKey("damage:1")
             .setRequiresSoloTick(true)
+            .setClaimedTickBatchId("tick-batch-7")
+            .setRequestedCommand("LOOK")
             .setEventType("onEnterRegion")
             .setScriptEventId("evt-1")
+            .setOriginDeadlineRegionEpoch(3L)
+            .setOriginDeadlineTickId(88L)
+            .setLateResultPolicy("late_result_safe_to_ignore")
             .setTargetCommandId("target-cmd-1")
             .setTargetCommandExecutionOutcome("APPLIED")
             .setTargetCommandGameplayResult("SUCCESS")
@@ -2740,6 +2798,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(1, responseRef.get().getFollowupsCount());
     assertEquals("rf-1", responseRef.get().getFollowups(0).getFollowupId());
     assertEquals("cmd-1", responseRef.get().getFollowups(0).getCommandId());
+    assertEquals("tick-batch-7", responseRef.get().getFollowups(0).getClaimedTickBatchId());
     assertEquals("dispatch-1", responseRef.get().getFollowups(0).getAutomationDispatchId());
     assertEquals("work-1", responseRef.get().getFollowups(0).getAutomationWorkItemId());
     assertEquals("script-1", responseRef.get().getFollowups(0).getScriptId());
@@ -2925,6 +2984,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setEffectKey("remote-followup:dispatch-1");
     followup.setFailureCode("REMOTE_REJECTED");
     followup.setFailureMessage("Target runtime rejected the remote followup");
+    followup.setClaimedTickBatchId("tick-batch-7");
     followup.setPayloadKind("trigger_script_event");
     followup.setRequiresSoloTick(true);
     followup.setOriginSourceKind("REMOTE_FOLLOWUP");
@@ -2972,8 +3032,13 @@ class GameSessionControlPlaneGrpcServiceTest {
                 "REMOTE_REJECTED",
                 "trigger_script_event",
                 "REMOTE_FOLLOWUP",
+                "SCHEDULED",
                 "onEnterRegion",
                 "remote-enter-1",
+                "Target region rejected the remote gameplay command",
+                true,
+                "late_result_safe_to_ignore",
+                "tick-batch-7",
                 "dispatch-1",
                 "cmd-1",
                 org.springframework.data.domain.PageRequest.of(0, 25)))
@@ -3032,8 +3097,13 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setFailureCode("REMOTE_REJECTED")
             .setPayloadKind("trigger_script_event")
             .setOriginSourceKind("REMOTE_FOLLOWUP")
+            .setOriginSourceState("SCHEDULED")
             .setEventType("onEnterRegion")
             .setScriptEventId("remote-enter-1")
+            .setResultMessage("Target region rejected the remote gameplay command")
+            .setRequiresSoloTick(true)
+            .setLateResultPolicy("late_result_safe_to_ignore")
+            .setClaimedTickBatchId("tick-batch-7")
             .setAutomationDispatchId("dispatch-1")
             .setCommandId("cmd-1")
             .setLimit(25)
@@ -3168,6 +3238,11 @@ class GameSessionControlPlaneGrpcServiceTest {
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(),
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyString(),

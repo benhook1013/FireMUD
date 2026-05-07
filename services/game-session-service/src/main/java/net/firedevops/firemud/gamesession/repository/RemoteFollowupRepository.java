@@ -66,11 +66,14 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
         and (:pointerVersion is null or followup.pointerVersion = :pointerVersion)
         and (:payloadKind = '' or followup.payloadKind = :payloadKind)
         and (:originSourceKind = '' or followup.originSourceKind = :originSourceKind)
+        and (:originSourceState = '' or followup.originSourceState = :originSourceState)
         and (:automationWorkItemId = '' or followup.automationWorkItemId = :automationWorkItemId)
         and (:targetEntityId = '' or followup.targetEntityId = :targetEntityId)
         and (:effectKey = '' or followup.effectKey = :effectKey)
         and (:failureCode = '' or followup.failureCode = :failureCode)
         and (:requiresSoloTick is null or followup.requiresSoloTick = :requiresSoloTick)
+        and (:claimedTickBatchId = '' or followup.claimedTickBatchId = :claimedTickBatchId)
+        and (:requestedCommand = '' or followup.requestedCommand = :requestedCommand)
         and (:eventType = '' or followup.eventType = :eventType)
         and (:scriptEventId = '' or followup.scriptEventId = :scriptEventId)
         and (:automationDispatchId = '' or followup.automationDispatchId = :automationDispatchId)
@@ -80,6 +83,24 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
              or targetCommand.executionOutcome = :targetCommandExecutionOutcome)
         and (:targetCommandGameplayResult = ''
              or targetCommand.gameplayResult = :targetCommandGameplayResult)
+        and (:originDeadlineRegionEpoch <= 0
+             or exists (
+               select 1 from RemoteCommandCoordinator coordinator
+               where coordinator.tenantId = followup.tenantId
+                 and coordinator.followupId = followup.followupId
+                 and coordinator.originDeadlineRegionEpoch = :originDeadlineRegionEpoch))
+        and (:originDeadlineTickId <= 0
+             or exists (
+               select 1 from RemoteCommandCoordinator coordinator
+               where coordinator.tenantId = followup.tenantId
+                 and coordinator.followupId = followup.followupId
+                 and coordinator.originDeadlineTickId = :originDeadlineTickId))
+        and (:lateResultPolicy = ''
+             or exists (
+               select 1 from RemoteCommandCoordinator coordinator
+               where coordinator.tenantId = followup.tenantId
+                 and coordinator.followupId = followup.followupId
+                 and coordinator.lateResultPolicy = :lateResultPolicy))
       order by followup.dueTickId asc, followup.id asc
       """)
   List<RemoteFollowup> findForControlPlane(
@@ -102,13 +123,19 @@ public interface RemoteFollowupRepository extends JpaRepository<RemoteFollowup, 
       @Param("pointerVersion") Long pointerVersion,
       @Param("payloadKind") String payloadKind,
       @Param("originSourceKind") String originSourceKind,
+      @Param("originSourceState") String originSourceState,
       @Param("automationWorkItemId") String automationWorkItemId,
       @Param("targetEntityId") String targetEntityId,
       @Param("effectKey") String effectKey,
       @Param("failureCode") String failureCode,
       @Param("requiresSoloTick") Boolean requiresSoloTick,
+      @Param("claimedTickBatchId") String claimedTickBatchId,
+      @Param("requestedCommand") String requestedCommand,
       @Param("eventType") String eventType,
       @Param("scriptEventId") String scriptEventId,
+      @Param("originDeadlineRegionEpoch") long originDeadlineRegionEpoch,
+      @Param("originDeadlineTickId") long originDeadlineTickId,
+      @Param("lateResultPolicy") String lateResultPolicy,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       @Param("targetCommandId") String targetCommandId,

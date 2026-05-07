@@ -658,6 +658,15 @@ message ListRemoteCommandCoordinatorsRequest {
   string target_command_id = 28;
   string target_command_execution_outcome = 29;
   string target_command_gameplay_result = 30;
+  string late_result_policy = 31;
+  string execution_outcome = 32;
+  string gameplay_result = 33;
+  string followup_status = 34;
+  string followup_claimed_tick_batch_id = 35;
+  bool followup_requires_solo_tick = 36;
+  string followup_origin_source_state = 37;
+  string latest_result_outcome = 38;
+  string latest_result_error_code = 39;
 }
 
 message ListRemoteCommandCoordinatorsResponse {
@@ -750,6 +759,12 @@ message ListRemoteFollowupsRequest {
   string target_command_id = 30;
   string target_command_execution_outcome = 31;
   string target_command_gameplay_result = 32;
+  string claimed_tick_batch_id = 33;
+  string requested_command = 34;
+  string origin_source_state = 35;
+  int64 origin_deadline_region_epoch = 36;
+  int64 origin_deadline_tick_id = 37;
+  string late_result_policy = 38;
 }
 
 message RemoteFollowupEntry {
@@ -846,6 +861,11 @@ message ListRemoteFollowupResultsRequest {
   string origin_source_kind = 31;
   string event_type = 32;
   string script_event_id = 33;
+  string result_message = 34;
+  bool requires_solo_tick = 35;
+  string origin_source_state = 36;
+  string late_result_policy = 37;
+  string claimed_tick_batch_id = 38;
 }
 
 message RemoteFollowupResultEntry {

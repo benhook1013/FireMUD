@@ -59,16 +59,45 @@ public interface RemoteCommandCoordinatorRepository
         and (:effectKey = '' or linkedFollowup.effectKey = :effectKey)
         and (:payloadKind = '' or linkedFollowup.payloadKind = :payloadKind)
         and (:originSourceKind = '' or linkedFollowup.originSourceKind = :originSourceKind)
+        and (:originSourceState = '' or linkedFollowup.originSourceState = :originSourceState)
         and (:automationWorkItemId = '' or coordinator.automationWorkItemId = :automationWorkItemId)
         and (:eventType = '' or linkedFollowup.eventType = :eventType)
         and (:scriptEventId = '' or linkedFollowup.scriptEventId = :scriptEventId)
         and (:automationDispatchId = '' or coordinator.automationDispatchId = :automationDispatchId)
         and (:commandId = '' or coordinator.commandId = :commandId)
+        and (:lateResultPolicy = '' or coordinator.lateResultPolicy = :lateResultPolicy)
+        and (:executionOutcome = '' or coordinator.executionOutcome = :executionOutcome)
+        and (:gameplayResult = '' or coordinator.gameplayResult = :gameplayResult)
+        and (:followupStatus = '' or linkedFollowup.status = :followupStatus)
+        and (:followupClaimedTickBatchId = ''
+             or linkedFollowup.claimedTickBatchId = :followupClaimedTickBatchId)
+        and (:followupRequiresSoloTick is null
+             or linkedFollowup.requiresSoloTick = :followupRequiresSoloTick)
         and (:targetCommandId = '' or targetCommand.commandId = :targetCommandId)
         and (:targetCommandExecutionOutcome = ''
              or targetCommand.executionOutcome = :targetCommandExecutionOutcome)
         and (:targetCommandGameplayResult = ''
              or targetCommand.gameplayResult = :targetCommandGameplayResult)
+        and (:latestResultOutcome = ''
+             or exists (
+               select 1 from RemoteFollowupResult result
+               where result.tenantId = coordinator.tenantId
+                 and result.coordinatorId = coordinator.coordinatorId
+                 and result.outcome = :latestResultOutcome
+                 and result.observedAt = (
+                   select max(latest.observedAt) from RemoteFollowupResult latest
+                   where latest.tenantId = coordinator.tenantId
+                     and latest.coordinatorId = coordinator.coordinatorId)))
+        and (:latestResultErrorCode = ''
+             or exists (
+               select 1 from RemoteFollowupResult result
+               where result.tenantId = coordinator.tenantId
+                 and result.coordinatorId = coordinator.coordinatorId
+                 and result.resultErrorCode = :latestResultErrorCode
+                 and result.observedAt = (
+                   select max(latest.observedAt) from RemoteFollowupResult latest
+                   where latest.tenantId = coordinator.tenantId
+                     and latest.coordinatorId = coordinator.coordinatorId)))
       order by coordinator.updatedAt desc, coordinator.id desc
       """)
   List<RemoteCommandCoordinator> findForControlPlane(
@@ -93,13 +122,22 @@ public interface RemoteCommandCoordinatorRepository
       @Param("effectKey") String effectKey,
       @Param("payloadKind") String payloadKind,
       @Param("originSourceKind") String originSourceKind,
+      @Param("originSourceState") String originSourceState,
       @Param("automationWorkItemId") String automationWorkItemId,
       @Param("eventType") String eventType,
       @Param("scriptEventId") String scriptEventId,
+      @Param("lateResultPolicy") String lateResultPolicy,
+      @Param("executionOutcome") String executionOutcome,
+      @Param("gameplayResult") String gameplayResult,
+      @Param("followupStatus") String followupStatus,
+      @Param("followupClaimedTickBatchId") String followupClaimedTickBatchId,
+      @Param("followupRequiresSoloTick") Boolean followupRequiresSoloTick,
       @Param("automationDispatchId") String automationDispatchId,
       @Param("commandId") String commandId,
       @Param("targetCommandId") String targetCommandId,
       @Param("targetCommandExecutionOutcome") String targetCommandExecutionOutcome,
       @Param("targetCommandGameplayResult") String targetCommandGameplayResult,
+      @Param("latestResultOutcome") String latestResultOutcome,
+      @Param("latestResultErrorCode") String latestResultErrorCode,
       Pageable pageable);
 }
