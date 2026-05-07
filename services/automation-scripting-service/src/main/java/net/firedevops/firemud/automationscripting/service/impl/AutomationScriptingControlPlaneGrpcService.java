@@ -702,6 +702,8 @@ public final class AutomationScriptingControlPlaneGrpcService
                 response
                     .setActivePluginVersionId(status.activePluginVersionId())
                     .setPendingPluginVersionId(status.pendingPluginVersionId())
+                    .setRuntimeRegionId(status.runtimeRegionId())
+                    .setRuntimeRegionEpoch(status.runtimeRegionEpoch())
                     .setPluginState(status.pluginState())
                     .setStatusReason(status.statusReason())
                     .setLastChangedAtMs(status.lastChangedAtMs())
@@ -1024,6 +1026,8 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setEventId(summary.eventId())
             .setTenantId(summary.tenantId())
             .setGameInstanceId(summary.gameInstanceId())
+            .setRuntimeRegionId(summary.runtimeRegionId())
+            .setRuntimeRegionEpoch(summary.runtimeRegionEpoch())
             .setPluginId(summary.pluginId())
             .setPreviousPluginVersionId(summary.previousPluginVersionId())
             .setActivePluginVersionId(summary.activePluginVersionId())

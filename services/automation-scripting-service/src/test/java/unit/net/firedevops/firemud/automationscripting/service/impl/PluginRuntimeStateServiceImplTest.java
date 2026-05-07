@@ -63,17 +63,21 @@ class PluginRuntimeStateServiceImplTest {
                             PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
                         .build())
                 .build());
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
-        .thenReturn(
-            GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setRuntimeState(
-                    GameInstanceRuntimeState.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("game-1")
-                        .setRuntimeVersionId("7")
-                        .setStatus("RUNNING")
-                        .build())
-                .build());
+    GetGameInstanceRuntimeStateResponse runtimeState =
+        GetGameInstanceRuntimeStateResponse.newBuilder()
+            .setRuntimeState(
+                GameInstanceRuntimeState.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setRegionId("region-7")
+                    .setRegionEpoch(12L)
+                    .setRuntimeVersionId("7")
+                    .setStatus("RUNNING")
+                    .build())
+            .build();
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "")).thenReturn(runtimeState);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
+        .thenReturn(runtimeState);
     when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
         .thenReturn(
             GetPublishedReleaseBundleResponse.newBuilder()
@@ -105,12 +109,14 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(result.controlPlaneRequestId()).isEqualTo("req-1");
     ArgumentCaptor<PluginRuntimeState> stateCaptor =
         ArgumentCaptor.forClass(PluginRuntimeState.class);
-    Mockito.verify(repository).save(stateCaptor.capture());
+    Mockito.verify(repository, Mockito.atLeastOnce()).save(stateCaptor.capture());
     Mockito.verify(eventRepository).save(Mockito.any(PluginRuntimeEvent.class));
     Mockito.verify(scheduleInstanceService)
         .reconcileObservedRuntimeState(Mockito.eq("1"), Mockito.eq("game-1"), Mockito.any());
     assertThat(stateCaptor.getValue().getPluginState())
         .isEqualTo(PluginState.PLUGIN_STATE_ENABLED.name());
+    assertThat(stateCaptor.getValue().getRuntimeRegionId()).isEqualTo("region-7");
+    assertThat(stateCaptor.getValue().getRuntimeRegionEpoch()).isEqualTo(12L);
     assertThat(stateCaptor.getValue().getStatusReason()).isEqualTo("activation");
   }
 
@@ -133,16 +139,20 @@ class PluginRuntimeStateServiceImplTest {
         .thenAnswer(invocation -> invocation.getArgument(0));
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
-        .thenReturn(
-            GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setRuntimeState(
-                    GameInstanceRuntimeState.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("game-1")
-                        .setPinnedScriptPatchVersion("patch-1")
-                        .build())
-                .build());
+    GetGameInstanceRuntimeStateResponse runtimeState =
+        GetGameInstanceRuntimeStateResponse.newBuilder()
+            .setRuntimeState(
+                GameInstanceRuntimeState.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setRegionId("region-8")
+                    .setRegionEpoch(21L)
+                    .setPinnedScriptPatchVersion("patch-1")
+                    .build())
+            .build();
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "")).thenReturn(runtimeState);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-8"))
+        .thenReturn(runtimeState);
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
             repository,
@@ -159,7 +169,9 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(disabled).isTrue();
     assertThat(existing.getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_DISABLED.name());
     assertThat(existing.getStatusReason()).isEqualTo("maintenance");
-    Mockito.verify(repository).save(existing);
+    assertThat(existing.getRuntimeRegionId()).isEqualTo("region-8");
+    assertThat(existing.getRuntimeRegionEpoch()).isEqualTo(21L);
+    Mockito.verify(repository, Mockito.atLeast(2)).save(existing);
     Mockito.verify(eventRepository).save(Mockito.any(PluginRuntimeEvent.class));
     Mockito.verify(scheduleInstanceService)
         .reconcileObservedRuntimeState(Mockito.eq("1"), Mockito.eq("game-1"), Mockito.any());
@@ -178,6 +190,8 @@ class PluginRuntimeStateServiceImplTest {
     existing.setControlPlaneRequestId("req-7");
     existing.setActorPrincipal("operator-1");
     existing.setLastChangedAt(java.time.Instant.ofEpochMilli(123));
+    existing.setRuntimeRegionId("region-9");
+    existing.setRuntimeRegionEpoch(33L);
     PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
     GameDesignControlPlaneClient gameDesignClient =
         Mockito.mock(GameDesignControlPlaneClient.class);
@@ -211,6 +225,8 @@ class PluginRuntimeStateServiceImplTest {
 
     assertThat(status).isPresent();
     assertThat(status.get().activePluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(status.get().runtimeRegionId()).isEqualTo("region-9");
+    assertThat(status.get().runtimeRegionEpoch()).isEqualTo(33L);
     assertThat(status.get().pluginState()).isEqualTo(PluginState.PLUGIN_STATE_DRAINING);
     assertThat(status.get().lastChangedAtMs()).isEqualTo(123L);
     assertThat(status.get().controlPlaneRequestId()).isEqualTo("req-7");
@@ -269,6 +285,8 @@ class PluginRuntimeStateServiceImplTest {
     event.setEventId("event-1");
     event.setTenantId("1");
     event.setGameInstanceId("game-1");
+    event.setRuntimeRegionId("region-7");
+    event.setRuntimeRegionEpoch(12L);
     event.setPluginId("plugin-1");
     event.setPreviousPluginVersionId("plugin-v0");
     event.setActivePluginVersionId("plugin-v1");
@@ -329,6 +347,8 @@ class PluginRuntimeStateServiceImplTest {
             "1", "game-1", "plugin-1", PluginState.PLUGIN_STATE_ENABLED, "plugin-v1", 10L, 20L, 50);
 
     assertThat(events).hasSize(1);
+    assertThat(events.getFirst().runtimeRegionId()).isEqualTo("region-7");
+    assertThat(events.getFirst().runtimeRegionEpoch()).isEqualTo(12L);
     assertThat(events.getFirst().previousPublication()).isNotNull();
     assertThat(events.getFirst().previousPublication().publicationId()).isEqualTo(16L);
     assertThat(events.getFirst().activePublication()).isNotNull();
@@ -474,7 +494,7 @@ class PluginRuntimeStateServiceImplTest {
                             PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
                         .build())
                 .build());
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -543,7 +563,7 @@ class PluginRuntimeStateServiceImplTest {
                             PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED)
                         .build())
                 .build());
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -745,7 +765,7 @@ class PluginRuntimeStateServiceImplTest {
         .thenReturn(
             publishedPluginVersion(
                 PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED, false));
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1"))
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(

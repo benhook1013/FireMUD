@@ -1226,6 +1226,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 new PluginRuntimeStateService.PluginRuntimeStatus(
                     "plugin-v1",
                     "",
+                    "region-7",
+                    12L,
                     PluginState.PLUGIN_STATE_ENABLED,
                     "operator_activation",
                     55L,
@@ -1260,6 +1262,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getActivePluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(ref.get().getRuntimeRegionId()).isEqualTo("region-7");
+    assertThat(ref.get().getRuntimeRegionEpoch()).isEqualTo(12L);
     assertThat(ref.get().getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_ENABLED);
     assertThat(ref.get().getLastChangedAtMs()).isEqualTo(55L);
     assertThat(ref.get().getControlPlaneRequestId()).isEqualTo("req-1");
@@ -1293,6 +1297,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "event-1",
                     "1",
                     "game-1",
+                    "region-7",
+                    12L,
                     "plugin-1",
                     "plugin-v0",
                     "plugin-v1",
@@ -1343,6 +1349,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getEventsList()).hasSize(1);
     assertThat(ref.get().getEvents(0).getEventId()).isEqualTo("event-1");
+    assertThat(ref.get().getEvents(0).getRuntimeRegionId()).isEqualTo("region-7");
+    assertThat(ref.get().getEvents(0).getRuntimeRegionEpoch()).isEqualTo(12L);
     assertThat(ref.get().getEvents(0).getPreviousPluginVersionId()).isEqualTo("plugin-v0");
     assertThat(ref.get().getEvents(0).getActivePluginVersionId()).isEqualTo("plugin-v1");
     assertThat(ref.get().getEvents(0).getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_ENABLED);

@@ -31,6 +31,11 @@ public class PluginRuntimeState {
   @Column(nullable = false, length = 64)
   private String gameInstanceId;
 
+  @Column(length = 64)
+  private String runtimeRegionId;
+
+  @Column private Long runtimeRegionEpoch;
+
   @Column(nullable = false, length = 128)
   private String pluginId;
 

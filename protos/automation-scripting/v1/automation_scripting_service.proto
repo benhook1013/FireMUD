@@ -835,16 +835,18 @@ message PluginPublicationLink {
 message GetPluginStatusResponse {
   string active_plugin_version_id = 1;
   string pending_plugin_version_id = 2;
-  PluginState plugin_state = 3;
-  string status_reason = 4;
-  int64 last_changed_at_ms = 5;
-  string control_plane_request_id = 6;
-  string actor_principal = 7;
-  int64 last_policy_checked_at_ms = 8;
-  bool policy_check_stale = 9;
-  shared.v1.ErrorDetail error = 10;
-  PluginPublicationLink active_publication = 11;
-  PluginPublicationLink pending_publication = 12;
+  string runtime_region_id = 3;
+  int64 runtime_region_epoch = 4;
+  PluginState plugin_state = 5;
+  string status_reason = 6;
+  int64 last_changed_at_ms = 7;
+  string control_plane_request_id = 8;
+  string actor_principal = 9;
+  int64 last_policy_checked_at_ms = 10;
+  bool policy_check_stale = 11;
+  shared.v1.ErrorDetail error = 12;
+  PluginPublicationLink active_publication = 13;
+  PluginPublicationLink pending_publication = 14;
 }
 
 message ListPluginRuntimeEventsRequest {
@@ -862,16 +864,18 @@ message PluginRuntimeEventEntry {
   string event_id = 1;
   string tenant_id = 2;
   string game_instance_id = 3;
-  string plugin_id = 4;
-  string previous_plugin_version_id = 5;
-  string active_plugin_version_id = 6;
-  PluginState plugin_state = 7;
-  string status_reason = 8;
-  string control_plane_request_id = 9;
-  string actor_principal = 10;
-  int64 observed_at_ms = 11;
-  PluginPublicationLink previous_publication = 12;
-  PluginPublicationLink active_publication = 13;
+  string runtime_region_id = 4;
+  int64 runtime_region_epoch = 5;
+  string plugin_id = 6;
+  string previous_plugin_version_id = 7;
+  string active_plugin_version_id = 8;
+  PluginState plugin_state = 9;
+  string status_reason = 10;
+  string control_plane_request_id = 11;
+  string actor_principal = 12;
+  int64 observed_at_ms = 13;
+  PluginPublicationLink previous_publication = 14;
+  PluginPublicationLink active_publication = 15;
 }
 
 message ListPluginRuntimeEventsResponse {

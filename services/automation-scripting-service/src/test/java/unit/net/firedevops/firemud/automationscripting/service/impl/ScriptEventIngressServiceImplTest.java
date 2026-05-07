@@ -57,6 +57,8 @@ class ScriptEventIngressServiceImplTest {
                 new PluginRuntimeStateService.PluginRuntimeStatus(
                     "plugin-v1",
                     "",
+                    "region-1",
+                    7L,
                     PluginState.PLUGIN_STATE_ENABLED,
                     "operator_activation",
                     100L,
@@ -433,6 +435,8 @@ class ScriptEventIngressServiceImplTest {
                 new PluginRuntimeStateService.PluginRuntimeStatus(
                     "plugin-v2",
                     "",
+                    "region-1",
+                    7L,
                     PluginState.PLUGIN_STATE_ENABLED,
                     "operator_activation",
                     100L,
@@ -509,6 +513,8 @@ class ScriptEventIngressServiceImplTest {
                 new PluginRuntimeStateService.PluginRuntimeStatus(
                     "plugin-v1",
                     "",
+                    "region-1",
+                    7L,
                     PluginState.PLUGIN_STATE_ENABLED,
                     "operator_activation",
                     100L,
