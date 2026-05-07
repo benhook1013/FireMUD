@@ -15,10 +15,10 @@
   "dependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
-    "@mui/material": "^9.0.0",
+    "@mui/material": "^9.0.1",
     "@reduxjs/toolkit": "^2.11.2",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "react-redux": "^9.2.0"
   },
   "devDependencies": {
@@ -35,7 +35,7 @@
     "serve": "^14.2.6",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.59.2",
-    "vite": "^8.0.10",
+    "vite": "^8.0.11",
     "wait-on": "^9.0.5"
   }
 }
