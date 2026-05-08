@@ -205,6 +205,8 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
         .thenReturn(Optional.of(coordinator));
     when(gameInstanceRepository.findById(9L)).thenReturn(Optional.of(instance));
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-b"))
+        .thenReturn(Optional.of(runtimeStatus));
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 9L))
         .thenReturn(Optional.of(runtimeStatus));
     when(gameplayCommandRepository
@@ -300,6 +302,8 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
         .thenReturn(Optional.of(coordinator));
     when(gameInstanceRepository.findById(9L)).thenReturn(Optional.of(instance));
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-b"))
+        .thenReturn(Optional.of(runtimeStatus));
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 9L))
         .thenReturn(Optional.of(runtimeStatus));
     when(gameplayCommandRepository
@@ -532,6 +536,8 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
         .thenReturn(Optional.of(coordinator));
     when(gameInstanceRepository.findById(9L)).thenReturn(Optional.of(instance));
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-b"))
+        .thenReturn(Optional.of(runtimeStatus));
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 9L))
         .thenReturn(Optional.of(runtimeStatus));
     when(gameplayCommandRepository

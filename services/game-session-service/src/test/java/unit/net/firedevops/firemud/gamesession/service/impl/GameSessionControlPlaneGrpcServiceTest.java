@@ -2022,8 +2022,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals(false, responseRef.get().getAccepted());
-    assertEquals("STALE_TIMELINE", responseRef.get().getAdmissionOutcome());
-    assertEquals("stale_region_id", responseRef.get().getError().getCode());
+    assertEquals("OWNERSHIP_UNAVAILABLE", responseRef.get().getAdmissionOutcome());
+    assertEquals("runtime_ownership_not_found", responseRef.get().getError().getCode());
     Mockito.verify(commandRepository, Mockito.never()).save(Mockito.any());
     Mockito.verifyNoInteractions(tickService);
   }
@@ -2067,6 +2067,58 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(false, responseRef.get().getAccepted());
     assertEquals("RUNTIME_PAUSED", responseRef.get().getAdmissionOutcome());
     assertEquals("runtime_paused", responseRef.get().getError().getCode());
+    Mockito.verify(commandRepository, Mockito.never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(tickService);
+  }
+
+  @Test
+  void enqueueAutomationCommandRejectsMissingRegionOwnershipEvenWhenInstanceRowExists() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    Mockito.when(
+            commandRepository
+                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                    1L, 7L, "region-1", 12L, "dispatch-1"))
+        .thenReturn(Optional.empty());
+    RuntimeRegionStatus staleInstanceStatus = runtimeStatus(false, 12L);
+    staleInstanceStatus.setRegionId("region-2");
+    RuntimeRegionStatusRepository runtimeRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    Mockito.when(runtimeRepository.findByTenantIdAndRegionId(1L, "region-1"))
+        .thenReturn(Optional.empty());
+    Mockito.when(runtimeRepository.findByTenantIdAndGameInstanceId(1L, 7L))
+        .thenReturn(Optional.of(staleInstanceStatus));
+    TickService tickService = Mockito.mock(TickService.class);
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            gameInstanceRepository,
+            commandRepository,
+            runtimeRepository,
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
+    service.enqueueAutomationCommandIfAbsent(
+        automationRequest(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(EnqueueAutomationCommandIfAbsentResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(false, responseRef.get().getAccepted());
+    assertEquals("OWNERSHIP_UNAVAILABLE", responseRef.get().getAdmissionOutcome());
+    assertEquals("runtime_ownership_not_found", responseRef.get().getError().getCode());
+    Mockito.verify(runtimeRepository).findByTenantIdAndRegionId(1L, "region-1");
+    Mockito.verify(runtimeRepository, Mockito.never()).findByTenantIdAndGameInstanceId(1L, 7L);
     Mockito.verify(commandRepository, Mockito.never()).save(Mockito.any());
     Mockito.verifyNoInteractions(tickService);
   }

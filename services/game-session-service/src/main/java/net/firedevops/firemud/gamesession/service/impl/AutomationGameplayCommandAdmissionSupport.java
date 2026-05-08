@@ -153,14 +153,8 @@ final class AutomationGameplayCommandAdmissionSupport {
 
   private static Optional<RuntimeRegionStatus> findRuntimeOwnership(
       AdmissionRequest request, RuntimeRegionStatusRepository runtimeRegionStatusRepository) {
-    Optional<RuntimeRegionStatus> byRegionId =
-        runtimeRegionStatusRepository.findByTenantIdAndRegionId(
-            request.tenantId(), request.regionId());
-    if (byRegionId.isPresent()) {
-      return byRegionId;
-    }
-    return runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(
-        request.tenantId(), request.gameInstanceId());
+    return runtimeRegionStatusRepository.findByTenantIdAndRegionId(
+        request.tenantId(), request.regionId());
   }
 
   private static GameplayCommand acceptedAutomationCommand(AdmissionRequest request) {
