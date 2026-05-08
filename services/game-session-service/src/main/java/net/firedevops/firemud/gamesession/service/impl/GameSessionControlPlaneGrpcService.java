@@ -2852,9 +2852,7 @@ public final class GameSessionControlPlaneGrpcService
     String normalizedPersistedRealmSlug =
         persistedRealmSlug == null || persistedRealmSlug.isBlank() ? "" : persistedRealmSlug;
     String currentPlayableStateScope =
-        currentBoundary.playableStateScope() == null
-            ? ""
-            : currentBoundary.playableStateScope().name();
+        normalizePlayableStateScope(currentBoundary.playableStateScope());
     String currentWorldSlug =
         currentBoundary.worldSlug() == null ? "" : currentBoundary.worldSlug();
     String currentRealmSlug =
@@ -3733,18 +3731,39 @@ public final class GameSessionControlPlaneGrpcService
     if (command.getQueueSourceDueAtMs() != null) {
       builder.setQueueSourceDueAtMs(command.getQueueSourceDueAtMs());
     }
-    currentRuntimeOwnership(command)
+    currentRuntimeBoundary(command.getTenantId(), command.getGameInstanceId())
         .ifPresent(
-            ownership -> {
-              if (ownership.getGameInstanceId() != null && ownership.getGameInstanceId() > 0) {
+            currentBoundary -> {
+              if (currentBoundary.gameInstanceId() > 0) {
                 builder.setCurrentRuntimeGameInstanceId(
-                    Long.toString(ownership.getGameInstanceId()));
+                    Long.toString(currentBoundary.gameInstanceId()));
               }
-              if (ownership.getRegionId() != null && !ownership.getRegionId().isBlank()) {
-                builder.setCurrentRuntimeRegionId(ownership.getRegionId());
+              if (currentBoundary.regionId() != null && !currentBoundary.regionId().isBlank()) {
+                builder.setCurrentRuntimeRegionId(currentBoundary.regionId());
               }
-              builder.setCurrentRuntimeRegionEpoch(ownership.getRegionEpoch());
+              builder.setCurrentRuntimeRegionEpoch(currentBoundary.regionEpoch());
+              if (currentBoundary.playableStateScope() != null) {
+                builder.setCurrentRuntimePlayableStateScope(currentBoundary.playableStateScope());
+              }
+              if (currentBoundary.worldSlug() != null && !currentBoundary.worldSlug().isBlank()) {
+                builder.setCurrentRuntimeWorldSlug(currentBoundary.worldSlug());
+              }
+              if (currentBoundary.realmSlug() != null && !currentBoundary.realmSlug().isBlank()) {
+                builder.setCurrentRuntimeRealmSlug(currentBoundary.realmSlug());
+              }
+              if (currentBoundary.pointerVersion() != null
+                  && currentBoundary.pointerVersion() > 0) {
+                builder.setCurrentRuntimePointerVersion(currentBoundary.pointerVersion());
+              }
             });
+    builder.setIsCurrentRuntimeRoutingBundleStale(
+        isCurrentRoutingBundleStale(
+            command.getTenantId(),
+            command.getGameInstanceId(),
+            command.getPlayableStateScope(),
+            command.getWorldSlug(),
+            command.getRealmSlug(),
+            command.getPointerVersion()));
     if (remoteCoordinator != null) {
       builder.setRemoteCoordinatorId(remoteCoordinator.getCoordinatorId());
       builder.setRemoteFollowupId(remoteCoordinator.getFollowupId());
@@ -3864,16 +3883,6 @@ public final class GameSessionControlPlaneGrpcService
               command.getTenantId(), command.getPluginId(), command.getPluginVersionId()));
     }
     return builder.build();
-  }
-
-  private Optional<RuntimeRegionStatus> currentRuntimeOwnership(GameplayCommand command) {
-    if (command.getTenantId() == null
-        || command.getTenantId() <= 0
-        || command.getGameInstanceId() == null
-        || command.getGameInstanceId() <= 0) {
-      return Optional.empty();
-    }
-    return currentRuntimeOwnership(command.getTenantId(), command.getGameInstanceId());
   }
 
   private Optional<RuntimeRegionStatus> currentRuntimeOwnership(

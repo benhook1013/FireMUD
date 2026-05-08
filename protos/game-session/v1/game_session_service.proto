@@ -523,6 +523,11 @@ message GameplayCommandStatus {
   string current_runtime_region_id = 85;
   int64 current_runtime_region_epoch = 86;
   string current_runtime_game_instance_id = 87;
+  entity_management.v1.PlayableStateScope current_runtime_playable_state_scope = 88;
+  string current_runtime_world_slug = 89;
+  string current_runtime_realm_slug = 90;
+  int64 current_runtime_pointer_version = 91;
+  bool is_current_runtime_routing_bundle_stale = 92;
 }
 
 message GetGameplayCommandStatusResponse {

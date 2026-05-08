@@ -1260,17 +1260,40 @@ class GameSessionControlPlaneGrpcServiceTest {
     currentOwnership.setRegionEpoch(22L);
     Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 7L))
         .thenReturn(Optional.of(currentOwnership));
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(1L, 7L))
+        .thenReturn(
+            Optional.of(
+                new net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot(
+                    "world-7",
+                    "World 7",
+                    "realm-7",
+                    "Realm 7",
+                    1L,
+                    7L,
+                    107L,
+                    true,
+                    true,
+                    true,
+                    "SHARED",
+                    "interactive")));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
-            Mockito.mock(GameInstanceRepository.class),
+            gameInstanceRepository,
             commandRepository,
             runtimeRegionStatusRepository,
             remoteFollowupRepository,
             remoteCommandCoordinatorRepository,
             remoteFollowupResultRepository,
             null,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            gameplayAdmissionPointerAuthorityService,
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             gameDesignClient,
@@ -1301,6 +1324,13 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("runtime-region-7", responseRef.get().getCommand().getCurrentRuntimeRegionId());
     assertEquals(22L, responseRef.get().getCommand().getCurrentRuntimeRegionEpoch());
     assertEquals("7", responseRef.get().getCommand().getCurrentRuntimeGameInstanceId());
+    assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getCommand().getCurrentRuntimePlayableStateScope());
+    assertEquals("world-7", responseRef.get().getCommand().getCurrentRuntimeWorldSlug());
+    assertEquals("realm-7", responseRef.get().getCommand().getCurrentRuntimeRealmSlug());
+    assertEquals(107L, responseRef.get().getCommand().getCurrentRuntimePointerVersion());
+    assertEquals(true, responseRef.get().getCommand().getIsCurrentRuntimeRoutingBundleStale());
     assertEquals("plugin-1", responseRef.get().getCommand().getPluginId());
     assertEquals("plugin-v1", responseRef.get().getCommand().getPluginVersionId());
     assertEquals(
@@ -1476,17 +1506,40 @@ class GameSessionControlPlaneGrpcServiceTest {
     currentOwnership.setRegionEpoch(19L);
     Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 7L))
         .thenReturn(Optional.of(currentOwnership));
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(1L, 7L))
+        .thenReturn(
+            Optional.of(
+                new net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot(
+                    "ops",
+                    "Ops",
+                    "preview",
+                    "Preview",
+                    1L,
+                    7L,
+                    29L,
+                    true,
+                    true,
+                    true,
+                    "ISOLATED",
+                    "interactive")));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
-            Mockito.mock(GameInstanceRepository.class),
+            gameInstanceRepository,
             commandRepository,
             runtimeRegionStatusRepository,
             Mockito.mock(RemoteFollowupRepository.class),
             remoteCommandCoordinatorRepository,
             remoteFollowupResultRepository,
             null,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            gameplayAdmissionPointerAuthorityService,
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             gameDesignClient,
@@ -1534,6 +1587,13 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("runtime-region-7", responseRef.get().getCommand().getCurrentRuntimeRegionId());
     assertEquals(19L, responseRef.get().getCommand().getCurrentRuntimeRegionEpoch());
     assertEquals("7", responseRef.get().getCommand().getCurrentRuntimeGameInstanceId());
+    assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
+        responseRef.get().getCommand().getCurrentRuntimePlayableStateScope());
+    assertEquals("ops", responseRef.get().getCommand().getCurrentRuntimeWorldSlug());
+    assertEquals("preview", responseRef.get().getCommand().getCurrentRuntimeRealmSlug());
+    assertEquals(29L, responseRef.get().getCommand().getCurrentRuntimePointerVersion());
+    assertEquals(false, responseRef.get().getCommand().getIsCurrentRuntimeRoutingBundleStale());
     assertEquals("plugin-2", responseRef.get().getCommand().getPluginId());
     assertEquals("plugin-v2", responseRef.get().getCommand().getPluginVersionId());
     assertEquals(
@@ -1640,17 +1700,40 @@ class GameSessionControlPlaneGrpcServiceTest {
     currentOwnership.setRegionEpoch(14L);
     Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 7L))
         .thenReturn(Optional.of(currentOwnership));
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(1L, 7L))
+        .thenReturn(
+            Optional.of(
+                new net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot(
+                    "world-7",
+                    "World 7",
+                    "realm-7",
+                    "Realm 7",
+                    1L,
+                    7L,
+                    107L,
+                    true,
+                    true,
+                    true,
+                    "SHARED",
+                    "interactive")));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         new GameSessionControlPlaneGrpcService(
-            Mockito.mock(GameInstanceRepository.class),
+            gameInstanceRepository,
             commandRepository,
             runtimeRegionStatusRepository,
             Mockito.mock(RemoteFollowupRepository.class),
             remoteCommandCoordinatorRepository,
             remoteFollowupResultRepository,
             null,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            gameplayAdmissionPointerAuthorityService,
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             gameDesignClient,
@@ -1674,6 +1757,13 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("runtime-region-9", responseRef.get().getCommand().getCurrentRuntimeRegionId());
     assertEquals(14L, responseRef.get().getCommand().getCurrentRuntimeRegionEpoch());
     assertEquals("7", responseRef.get().getCommand().getCurrentRuntimeGameInstanceId());
+    assertEquals(
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        responseRef.get().getCommand().getCurrentRuntimePlayableStateScope());
+    assertEquals("world-7", responseRef.get().getCommand().getCurrentRuntimeWorldSlug());
+    assertEquals("realm-7", responseRef.get().getCommand().getCurrentRuntimeRealmSlug());
+    assertEquals(107L, responseRef.get().getCommand().getCurrentRuntimePointerVersion());
+    assertEquals(true, responseRef.get().getCommand().getIsCurrentRuntimeRoutingBundleStale());
     assertEquals("REMOTE_APPLIED", responseRef.get().getCommand().getRemoteState());
     assertEquals("region-origin", responseRef.get().getCommand().getRemoteOriginRegionId());
     assertEquals(7L, responseRef.get().getCommand().getRemoteOriginRegionEpoch());
